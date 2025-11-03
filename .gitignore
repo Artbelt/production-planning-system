@@ -1,0 +1,91 @@
+# PHP
+*.log
+*.cache
+*.tmp
+
+# Composer
+vendor/
+composer.phar
+
+# IDE
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Uploads and temporary files
+*/uploads/*.xlsx
+*/uploads/*.xls
+*/uploads/*.csv
+*/pdf/*.pdf
+*.zip
+
+# Database dumps
+*.sql
+!auth/maintenance/*.sql
+!cut_operator/*.sql
+!laser_operator/*.sql
+
+# Sensitive configuration
+auth_config.php
+config.php
+*.env
+
+# Node modules (если будут использоваться)
+node_modules/
+package-lock.json
+
+# Logs
+*/logs/*.log
+auth/logs/*.log
+error.log
+access.log
+
+# Backup files
+*.bak
+*.backup
+*backup.htm
+*backup.html
+
+# Temporary test files
+test_*.php
+debug_*.php
+TEST_*.php
+check_*.php
+
+# Excel library cache
+*/Classes/PHPExcel/Shared/OLE/ChainedBlockStream.php.cache
+
+# XAMPP specific
+xampp/
+
+# Font files (if generated)
+*/font/*.z
+*/makefont/*.map
+
+# Deleted/archived files
+**/[DEL]*
+**/[HIDE]*
+**/.trash/
+
+# Development documentation (optional - remove if you want to track them)
+ROADMAP.md
+ANALYSIS_*.md
+DESIGN_*.md
+SEPARATE_DB_CHANGES.md
+
+# Temporary scripts
+fix_*.php
+update_*.php
+install_*.php
+clear_*.php
+
+# Old/unused directories
+*/trash/
+*/Новая\ папка/
+
