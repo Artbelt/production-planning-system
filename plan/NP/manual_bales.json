@@ -1,0 +1,50 @@
+[
+    {
+        "filter": "AF1798s",
+        "paper": "\u0433\u043e\u0444\u0440\u043e\u043f\u0430\u043a\u0435\u0442 AF1798s",
+        "width": 211,
+        "height": 33,
+        "length": 1000,
+        "len_per_filter": 5610
+    },
+    {
+        "filter": "AF1937",
+        "paper": "\u0433\u043e\u0444\u0440\u043e\u043f\u0430\u043a\u0435\u0442 AF1937",
+        "width": 169,
+        "height": 33,
+        "length": 1000,
+        "len_per_filter": 4422
+    },
+    {
+        "filter": "AF1610",
+        "paper": "\u0433\u043e\u0444\u0440\u043e\u043f\u0430\u043a\u0435\u0442 AF1610",
+        "width": 221,
+        "height": 33,
+        "length": 1000,
+        "len_per_filter": 5676
+    },
+    {
+        "filter": "AF1892",
+        "paper": "\u0433\u043e\u0444\u0440\u043e\u043f\u0430\u043a\u0435\u0442 AF1892",
+        "width": 172,
+        "height": 24,
+        "length": 1000,
+        "len_per_filter": 3936
+    },
+    {
+        "filter": "AF1994",
+        "paper": "\u0433\u043e\u0444\u0440\u043e\u043f\u0430\u043a\u0435\u0442 AF1994",
+        "width": 208,
+        "height": 40,
+        "length": 500,
+        "len_per_filter": 6960
+    },
+    {
+        "filter": "AF1914",
+        "paper": "\u0433\u043e\u0444\u0440\u043e\u043f\u0430\u043a\u0435\u0442 AF1914",
+        "width": 213,
+        "height": 33,
+        "length": 1000,
+        "len_per_filter": 4488
+    }
+]

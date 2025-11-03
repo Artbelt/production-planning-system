@@ -1,0 +1,210 @@
+<?php
+// NP_view_roll_plan.php — компактный просмотр плана раскроя рулонов (3 колонки)
+$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4","root","",[
+    PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION
+]);
+
+$order = $_GET['order'] ?? '';
+$autoPrint = isset($_GET['print']) ? true : false;
+if ($order==='') die('Не указан параметр order.');
+
+$sql = "
+SELECT
+  r.id, r.bale_id, r.work_date, COALESCE(r.done, 0) as done,
+  c.filter, TRIM(SUBSTRING_INDEX(c.filter,' [',1)) AS base_filter,
+  c.width, c.height, c.length, c.material
+FROM roll_plans r
+JOIN cut_plans c
+  ON c.order_number = r.order_number
+ AND c.bale_id = r.bale_id
+WHERE r.order_number = :ord
+ORDER BY r.work_date, CAST(r.bale_id AS UNSIGNED), base_filter
+";
+$stmt = $pdo->prepare($sql);
+$stmt->execute([':ord'=>$order]);
+$rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$bales = [];
+foreach ($rows as $r) {
+    $id = $r['id'];
+    if (!isset($bales[$id])) {
+        $bales[$id] = [
+            'id' => $id,
+            'bale_id' => $r['bale_id'],
+            'plan_date' => $r['work_date'],
+            'done' => (int)$r['done'],
+            'material' => $r['material'] ?? '',
+            'filters' => [],
+            'total_width' => 0.0,
+            'length' => (int)$r['length'],
+        ];
+    }
+    $bales[$id]['filters'][] = [
+        'base'   => $r['base_filter'],
+        'width'  => (float)$r['width'],
+        'height' => (float)$r['height'],
+        'length' => (int)$r['length'],
+    ];
+    $bales[$id]['total_width'] += (float)$r['width'];
+}
+uksort($bales, fn($a,$b)=>($bales[$a]['plan_date'] <=> $bales[$b]['plan_date']) ?: ($bales[$a]['bale_id'] <=> $bales[$b]['bale_id']));
+$total_bales = count($bales);
+$done_bales = array_sum(array_column($bales, 'done'));
+?>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>План раскроя рулона — № <?= htmlspecialchars($order) ?></title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        :root{ --bg:#f6f7fb; --card:#fff; --line:#e5e7eb; --muted:#6b7280; --ok:#16a34a; --ink:#111827; }
+        *{box-sizing:border-box}
+        body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);margin:0;padding:8px;color:var(--ink);font-size:12px}
+        h1{margin:4px 0 10px;text-align:center;font-size:16px}
+        .panel{max-width:1300px;margin:0 auto 8px;display:flex;gap:8px;justify-content:center;align-items:center}
+        .btn{padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;font-size:12px}
+        .muted{color:var(--muted)}
+        .grid{max-width:1300px;margin:0 auto;display:grid;grid-template-columns:repeat(3, 1fr);gap:8px}
+        .card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px}
+        .hdr{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:4px}
+        .hdr-left{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+        .tag{font-size:11px;padding:1px 6px;border-radius:999px;border:1px solid var(--line);background:#fff;white-space:nowrap}
+        .ok{color:var(--ok);border-color:#c9f2d9;background:#f1f9f4}
+        .done{background:#dcfce7;border:2px solid #16a34a;opacity:1;box-shadow:0 2px 8px rgba(34,197,94,0.3)}
+        .done .hdr{background:#16a34a;color:white;border-radius:6px;padding:4px 6px;margin:-2px -2px 4px -2px;}
+        .done .hdr .muted{color:white !important}
+        .done .tag.ok{background:#16a34a;border-color:#15803d;color:white;font-weight:bold}
+        .mono{font-variant-numeric:tabular-nums;white-space:nowrap}
+        table{width:100%;border-collapse:collapse;font-size:11px}
+        th,td{border:1px solid var(--line);padding:3px 5px;text-align:center;vertical-align:middle}
+        th{background:#f6f7fb;font-weight:600}
+        td.left{text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        tbody tr:nth-child(even){background:#fbfbfb}
+        @media(max-width:1100px){ .grid{grid-template-columns:repeat(2, 1fr)} }
+        @media(max-width:700px){  .grid{grid-template-columns:1fr} }
+        /* Стили для фильтрации по материалу */
+        .filter-btn{padding:6px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;font-size:12px;transition:all 0.2s}
+        .filter-btn.active{background:#2563eb;color:white;border-color:#2563eb}
+        .card.highlight-white{box-shadow:0 0 0 2px #3b82f6;background:#eff6ff}
+        .card.highlight-carbon{box-shadow:0 0 0 2px #6b7280;background:#f3f4f6}
+        .card.hidden{display:none}
+        
+        @media print{
+            @page { size: landscape; margin: 8mm; }
+            body{background:#fff;padding:0}
+            .panel{display:none}
+            .grid{gap:6px;grid-template-columns:repeat(3, 1fr)}
+            .card{break-inside:avoid}
+            th,td{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        }
+    </style>
+    <?php if ($autoPrint): ?>
+        <script>window.addEventListener('load',()=>window.print());</script>
+    <?php endif; ?>
+</head>
+<body>
+
+<h1>План раскроя рулона — заявка № <?= htmlspecialchars($order) ?></h1>
+
+<div class="panel">
+    <button class="btn" onclick="window.print()">Печать</button>
+    <span class="muted">Бухт: <?= (int)$total_bales ?> | Порезано: <strong><?= (int)$done_bales ?></strong> | Осталось: <strong><?= (int)($total_bales - $done_bales) ?></strong></span>
+    <div style="display:flex;gap:8px;align-items:center">
+        <span class="muted">Фильтр:</span>
+        <button class="filter-btn active" onclick="filterMaterial('all')">Все</button>
+        <button class="filter-btn" onclick="filterMaterial('white')">Белые</button>
+        <button class="filter-btn" onclick="filterMaterial('carbon')">Угольные</button>
+    </div>
+</div>
+
+<div class="grid">
+    <?php if (!$bales): ?>
+        <div class="card"><em class="muted">Нет данных по раскрою рулонов для этой заявки.</em></div>
+    <?php else: foreach ($bales as $b):
+        $leftover = max(0, 1000 - $b['total_width']); // считаем остаток от ширины бухты 1000 мм для У5
+        $materialUpper = strtoupper(trim($b['material']));
+        // Определяем тип: CARBON = угольные, Simple (или пустые) = белые
+        $isCarbon = ($materialUpper === 'CARBON');
+        $materialType = $isCarbon ? 'carbon' : 'white';
+        ?>
+        <div class="card <?= $b['done']?'done':'' ?>" data-material="<?= htmlspecialchars($materialType) ?>">
+            <div class="hdr">
+                <div class="hdr-left">
+                    <strong class="mono"><?= htmlspecialchars($b['plan_date']) ?></strong>
+                    <span>Бухта: <strong><?= htmlspecialchars($b['bale_id']) ?></strong></span>
+                    <!-- Убрали «∑ ширин ...», оставили только остаток и длину -->
+                    <span class="muted">ост.: <strong class="mono"><?= (float)$leftover ?> мм</strong></span>
+                    <span class="muted">длина: <strong class="mono"><?= (int)$b['length'] ?> м</strong></span>
+                </div>
+                <div class="tag <?= $b['done']?'ok':'' ?>"><?= $b['done']?'✓ Порезано':'Запланировано' ?></div>
+            </div>
+
+            <table>
+                <thead>
+                <tr>
+                    <th class="left">Фильтр</th>
+                    <th>Шир, мм</th>
+                    <th>Выс, мм</th>
+                    <th>Длина, м</th>
+                </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($b['filters'] as $f): ?>
+                    <tr>
+                        <td class="left" title="<?= htmlspecialchars($f['base']) ?>"><?= htmlspecialchars($f['base']) ?></td>
+                        <td class="mono"><?= (float)$f['width'] ?></td>
+                        <td class="mono"><?= (float)$f['height'] ?></td>
+                        <td class="mono"><?= (int)$f['length'] ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endforeach; endif; ?>
+</div>
+
+<script>
+let currentFilter = 'all';
+
+function filterMaterial(type) {
+    currentFilter = type;
+    
+    // Обновляем активную кнопку
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    event.target.classList.add('active');
+    
+    // Фильтруем карточки
+    const cards = document.querySelectorAll('.card[data-material]');
+    cards.forEach(card => {
+        const material = card.dataset.material;
+        
+        if (type === 'all') {
+            card.classList.remove('hidden', 'highlight-white', 'highlight-carbon');
+        } else if (type === 'white') {
+            if (material === 'white') {
+                card.classList.remove('hidden');
+                card.classList.add('highlight-white');
+                card.classList.remove('highlight-carbon');
+            } else {
+                card.classList.add('hidden');
+                card.classList.remove('highlight-white', 'highlight-carbon');
+            }
+        } else if (type === 'carbon') {
+            if (material === 'carbon') {
+                card.classList.remove('hidden');
+                card.classList.add('highlight-carbon');
+                card.classList.remove('highlight-white');
+            } else {
+                card.classList.add('hidden');
+                card.classList.remove('highlight-white', 'highlight-carbon');
+            }
+        }
+    });
+}
+</script>
+
+</body>
+</html>
