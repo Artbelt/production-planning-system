@@ -124,6 +124,7 @@ $canAccessLaser = canAccessLaserRequests($userDepartments, 'U5');
             --border:#e5e7eb;
             --accent:#2457e6;
             --accent-ink:#ffffff;
+            --danger:#dc2626;
             --radius:12px;
             --shadow:0 2px 12px rgba(2,8,20,.06);
             --shadow-soft:0 1px 8px rgba(2,8,20,.05);
@@ -829,19 +830,15 @@ echo "<!-- Аккуратная панель авторизации -->
 
                 <div class="section-title" style="margin-top:14px">Управление заявками</div>
                 <section class="stack">
-                    <button type="button" onclick="openAddToOrderModal()">Добавить к заявке...</button>
+                    <button type="button" onclick="openLoadFileModal()">Прочитать XLS заявку</button>
                     <form action='new_order.php' method='post' target='_blank' class="stack"><input type='submit' value='Создать заявку вручную'></form>
+                    <button type="button" onclick="openAddToOrderModal()">Добавить к заявке...</button>
+                    <form action='combine_orders.php' method='post' target='_blank' class="stack"><input type='submit' value='Объединение заявок'></form>
+                    <button type="button" onclick="openDeleteOrdersModal()">Удалить заявку</button>
+                    
+                    <div style="border-top: 1px dashed var(--border); margin: 8px 0;"></div>
+                    
                     <form action='NP_cut_index.php' method='post' target='_blank' class="stack"><input type='submit' value='Менеджер планирования (новый)'></form>
-                    <form action='combine_orders.php' method='post' class="stack"><input type='submit' value='Объединение заявок'></form>
-
-                    <div class="card">
-                        <form enctype="multipart/form-data" action="load_file.php" method="POST" class="stack">
-                            <input type="hidden" name="MAX_FILE_SIZE" value="3000000" />
-                            <label class="muted">Добавить заявку коммерческого отдела:</label>
-                            <input name="userfile" type="file" />
-                            <input type="submit" value="Загрузить файл" />
-                        </form>
-                    </div>
                 </section>
 
                 <?php $result->close(); $mysqli->close(); ?>
@@ -1854,78 +1851,148 @@ window.onclick = function(event) {
 
     <!-- Модальное окно для добавления позиции к заявке -->
     <div id="addToOrderModal" class="modal" style="display: none;">
-        <div class="modal-content" style="max-width: 500px; max-height: 90vh; overflow-y: auto;">
-            <div class="modal-header">
-                <h3 class="modal-title">➕ Добавить позицию к заявке</h3>
+        <div class="modal-content" style="max-width: 500px; max-height: 90vh; overflow-y: auto; padding: 12px;">
+            <div class="modal-header" style="margin-bottom: 10px; padding-bottom: 8px;">
+                <h3 class="modal-title" style="font-size: 16px;">➕ Добавить позицию к заявке</h3>
                 <span class="close" onclick="closeAddToOrderModal()">&times;</span>
             </div>
-            <div class="modal-body">
+            <div class="modal-body" style="padding: 0;">
                 <form id="addToOrderForm" onsubmit="submitAddToOrder(event)">
-                    <div style="display: grid; gap: 14px; margin-bottom: 20px;">
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Выберите заявку:</label>
-                            <select id="selectOrderNumber" required style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                    <div style="display: grid; gap: 8px; margin-bottom: 12px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label style="min-width: 120px; font-weight: 500; font-size: 12px;">Выберите заявку:</label>
+                            <select id="selectOrderNumber" required style="flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;">
                                 <option value="">-- Выберите заявку --</option>
                             </select>
                         </div>
                         
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Фильтр:</label>
-                            <select id="inputFilter" required style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label style="min-width: 120px; font-weight: 500; font-size: 12px;">Фильтр:</label>
+                            <select id="inputFilter" required style="flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;">
                                 <option value="">-- Выберите фильтр --</option>
                             </select>
                         </div>
                         
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Количество, шт:</label>
-                            <input type="number" id="inputCount" required min="1" placeholder="0" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label style="min-width: 120px; font-weight: 500; font-size: 12px;">Количество, шт:</label>
+                            <input type="number" id="inputCount" required min="1" placeholder="0" style="flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;">
                         </div>
                         
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Маркировка:</label>
-                            <input type="text" id="inputMarking" value="стандарт" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label style="min-width: 120px; font-weight: 500; font-size: 12px;">Маркировка:</label>
+                            <input type="text" id="inputMarking" value="стандарт" style="flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;">
                         </div>
                         
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Упаковка инд.:</label>
-                            <input type="text" id="inputPersonalPackaging" value="стандарт" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label style="min-width: 120px; font-weight: 500; font-size: 12px;">Упаковка инд.:</label>
+                            <input type="text" id="inputPersonalPackaging" value="стандарт" style="flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;">
                         </div>
                         
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Этикетка инд.:</label>
-                            <input type="text" id="inputPersonalLabel" value="стандарт" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label style="min-width: 120px; font-weight: 500; font-size: 12px;">Этикетка инд.:</label>
+                            <input type="text" id="inputPersonalLabel" value="стандарт" style="flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;">
                         </div>
                         
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Упаковка групп.:</label>
-                            <input type="text" id="inputGroupPackaging" value="стандарт" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label style="min-width: 120px; font-weight: 500; font-size: 12px;">Упаковка групп.:</label>
+                            <input type="text" id="inputGroupPackaging" value="стандарт" style="flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;">
                         </div>
                         
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Норма упаковки:</label>
-                            <input type="number" id="inputPackagingRate" value="10" min="1" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label style="min-width: 120px; font-weight: 500; font-size: 12px;">Норма упаковки:</label>
+                            <input type="number" id="inputPackagingRate" value="10" min="1" style="flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;">
                         </div>
                         
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Этикетка групп.:</label>
-                            <input type="text" id="inputGroupLabel" value="стандарт" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label style="min-width: 120px; font-weight: 500; font-size: 12px;">Этикетка групп.:</label>
+                            <input type="text" id="inputGroupLabel" value="стандарт" style="flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;">
                         </div>
                         
-                        <div style="display: flex; align-items: center; gap: 12px;">
-                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Примечание:</label>
-                            <input type="text" id="inputRemark" value="дополнение" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <label style="min-width: 120px; font-weight: 500; font-size: 12px;">Примечание:</label>
+                            <input type="text" id="inputRemark" value="дополнение" style="flex: 1; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;">
                         </div>
                     </div>
                     
-                    <div style="display: flex; gap: 12px; justify-content: flex-end;">
-                        <button type="button" onclick="closeAddToOrderModal()" style="padding: 10px 20px; background: var(--muted); color: white; border: none; border-radius: 8px; cursor: pointer;">
+                    <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                        <button type="button" onclick="closeAddToOrderModal()" style="padding: 6px 14px; background: var(--muted); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px;">
                             Отмена
                         </button>
-                        <button type="submit" style="padding: 10px 20px; background: var(--accent); color: white; border: none; border-radius: 8px; cursor: pointer;">
+                        <button type="submit" style="padding: 6px 14px; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px;">
                             ➕ Добавить позицию
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно для загрузки XLS файла -->
+    <div id="loadFileModal" class="modal">
+        <div class="modal-content" style="max-width: 420px; padding: 16px; overflow-x: hidden;">
+            <div class="modal-header" style="margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border);">
+                <div class="modal-title" style="font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 18px;">📄</span>
+                    Прочитать XLS заявку
+                </div>
+                <span class="close" onclick="closeLoadFileModal()" style="font-size: 20px;">&times;</span>
+            </div>
+            <div class="modal-body" style="padding: 0; overflow-x: hidden;">
+                <form id="loadFileForm" enctype="multipart/form-data" action="load_file.php" method="POST">
+                    <input type="hidden" name="MAX_FILE_SIZE" value="3000000" />
+                    <p style="margin: 0 0 12px 0; color: var(--muted); font-size: 12px; line-height: 1.4;">Выберите файл Excel с заявкой коммерческого отдела</p>
+                    <div style="margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                        <input id="loadFileInput" name="userfile" type="file" accept=".xls,.xlsx" style="position: absolute; width: 0; height: 0; opacity: 0; overflow: hidden;" />
+                        <button type="button" onclick="document.getElementById('loadFileInput').click();" id="fileSelectButton" style="padding: 7px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--paper); cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--ink);">
+                            <span style="font-size: 14px;">📎</span>
+                            <span>Выбрать файл</span>
+                        </button>
+                        <span style="font-size: 11px; color: var(--muted);">(.xls, .xlsx)</span>
+                    </div>
+                    <div id="fileNameDisplay" style="margin-bottom: 12px; padding: 6px 10px; background: var(--paper); border-radius: 6px; font-size: 11px; color: var(--ink); display: none; border: 1px solid var(--border);">
+                        <span style="font-weight: 500;">Выбранный файл: </span><span id="fileNameText"></span>
+                    </div>
+                    <div style="display: flex; gap: 8px; justify-content: flex-end; padding-top: 8px; border-top: 1px solid var(--border);">
+                        <button type="button" onclick="closeLoadFileModal()" style="padding: 7px 16px; background: transparent; color: var(--ink); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s;">
+                            Отмена
+                        </button>
+                        <button type="submit" id="submitFileButton" disabled style="padding: 7px 16px; background: var(--muted); color: white; border: none; border-radius: 6px; cursor: not-allowed; font-size: 12px; font-weight: 500; transition: all 0.2s; opacity: 0.5;">
+                            Загрузить
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно для удаления заявок -->
+    <div id="deleteOrdersModal" class="modal">
+        <div class="modal-content" style="max-width: 600px; padding: 12px;">
+            <div class="modal-header" style="margin-bottom: 10px; padding-bottom: 8px;">
+                <div class="modal-title" style="font-size: 16px;">Удаление заявок</div>
+                <span class="close" onclick="closeDeleteOrdersModal()">&times;</span>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <p style="margin-bottom: 10px; color: var(--danger); font-weight: 600; font-size: 12px;">
+                    ⚠️ Внимание: Заявка будет полностью удалена. Это действие необратимо!
+                </p>
+                
+                <div style="margin-bottom: 8px; display: flex; gap: 10px; align-items: center;">
+                    <span id="selectedCount" style="margin-left: auto; color: var(--muted); font-size: 11px;">Выбрано: 0</span>
+                </div>
+                
+                <div id="ordersList" style="max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 6px;">
+                    <div style="text-align: center; padding: 15px; color: var(--muted); font-size: 12px;">Загрузка заявок...</div>
+                </div>
+                
+                <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;">
+                    <button type="button" onclick="closeDeleteOrdersModal()" style="padding: 6px 14px; background: var(--muted); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px;">
+                        Отмена
+                    </button>
+                    <button type="button" onclick="deleteSelectedOrders()" id="deleteBtn" disabled style="padding: 6px 14px; background: var(--danger); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 12px;">
+                        Удалить выбранные
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -1967,6 +2034,244 @@ if (isset($_GET['profile'])) {
     echo "</div>";
     echo "</div>";
 }
+?>
+<script>
+// Функция открытия модального окна загрузки файла
+function openLoadFileModal() {
+    document.getElementById('loadFileModal').style.display = 'block';
+    // Сброс формы при открытии
+    document.getElementById('loadFileForm').reset();
+    document.getElementById('fileNameDisplay').style.display = 'none';
+    document.getElementById('submitFileButton').disabled = true;
+    document.getElementById('submitFileButton').style.background = 'var(--muted)';
+    document.getElementById('submitFileButton').style.opacity = '0.5';
+    document.getElementById('submitFileButton').style.cursor = 'not-allowed';
+}
+
+// Функция закрытия модального окна загрузки файла
+function closeLoadFileModal() {
+    document.getElementById('loadFileModal').style.display = 'none';
+    document.getElementById('loadFileForm').reset();
+    document.getElementById('fileNameDisplay').style.display = 'none';
+    document.getElementById('submitFileButton').disabled = true;
+    document.getElementById('submitFileButton').style.background = 'var(--muted)';
+    document.getElementById('submitFileButton').style.opacity = '0.5';
+    document.getElementById('submitFileButton').style.cursor = 'not-allowed';
+    
+    // Сброс кнопки выбора файла
+    const fileSelectButton = document.getElementById('fileSelectButton');
+    if (fileSelectButton) {
+        const iconSpan = fileSelectButton.querySelector('span:first-child');
+        const textSpan = fileSelectButton.querySelector('span:last-child');
+        if (iconSpan) iconSpan.textContent = '📎';
+        if (textSpan) textSpan.textContent = 'Выбрать файл';
+        fileSelectButton.style.borderColor = 'var(--border)';
+        fileSelectButton.style.background = 'var(--paper)';
+        fileSelectButton.removeAttribute('data-selected');
+    }
+}
+
+// Обработка выбора файла
+document.addEventListener('DOMContentLoaded', function() {
+    const fileInput = document.getElementById('loadFileInput');
+    const fileSelectButton = document.getElementById('fileSelectButton');
+    const fileNameDisplay = document.getElementById('fileNameDisplay');
+    const fileNameText = document.getElementById('fileNameText');
+    const submitButton = document.getElementById('submitFileButton');
+    
+    if (fileInput && fileSelectButton) {
+        // Стили для кнопки при наведении
+        fileSelectButton.addEventListener('mouseenter', function() {
+            if (!this.dataset.selected) {
+                this.style.borderColor = 'var(--accent)';
+                this.style.background = '#f0f4ff';
+            }
+        });
+        fileSelectButton.addEventListener('mouseleave', function() {
+            if (!this.dataset.selected) {
+                this.style.borderColor = 'var(--border)';
+                this.style.background = 'var(--paper)';
+            }
+        });
+        
+        // Обработка выбора файла
+        fileInput.addEventListener('change', function() {
+            if (this.files.length > 0) {
+                const fileName = this.files[0].name;
+                fileNameText.textContent = fileName;
+                fileNameDisplay.style.display = 'block';
+                
+                // Активация кнопки загрузки
+                submitButton.disabled = false;
+                submitButton.style.background = 'var(--accent)';
+                submitButton.style.opacity = '1';
+                submitButton.style.cursor = 'pointer';
+                
+                // Обновление текста и стиля кнопки выбора
+                const iconSpan = fileSelectButton.querySelector('span:first-child');
+                const textSpan = fileSelectButton.querySelector('span:last-child');
+                if (iconSpan) iconSpan.textContent = '✓';
+                if (textSpan) textSpan.textContent = 'Файл выбран';
+                fileSelectButton.style.borderColor = 'var(--accent)';
+                fileSelectButton.style.background = '#f0f4ff';
+                fileSelectButton.dataset.selected = 'true';
+            }
+        });
+    }
+    
+    // Закрытие модального окна при клике вне его
+    const modal = document.getElementById('loadFileModal');
+    if (modal) {
+        window.addEventListener('click', function(event) {
+            if (event.target == modal) {
+                closeLoadFileModal();
+            }
+        });
+    }
+    
+    // Закрытие модального окна удаления заявок при клике вне его
+    const deleteModal = document.getElementById('deleteOrdersModal');
+    if (deleteModal) {
+        window.addEventListener('click', function(event) {
+            if (event.target == deleteModal) {
+                closeDeleteOrdersModal();
+            }
+        });
+    }
+});
+
+// Функции для модального окна удаления заявок
+let ordersList = [];
+
+function openDeleteOrdersModal() {
+    document.getElementById('deleteOrdersModal').style.display = 'block';
+    loadOrdersList();
+}
+
+function closeDeleteOrdersModal() {
+    document.getElementById('deleteOrdersModal').style.display = 'none';
+    ordersList = [];
+}
+
+async function loadOrdersList() {
+    const listDiv = document.getElementById('ordersList');
+    listDiv.innerHTML = '<div style="text-align: center; padding: 15px; color: var(--muted); font-size: 12px;">Загрузка заявок...</div>';
+    
+    try {
+        const response = await fetch('delete_orders_api.php?action=get_orders');
+        const data = await response.json();
+        
+        if (data.ok && data.orders) {
+            ordersList = data.orders;
+            renderOrdersList();
+        } else {
+            listDiv.innerHTML = '<div style="text-align: center; padding: 15px; color: var(--danger); font-size: 12px;">Ошибка загрузки заявок</div>';
+        }
+    } catch (error) {
+        listDiv.innerHTML = '<div style="text-align: center; padding: 15px; color: var(--danger); font-size: 12px;">Ошибка: ' + error.message + '</div>';
+    }
+}
+
+function renderOrdersList() {
+    const listDiv = document.getElementById('ordersList');
+    
+    if (ordersList.length === 0) {
+        listDiv.innerHTML = '<div style="text-align: center; padding: 15px; color: var(--muted); font-size: 12px;">Нет заявок для удаления</div>';
+        return;
+    }
+    
+    let html = '<div style="display: flex; flex-direction: column; gap: 4px;">';
+    ordersList.forEach(order => {
+        const statusClass = order.status === 'replanning' ? ' style="color: #dc2626; font-weight: 600;"' : '';
+        const hiddenBadge = order.is_hidden ? '<span style="background: var(--muted); color: white; padding: 1px 4px; border-radius: 3px; font-size: 9px; margin-left: 6px;">Скрыта</span>' : '';
+        html += `
+            <label style="display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; transition: background 0.2s;" 
+                   onmouseover="this.style.background='#f9fafb'" 
+                   onmouseout="this.style.background=''">
+                <input type="checkbox" class="order-checkbox" value="${order.order_number}" onchange="updateSelectedCount()" style="margin: 0; cursor: pointer; width: 14px; height: 14px;">
+                <div style="flex: 1;">
+                    <div${statusClass} style="font-size: 13px;">${order.order_number}${hiddenBadge}</div>
+                    <div style="font-size: 11px; color: var(--muted);">
+                        Позиций: ${order.positions_count}, Всего: ${order.total_count} шт
+                    </div>
+                </div>
+            </label>
+        `;
+    });
+    html += '</div>';
+    listDiv.innerHTML = html;
+    updateSelectedCount();
+}
+
+function selectAllOrders() {
+    document.querySelectorAll('.order-checkbox').forEach(cb => cb.checked = true);
+    updateSelectedCount();
+}
+
+function deselectAllOrders() {
+    document.querySelectorAll('.order-checkbox').forEach(cb => cb.checked = false);
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const checked = document.querySelectorAll('.order-checkbox:checked').length;
+    document.getElementById('selectedCount').textContent = 'Выбрано: ' + checked;
+    document.getElementById('deleteBtn').disabled = checked === 0;
+}
+
+async function deleteSelectedOrders() {
+    const checkedBoxes = document.querySelectorAll('.order-checkbox:checked');
+    const selectedOrders = Array.from(checkedBoxes).map(cb => cb.value);
+    
+    if (selectedOrders.length === 0) {
+        alert('Выберите заявки для удаления');
+        return;
+    }
+    
+    const deleteType = 'full'; // Всегда полное удаление
+    const confirmText = `Вы уверены, что хотите полностью удалить ${selectedOrders.length} заявок? Это действие необратимо!`;
+    
+    if (!confirm(confirmText)) {
+        return;
+    }
+    
+    const deleteBtn = document.getElementById('deleteBtn');
+    const originalText = deleteBtn.textContent;
+    deleteBtn.textContent = 'Удаление...';
+    deleteBtn.disabled = true;
+    
+    try {
+        const response = await fetch('delete_orders_api.php?action=delete_orders', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                orders: selectedOrders,
+                delete_type: deleteType
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok) {
+            alert(`✅ Успешно удалено ${data.deleted_count} заявок`);
+            closeDeleteOrdersModal();
+            // Перезагружаем страницу для обновления списка заявок
+            location.reload();
+        } else {
+            alert('❌ Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+            deleteBtn.textContent = originalText;
+            deleteBtn.disabled = false;
+        }
+    } catch (error) {
+        alert('❌ Ошибка при удалении: ' + error.message);
+        deleteBtn.textContent = originalText;
+        deleteBtn.disabled = false;
+    }
+}
+</script>
+<?php
 ?>
 </body>
 </html>

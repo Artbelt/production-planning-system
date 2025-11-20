@@ -67,35 +67,48 @@ try{
             --line:#e5e7eb; --ok:#16a34a; --warn:#ef4444; --accent:#2563eb;
         }
         *{box-sizing:border-box}
-        body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);margin:16px;color:var(--text)}
+        body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);margin:12px;color:var(--text)}
         .wrap{max-width:1100px;margin:0 auto}
-        h2{margin:0 0 6px}
-        .sub{color:var(--muted); margin-bottom:10px}
+        h2{margin:0 0 4px;font-size:18px}
+        .sub{color:var(--muted); margin-bottom:6px;font-size:12px}
 
-        .toolbar{display:flex;gap:8px;align-items:center;margin:8px 0 14px}
-        .btn{padding:8px 12px;border-radius:8px;background:var(--accent);color:#fff;border:1px solid var(--accent);cursor:pointer;text-decoration:none}
-        .btn:hover{filter:brightness(.95)}
+        .toolbar{display:flex;gap:8px;align-items:center;margin:6px 0 10px}
+        .btn{padding:10px 16px;border-radius:8px;background:var(--accent);color:#fff;border:1px solid var(--accent);cursor:pointer;text-decoration:none;font-weight:600;font-size:15px;display:inline-flex;align-items:center;gap:6px;box-shadow:0 2px 4px rgba(37,99,235,0.2)}
+        .btn:hover{filter:brightness(.95);box-shadow:0 2px 6px rgba(37,99,235,0.3)}
+        .btn:before{content:"🖨️"}
         .btn-ghost{padding:8px 12px;border-radius:8px;background:#eef2ff;color:#374151;border:1px solid #c7d2fe;text-decoration:none}
-        .totals{margin:8px 0 18px;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fff;display:flex;gap:18px;flex-wrap:wrap}
+        .totals{margin:6px 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;display:flex;gap:14px;flex-wrap:wrap;font-size:13px}
 
-        .day-card{background:#fff;border:1px solid var(--line);border-radius:12px;margin:12px 0;overflow:hidden}
-        .day-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#f3f4f6;border-bottom:1px solid var(--line)}
-        .day-title{font-weight:600}
-        .day-sub{font-size:12px;color:var(--muted)}
-        table{border-collapse:collapse;width:100%}
-        th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;font-size:14px}
-        th{background:#fafafa}
+        .days-container{display:grid;grid-template-columns:repeat(auto-fit, minmax(350px, 1fr));gap:12px;margin:8px 0}
+        .day-card{background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:0;display:flex;flex-direction:column}
+        .day-head{display:flex;flex-direction:column;padding:6px 8px;background:#f3f4f6;border-bottom:1px solid var(--line);gap:4px}
+        .day-title{font-weight:600;font-size:13px}
+        .day-sub{font-size:10px;color:var(--muted);line-height:1.3}
+        .day-card table{width:100%;border-collapse:collapse;table-layout:fixed}
+        th,td{border:1px solid var(--line);padding:5px 6px;text-align:left;font-size:11px;word-wrap:break-word}
+        th{background:#fafafa;font-weight:600;font-size:11px}
         td.num, th.num{text-align:right}
+        th:first-child{width:35px}
+        th:last-child{width:90px}
 
-        .done{color:var(--ok); font-weight:600}
-        .warn{color:var(--warn); font-weight:600}
+        .done{color:var(--ok); font-weight:600;font-size:11px}
+        .warn{color:var(--warn); font-weight:600;font-size:11px}
 
+        @media (max-width: 768px){
+            .days-container{grid-template-columns:1fr}
+        }
         @media print{
-            @page{ size: A4 portrait; margin: 10mm; }
+            @page{ size: A4 portrait; margin: 8mm; }
             body{background:#fff;margin:0}
             .toolbar{display:none}
             .wrap{max-width:none}
-            .day-card{page-break-inside:avoid}
+            .days-container{grid-template-columns:repeat(2, 1fr);gap:8px}
+            .day-card{page-break-inside:avoid;break-inside:avoid}
+            th,td{font-size:9px;padding:2px 4px;line-height:1.2}
+            .day-head{padding:4px 6px}
+            .day-title{font-size:11px}
+            .day-sub{font-size:8px;line-height:1.2}
+            table{border-spacing:0}
         }
     </style>
 </head>
@@ -110,7 +123,6 @@ try{
 
     <div class="toolbar">
         <a class="btn" href="#" onclick="window.print();return false;">Печать</a>
-        <a class="btn-ghost" href="NP_cut_index.php">Назад к этапам</a>
     </div>
 
     <?php if (empty($byDate)): ?>
@@ -118,10 +130,10 @@ try{
             <div class="day-head">
                 <div class="day-title">Нет данных по плану</div>
             </div>
-            <div style="padding:12px">Для этой заявки нет записей в <code>corrugation_plan</code>.</div>
+            <div style="padding:8px 10px;font-size:12px">Для этой заявки нет записей в <code>corrugation_plan</code>.</div>
         </div>
     <?php else: ?>
-
+        <div class="days-container">
         <?php foreach($byDate as $date => $items): ?>
             <?php
             $sumPlan = 0; $sumFact = 0;
@@ -134,55 +146,37 @@ try{
                     <div class="day-title"><?=htmlspecialchars($date)?> <span class="day-sub">/ <?=ruDow($date)?></span></div>
                     <div class="day-sub">
                         План: <b><?=number_format($sumPlan,0,'.',' ')?></b> |
-                        Факт: <b><?=number_format($sumFact,0,'.',' ')?></b> |
                         Осталось: <b><?=number_format($remain,0,'.',' ')?></b>
                     </div>
                 </div>
                 <table>
                     <tr>
-                        <th style="width:40px">№</th>
+                        <th style="width:30px">№</th>
                         <th>Фильтр</th>
-                        <th class="num" style="width:110px">План, шт</th>
-                        <th class="num" style="width:110px">Факт, шт</th>
-                        <th style="width:140px">Статус</th>
+                        <th class="num" style="width:85px">План, шт</th>
                     </tr>
                     <?php foreach($items as $i=>$it): ?>
                         <?php
                         $pl = (int)$it['count'];
-                        $fc = (int)$it['fact_count'];
-                        $done = ($fc >= $pl && $pl > 0);
-                        $statusTxt = $done ? 'Выполнено' : (($fc>0 && $fc<$pl) ? 'В работе' : 'Запланировано');
                         ?>
                         <tr>
                             <td><?=($i+1)?></td>
-                            <td><?=htmlspecialchars($it['filter'] ?? '')?></td>
+                            <td><?=htmlspecialchars($it['filter_label'] ?? '')?></td>
                             <td class="num"><?=number_format($pl,0,'.',' ')?></td>
-                            <td class="num"><?=number_format($fc,0,'.',' ')?></td>
-                            <td>
-                                <?php if ($done): ?>
-                                    <span class="done">✅ <?=$statusTxt?></span>
-                                <?php elseif ($fc>0 && $fc<$pl): ?>
-                                    <span class="warn">⏳ <?=$statusTxt?></span>
-                                <?php else: ?>
-                                    <span><?=$statusTxt?></span>
-                                <?php endif; ?>
-                            </td>
                         </tr>
                     <?php endforeach; ?>
                     <tr>
                         <th colspan="2" class="num">ИТОГО за день:</th>
                         <th class="num"><?=number_format($sumPlan,0,'.',' ')?></th>
-                        <th class="num"><?=number_format($sumFact,0,'.',' ')?></th>
-                        <th><?= $remain>0 ? ('Осталось: '.number_format($remain,0,'.',' ')) : 'Готово' ?></th>
                     </tr>
                 </table>
             </div>
         <?php endforeach; ?>
+        </div>
 
         <div class="totals">
             <div><b>Итого по заявке:</b></div>
             <div>План, шт: <b><?=number_format($grandPlan,0,'.',' ')?></b></div>
-            <div>Факт, шт: <b><?=number_format($grandFact,0,'.',' ')?></b></div>
             <div>Осталось, шт: <b><?=number_format(max(0, $grandPlan-$grandFact),0,'.',' ')?></b></div>
         </div>
     <?php endif; ?>

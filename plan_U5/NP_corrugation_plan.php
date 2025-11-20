@@ -79,7 +79,10 @@ foreach($rows as $r){
     // tooltip (скрытые поля): [z..][w..][L..]
     $tooltip = sprintf('[z%d] [w%s]%s', $Z, trim_num($W, 1), $L !== null ? (' [L'.(int)$L.']') : '');
 
-    $key = $r['bale_id'].':'.$r['strip_no'];
+    // Включаем filter в ключ для уникальности (на случай дубликатов bale_id:strip_no с разными filter)
+    // Заменяем двоеточия в filter на подчеркивания, чтобы не конфликтовать с разделителями ключа
+    $filterSafe = str_replace(':', '_', $r['filter']);
+    $key = $r['bale_id'].':'.$r['strip_no'].':'.$filterSafe;
     $pool[$d][] = [
         'key'      => $key,
         'bale_id'  => (int)$r['bale_id'],
@@ -88,8 +91,8 @@ foreach($rows as $r){
         'label'    => $label_visible,
         'tip'      => $tooltip,
         'packs'    => $cnt,
-        'fact_count' => isset($factData[$key]) ? $factData[$key]['fact_count'] : 0,
-        'plan_count' => isset($factData[$key]) ? $factData[$key]['plan_count'] : 0,
+        'fact_count' => isset($factData[$r['bale_id'].':'.$r['strip_no']]) ? $factData[$r['bale_id'].':'.$r['strip_no']]['fact_count'] : 0,
+        'plan_count' => isset($factData[$r['bale_id'].':'.$r['strip_no']]) ? $factData[$r['bale_id'].':'.$r['strip_no']]['plan_count'] : 0,
     ];
 }
 $dates = array_values(array_keys($dates));
@@ -698,9 +701,24 @@ sort($dates);
         saveBtn.disabled = !has;
     }
     function setPillDisabledByKey(key, disabled){
-        document.querySelectorAll(`.pill[data-key="${key}"]`).forEach(el=>{
-            el.classList.toggle('pill-disabled', !!disabled);
-        });
+        // Ключ может быть в формате bale_id:strip_no:hash или bale_id:strip_no
+        // Ищем все плашки, которые начинаются с bale_id:strip_no
+        const parts = key.split(':');
+        if (parts.length >= 2) {
+            const baseKey = parts[0] + ':' + parts[1];
+            document.querySelectorAll(`.pill[data-key^="${baseKey}:"]`).forEach(el=>{
+                el.classList.toggle('pill-disabled', !!disabled);
+            });
+            // Также проверяем старый формат для обратной совместимости
+            document.querySelectorAll(`.pill[data-key="${baseKey}"]`).forEach(el=>{
+                el.classList.toggle('pill-disabled', !!disabled);
+            });
+        } else {
+            // Старый формат без hash
+            document.querySelectorAll(`.pill[data-key="${key}"]`).forEach(el=>{
+                el.classList.toggle('pill-disabled', !!disabled);
+            });
+        }
     }
     function getAllDays(){
         return [...planGrid.querySelectorAll('.col[data-day]')].map(c=>c.dataset.day);
@@ -1206,7 +1224,17 @@ sort($dates);
     document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && dpWrap.style.display==='flex') closeDatePicker(); });
 
     document.querySelectorAll('.pill').forEach(p=>{
-        cutDateByKey.set(p.dataset.key, p.dataset.cutDate);
+        // Сохраняем cutDate по baseKey (bale_id:strip_no) для всех вариантов filter
+        const key = p.dataset.key || '';
+        const parts = key.split(':');
+        if (parts.length >= 2) {
+            const baseKey = parts[0] + ':' + parts[1];
+            cutDateByKey.set(baseKey, p.dataset.cutDate);
+            // Также сохраняем по полному ключу для обратной совместимости
+            cutDateByKey.set(key, p.dataset.cutDate);
+        } else {
+            cutDateByKey.set(key, p.dataset.cutDate);
+        }
         p.addEventListener('click', (e)=>{
             if (e.shiftKey && lastPickedDay){ addToPlan(lastPickedDay, p); return; }
             openDatePicker(p);
@@ -1361,7 +1389,11 @@ sort($dates);
             const filter = row.dataset.filter || '';
             const day    = row.dataset.day || '';
             if(!key || !day) return;
-            const [bale_id, strip_no] = key.split(':').map(x=>parseInt(x,10));
+            // Ключ может быть в формате bale_id:strip_no или bale_id:strip_no:hash
+            // Извлекаем bale_id и strip_no (первые два элемента)
+            const parts = key.split(':');
+            const bale_id = parseInt(parts[0], 10);
+            const strip_no = parseInt(parts[1], 10);
             if(!bale_id || !strip_no) return;
             items.push({ date: day, bale_id, strip_no, filter, count: packs });
         });
@@ -1407,8 +1439,12 @@ sort($dates);
             // 3) Розкласти елементи по днях
 // 3) Розкласти елементи по днях
             (data.items||[]).forEach(it=>{
-                const key  = String(it.bale_id)+':'+String(it.strip_no);
-                const pill = document.querySelector(`.pill[data-key="${key}"]`);
+                // Ищем плашку по bale_id, strip_no и filter (используем атрибуты для поиска)
+                const pill = Array.from(document.querySelectorAll('.pill')).find(p => 
+                    p.dataset.baleId == it.bale_id && 
+                    p.dataset.stripNo == it.strip_no && 
+                    p.dataset.filterName === it.filter
+                );
 
                 if (pill) {
                     addToPlan(it.date, pill);
@@ -1418,7 +1454,12 @@ sort($dates);
                     if (!dz) return;
 
                     const label   = (it.filter||'Без имени') + ' ['+(it.count||0)+' шт]';
-                    const cutDate = cutDateByKey.get(key) || '';  // ← взяли з мапи
+                    // Используем baseKey для cutDateByKey (там хранятся старые ключи)
+                    const baseKey = String(it.bale_id)+':'+String(it.strip_no);
+                    const cutDate = cutDateByKey.get(baseKey) || '';
+                    // Создаем ключ с filter для уникальности (заменяем двоеточия в filter)
+                    const filterSafe = (it.filter || '').replace(/:/g, '_');
+                    const key = baseKey + ':' + filterSafe;
 
                     const row = createRow({
                         key,

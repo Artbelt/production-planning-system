@@ -714,7 +714,7 @@ try{
                             </span>
                             <?php if ($o['cut_ready']): ?>
                                 <div class="button-group">
-                                    <button class="btn-outline btn-sm btn-icon" onclick="window.open('NP/print_cut_report.php?order=<?= urlencode($ord) ?>', '_blank')">
+                                    <button class="btn-outline btn-sm btn-icon" onclick="window.open('NP_view_cut.php?order=<?= urlencode($ord) ?>', '_blank')">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <polyline points="6 9 6 2 18 2 18 9"/>
                                             <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
@@ -737,8 +737,9 @@ try{
                                 <div class="button-group">
                                     <button class="btn-outline btn-sm btn-icon" onclick="window.open('NP_view_roll_plan.php?order=<?= urlencode($ord) ?>', '_blank')">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                                            <circle cx="12" cy="12" r="3"/>
+                                            <polyline points="6 9 6 2 18 2 18 9"/>
+                                            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+                                            <rect x="6" y="14" width="12" height="8"/>
                                         </svg>
                                     </button>
                                     <button class="btn-secondary btn-sm flex-1" onclick="editRollPlan('<?= htmlspecialchars($ord, ENT_QUOTES) ?>')">Изменить</button>
@@ -766,8 +767,9 @@ try{
                                 <div class="button-group">
                                     <button class="btn-outline btn-sm btn-icon" onclick="window.open('NP_view_corrugation_plan.php?order=<?= urlencode($ord) ?>', '_blank')">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                                            <circle cx="12" cy="12" r="3"/>
+                                            <polyline points="6 9 6 2 18 2 18 9"/>
+                                            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+                                            <rect x="6" y="14" width="12" height="8"/>
                                         </svg>
                                     </button>
                                     <button class="btn-secondary btn-sm flex-1" onclick="editCorrugationPlan('<?= htmlspecialchars($ord, ENT_QUOTES) ?>')">Изменить</button>
@@ -793,10 +795,11 @@ try{
                             <?php elseif ($o['build_ready']): ?>
                                 <span class="badge badge-success">Готово</span>
                                 <div class="button-group">
-                                    <button class="btn-outline btn-sm btn-icon" onclick="window.open('view_production_plan.php?order=<?= urlencode($ord) ?>', '_blank')">
+                                    <button class="btn-outline btn-sm btn-icon" onclick="window.open('NP_print_build_plan.php?order=<?= urlencode($ord) ?>', '_blank')">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                                            <circle cx="12" cy="12" r="3"/>
+                                            <polyline points="6 9 6 2 18 2 18 9"/>
+                                            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+                                            <rect x="6" y="14" width="12" height="8"/>
                                         </svg>
                                     </button>
                                     <button class="btn-secondary btn-sm flex-1" onclick="editBuildPlan('<?= htmlspecialchars($ord, ENT_QUOTES) ?>')">Изменить</button>

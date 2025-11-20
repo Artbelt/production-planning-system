@@ -1861,8 +1861,13 @@ try{
         
         window.minimizePanel = function() {
             const content = document.querySelector('.floating-panel-content');
+            const scrollWrapper = document.querySelector('.floating-panel-scroll-wrapper');
             if (isMinimized) {
-                content.style.display = 'block';
+                content.style.display = 'flex';
+                if (scrollWrapper) {
+                    scrollWrapper.style.overflowY = 'auto';
+                    scrollWrapper.style.overflowX = 'hidden';
+                }
                 isMinimized = false;
             } else {
                 content.style.display = 'none';

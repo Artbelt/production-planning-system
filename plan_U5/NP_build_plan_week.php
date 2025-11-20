@@ -243,124 +243,6 @@ try{
     .orderInput{padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;width:170px}
     .badgeOrder{font-size:12px;color:var(--muted)}
 
-    /* Плавающая панель с гофропакетами */
-    .corr-panel {
-        position: fixed;
-        top: 80px;
-        right: 20px;
-        width: 280px;
-        max-height: calc(100vh - 120px);
-        background: white;
-        border-radius: 10px;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.15);
-        z-index: 90;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-    }
-    .corr-panel-header {
-        background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-        color: white;
-        padding: 6px 10px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        cursor: move;
-        user-select: none;
-    }
-    .corr-panel-title {
-        font-weight: 600;
-        font-size: 12px;
-    }
-    .corr-panel-btn {
-        background: rgba(255,255,255,0.2);
-        color: white;
-        border: 1px solid rgba(255,255,255,0.3);
-        border-radius: 4px;
-        padding: 2px 6px;
-        cursor: pointer;
-        font-size: 14px;
-        transition: background 0.2s;
-        line-height: 1;
-    }
-    .corr-panel-btn:hover {
-        background: rgba(255,255,255,0.3);
-    }
-    .corr-panel-content {
-        overflow-y: auto;
-        padding: 6px;
-        flex: 1;
-    }
-    .corr-date-group {
-        margin-bottom: 8px;
-    }
-    .corr-date-header {
-        font-weight: 600;
-        font-size: 11px;
-        color: #374151;
-        padding: 4px 6px;
-        background: #f3f4f6;
-        border-radius: 4px;
-        margin-bottom: 4px;
-        position: sticky;
-        top: 0;
-        z-index: 1;
-    }
-    .corr-item {
-        background: #f0fdf4;
-        border: 1px solid #86efac;
-        border-radius: 6px;
-        padding: 4px 6px;
-        margin-bottom: 3px;
-        cursor: grab;
-        transition: all 0.15s;
-    }
-    .corr-item:hover {
-        background: #dcfce7;
-        box-shadow: 0 1px 4px rgba(34,197,94,0.2);
-    }
-    .corr-item:active {
-        cursor: grabbing;
-    }
-    .corr-item.assigned {
-        background: #f3f4f6;
-        border-color: #9ca3af;
-        opacity: 0.6;
-    }
-    .corr-item.assigned:hover {
-        background: #e5e7eb;
-        box-shadow: none;
-    }
-    .corr-item-name {
-        font-weight: 600;
-        font-size: 11px;
-        margin-bottom: 2px;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-    .corr-item-info {
-        font-size: 10px;
-        color: #6b7280;
-        display: flex;
-        gap: 6px;
-        flex-wrap: wrap;
-    }
-    .corr-item .height-dot {
-        width: 14px;
-        height: 14px;
-        font-size: 8px;
-        border-width: 1px;
-    }
-    .corr-panel.minimized .corr-panel-content {
-        display: none;
-    }
-    .corr-panel.minimized {
-        max-height: 32px;
-    }
 
     /* Стили для элементов управления тепловой картой */
     .heatmap-controls{display:flex;gap:8px;align-items:center}
@@ -441,7 +323,6 @@ try{
         <div id="weekTitle" style="font-weight:600"></div>
         <button class="btn" id="nextWeek">›</button>
         <button class="btn" id="todayBtn">Сегодня</button>
-        <button class="btn" id="toggleSpan">2 недели</button>
         <button class="btn" id="allOrderBtn">Вся заявка</button>
     </div>
     <div class="legend">
@@ -453,7 +334,6 @@ try{
     <div class="controls">
         <button class="btn" id="loadBtn">Загрузить</button>
         <button class="btn primary" id="saveBtn" >Сохранить</button>
-        <button class="btn" id="testBtn" onclick="alert('Test button works!')">Тест</button>
         <button class="btn" id="splitBtn" title="Разделить позицию на части (пробел)">✂</button>
         <button class="btn" id="undoSplitBtn" title="Откатить последнее разделение" disabled>⟲</button>
         <button class="btn" id="bufferBtn" title="Плавающий буфер">📋</button>
@@ -466,74 +346,6 @@ try{
     </div>
 </header>
 
-<!-- Панель с распланированными гофропакетами -->
-<div class="corr-panel" id="corrPanel">
-    <div class="corr-panel-header" id="corrPanelHeader">
-        <div class="corr-panel-title">✅ Гофропакеты (<?= count($corrugatedFilters) ?>)</div>
-        <button class="corr-panel-btn" onclick="toggleCorrPanel()">−</button>
-    </div>
-    <div class="corr-panel-content" id="corrPanelContent">
-        <?php if (empty($corrugatedFilters)): ?>
-            <div style="color:#6b7280;font-size:11px;text-align:center;padding:20px">
-                Нет распланированных гофропакетов
-            </div>
-        <?php else: ?>
-            <?php 
-            function fmt_mm($v){
-                if ($v === null || $v === '') return null;
-                $v = (float)$v;
-                return (abs($v - round($v)) < 0.01) ? (string)(int)round($v) : rtrim(rtrim(number_format($v,1,'.',''), '0'), '.');
-            }
-            
-            // Группируем по датам
-            foreach ($corrByDate as $date => $items): ?>
-                <div class="corr-date-group">
-                    <div class="corr-date-header">📅 <?= h($date) ?></div>
-                    <?php foreach ($items as $cf): 
-                        $htStr = $cf['paper_height'] !== null ? fmt_mm($cf['paper_height']) : null;
-                        $available = (int)$cf['count'] - (int)$cf['fact_count'];
-                        
-                        // Проверяем, распланирована ли позиция
-                        $key = $cf['source_date'].'|'.$cf['filter'];
-                        $assigned = $assignedMap[$key] ?? 0;
-                        $isFullyAssigned = $assigned >= $available;
-                        $assignedClass = $assigned > 0 ? 'assigned' : '';
-                    ?>
-                    <div class="corr-item <?= $assignedClass ?>" 
-                         draggable="true"
-                         data-corr-id="<?= h($cf['id']) ?>"
-                         data-source-date="<?= h($cf['source_date']) ?>"
-                         data-filter="<?= h($cf['filter']) ?>"
-                         data-count="<?= $cf['count'] ?>"
-                         data-fact="<?= $cf['fact_count'] ?>"
-                         data-available="<?= max(0, $available - $assigned) ?>"
-                         data-rate="<?= $cf['rate_per_shift'] ?>"
-                         data-height="<?= $htStr ? h($htStr) : '' ?>"
-                         title="<?= $assigned > 0 ? 'Распланировано: '.$assigned.' шт' : 'Доступно для планирования' ?>">
-                        <div class="corr-item-name">
-                            <?php if ($isFullyAssigned): ?>✓ <?php endif; ?>
-                            <?= h($cf['filter']) ?>
-                            <?php if ($htStr): ?>
-                                <span class="height-dot"><?= h($htStr) ?></span>
-                            <?php endif; ?>
-                        </div>
-                        <div class="corr-item-info">
-                            <?php if ($assigned > 0): ?>
-                                <span style="color:#16a34a;font-weight:600">✓ <?= $assigned ?></span>
-                                <?php if ($available - $assigned > 0): ?>
-                                    <span>/ <?= $available ?> шт</span>
-                                <?php endif; ?>
-                            <?php else: ?>
-                                <span>📦 <?= $available ?> шт</span>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                    <?php endforeach; ?>
-                </div>
-            <?php endforeach; ?>
-        <?php endif; ?>
-    </div>
-</div>
 
 <div class="week-wrap">
     <div class="week" id="weekGrid">
@@ -593,7 +405,7 @@ try{
         const FALLBACK_SLOT_H = 0.5;                      // если нет нормы (фиксируем!)
         const MIN_SLOT_H = 0.25;
         // количество отображаемых дней (режим: 7, 14 или все дни заявки)
-        let spanDays = 7;
+        let spanDays = 14;
         let allOrderMode = false;
         let heatmapMode = 'none'; // 'none', 'complexity' или 'heights'
         let splitMode = false;   // режим разделения позиций
@@ -718,7 +530,7 @@ try{
         if (toggleSpanBtn){
             toggleSpanBtn.onclick = ()=>{
                 allOrderMode = false;
-                spanDays = (spanDays===7 ? 14 : 7);
+                spanDays = (spanDays===14 ? 7 : 14);
                 updateSpanBtnLabel();
                 updateAllOrderBtnLabel();
                 renderWeek(false);
@@ -1134,7 +946,7 @@ try{
                     // После загрузки рассчитываем период отображения
                     calculateAllOrderDays();
                 } else {
-                    spanDays = 7;
+                    spanDays = 14;
                 }
                 updateSpanBtnLabel();
                 updateAllOrderBtnLabel();
@@ -1149,7 +961,7 @@ try{
                 toggleSpanBtn.textContent = '2 недели';
                 toggleSpanBtn.disabled = true;
             } else {
-                toggleSpanBtn.textContent = (spanDays===7 ? '2 недели' : '1 неделя');
+                toggleSpanBtn.textContent = (spanDays===14 ? '1 неделя' : '2 недели');
                 toggleSpanBtn.disabled = false;
             }
         }
@@ -1946,165 +1758,6 @@ try{
         
     });
 
-    // ============ ПАНЕЛЬ С ГОФРОПАКЕТАМИ ============
-    function toggleCorrPanel() {
-        const panel = document.getElementById('corrPanel');
-        panel.classList.toggle('minimized');
-        const btn = panel.querySelector('.corr-panel-btn');
-        btn.textContent = panel.classList.contains('minimized') ? '+' : '−';
-    }
-
-    // Drag панели
-    (function() {
-        const panel = document.getElementById('corrPanel');
-        const header = document.getElementById('corrPanelHeader');
-        let isDragging = false;
-        let startX, startY, startLeft, startTop;
-
-        header.addEventListener('mousedown', (e) => {
-            if (e.target.tagName === 'BUTTON') return;
-            isDragging = true;
-            const rect = panel.getBoundingClientRect();
-            startX = e.clientX;
-            startY = e.clientY;
-            startLeft = rect.left;
-            startTop = rect.top;
-            panel.style.transition = 'none';
-        });
-
-        document.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            const dx = e.clientX - startX;
-            const dy = e.clientY - startY;
-            panel.style.left = (startLeft + dx) + 'px';
-            panel.style.top = (startTop + dy) + 'px';
-            panel.style.right = 'auto';
-        });
-
-        document.addEventListener('mouseup', () => {
-            if (isDragging) {
-                isDragging = false;
-                panel.style.transition = '';
-            }
-        });
-    })();
-
-    // Drag элементов из панели в календарь
-    document.querySelectorAll('.corr-item').forEach(item => {
-        item.addEventListener('dragstart', (e) => {
-            const data = {
-                source_date: item.dataset.sourceDate,
-                filter: item.dataset.filter,
-                count: parseInt(item.dataset.available),
-                rate: parseFloat(item.dataset.rate),
-                height: item.dataset.height,
-                corr_id: item.dataset.corrId
-            };
-            e.dataTransfer.setData('application/json', JSON.stringify(data));
-            e.dataTransfer.effectAllowed = 'copy';
-            item.style.opacity = '0.5';
-        });
-
-        item.addEventListener('dragend', (e) => {
-            item.style.opacity = '1';
-        });
-    });
-
-    // Модифицируем обработчик drop в календаре
-    // Находим все lane элементы и добавляем поддержку drop из панели
-    document.addEventListener('DOMContentLoaded', () => {
-        const lanes = document.querySelectorAll('.lane');
-        lanes.forEach(lane => {
-            // Добавляем визуальную подсветку при hover
-            lane.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'copy';
-                lane.style.background = 'rgba(34, 197, 94, 0.1)';
-            });
-
-            lane.addEventListener('dragleave', () => {
-                lane.style.background = '';
-            });
-
-            lane.addEventListener('drop', (e) => {
-                e.preventDefault();
-                lane.style.background = '';
-                
-                try {
-                    const data = JSON.parse(e.dataTransfer.getData('application/json'));
-                    if (!data || !data.filter) return;
-
-                    // Получаем день и бригаду из lane
-                    const dayCol = lane.closest('.day');
-                    const dayDateEl = dayCol.querySelector('.day-date');
-                    const dateMatch = dayDateEl ? dayDateEl.textContent.match(/\d{4}-\d{2}-\d{2}/) : null;
-                    if (!dateMatch) return;
-                    
-                    const targetDate = dateMatch[0];
-                    const brigade = lane.classList.contains('b1') ? 1 : 2;
-
-                    // Запрашиваем количество у пользователя
-                    const qty = prompt(`Добавить в план:\n${data.filter}\n\nДоступно: ${data.count} шт\nВведите количество:`, data.count);
-                    if (!qty || isNaN(qty) || qty <= 0) return;
-
-                    const count = Math.min(parseInt(qty), data.count);
-
-                    // Добавляем позицию в план (используем существующую логику)
-                    addEventToLane(lane, {
-                        source_date: data.source_date,
-                        filter: data.filter,
-                        count: count,
-                        rate: data.rate || 0,
-                        height: data.height,
-                        brigade: brigade,
-                        plan_date: targetDate
-                    });
-
-                    // Проверяем, нужно ли расширить сетку
-                    checkAndExpandIfNeeded(targetDate);
-
-                    console.log('Добавлено:', data.filter, count, 'шт в', targetDate, 'бригада', brigade);
-                } catch (err) {
-                    console.error('Ошибка при обработке drop:', err);
-                }
-            });
-        });
-    });
-
-    // Вспомогательная функция для добавления события в lane
-    function addEventToLane(lane, eventData) {
-        // Эта функция должна интегрироваться с существующей логикой планирования
-        // Пока просто создаём визуальный элемент
-        const eventDiv = document.createElement('div');
-        eventDiv.className = 'event';
-        eventDiv.draggable = true;
-        
-        const hours = eventData.rate > 0 ? ((eventData.count / eventData.rate) * SHIFT_HOURS).toFixed(1) : '0.0';
-        const heightStr = eventData.height ? ` [${eventData.height}]` : '';
-        
-        eventDiv.innerHTML = `
-            <h4>
-                <span class="ttl">${eventData.filter}${heightStr}</span>
-                <span class="cx">${hours}ч</span>
-            </h4>
-            <div class="sub">
-                <span>${eventData.count} шт</span>
-                <span>📅 ${eventData.source_date}</span>
-            </div>
-        `;
-        
-        // Позиционирование (в начале смены для простоты)
-        eventDiv.style.top = '0px';
-        eventDiv.style.height = `calc(${hours} * var(--pxh))`;
-        
-        lane.appendChild(eventDiv);
-        
-        // Важно: здесь нужно обновить внутренние структуры данных
-        // Это зависит от реализации вашей системы планирования
-        // Например: updatePlan(eventData);
-        
-        updateSaveButtonState(); // Активируем кнопку сохранения
-    }
     
 </script>
 </html>
