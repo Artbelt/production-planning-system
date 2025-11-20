@@ -285,6 +285,33 @@ function h($s): string { return htmlspecialchars((string)$s ?? '', ENT_QUOTES | 
                     </tr>
                 </table>
             </div>
+
+            <!-- Тариф и сложность производства -->
+            <div class="card">
+                <div class="section-title">Тариф и сложность производства</div>
+                <table class="table">
+                    <tr>
+                        <th>Тариф</th>
+                        <td><?= h($data['tariff_name'] ?? 'Не указан') ?></td>
+                    </tr>
+                    <?php if (!empty($data['tariff_rate'])): ?>
+                    <tr>
+                        <th>Ставка за единицу</th>
+                        <td class="value-mono"><?= h($data['tariff_rate']) ?></td>
+                    </tr>
+                    <?php endif; ?>
+                    <?php if (!empty($data['tariff_type'])): ?>
+                    <tr>
+                        <th>Тип тарифа</th>
+                        <td><?= h($data['tariff_type']) ?></td>
+                    </tr>
+                    <?php endif; ?>
+                    <tr>
+                        <th>Сложность производства</th>
+                        <td class="value-mono"><?= h($data['build_complexity'] ?? 'Не указана') ?><?= !empty($data['build_complexity']) ? ' шт/смену' : '' ?></td>
+                    </tr>
+                </table>
+            </div>
         </section>
 
         <div class="card">

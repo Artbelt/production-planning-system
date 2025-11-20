@@ -147,9 +147,15 @@ function getAllLaserRequests($databases) {
                 $mysqli->close();
                 continue;
             }
+            
+            // Автомиграция: добавляем поле progress_count если его нет
+            $columnCheck = $mysqli->query("SHOW COLUMNS FROM laser_requests LIKE 'progress_count'");
+            if ($columnCheck && $columnCheck->num_rows === 0) {
+                $mysqli->query("ALTER TABLE laser_requests ADD COLUMN progress_count INT NOT NULL DEFAULT 0 AFTER quantity");
+            }
         
             // Безопасный запрос с проверкой
-            $sql = "SELECT id, user_name, department, component_name, quantity, desired_delivery_time, is_completed, completed_at, created_at, '{$department}' as source_department FROM laser_requests ORDER BY created_at DESC LIMIT 100";
+            $sql = "SELECT id, user_name, department, component_name, quantity, progress_count, desired_delivery_time, is_completed, completed_at, created_at, '{$department}' as source_department FROM laser_requests ORDER BY created_at DESC LIMIT 100";
             
             if (!$result = $mysqli->query($sql)) {
                 $error = "Ошибка запроса к БД {$department}: " . $mysqli->error;
@@ -167,6 +173,7 @@ function getAllLaserRequests($databases) {
                     'department' => isset($row['department']) ? $row['department'] : $department,
                     'component_name' => isset($row['component_name']) ? $row['component_name'] : '',
                     'quantity' => isset($row['quantity']) ? (int)$row['quantity'] : 0,
+                    'progress_count' => isset($row['progress_count']) ? (int)$row['progress_count'] : 0,
                     'desired_delivery_time' => isset($row['desired_delivery_time']) ? $row['desired_delivery_time'] : null,
                     'is_completed' => isset($row['is_completed']) ? (bool)$row['is_completed'] : false,
                     'completed_at' => isset($row['completed_at']) ? $row['completed_at'] : null,

@@ -185,9 +185,16 @@ try{
 
     // Статусы заявок
     $orders = $pdo->query("
-        SELECT DISTINCT order_number, cut_ready, cut_confirmed, plan_ready, corr_ready, build_ready, status
+        SELECT order_number, 
+               MAX(cut_ready) as cut_ready, 
+               MAX(cut_confirmed) as cut_confirmed, 
+               MAX(plan_ready) as plan_ready, 
+               MAX(corr_ready) as corr_ready, 
+               MAX(build_ready) as build_ready, 
+               MAX(status) as status
         FROM orders
         WHERE hide IS NULL OR hide != 1
+        GROUP BY order_number
         ORDER BY order_number
     ")->fetchAll(PDO::FETCH_ASSOC);
 

@@ -1,5 +1,8 @@
 <?php
 // view_production_plan.php — план vs факт + переносы по сменам для выбранной заявки
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+if(function_exists('opcache_reset')) opcache_reset(); // Сброс OpCache
 
 $dsn = 'mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4';
 $user = 'root';
@@ -190,6 +193,7 @@ function sumFactForDayMap($map){ $s=0; foreach($map as $v) $s+=(int)$v; return $
 <body>
 
 <h1>План и факт сборки — заявка № <?= htmlspecialchars($order) ?></h1>
+<!-- VERSION: 2024-11-10-GRADIENT-DEBUG -->
 
 <div class="toolbar">
     <div style="text-align:center; margin-bottom:15px;">
@@ -232,12 +236,43 @@ function sumFactForDayMap($map){ $s=0; foreach($map as $v) $s+=(int)$v; return $
                         // Получаем распределенный факт для этой даты и позиции
                         $fact = (int)($factDistribution[$d][$base] ?? 0);
 
-                        $cls = ($fact >= $plan) ? 'ok' : ($fact>0 ? 'warn' : 'bad');
+                        // Вычисляем процент выполнения
+                        $percentage = $plan > 0 ? ($fact / $plan * 100) : 0;
+                        
+                        // Определяем класс и стиль
+                        $cls = 'tag '; // Базовый класс всегда
+                        $customStyle = '';
+                        
+                        // Градиент от 80% до 100%
+                        if ($percentage >= 80 && $percentage < 100) {
+                            // Нормализуем от 0 до 1 в диапазоне 80-100%
+                            $gradientPosition = ($percentage - 80) / 20;
+                            
+                            // Более мягкие, пастельные оттенки зеленого
+                            // Светло-зеленый (80%) -> зеленый (100%)
+                            // RGB: (180, 240, 180) -> (100, 220, 120)
+                            $r = round(180 - ($gradientPosition * (180 - 100)));
+                            $g = round(240 - ($gradientPosition * (240 - 220)));
+                            $b = round(180 - ($gradientPosition * (180 - 120)));
+                            
+                            // Прозрачность 0.5 (50%) - менее яркий
+                            $bgColor = "rgba($r, $g, $b, 0.5)";
+                            $borderColor = "rgba(" . max(0, $r - 20) . "," . max(0, $g - 20) . "," . max(0, $b - 20) . ", 0.6)";
+                            $textColor = '#2d5016'; // Темно-зеленый текст
+                            
+                            $customStyle = "background: $bgColor !important; border-color: $borderColor !important; color: $textColor !important; font-weight: 500 !important;";
+                        } elseif ($percentage >= 100) {
+                            // 100% и выше - приглушенный зеленый
+                            $customStyle = 'background: rgba(100, 220, 120, 0.5) !important; border-color: rgba(80, 200, 100, 0.6) !important; color: #2d5016 !important; font-weight: 500 !important;';
+                        } else {
+                            // Стандартные классы для других случаев
+                            $cls .= ($fact >= $plan) ? 'ok' : ($fact>0 ? 'warn' : 'bad');
+                        }
                         ?>
                         <li data-key="<?= htmlspecialchars(mb_strtolower($base)) ?>">
                             <div class="row">
                                 <strong><?= htmlspecialchars($base) ?></strong>
-                                <span class="tag <?= $cls ?>"><?= (int)$fact ?>/<?= (int)$plan ?></span>
+                                <span class="<?= $cls ?>" <?= $customStyle ? 'style="' . $customStyle . '"' : '' ?> title="Процент: <?= round($percentage, 1) ?>%"><?= (int)$fact ?>/<?= (int)$plan ?></span>
                             </div>
                         </li>
                     <?php endforeach; ?>

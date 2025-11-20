@@ -8,21 +8,30 @@ function show_ads(){
 
     global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
 
-    $host = $mysql_host;
-    $db = $mysql_database;
-    $user = $mysql_user;
-    $pass = $mysql_user_pass;
-
-    try {
-        $pdo = new PDO("mysql:host=$host;dbname=$db", $user, $pass);
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-
-        // Запрос активных объявлений
-        $stmt = $pdo->prepare("SELECT * FROM ads WHERE expires_at >= NOW() ORDER BY expires_at ASC");
-        $stmt->execute();
-        $ads = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    } catch (PDOException $e) {
-        die("Ошибка подключения: " . $e->getMessage());
+    // ОПТИМИЗАЦИЯ: используем MySQLi вместо нового PDO подключения
+    static $cached_ads = null;
+    static $cache_time = null;
+    
+    // Кэшируем результат на 60 секунд
+    if ($cached_ads !== null && $cache_time !== null && (time() - $cache_time) < 60) {
+        $ads = $cached_ads;
+    } else {
+        $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+        if ($mysqli->connect_errno) {
+            $ads = [];
+        } else {
+            $stmt = $mysqli->prepare("SELECT title, content, expires_at FROM ads WHERE expires_at >= NOW() ORDER BY expires_at ASC");
+            if ($stmt && $stmt->execute()) {
+                $result = $stmt->get_result();
+                $ads = $result->fetch_all(MYSQLI_ASSOC);
+                $stmt->close();
+            } else {
+                $ads = [];
+            }
+            $mysqli->close();
+        }
+        $cached_ads = $ads;
+        $cache_time = time();
     }
     ?>
     <style>
@@ -249,28 +258,47 @@ function load_filters_into_select($text){
 
     global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
 
-    /** Создаем подключение к БД */
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
+    // ОПТИМИЗАЦИЯ: кэшируем список фильтров на 5 минут
+    static $cached_filters = null;
+    static $cache_time = null;
+    
+    if ($cached_filters !== null && $cache_time !== null && (time() - $cache_time) < 300) {
+        $filters = $cached_filters;
+    } else {
+        /** Создаем подключение к БД */
+        $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
 
-    /** Выполняем запрос SQL для загрузки заявок*/
-    $sql = "SELECT DISTINCT filter FROM panel_filter_structure ORDER BY filter;";
+        /** Выполняем запрос SQL для загрузки фильтров (с LIMIT для безопасности) */
+        $sql = "SELECT DISTINCT filter FROM panel_filter_structure WHERE filter IS NOT NULL AND filter != '' ORDER BY filter LIMIT 5000;";
 
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-        exit;
+        /** Если запрос не удачный -> exit */
+        if (!$result = $mysqli->query($sql)){ 
+            echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
+            exit;
+        }
+
+        /** Собираем все фильтры в массив */
+        $filters = [];
+        while ($row = $result->fetch_assoc()){
+            $filters[] = $row['filter'];
+        }
+        
+        /** Закрываем соединение */
+        $result->close();
+        $mysqli->close();
+        
+        // Сохраняем в кэш
+        $cached_filters = $filters;
+        $cache_time = time();
     }
 
-    /** Разбор массива значений  */
+    /** Выводим select */
     echo "<select name='analog_filter' >";
-    echo "<option value=''>".$text."</option>";
-    while ($orders_data = $result->fetch_assoc()){
-        echo "<option value=".$orders_data['filter'].">".$orders_data['filter']."</option>";
+    echo "<option value=''>".htmlspecialchars($text)."</option>";
+    foreach ($filters as $filter) {
+        echo "<option value='".htmlspecialchars($filter)."'>".htmlspecialchars($filter)."</option>";
     }
     echo "</select>";
-
-    /** Закрываем соединение */
-    $result->close();
-    $mysqli->close();
 }
 
 

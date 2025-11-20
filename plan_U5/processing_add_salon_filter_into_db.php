@@ -43,6 +43,13 @@ if (isset($_POST['form_factor'])){
     $form_factor = 'трапеция';
 }else $form_factor = '';
 
+/** Надрезы */
+$has_edge_cuts = isset($_POST['has_edge_cuts']) ? 1 : 0;
+
+/** ТАРИФ И СЛОЖНОСТЬ */
+$tariff_id = isset($_POST['tariff_id']) && $_POST['tariff_id'] !== '' && $_POST['tariff_id'] !== '0' ? intval($_POST['tariff_id']) : null;
+$build_complexity = isset($_POST['build_complexity']) && $_POST['build_complexity'] !== '' && $_POST['build_complexity'] !== '0' ? floatval($_POST['build_complexity']) : null;
+
 /** ПРоверка наличия фильтра в БД */
 $a = check_filter($_POST['filter_name']);
 
@@ -55,9 +62,66 @@ if ($a > 0){
 /** Если фильтра в БД такого нет -> начинаем запись */
 
 /** Запись информации о фильтре в БД */
-$sql = "INSERT INTO salon_filter_structure(filter, category, paper_package, insertion_count, box, g_box, comment, foam_rubber, form_factor, tail, side_type) 
-        VALUES ('$filter_name','$category','$p_p_name','$insertion_count','$box','$g_box','$remark', '$foam_rubber', '$form_factor', '$tail', '$side_type');";
-$result = mysql_execute($sql);
+global $mysql_host, $mysql_user, $mysql_user_pass, $mysql_database;
+$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+
+if ($mysqli->connect_errno) {
+    echo "Ошибка подключения к БД: " . $mysqli->connect_error;
+    exit();
+}
+
+// Используем prepared statements для корректной обработки NULL значений
+// Формируем запрос с учетом NULL значений
+$fields = "filter, category, paper_package, insertion_count, box, g_box, comment, foam_rubber, form_factor, tail, side_type, has_edge_cuts";
+$placeholders = "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
+$types = "sssssssssssi";
+$params = [$filter_name, $category, $p_p_name, $insertion_count, $box, $g_box, $remark, $foam_rubber, $form_factor, $tail, $side_type, $has_edge_cuts];
+
+if ($tariff_id !== null) {
+    $fields .= ", tariff_id";
+    $placeholders .= ", ?";
+    $types .= "i";
+    $params[] = $tariff_id;
+} else {
+    $fields .= ", tariff_id";
+    $placeholders .= ", NULL";
+}
+
+if ($build_complexity !== null) {
+    $fields .= ", build_complexity";
+    $placeholders .= ", ?";
+    $types .= "d";
+    $params[] = $build_complexity;
+} else {
+    $fields .= ", build_complexity";
+    $placeholders .= ", NULL";
+}
+
+$sql = "INSERT INTO salon_filter_structure($fields) VALUES ($placeholders)";
+$stmt = $mysqli->prepare($sql);
+
+if (!$stmt) {
+    echo "Ошибка подготовки запроса: " . $mysqli->error;
+    $mysqli->close();
+    exit();
+}
+
+// Биндим параметры с использованием ссылок для bind_param
+$bind_params = [$types];
+foreach ($params as $key => $value) {
+    $bind_params[] = &$params[$key];
+}
+call_user_func_array([$stmt, 'bind_param'], $bind_params);
+
+if (!$stmt->execute()) {
+    echo "Ошибка при сохранении фильтра: " . $stmt->error;
+    $stmt->close();
+    $mysqli->close();
+    exit();
+}
+
+$stmt->close();
+$mysqli->close();
 
 /** Запись информации о гофропакете в БД */
 $sql = "INSERT INTO paper_package_salon(p_p_name, p_p_height, p_p_width, p_p_pleats_count, p_p_supplier, p_p_remark, p_p_material) 

@@ -75,6 +75,15 @@ foreach ($userDepartments as $dept) {
     }
 }
 
+// Проверяем права доступа к модулю оператора тигельного пресса по всем ролям пользователя
+$canAccessBoxOperator = false;
+foreach ($userDepartments as $dept) {
+    if (in_array($dept['role_name'], ['admin', 'director', 'box_operator'])) {
+        $canAccessBoxOperator = true;
+        break;
+    }
+}
+
 // Проверяем специальный доступ к глобальному модулю (admin/director имеют приоритет над отдельными кнопками)
 $hasGlobalCutOperatorAccess = false;
 foreach ($userDepartments as $dept) {
@@ -217,6 +226,10 @@ foreach ($userDepartments as $dept) {
 
 		.btn.cut {
 			background-color: #4CAF50;
+		}
+
+		.btn.box {
+			background-color: #00BCD4;
 		}
 
 		.btn.calculation {
@@ -396,6 +409,7 @@ foreach ($userDepartments as $dept) {
 		<?php endif; ?>
 		<?php if (in_array('U3', $availableDepartments)): ?>
 		<button class="btn production" onclick="window.open('/plan_U3/product_output.php', '_blank')">Внести выпущенную продукцию У3</button>
+		<button class="btn plan" onclick="window.open('/plan_U3/summary_plan_U3.php', '_blank')">Сводный план У3</button>
 		<?php endif; ?>
 		<?php if (in_array('U4', $availableDepartments)): ?>
 		<button class="btn production" onclick="window.open('/plan_U4/product_output.php', '_blank')">Внести выпущенную продукцию У4</button>
@@ -403,10 +417,13 @@ foreach ($userDepartments as $dept) {
 		<?php if (in_array('U5', $availableDepartments)): ?>
 		<button class="btn production" onclick="window.open('/plan_U5/product_output.php', '_blank')">Внести выпущенную продукцию У5</button>
 		<?php endif; ?>
-		
-		<!-- Кнопка расчета % только для сборщиц У5 -->
+	<?php endif; ?>
+	
+	<!-- Сводный план (только для сборщиц У5) -->
+	<?php if ($userRole === 'assembler'): ?>
 		<?php if (in_array('U5', $availableDepartments)): ?>
-		<button class="btn calculation" onclick="window.open('/plan_U5/calculation_percent.php', '_blank')">Расчет %</button>
+		<button class="btn plan" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);" onclick="window.open('/plan_U5/mobile_build_plan.php', '_blank')">Сводный план У5</button>
+		<button class="btn plan" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);" onclick="window.open('/plan_U5/buffer_stock.php', '_blank')">Буфер гофропакетов У5</button>
 		<?php endif; ?>
 	<?php endif; ?>
 	
@@ -450,6 +467,16 @@ foreach ($userDepartments as $dept) {
 	<!-- Модуль оператора бумагорезки -->
 	<?php if ($canAccessCutOperator): ?>
 	<button class="btn cut" onclick="window.open('cut_operator/', '_blank')">Оператор бумагорезки</button>
+	<?php endif; ?>
+	
+	<!-- Модуль оператора тигельного пресса -->
+	<?php if ($canAccessBoxOperator): ?>
+	<button class="btn box" onclick="window.open('press_operator/', '_blank')">Оператор тигельного пресса</button>
+	<?php endif; ?>
+	
+	<!-- Задачи (только для директоров) -->
+	<?php if ($userRole === 'director'): ?>
+	<button class="btn" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);" onclick="window.open('/tasks_manager/', '_blank')">Задачи</button>
 	<?php endif; ?>
 	
 	<!-- Админ панель (только для директоров) -->

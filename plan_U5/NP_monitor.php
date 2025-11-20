@@ -928,10 +928,10 @@ function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES|ENT_SUBSTITUTE, 
                 now.getSeconds().toString().padStart(2, '0');
         }, 1000);
         
-        // Авто-обновление данных каждые 30 секунд
+        // Авто-обновление данных каждые 5 минут
         setInterval(() => {
             location.reload();
-        }, 30000);
+        }, 300000);
         // ---- Модальное окно деталей смены ----
         function openCorrModal(dateStr, items) {
             const modal = document.getElementById('corrModal');

@@ -739,7 +739,7 @@
     </div>
 
     <div class="panel">
-        <button id="back_button" onclick="window.history.back()">← Назад</button>
+        <button id="close_button" onclick="window.close()">✖ Закрыть</button>
     </div>
 </div>
 <script>

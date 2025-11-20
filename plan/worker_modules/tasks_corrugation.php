@@ -2,40 +2,15 @@
 $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
 $date = $_GET['date'] ?? date('Y-m-d');
 
-// грузим сырые строки
+// грузим строки (без группировки - каждый рулон отдельно)
 $stmt = $pdo->prepare("
     SELECT id, order_number, plan_date, filter_label, `count`, fact_count
     FROM corrugation_plan
     WHERE plan_date = ?
-    ORDER BY order_number, id
+    ORDER BY order_number, filter_label, id
 ");
 $stmt->execute([$date]);
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// группируем по (order_number, filter_label)
-$groups = [];
-foreach ($rows as $r) {
-    $key = $r['order_number'].'|'.$r['filter_label'];
-    if (!isset($groups[$key])) {
-        $groups[$key] = [
-            'order_number' => $r['order_number'],
-            'filter_label' => $r['filter_label'],
-            'ids'          => [],
-            'items'        => [],
-            'plan_sum'     => 0,
-            'fact_sum'     => 0,
-        ];
-    }
-    $groups[$key]['ids'][] = (int)$r['id'];
-    $groups[$key]['items'][] = [
-        'id'         => (int)$r['id'],
-        'count'      => (int)$r['count'],
-        'fact_count' => (int)$r['fact_count'],
-    ];
-    $groups[$key]['plan_sum'] += (int)$r['count'];
-    $groups[$key]['fact_sum'] += (int)$r['fact_count'];
-}
-$group_list = array_values($groups);
 
 // даты для стрелок
 $dt       = new DateTime($date);
@@ -500,37 +475,44 @@ function greenShadeStyle(int $plan, int $fact): string {
                 word-wrap: break-word;
             }
 
-            /* колонка "Заявка" - минимальная ширина */
+            /* колонка "ID рулона" - минимальная ширина */
             thead th:nth-child(1),
             tbody td:nth-child(1) {
-                width: 15%;
-                min-width: 60px;
+                width: 12%;
+                min-width: 50px;
+            }
+
+            /* колонка "Заявка" - минимальная ширина */
+            thead th:nth-child(2),
+            tbody td:nth-child(2) {
+                width: 13%;
+                min-width: 55px;
             }
 
             /* колонка "Фильтр" - максимальная ширина */
-            thead th:nth-child(2),
-            tbody td:nth-child(2) {
-                width: 45%;
+            thead th:nth-child(3),
+            tbody td:nth-child(3) {
+                width: 35%;
                 text-align: left;
                 padding-left: 8px;
             }
 
             /* колонка "План" - средняя ширина */
-            thead th:nth-child(3),
-            tbody td:nth-child(3) {
+            thead th:nth-child(4),
+            tbody td:nth-child(4) {
                 width: 15%;
                 min-width: 50px;
             }
 
             /* колонка "Факт" - фиксированная ширина */
-            thead th:nth-child(4),
-            tbody td:nth-child(4) {
+            thead th:nth-child(5),
+            tbody td:nth-child(5) {
                 width: 25%;
                 min-width: 100px;
             }
 
             /* внутри "Факт": одна строка, без переносов */
-            tbody td:nth-child(4) {
+            tbody td:nth-child(5) {
                 display: flex;
                 align-items: center;
                 justify-content: center;
@@ -604,46 +586,35 @@ function greenShadeStyle(int $plan, int $fact): string {
             }
         }
 
-        async function saveGroup(idsCsv, itemsJson, inputId, plan){
+        async function saveRow(id, inputId, plan){
             const inp = document.getElementById(inputId);
             const val = Number((inp.value||'').trim());
             if(isNaN(val) || val < 0){ alert('Введите корректное число'); return; }
 
-            const items = JSON.parse(itemsJson);
-
-            // распределение общего факта по строкам
-            let rest = val, dist = [];
-            for (const it of items){
-                if (rest <= 0){ dist.push({id:it.id,fact:0}); continue; }
-                const take = rest; // берем весь остаток (без ограничения планом)
-                dist.push({id:it.id,fact:take}); rest -= take;
-            }
-
-            // сохраняем по каждой строке
-            for (const d of dist){
-                const resp = await fetch('save_corr_fact.php',{
-                    method:'POST',
-                    headers:{'Content-Type':'application/x-www-form-urlencoded'},
-                    body:'id='+d.id+'&fact='+d.fact
-                }).then(r=>r.json()).catch(()=>null);
-                if (!resp || !resp.success){
-                    alert('Ошибка сохранения факта по строкам группы.');
-                    return;
-                }
+            // сохраняем факт для одной строки
+            const resp = await fetch('save_corr_fact.php',{
+                method:'POST',
+                headers:{'Content-Type':'application/x-www-form-urlencoded'},
+                body:'id='+id+'&fact='+val
+            }).then(r=>r.json()).catch(()=>null);
+            
+            if (!resp || !resp.success){
+                alert('Ошибка сохранения факта.');
+                return;
             }
 
             // применим подсветку
-            const row = document.getElementById('grow-'+idsCsv.split(',').join('-'));
+            const row = document.getElementById('row-'+id);
             applyShade(row, Number(plan), val);
 
             alert('Сохранено');
         }
 
         // Enter в поле «Факт» = сохранить
-        function onQtyKey(e, idsCsv, itemsJson, inputId, plan){
+        function onQtyKey(e, id, inputId, plan){
             if (e.key === 'Enter') {
                 e.preventDefault();
-                saveGroup(idsCsv, itemsJson, inputId, plan);
+                saveRow(id, inputId, plan);
             }
         }
 
@@ -715,6 +686,7 @@ function greenShadeStyle(int $plan, int $fact): string {
                 const factSum = result.fact_sum || 0;
                 const ratio = planSum > 0 ? (factSum / planSum) : 0;
                 const ratioPercent = (ratio * 100).toFixed(1);
+                const rollId = result.id || '-';
                 
                 // Затенение для выполнения 90%+
                 let bgStyle = '';
@@ -736,7 +708,7 @@ function greenShadeStyle(int $plan, int $fact): string {
                 
                 html += `
                     <div class="search-result-item" onclick="goToDate('${result.plan_date}')" style="${bgStyle}">
-                        <div class="result-date">${result.plan_date}</div>
+                        <div class="result-date">${result.plan_date} [Рулон ID: ${rollId}]</div>
                         <div class="result-details">
                             <span class="result-order-number">${result.order_number}</span>${result.filter_label}<br>
                             План: <span class="result-plan">${planSum} шт</span> | 
@@ -778,49 +750,65 @@ function greenShadeStyle(int $plan, int $fact): string {
 </div>
 
 <div class="section">
-    <?php if ($group_list): ?>
+    <?php if ($rows): ?>
         <table>
             <thead>
             <tr>
+                <th>ID рулона</th>
                 <th>Заявка</th>
                 <th>Фильтр</th>
                 <th>План</th>
                 <th>Факт</th>
+                <th>История</th>
             </tr>
             </thead>
             <tbody>
-            <?php foreach ($group_list as $g):
-                $idsCsv   = implode(',', $g['ids']);
-                $rowId    = 'grow-'.str_replace(',', '-', $idsCsv);
-                $inputId  = 'gfact-'.str_replace(',', '-', $idsCsv);
-                $itemsArr = array_map(fn($it)=>['id'=>$it['id'],'count'=>$it['count']], $g['items']);
-                $itemsJson = htmlspecialchars(json_encode($itemsArr), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            <?php foreach ($rows as $r):
+                $id       = (int)$r['id'];
+                $rowId    = 'row-'.$id;
+                $inputId  = 'fact-'.$id;
+                $plan     = (int)$r['count'];
+                $fact     = (int)$r['fact_count'];
 
-                $ratio  = ($g['plan_sum']>0) ? $g['fact_sum']/$g['plan_sum'] : 0;
+                $ratio  = ($plan > 0) ? $fact / $plan : 0;
                 $isDone = ($ratio >= 1);
-                $style  = greenShadeStyle((int)$g['plan_sum'], (int)$g['fact_sum']); // начальный фон
+                $style  = greenShadeStyle($plan, $fact); // начальный фон
                 ?>
                 <tr id="<?= $rowId ?>" class="<?= $isDone ? 'is-done' : '' ?>" <?= $style ?>>
-                                <td>
-                                    <strong><?= htmlspecialchars($g['order_number']) ?></strong>
-                                </td>
-                                <td>
-                                    <?= htmlspecialchars($g['filter_label']) ?>
-                                </td>
-                                <td>
-                                    <span style="font-weight: 600; color: var(--primary-color);">
-                                        <?= (int)$g['plan_sum'] ?>
-                                    </span>
-                                </td>
+                    <td>
+                        <span style="font-weight: 500; color: var(--gray-600);">
+                            <?= $id ?>
+                        </span>
+                    </td>
+                    <td>
+                        <strong><?= htmlspecialchars($r['order_number']) ?></strong>
+                    </td>
+                    <td>
+                        <?= htmlspecialchars($r['filter_label']) ?>
+                    </td>
+                    <td>
+                        <span style="font-weight: 600; color: var(--primary-color);">
+                            <?= $plan ?>
+                        </span>
+                    </td>
                     <td>
                         <input
                             type="number" class="qty" id="<?= $inputId ?>"
-                            value="<?= (int)$g['fact_sum']  ?>" min="0"
-                            onkeydown="onQtyKey(event,'<?= $idsCsv ?>','<?= $itemsJson ?>','<?= $inputId ?>',<?= (int)$g['plan_sum'] ?>)"
+                            value="<?= $fact > 0 ? $fact : '' ?>" 
+                            placeholder="0"
+                            min="0"
+                            onkeydown="onQtyKey(event,<?= $id ?>,'<?= $inputId ?>',<?= $plan ?>)"
                         >
                         <button class="save" type="button" title="Сохранить"
-                                onclick="saveGroup('<?= $idsCsv ?>','<?= $itemsJson ?>','<?= $inputId ?>',<?= (int)$g['plan_sum'] ?>)">
+                                onclick="saveRow(<?= $id ?>,'<?= $inputId ?>',<?= $plan ?>)">
                             ✓
+                        </button>
+                    </td>
+                    <td>
+                        <button class="save" type="button" title="История изготовления"
+                                onclick="showHistory(<?= $id ?>)"
+                                style="background: var(--info-color);">
+                            📋
                         </button>
                     </td>
                 </tr>
@@ -828,11 +816,11 @@ function greenShadeStyle(int $plan, int $fact): string {
             </tbody>
         </table>
     <?php else: ?>
-                <div class="no-data">
-                    Заданий на эту дату нет
-                </div>
-    <?php endif; ?>
+        <div class="no-data">
+            Заданий на эту дату нет
         </div>
+    <?php endif; ?>
+</div>
 </div>
 
     <!-- Modal для поиска позиций по фильтру -->
@@ -858,5 +846,107 @@ function greenShadeStyle(int $plan, int $fact): string {
             </div>
         </div>
     </div>
+
+    <!-- Modal для просмотра истории изготовления -->
+    <div id="historyModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">История изготовления позиции</h2>
+                <span class="close" onclick="closeHistory()">&times;</span>
+            </div>
+            <div id="historyContent" style="padding: 10px;">
+                <div class="no-results">Загрузка...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Функции для модального окна истории
+        function showHistory(id) {
+            const modal = document.getElementById('historyModal');
+            const content = document.getElementById('historyContent');
+            
+            modal.style.display = 'block';
+            content.innerHTML = '<div class="no-results">Загрузка...</div>';
+            
+            // Загружаем историю
+            fetch('get_corr_history.php?id=' + id)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        displayHistory(data.data);
+                    } else {
+                        content.innerHTML = '<div class="no-results">Ошибка: ' + (data.message || 'Неизвестная ошибка') + '</div>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Ошибка загрузки истории:', error);
+                    content.innerHTML = '<div class="no-results">Ошибка загрузки данных</div>';
+                });
+        }
+
+        function displayHistory(data) {
+            const content = document.getElementById('historyContent');
+            
+            let html = '<div style="margin-bottom: 20px;">';
+            html += '<p><strong>Заявка:</strong> ' + data.order_number + '</p>';
+            html += '<p><strong>Фильтр:</strong> ' + data.filter_label + '</p>';
+            html += '<p><strong>План:</strong> <span style="color: var(--primary-color); font-weight: 600;">' + data.plan_count + ' шт</span></p>';
+            html += '<p><strong>Факт (общий):</strong> <span style="color: var(--success-color); font-weight: 600;">' + data.fact_count + ' шт</span></p>';
+            html += '</div>';
+            
+            if (data.history && data.history.length > 0) {
+                html += '<h3 style="margin-bottom: 15px; font-size: 1.1rem;">История изготовления:</h3>';
+                html += '<table style="width: 100%; border-collapse: collapse;">';
+                html += '<thead><tr style="background: var(--gray-100);">';
+                html += '<th style="padding: 10px; border: 1px solid var(--gray-200);">Дата</th>';
+                html += '<th style="padding: 10px; border: 1px solid var(--gray-200);">Количество</th>';
+                html += '<th style="padding: 10px; border: 1px solid var(--gray-200);">Время</th>';
+                html += '</tr></thead><tbody>';
+                
+                data.history.forEach(entry => {
+                    html += '<tr>';
+                    html += '<td style="padding: 10px; border: 1px solid var(--gray-200); text-align: center;"><strong>' + entry.date + '</strong></td>';
+                    html += '<td style="padding: 10px; border: 1px solid var(--gray-200); text-align: center; font-weight: 600; color: var(--success-color);">' + entry.quantity + ' шт</td>';
+                    html += '<td style="padding: 10px; border: 1px solid var(--gray-200); text-align: center;">' + (entry.timestamp || '-') + '</td>';
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table>';
+                
+                html += '<div style="margin-top: 20px; padding: 15px; background: var(--gray-50); border-radius: var(--border-radius);">';
+                html += '<p><strong>Итого из истории:</strong> <span style="color: var(--info-color); font-weight: 600;">' + data.stats.total_from_history + ' шт</span></p>';
+                html += '<p><strong>Дней изготовления:</strong> ' + data.stats.production_days + '</p>';
+                
+                if (data.stats.is_match) {
+                    html += '<p style="color: var(--success-color); font-weight: 600;">✓ История совпадает с фактом</p>';
+                } else {
+                    html += '<p style="color: var(--warning-color); font-weight: 600;">⚠ История не совпадает с фактом</p>';
+                }
+                html += '</div>';
+            } else {
+                html += '<div class="no-results">История изготовления пока пуста</div>';
+            }
+            
+            content.innerHTML = html;
+        }
+
+        function closeHistory() {
+            document.getElementById('historyModal').style.display = 'none';
+        }
+
+        // Закрытие модального окна при клике вне его
+        window.addEventListener('click', function(event) {
+            const historyModal = document.getElementById('historyModal');
+            const filterModal = document.getElementById('filterSearchModal');
+            
+            if (event.target === historyModal) {
+                closeHistory();
+            }
+            if (event.target === filterModal) {
+                closeFilterSearch();
+            }
+        });
+    </script>
 </body>
 </html>

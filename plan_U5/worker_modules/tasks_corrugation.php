@@ -786,6 +786,7 @@ function greenShadeStyle(int $plan, int $fact): string {
                 <th>Фильтр</th>
                 <th>План</th>
                 <th>Факт</th>
+                <th>История</th>
             </tr>
             </thead>
             <tbody>
@@ -799,6 +800,9 @@ function greenShadeStyle(int $plan, int $fact): string {
                 $ratio  = ($g['plan_sum']>0) ? $g['fact_sum']/$g['plan_sum'] : 0;
                 $isDone = ($ratio >= 1);
                 $style  = greenShadeStyle((int)$g['plan_sum'], (int)$g['fact_sum']); // начальный фон
+                
+                // Берем первый ID для отображения истории группы
+                $firstId = $g['ids'][0];
                 ?>
                 <tr id="<?= $rowId ?>" class="<?= $isDone ? 'is-done' : '' ?>" <?= $style ?>>
                                 <td>
@@ -821,6 +825,13 @@ function greenShadeStyle(int $plan, int $fact): string {
                         <button class="save" type="button" title="Сохранить"
                                 onclick="saveGroup('<?= $idsCsv ?>','<?= $itemsJson ?>','<?= $inputId ?>',<?= (int)$g['plan_sum'] ?>)">
                             ✓
+                        </button>
+                    </td>
+                    <td>
+                        <button class="save" type="button" title="История изготовления"
+                                onclick="showHistory(<?= $firstId ?>, '<?= $idsCsv ?>')"
+                                style="background: var(--info-color);">
+                            📋
                         </button>
                     </td>
                 </tr>
@@ -858,5 +869,108 @@ function greenShadeStyle(int $plan, int $fact): string {
             </div>
         </div>
     </div>
+
+    <!-- Modal для просмотра истории изготовления -->
+    <div id="historyModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">История изготовления позиции</h2>
+                <span class="close" onclick="closeHistory()">&times;</span>
+            </div>
+            <div id="historyContent" style="padding: 10px;">
+                <div class="no-results">Загрузка...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Функции для модального окна истории
+        function showHistory(id, ids) {
+            const modal = document.getElementById('historyModal');
+            const content = document.getElementById('historyContent');
+            
+            modal.style.display = 'block';
+            content.innerHTML = '<div class="no-results">Загрузка...</div>';
+            
+            // Загружаем историю для первого ID (для группы)
+            fetch('get_corr_history.php?id=' + id)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        displayHistory(data.data);
+                    } else {
+                        content.innerHTML = '<div class="no-results">Ошибка: ' + (data.message || 'Неизвестная ошибка') + '</div>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Ошибка загрузки истории:', error);
+                    content.innerHTML = '<div class="no-results">Ошибка загрузки данных</div>';
+                });
+        }
+
+        function displayHistory(data) {
+            const content = document.getElementById('historyContent');
+            
+            let html = '<div style="margin-bottom: 20px;">';
+            html += '<p><strong>Заявка:</strong> ' + data.order_number + '</p>';
+            html += '<p><strong>Фильтр:</strong> ' + data.filter_label + '</p>';
+            html += '<p><strong>План:</strong> <span style="color: var(--primary-color); font-weight: 600;">' + data.plan_count + ' шт</span></p>';
+            html += '<p><strong>Факт (общий):</strong> <span style="color: var(--success-color); font-weight: 600;">' + data.fact_count + ' шт</span></p>';
+            html += '</div>';
+            
+            if (data.history && data.history.length > 0) {
+                html += '<h3 style="margin-bottom: 15px; font-size: 1.1rem;">История изготовления:</h3>';
+                html += '<table style="width: 100%; border-collapse: collapse;">';
+                html += '<thead><tr style="background: var(--gray-100);">';
+                html += '<th style="padding: 10px; border: 1px solid var(--gray-200);">Дата</th>';
+                html += '<th style="padding: 10px; border: 1px solid var(--gray-200);">Количество</th>';
+                html += '<th style="padding: 10px; border: 1px solid var(--gray-200);">Время</th>';
+                html += '</tr></thead><tbody>';
+                
+                data.history.forEach(entry => {
+                    html += '<tr>';
+                    html += '<td style="padding: 10px; border: 1px solid var(--gray-200); text-align: center;"><strong>' + entry.date + '</strong></td>';
+                    html += '<td style="padding: 10px; border: 1px solid var(--gray-200); text-align: center; font-weight: 600; color: var(--success-color);">' + entry.quantity + ' шт</td>';
+                    html += '<td style="padding: 10px; border: 1px solid var(--gray-200); text-align: center;">' + (entry.timestamp || '-') + '</td>';
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table>';
+                
+                html += '<div style="margin-top: 20px; padding: 15px; background: var(--gray-50); border-radius: var(--border-radius);">';
+                html += '<p><strong>Итого из истории:</strong> <span style="color: var(--info-color); font-weight: 600;">' + data.stats.total_from_history + ' шт</span></p>';
+                html += '<p><strong>Дней изготовления:</strong> ' + data.stats.production_days + '</p>';
+                
+                if (data.stats.is_match) {
+                    html += '<p style="color: var(--success-color); font-weight: 600;">✓ История совпадает с фактом</p>';
+                } else {
+                    html += '<p style="color: var(--warning-color); font-weight: 600;">⚠ История не совпадает с фактом</p>';
+                }
+                html += '</div>';
+            } else {
+                html += '<div class="no-results">История изготовления пока пуста</div>';
+            }
+            
+            content.innerHTML = html;
+        }
+
+        function closeHistory() {
+            document.getElementById('historyModal').style.display = 'none';
+        }
+
+        // Обновляем закрытие модальных окон при клике вне их
+        const existingClickHandler = window.onclick;
+        window.onclick = function(event) {
+            const historyModal = document.getElementById('historyModal');
+            const filterModal = document.getElementById('filterSearchModal');
+            
+            if (event.target === historyModal) {
+                closeHistory();
+            }
+            if (event.target === filterModal) {
+                closeFilterSearch();
+            }
+        };
+    </script>
 </body>
 </html>

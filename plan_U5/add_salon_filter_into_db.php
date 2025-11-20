@@ -183,6 +183,17 @@ require_once('tools/tools.php');
     // Текущее имя нового фильтра (чтобы не терялось при выборе прототипа)
     $filter_name = isset($_POST['filter_name']) ? $_POST['filter_name'] : '';
 
+    // Загружаем список тарифов с build_complexity
+    $tariffs = [];
+    try {
+        $tariff_result = mysql_execute("SELECT id, tariff_name, rate_per_unit, type, build_complexity FROM salary_tariffs ORDER BY tariff_name");
+        while ($row = $tariff_result->fetch_assoc()) {
+            $tariffs[] = $row;
+        }
+    } catch (Exception $e) {
+        // Игнорируем ошибки
+    }
+
     // ===== Загрузка справочника фильтров для выпадающего списка прототипов =====
     try {
         // при необходимости поменяй таблицу
@@ -225,6 +236,9 @@ require_once('tools/tools.php');
     if (!isset($analog_data['form_factor_checkbox_state'])) {
         $analog_data['form_factor_checkbox_state'] = (!empty($analog_data['form_factor'])) ? 'checked' : '';
     }
+    if (!isset($analog_data['has_edge_cuts'])) {
+        $analog_data['has_edge_cuts'] = isset($analog_data['has_edge_cuts']) ? intval($analog_data['has_edge_cuts']) : 0;
+    }
     ?>
 
     <!-- Прототип -->
@@ -263,6 +277,35 @@ require_once('tools/tools.php');
                     <select name="category" form="saveForm">
                         <option>Салонный</option>
                     </select>
+                </div>
+            </div>
+        </section>
+
+        <!-- Тариф и сложность -->
+        <section class="card">
+            <h3>Тариф и сложность производства</h3>
+            <div class="row-2">
+                <div>
+                    <label>Тариф</label>
+                    <select name="tariff_id" id="tariffSelect" form="saveForm" onchange="updateBuildComplexity()">
+                        <option value="">— Не выбран —</option>
+                        <?php foreach ($tariffs as $tariff): ?>
+                            <option value="<?= htmlspecialchars($tariff['id']) ?>" 
+                                    data-complexity="<?= htmlspecialchars($tariff['build_complexity'] ?? '') ?>">
+                                <?= htmlspecialchars($tariff['tariff_name']) ?> 
+                                <?php if (!empty($tariff['rate_per_unit'])): ?>
+                                    (<?= htmlspecialchars($tariff['rate_per_unit']) ?>)
+                                <?php endif; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div>
+                    <label>Сложность производства (шт/смену)</label>
+                    <input type="number" name="build_complexity" id="buildComplexityInput" form="saveForm" step="0.01" 
+                           value="" 
+                           placeholder="Автоматически из тарифа" readonly style="background:#f3f4f6; cursor:not-allowed;">
+                    <small style="color:var(--muted); font-size:11px; margin-top:4px; display:block">Заполняется автоматически из выбранного тарифа</small>
                 </div>
             </div>
         </section>
@@ -337,6 +380,7 @@ require_once('tools/tools.php');
                 <label class="check"><input type="checkbox" name="foam_rubber" form="saveForm" <?= $analog_data['foam_rubber_checkbox_state'] ?>> Поролон</label>
                 <label class="check"><input type="checkbox" name="tail" form="saveForm" <?= $analog_data['tail_checkbox_state'] ?>> Язычок</label>
                 <label class="check"><input type="checkbox" name="form_factor" form="saveForm" <?= $analog_data['form_factor_checkbox_state'] ?>> Трапеция</label>
+                <label class="check"><input type="checkbox" name="has_edge_cuts" form="saveForm" <?= isset($analog_data['has_edge_cuts']) && $analog_data['has_edge_cuts'] == 1 ? 'checked' : '' ?>> Надрезы</label>
             </div>
         </section>
 
@@ -637,6 +681,32 @@ require_once('tools/tools.php');
             alert('✗ Ошибка при сохранении: ' + error.message);
         }
     }
+</script>
+
+<script>
+// Функция обновления сложности производства из выбранного тарифа
+function updateBuildComplexity() {
+    const tariffSelect = document.getElementById('tariffSelect');
+    const complexityInput = document.getElementById('buildComplexityInput');
+    
+    if (!tariffSelect || !complexityInput) {
+        return;
+    }
+    
+    const selectedOption = tariffSelect.options[tariffSelect.selectedIndex];
+    const complexity = selectedOption ? selectedOption.getAttribute('data-complexity') : '';
+    
+    if (complexity && complexity !== '') {
+        complexityInput.value = complexity;
+    } else {
+        complexityInput.value = '';
+    }
+}
+
+// Устанавливаем начальное значение при загрузке страницы
+document.addEventListener('DOMContentLoaded', function() {
+    updateBuildComplexity();
+});
 </script>
 
 </body>

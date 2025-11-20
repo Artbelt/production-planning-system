@@ -159,7 +159,7 @@ try{
         return $bw <=> $aw;
     });
 
-    // ассортимент без CARBON
+    // ассортимент - сначала пробуем с JOIN
     $sqlAssort="
     SELECT
       rfs.filter,
@@ -167,11 +167,43 @@ try{
       ppr.p_p_height    AS strip_width_mm,
       ppr.p_p_fold_height AS pleat_height_mm
     FROM round_filter_structure rfs
-    JOIN paper_package_round ppr ON ppr.p_p_name = rfs.filter_package
-    WHERE UPPER(ppr.p_p_material) <> 'CARBON'
-    GROUP BY rfs.filter, ppr.p_p_material, ppr.p_p_height, ppr.p_p_fold_height
-    ORDER BY ppr.p_p_height, rfs.filter";
-    $assort = $pdo->query($sqlAssort)->fetchAll();
+    LEFT JOIN paper_package_round ppr ON ppr.p_p_name = rfs.filter_package
+    WHERE UPPER(COALESCE(ppr.p_p_material, '')) <> 'CARBON'
+    GROUP BY rfs.filter
+    ORDER BY rfs.filter";
+    
+    try {
+        $assort = $pdo->query($sqlAssort)->fetchAll();
+    } catch (Exception $e) {
+        $assort = [];
+    }
+    
+    // Если ассортимент пустой или ошибка, берем все фильтры из справочника
+    if (empty($assort)) {
+        $sqlAssort="
+        SELECT DISTINCT filter
+        FROM round_filter_structure
+        ORDER BY filter";
+        $assort = $pdo->query($sqlAssort)->fetchAll();
+    }
+
+    /* НОВЫЕ позиции в заказе — их НЕТ в справочнике (для модалки) */
+    $sqlMissing="
+      SELECT o.filter AS filter, SUM(o.count) AS strips_qty
+      FROM orders o
+      LEFT JOIN round_filter_structure rfs ON rfs.filter = o.filter
+      WHERE o.order_number = :order_number AND rfs.filter IS NULL
+      GROUP BY o.filter
+      ORDER BY o.filter
+    ";
+    $stm=$pdo->prepare($sqlMissing);
+    $stm->execute([':order_number'=>$orderNumber]);
+    $missing = $stm->fetchAll();
+
+    // DEBUG: временно выводим для отладки
+    // echo "<!-- DEBUG ASSORT COUNT: " . count($assort) . " -->\n";
+    // echo "<!-- DEBUG MISSING COUNT: " . count($missing) . " -->\n";
+    // if (!empty($assort)) echo "<!-- DEBUG FIRST ASSORT: " . print_r($assort[0], true) . " -->\n";
 
 }catch(Throwable $e){http_response_code(500);echo 'Ошибка: '.$e->getMessage(); exit;}
 ?>
@@ -324,6 +356,22 @@ try{
         .btn, .delBaleBtn, .delBtn { display:none !important; }
     }
 
+    /* === МОДАЛЬНОЕ ОКНО для новых позиций === */
+    .modalBack{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9998}
+    .modal{display:none;position:fixed;inset:0;align-items:center;justify-content:center;z-index:9999;pointer-events:none}
+    .modal .win{pointer-events:all;width:min(920px, 92vw);max-height:80vh;overflow:auto;background:#fff;border-radius:12px;border:1px solid #e5e7eb;box-shadow:0 20px 60px rgba(0,0,0,.25);padding:14px}
+    .modal h3{margin:0 0 8px;font:700 16px/1.2 system-ui, Arial}
+    .missingTbl{width:100%;border-collapse:collapse;table-layout:auto}
+    .missingTbl th, .missingTbl td{border:1px solid #e5e7eb;padding:6px 8px;vertical-align:middle}
+    .missingTbl th{background:#f9fafb}
+    .missFilter{font-weight:700}
+    .assortSelect{width:100%;max-width:420px}
+    .modal .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+    .modal .closeBtn{border:1px solid #aaa;background:#fafafa;border-radius:8px;padding:6px 10px;cursor:pointer}
+    .addBtn{border:1px solid #2563eb;background:#eff6ff;color:#1d4ed8;border-radius:8px;padding:6px 10px;cursor:pointer;white-space:nowrap}
+    .addBtn:hover{background:#dbeafe;border-color:#1d4ed8}
+    .muted{color:#6b7280;font-size:12px;margin:4px 0}
+
 </style>
 
 <h2>Раскрой по заявке #<?=htmlspecialchars($orderNumber)?></h2>
@@ -423,8 +471,42 @@ try{
     </div>
 </div>
 
+<!-- МОДАЛЬНОЕ ОКНО для новых позиций -->
+<div class="modalBack" id="missBack"></div>
+<div class="modal" id="missModal" role="dialog" aria-modal="true" aria-labelledby="missTitle">
+    <div class="win">
+        <div class="topbar">
+            <h3 id="missTitle">Новые позиции в заявке — нет в справочнике</h3>
+            <button class="closeBtn" id="missClose">Закрыть</button>
+        </div>
+        <p class="muted" id="missIntro"></p>
+        <table class="missingTbl" id="missTbl">
+            <tr>
+                <th>Позиция из заявки</th>
+                <th>Подобрать из ассортимента</th>
+                <th>Добавить в БД</th>
+            </tr>
+            <!-- строки генерируются JS -->
+        </table>
+    </div>
+</div>
+
 <script>
     const ORDER = <?=json_encode($orderNumber)?>;
+
+    // ===== данные для модалки =====
+    const MISSING = <?=json_encode($missing, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>;
+    const ASSORT  = <?=json_encode($assort,  JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)?>;
+
+    // Отладка - выводим в консоль
+    console.log('MISSING:', MISSING);
+    console.log('ASSORT:', ASSORT);
+    console.log('ASSORT length:', ASSORT ? ASSORT.length : 0);
+
+    // путь к странице добавления позиции
+    const ADD_FILTER_URL = 'add_round_filter_into_db.php';
+    const WORKSHOP_CODE = 'U3';
+    const ASSORT_SELECT_POST_NAME = 'analog_filter';
 
     // === глобальные параметры (объявляем один раз) ===
     let BALE_WIDTH = 1200.0;                  // текущий формат бухты
@@ -712,7 +794,124 @@ try{
     }
     document.getElementById('btnLoadDB').addEventListener('click', loadFromDB);
 
+    // === ФУНКЦИИ ДЛЯ МОДАЛКИ ===
+    function buildAssortSelect(id) {
+        const sel = document.createElement('select');
+        sel.id = id;
+        sel.className = 'assortSelect';
+
+        const opt0 = document.createElement('option');
+        opt0.value = '';
+        opt0.textContent = '— Выберите аналог —';
+        sel.appendChild(opt0);
+
+        console.log('Building select', id, 'ASSORT:', ASSORT);
+
+        if (!Array.isArray(ASSORT) || ASSORT.length === 0) {
+            const optErr = document.createElement('option');
+            optErr.value = '';
+            optErr.textContent = '❌ Ассортимент не загружен';
+            sel.appendChild(optErr);
+            sel.disabled = true;
+            console.error('ASSORT пустой или не массив:', ASSORT);
+            return sel;
+        }
+
+        const uniqueNames = new Set(ASSORT.map(a => a.filter || a));
+        console.log('Unique names:', uniqueNames);
+
+        for (const name of uniqueNames) {
+            if (name && name !== '') {
+                const o = document.createElement('option');
+                o.value = name;
+                o.textContent = name;
+                sel.appendChild(o);
+            }
+        }
+        return sel;
+    }
+
+    function renderMissingModal(){
+        if(!Array.isArray(MISSING) || !MISSING.length) return;
+
+        el('missIntro').textContent = `В заявке #${ORDER} найдены позиции, которых нет в справочнике. Подберите аналог из ассортимента или добавьте позицию в БД.`;
+
+        const tbody = el('missTbl');
+        for (const [idx, m] of MISSING.entries()){
+            const tr = document.createElement('tr');
+
+            // 1) Позиция из заявки
+            const tdF = document.createElement('td');
+            tdF.innerHTML = `<span class="missFilter">${m.filter}</span>`;
+            tr.appendChild(tdF);
+
+            // 2) Выпадающий список ассортимента
+            const tdSel = document.createElement('td');
+            const sel = buildAssortSelect('assSel_'+idx);
+            tdSel.appendChild(sel);
+            tr.appendChild(tdSel);
+
+            // 3) Форма "Добавить в БД"
+            const tdAdd = document.createElement('td');
+
+            const form = document.createElement('form');
+            form.action = ADD_FILTER_URL;
+            form.method = 'post';
+            form.target = '_blank';
+
+            // hidden: цех
+            const inpWorkshop = document.createElement('input');
+            inpWorkshop.type = 'hidden';
+            inpWorkshop.name = 'workshop';
+            inpWorkshop.value = WORKSHOP_CODE;
+            form.appendChild(inpWorkshop);
+
+            // hidden: имя отсутствующего фильтра
+            const inpFilterName = document.createElement('input');
+            inpFilterName.type = 'hidden';
+            inpFilterName.name = 'filter_name';
+            inpFilterName.value = m.filter;
+            form.appendChild(inpFilterName);
+
+            // hidden: выбранный шаблон из выпадайки
+            const inpCopyFrom = document.createElement('input');
+            inpCopyFrom.type = 'hidden';
+            inpCopyFrom.name = ASSORT_SELECT_POST_NAME;
+            form.appendChild(inpCopyFrom);
+
+            // сабмит
+            const btn = document.createElement('button');
+            btn.type = 'submit';
+            btn.className = 'addBtn';
+            btn.textContent = 'Добавить в БД';
+            form.appendChild(btn);
+
+            // при отправке перетащим выбранное из select во hidden
+            form.addEventListener('submit', (ev) => {
+                const selEl = document.getElementById('assSel_' + idx);
+                inpCopyFrom.value = selEl.value;
+            });
+
+            tdAdd.appendChild(form);
+            tr.appendChild(tdAdd);
+
+            tbody.appendChild(tr);
+        }
+
+        // показать модалку
+        el('missBack').style.display='block';
+        el('missModal').style.display='flex';
+
+        // закрытие
+        const close = ()=>{ el('missBack').style.display='none'; el('missModal').style.display='none'; };
+        el('missBack').onclick = close;
+        el('missClose').onclick = close;
+    }
+
     // init
     el('btnSave').disabled=true; el('btnClear').disabled=true;
     highlightWidthMatches();
+
+    // показываем модалку, если есть новые позиции
+    if (Array.isArray(MISSING) && MISSING.length){ renderMissingModal(); }
 </script>

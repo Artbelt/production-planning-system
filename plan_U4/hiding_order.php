@@ -18,4 +18,4 @@ if (!$result = $mysqli->query($sql)){
     exit;
 }
 
-echo "<a class='a' href='enter.php'>на главную</a>";
+echo "<button class='a' onclick='window.close();' style='cursor: pointer;'>Закрыть страницу</button>";

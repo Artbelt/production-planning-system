@@ -191,6 +191,9 @@ if ($canAccessLaser) {
     }
 echo "<p>Информация: <p>";
     ?>
+    <form action='summary_plan_U3.php' method='post' target='_blank'>
+        <input type='submit' value='Сводный план У3' style='height: 20px; width: 220px'>
+    </form>
     <form action='dimensions_report.php' method='post' target='_blank' ><input type='submit' value='Таблица размеров для участка'  style=\"height: 20px; width: 220px\"></form>
     <form action='product_output_view.php' method='post' target='_blank' ><input type='submit' value='Обзор выпуска продукции'  style=\"height: 20px; width: 220px\"></form>
 <form action="gofra_packages_table.php" method="post" target="_blank">
@@ -273,6 +276,133 @@ echo "</td><td>"
 
 
 echo "<tr><td style='color: cornflowerblue'> <p>";
+
+if ($userRole === 'supervisor') {
+    $tasksError = null;
+    $myTasks = [];
+    
+    try {
+        $pdo_tasks = new PDO(
+            "mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4",
+            "root",
+            "",
+            [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            ]
+        );
+        
+        $stmt_tasks = $pdo_tasks->prepare("
+            SELECT id, title, description, priority, due_date, status
+            FROM tasks
+            WHERE assigned_to = ?
+              AND status NOT IN ('completed', 'cancelled')
+              AND department = ?
+            ORDER BY 
+                CASE priority 
+                    WHEN 'urgent' THEN 1 
+                    WHEN 'high' THEN 2 
+                    WHEN 'normal' THEN 3 
+                    WHEN 'low' THEN 4 
+                END,
+                due_date ASC
+            LIMIT 5
+        ");
+        $stmt_tasks->execute([$session['user_id'], $currentDepartment]);
+        $myTasks = $stmt_tasks->fetchAll();
+    } catch (Exception $e) {
+        $tasksError = $e->getMessage();
+    }
+    
+    echo "<div style='background:#f8f9fa;border:2px solid #667eea;padding:16px;border-radius:8px;margin-bottom:16px;'>";
+    echo "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #e5e7eb;'>";
+    echo "<h3 style='margin:0;font-size:16px;font-weight:600;color:#374151;'>Мои задачи</h3>";
+    $taskCount = count($myTasks);
+    echo "<span style='background:#667eea;color:#fff;padding:4px 10px;border-radius:999px;font-weight:600;font-size:13px;'>$taskCount</span>";
+    echo "</div>";
+    
+    if ($tasksError) {
+        echo "<div style='color:#b91c1c;font-size:13px;'>Не удалось загрузить задачи: " . htmlspecialchars($tasksError) . "</div>";
+    } elseif ($taskCount === 0) {
+        echo "<div style='color:#6b7280;font-size:13px;'>У вас нет активных задач.</div>";
+    } else {
+        $today = new DateTime();
+        $today->setTime(0, 0, 0);
+        echo "<div style='display:flex;flex-direction:column;gap:10px;'>";
+        
+        foreach ($myTasks as $task) {
+            $dueDate = $task['due_date'] ? new DateTime($task['due_date']) : null;
+            if ($dueDate) {
+                $dueDate->setTime(0, 0, 0);
+            }
+            $isOverdue = $dueDate ? ($dueDate < $today) : false;
+            
+            $priorityColors = [
+                'urgent' => ['bg' => '#fee2e2', 'text' => '#991b1b', 'label' => 'Срочно'],
+                'high' => ['bg' => '#fef3c7', 'text' => '#92400e', 'label' => 'Высокий'],
+                'normal' => ['bg' => '#e0e7ff', 'text' => '#3730a3', 'label' => 'Обычный'],
+                'low' => ['bg' => '#ecfdf5', 'text' => '#047857', 'label' => 'Низкий'],
+            ];
+            $priority = $priorityColors[$task['priority'] ?? 'normal'] ?? $priorityColors['normal'];
+            
+            echo "<div style='background:#fff;padding:12px;border-radius:6px;border:1px solid #e5e7eb;'>";
+            echo "<div style='display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;'>";
+            echo "<div style='font-weight:600;font-size:14px;color:#1f2937;flex:1;'>" . htmlspecialchars($task['title']) . "</div>";
+            echo "<span style='background:{$priority['bg']};color:{$priority['text']};padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;'>{$priority['label']}</span>";
+            echo "</div>";
+            
+            if (!empty($task['description'])) {
+                $desc = mb_substr($task['description'], 0, 120);
+                if (mb_strlen($task['description']) > 120) {
+                    $desc .= '...';
+                }
+                echo "<div style='font-size:12px;color:#6b7280;margin-bottom:8px;line-height:1.4;'>" . nl2br(htmlspecialchars($desc)) . "</div>";
+            }
+            
+            $dueText = $dueDate ? $dueDate->format('d.m.Y') : 'Без срока';
+            $dueStyle = $isOverdue ? 'color:#ef4444;font-weight:600;' : 'color:#374151;font-weight:600;';
+            
+            echo "<div style='display:flex;justify-content:space-between;align-items:center;font-size:11px;'>";
+            echo "<span style='color:#9ca3af;'>До: <strong style='$dueStyle'>$dueText</strong></span>";
+            echo "<div style='display:flex;gap:5px;'>";
+            if ($task['status'] === 'pending') {
+                echo "<button onclick=\"updateTaskStatus({$task['id']}, 'in_progress')\" style='padding:3px 10px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:4px;cursor:pointer;font-size:11px;'>Начать</button>";
+            }
+            echo "<button onclick=\"updateTaskStatus({$task['id']}, 'completed')\" style='padding:3px 10px;background:#10b981;border:none;color:#fff;border-radius:4px;cursor:pointer;font-size:11px;'>Завершить</button>";
+            echo "</div></div></div>";
+        }
+        
+        echo "</div>";
+        
+        echo "<script>
+        async function updateTaskStatus(taskId, status) {
+            try {
+                const response = await fetch('/tasks_manager/tasks_api.php?action=update_status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ task_id: taskId, status: status })
+                });
+                const data = await response.json();
+                if (data.ok) {
+                    const messages = {
+                        'in_progress': '▶️ Задача взята в работу',
+                        'completed': '✅ Задача выполнена!'
+                    };
+                    alert(messages[status] || 'Статус обновлен');
+                    location.reload();
+                } else {
+                    alert('❌ Ошибка: ' + data.error);
+                }
+            } catch (error) {
+                alert('❌ Ошибка: ' + error.message);
+            }
+        }
+        </script>";
+    }
+    
+    echo "</div>";
+}
+
 show_ads();
 echo "Изготовленая продукция за последние 10 дней:";
 show_weekly_production();

@@ -1,11 +1,22 @@
 <?php
+// ПРОФИЛИРОВАНИЕ: засекаем время начала
+$_profile_start = microtime(true);
+$_profile_times = [];
+
+function profile_mark($label) {
+    global $_profile_start, $_profile_times;
+    $_profile_times[$label] = round((microtime(true) - $_profile_start) * 1000, 2);
+}
+
 // Проверяем авторизацию через новую систему
 require_once('../auth/includes/config.php');
 require_once('../auth/includes/auth-functions.php');
+profile_mark('Auth includes loaded');
 
 // Подключаем файлы настроек/инструментов
 require_once('settings.php');
 require_once('tools/tools.php');
+profile_mark('Settings & tools loaded');
 
 // Инициализация системы авторизации
 initAuthSystem();
@@ -17,6 +28,7 @@ if (session_status() === PHP_SESSION_NONE) {
 
 $auth = new AuthManager();
 $session = $auth->checkSession();
+profile_mark('Auth check');
 
 if (!$session) {
     header('Location: ../auth/login.php');
@@ -27,6 +39,7 @@ if (!$session) {
 $db = Database::getInstance();
 $users = $db->select("SELECT * FROM auth_users WHERE id = ?", [$session['user_id']]);
 $user = $users[0] ?? null;
+profile_mark('User loaded');
 
 // Если пользователь не найден, используем данные из сессии
 if (!$user) {
@@ -42,6 +55,7 @@ $userDepartments = $db->select("
     JOIN auth_roles r ON ud.role_id = r.id
     WHERE ud.user_id = ?
 ", [$session['user_id']]);
+profile_mark('User departments loaded');
 
 // Проверяем, есть ли у пользователя доступ к цеху U5
 $hasAccessToU5 = false;
@@ -55,13 +69,9 @@ foreach ($userDepartments as $dept) {
 }
 
 // Определяем текущий цех
-$currentDepartment = $_SESSION['auth_department'] ?? 'U5';
-
-// Если отдел пустой в сессии, но у пользователя есть доступ к U5, устанавливаем U5
-if (empty($_SESSION['auth_department']) && $hasAccessToU5) {
-    $currentDepartment = 'U5';
-    $_SESSION['auth_department'] = 'U5'; // Обновляем сессию
-}
+// ВАЖНО: Это файл plan_U5/main.php - принудительно устанавливаем цех U5!
+$currentDepartment = 'U5';
+$_SESSION['auth_department'] = 'U5'; // Обновляем сессию для согласованности
 
 // Если нет доступа к U5, показываем предупреждение, но не блокируем
 if (!$hasAccessToU5) {
@@ -529,7 +539,7 @@ echo "<!-- Аккуратная панель авторизации -->
                     <button onclick="openDataEditor()">Редактор данных</button>
                     <a href="NP_supply_requirements.php" target="_blank" rel="noopener" class="stack"><button>Потребность комплектующих</button></a>
                     <?php if ($canAccessLaser): ?>
-                    <a href="laser_request.php" target="_blank" rel="noopener"><button type="button">Заявка на лазер</button></a>
+                    <a href="laser_request.php" target="_blank" rel="noopener" class="stack"><button type="button">Заявка на лазер</button></a>
                     <?php endif; ?>
                 </div>
 
@@ -584,6 +594,9 @@ echo "<!-- Аккуратная панель авторизации -->
                         <input type='hidden' name='workshop' value='<?php echo htmlspecialchars($workshop); ?>'>
                         <input type='submit' value='Изменить параметры фильтра'>
                     </form>
+                    <form action='manage_tariffs.php' method='get' target='_blank' class="stack">
+                        <input type='submit' value='Управление тарифами'>
+                    </form>
                 </div>
 
                 <div class="section-title" style="margin-top:14px">Объявление</div>
@@ -594,18 +607,157 @@ echo "<!-- Аккуратная панель авторизации -->
 
             <!-- Центральная панель -->
             <td class="panel panel--main" style="width:40%;">
+                <?php
+                // Виджет задач для мастеров
+                if ($userRole === 'supervisor') {
+                    profile_mark('Tasks widget start');
+                    $pdo_tasks = new PDO("mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4", "root", "", [
+                        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                    ]);
+                    
+                    try {
+                        $stmt_tasks = $pdo_tasks->prepare("
+                            SELECT id, title, description, priority, due_date, status
+                            FROM tasks
+                            WHERE assigned_to = ? 
+                            AND status NOT IN ('completed', 'cancelled')
+                            AND department = ?
+                            ORDER BY 
+                                CASE priority 
+                                    WHEN 'urgent' THEN 1 
+                                    WHEN 'high' THEN 2 
+                                    WHEN 'normal' THEN 3 
+                                    WHEN 'low' THEN 4 
+                                END,
+                                due_date ASC
+                            LIMIT 5
+                        ");
+                        $stmt_tasks->execute([$session['user_id'], $currentDepartment]);
+                        $myTasks = $stmt_tasks->fetchAll();
+                        
+                        $taskCount = count($myTasks);
+                        
+                        if ($taskCount > 0):
+                            $today = new DateTime();
+                            $today->setTime(0, 0, 0);
+                ?>
+                <!-- Виджет задач -->
+                <div style="background: #f8f9fa; border: 2px solid #667eea; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 2px solid #e5e7eb;">
+                        <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: #374151;">
+                            Мои задачи
+                        </h3>
+                        <span style="background: #667eea; color: white; padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 13px;">
+                            <?php echo $taskCount; ?>
+                        </span>
+                    </div>
+                    
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                        <?php foreach ($myTasks as $task): 
+                            $dueDate = new DateTime($task['due_date']);
+                            $dueDate->setTime(0, 0, 0);
+                            $isOverdue = $dueDate < $today;
+                            
+                            $priorityColors = [
+                                'urgent' => ['bg' => '#fee2e2', 'text' => '#991b1b'],
+                                'high' => ['bg' => '#fef3c7', 'text' => '#92400e'],
+                                'normal' => ['bg' => 'rgba(255, 255, 255, 0.3)', 'text' => 'white'],
+                                'low' => ['bg' => 'rgba(255, 255, 255, 0.2)', 'text' => 'rgba(255, 255, 255, 0.8)']
+                            ];
+                            $priorityLabels = ['urgent' => 'Срочно', 'high' => 'Высокий', 'normal' => 'Обычный', 'low' => 'Низкий'];
+                            $priority = $task['priority'];
+                        ?>
+                        <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #e5e7eb;">
+                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 6px;">
+                                <div style="font-weight: 600; font-size: 14px; color: #1f2937; flex: 1;"><?php echo htmlspecialchars($task['title']); ?></div>
+                                <span style="background: <?php echo $priorityColors[$priority]['bg']; ?>; color: <?php echo $priorityColors[$priority]['text']; ?>; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600;">
+                                    <?php echo $priorityLabels[$priority]; ?>
+                                </span>
+                            </div>
+                            <?php if ($task['description']): ?>
+                            <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px; line-height: 1.4;">
+                                <?php echo nl2br(htmlspecialchars(mb_substr($task['description'], 0, 80) . (mb_strlen($task['description']) > 80 ? '...' : ''))); ?>
+                            </div>
+                            <?php endif; ?>
+                            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+                                <span style="color: #9ca3af;">До: <strong style="<?php echo $isOverdue ? 'color: #ef4444;' : 'color: #374151;'; ?>"><?php echo $dueDate->format('d.m.Y'); ?></strong></span>
+                                <div style="display: flex; gap: 5px;">
+                                    <?php if ($task['status'] === 'pending'): ?>
+                                    <button onclick="updateTaskStatus(<?php echo $task['id']; ?>, 'in_progress')" style="padding: 3px 10px; border: 1px solid #d1d5db; background: white; color: #374151; border-radius: 4px; cursor: pointer; font-size: 11px;">
+                                        Начать
+                                    </button>
+                                    <?php endif; ?>
+                                    <button onclick="updateTaskStatus(<?php echo $task['id']; ?>, 'completed')" style="padding: 3px 10px; background: #10b981; border: none; color: white; border-radius: 4px; cursor: pointer; font-size: 11px;">
+                                        Завершить
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                
+                <script>
+                async function updateTaskStatus(taskId, status) {
+                    try {
+                        const response = await fetch('/tasks_manager/tasks_api.php?action=update_status', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ task_id: taskId, status: status })
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.ok) {
+                            const messages = {
+                                'in_progress': '▶️ Задача взята в работу',
+                                'completed': '✅ Задача выполнена!'
+                            };
+                            alert(messages[status] || 'Статус обновлен');
+                            location.reload();
+                        } else {
+                            alert('❌ Ошибка: ' + data.error);
+                        }
+                    } catch (error) {
+                        alert('❌ Ошибка: ' + error.message);
+                    }
+                }
+                </script>
+                <?php 
+                        endif; // if ($taskCount > 0)
+                        profile_mark('Tasks widget completed');
+                    } catch (Exception $e) {
+                        // Тихо игнорируем ошибки
+                        profile_mark('Tasks widget error (ignored)');
+                    }
+                } else {
+                    profile_mark('Tasks widget skipped (not supervisor)');
+                }
+                ?>
+                
                 <div class="section-title">Объявления</div>
                 <div class="stack-lg">
 
-                    <?php show_ads();?>
-                    <?php show_weekly_production();?>
-                    <?php show_monthly_production();?>
+                    <?php 
+                    show_ads();
+                    profile_mark('show_ads() completed');
+                    
+                    show_weekly_production();
+                    profile_mark('show_weekly_production() completed');
+                    
+                    show_monthly_production();
+                    profile_mark('show_monthly_production() completed');
+                    ?>
 
                     <div class="search-card">
                         <h4 style="margin:0 0 8px;">Поиск заявок по фильтру</h4>
                         <div class="stack">
                             <label for="filterSelect">Фильтр:</label>
-                            <?php load_filters_into_select(); /* <select name="analog_filter"> */ ?>
+                            <?php 
+                            load_filters_into_select();
+                            profile_mark('load_filters_into_select() completed');
+                            ?>
                         </div>
                         <div id="filterSearchResult" style="margin-top:10px;"></div>
                     </div>
@@ -636,39 +788,48 @@ echo "<!-- Аккуратная панель авторизации -->
             <!-- Правая панель -->
             <td class="panel panel--right" style="width:30%;">
                 <?php
-                /* загрузка заявок */
+                /* ОПТИМИЗИРОВАННАЯ загрузка заявок */
+                profile_mark('Orders loading start');
                 $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
                 if ($mysqli->connect_errno) { echo 'Возникла проблема на сайте'; exit; }
-                $sql = "SELECT DISTINCT order_number, workshop, hide, status FROM orders;";
-                if (!$result = $mysqli->query($sql)){
+                
+                // Оптимизированный запрос: фильтруем сразу в SQL, используем prepared statement
+                $sql = "SELECT DISTINCT order_number, status 
+                        FROM orders 
+                        WHERE workshop = ? 
+                        AND COALESCE(hide, 0) != 1 
+                        ORDER BY order_number";
+                $stmt = $mysqli->prepare($sql);
+                $stmt->bind_param('s', $currentDepartment);
+                
+                if (!$stmt->execute()){
                     echo "Ошибка: Наш запрос не удался\n"; exit;
                 }
+                $result = $stmt->get_result();
+                profile_mark('Orders loaded');
                 ?>
 
                 <div class="section-title">Сохраненные заявки</div>
                 <div class="saved-orders">
                     <?php
                     echo '<form action="show_order.php" method="post" target="_blank">';
-                    if ($result->num_rows === 0) { echo "<div class='muted'>В базе нет ни одной заявки</div>"; }
+                    if ($result->num_rows === 0) { 
+                        echo "<div class='muted'>В базе нет ни одной заявки</div>"; 
+                    }
                     while ($orders_data = $result->fetch_assoc()){
-                        if ($orders_data['hide'] != 1){
-                            $val = htmlspecialchars($orders_data['order_number']);
-                            $status = $orders_data['status'] ?? 'normal';
-                            $class = ($status === 'replanning') ? ' class="replanning-btn"' : '';
-                            echo "<input type='submit' name='order_number' value='{$val}'{$class}>";
-                        }
+                        $val = htmlspecialchars($orders_data['order_number']);
+                        $status = $orders_data['status'] ?? 'normal';
+                        $class = ($status === 'replanning') ? ' class="replanning-btn"' : '';
+                        echo "<input type='submit' name='order_number' value='{$val}'{$class}>";
                     }
                     echo '</form>';
+                    $stmt->close();
                     ?>
                 </div>
 
                 <div class="section-title" style="margin-top:14px">Управление заявками</div>
                 <section class="stack">
-                    <section class="stack">
-                        <button type="button" id="btn-create-resid" >Создать заявку для остатков</button>
-                        <span class="muted" id="resid-hint" style="margin-left:6px;"></span>
-                    </section>
-
+                    <button type="button" onclick="openAddToOrderModal()">Добавить к заявке...</button>
                     <form action='new_order.php' method='post' target='_blank' class="stack"><input type='submit' value='Создать заявку вручную'></form>
                     <form action='NP_cut_index.php' method='post' target='_blank' class="stack"><input type='submit' value='Менеджер планирования (новый)'></form>
                     <form action='combine_orders.php' method='post' class="stack"><input type='submit' value='Объединение заявок'></form>
@@ -682,27 +843,6 @@ echo "<!-- Аккуратная панель авторизации -->
                         </form>
                     </div>
                 </section>
-
-                <script>
-                    document.getElementById('btn-create-resid').addEventListener('click', async () => {
-                        const btn = document.getElementById('btn-create-resid');
-                        const hint = document.getElementById('resid-hint');
-                        btn.disabled = true; hint.textContent = 'Создаю...';
-                        try {
-                            const res = await fetch('residual_create.php', {
-                                method:'POST',
-                                headers:{'Content-Type':'application/x-www-form-urlencoded'},
-                                body: new URLSearchParams({workshop:'U5'}).toString()
-                            });
-                            const text = await res.text();
-                            let data; try { data = JSON.parse(text); } catch { throw new Error('Сервер вернул не-JSON: ' + text.slice(0,200)); }
-                            if (!data.ok) throw new Error(data.error || 'Ошибка');
-                            hint.textContent = (data.created ? 'Создана' : 'Уже существует') + ' заявка: ' + data.order_number;
-                        } catch(e) {
-                            hint.textContent = 'Ошибка: ' + e.message;
-                        } finally { btn.disabled = false; }
-                    });
-                </script>
 
                 <?php $result->close(); $mysqli->close(); ?>
             </td>
@@ -846,6 +986,7 @@ window.onclick = function(event) {
     const dataModal = document.getElementById('dataEditorModal');
     const productModal = document.getElementById('productEditorModal');
     const addPositionModal = document.getElementById('addPositionModal');
+    const addToOrderModal = document.getElementById('addToOrderModal');
     
     if (event.target === dataModal) {
         closeDataEditor();
@@ -855,6 +996,111 @@ window.onclick = function(event) {
     }
     if (event.target === addPositionModal) {
         closeAddPositionModal();
+    }
+    if (event.target === addToOrderModal) {
+        closeAddToOrderModal();
+    }
+}
+
+// Функции для модального окна "Добавить к заявке"
+function openAddToOrderModal() {
+    document.getElementById('addToOrderModal').style.display = 'block';
+    loadOrdersAndFiltersForAddToOrder();
+}
+
+function closeAddToOrderModal() {
+    document.getElementById('addToOrderModal').style.display = 'none';
+    document.getElementById('addToOrderForm').reset();
+    // Сбрасываем значения по умолчанию
+    document.getElementById('inputMarking').value = 'стандарт';
+    document.getElementById('inputPersonalPackaging').value = 'стандарт';
+    document.getElementById('inputPersonalLabel').value = 'стандарт';
+    document.getElementById('inputGroupPackaging').value = 'стандарт';
+    document.getElementById('inputPackagingRate').value = '10';
+    document.getElementById('inputGroupLabel').value = 'стандарт';
+    document.getElementById('inputRemark').value = 'дополнение';
+}
+
+async function loadOrdersAndFiltersForAddToOrder() {
+    try {
+        // Загружаем список заявок
+        const ordersResponse = await fetch('add_to_order_api.php?action=get_orders');
+        const ordersData = await ordersResponse.json();
+        
+        if (ordersData.ok) {
+            const orderSelect = document.getElementById('selectOrderNumber');
+            orderSelect.innerHTML = '<option value="">-- Выберите заявку --</option>';
+            ordersData.orders.forEach(order => {
+                const option = document.createElement('option');
+                option.value = order;
+                option.textContent = order;
+                orderSelect.appendChild(option);
+            });
+        }
+        
+        // Загружаем список фильтров
+        const filtersResponse = await fetch('add_to_order_api.php?action=get_filters');
+        const filtersData = await filtersResponse.json();
+        
+        if (filtersData.ok) {
+            const filterSelect = document.getElementById('inputFilter');
+            filterSelect.innerHTML = '<option value="">-- Выберите фильтр --</option>';
+            filtersData.filters.forEach(filter => {
+                const option = document.createElement('option');
+                option.value = filter;
+                option.textContent = filter;
+                filterSelect.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки данных:', error);
+        alert('Ошибка загрузки данных: ' + error.message);
+    }
+}
+
+async function submitAddToOrder(event) {
+    event.preventDefault();
+    
+    const submitBtn = event.target.querySelector('button[type="submit"]');
+    const originalText = submitBtn.textContent;
+    submitBtn.textContent = 'Добавление...';
+    submitBtn.disabled = true;
+    
+    const payload = {
+        order_number: document.getElementById('selectOrderNumber').value,
+        filter: document.getElementById('inputFilter').value,
+        count: parseInt(document.getElementById('inputCount').value) || 0,
+        marking: document.getElementById('inputMarking').value.trim(),
+        personal_packaging: document.getElementById('inputPersonalPackaging').value.trim(),
+        personal_label: document.getElementById('inputPersonalLabel').value.trim(),
+        group_packaging: document.getElementById('inputGroupPackaging').value.trim(),
+        packaging_rate: parseInt(document.getElementById('inputPackagingRate').value) || 10,
+        group_label: document.getElementById('inputGroupLabel').value.trim(),
+        remark: document.getElementById('inputRemark').value.trim()
+    };
+    
+    try {
+        const response = await fetch('add_to_order_api.php?action=add_position', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+        
+        const data = await response.json();
+        
+        if (data.ok) {
+            alert('✅ Позиция успешно добавлена к заявке!');
+            closeAddToOrderModal();
+        } else {
+            alert('❌ Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+        }
+    } catch (error) {
+        alert('❌ Ошибка при добавлении: ' + error.message);
+    } finally {
+        submitBtn.textContent = originalText;
+        submitBtn.disabled = false;
     }
 }
 
@@ -1606,5 +1852,121 @@ window.onclick = function(event) {
         </div>
     </div>
 
+    <!-- Модальное окно для добавления позиции к заявке -->
+    <div id="addToOrderModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 500px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3 class="modal-title">➕ Добавить позицию к заявке</h3>
+                <span class="close" onclick="closeAddToOrderModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <form id="addToOrderForm" onsubmit="submitAddToOrder(event)">
+                    <div style="display: grid; gap: 14px; margin-bottom: 20px;">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Выберите заявку:</label>
+                            <select id="selectOrderNumber" required style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                                <option value="">-- Выберите заявку --</option>
+                            </select>
+                        </div>
+                        
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Фильтр:</label>
+                            <select id="inputFilter" required style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                                <option value="">-- Выберите фильтр --</option>
+                            </select>
+                        </div>
+                        
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Количество, шт:</label>
+                            <input type="number" id="inputCount" required min="1" placeholder="0" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        </div>
+                        
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Маркировка:</label>
+                            <input type="text" id="inputMarking" value="стандарт" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        </div>
+                        
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Упаковка инд.:</label>
+                            <input type="text" id="inputPersonalPackaging" value="стандарт" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        </div>
+                        
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Этикетка инд.:</label>
+                            <input type="text" id="inputPersonalLabel" value="стандарт" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        </div>
+                        
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Упаковка групп.:</label>
+                            <input type="text" id="inputGroupPackaging" value="стандарт" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        </div>
+                        
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Норма упаковки:</label>
+                            <input type="number" id="inputPackagingRate" value="10" min="1" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        </div>
+                        
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Этикетка групп.:</label>
+                            <input type="text" id="inputGroupLabel" value="стандарт" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        </div>
+                        
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <label style="min-width: 150px; font-weight: 500; font-size: 14px;">Примечание:</label>
+                            <input type="text" id="inputRemark" value="дополнение" style="flex: 1; max-width: 300px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                        </div>
+                    </div>
+                    
+                    <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                        <button type="button" onclick="closeAddToOrderModal()" style="padding: 10px 20px; background: var(--muted); color: white; border: none; border-radius: 8px; cursor: pointer;">
+                            Отмена
+                        </button>
+                        <button type="submit" style="padding: 10px 20px; background: var(--accent); color: white; border: none; border-radius: 8px; cursor: pointer;">
+                            ➕ Добавить позицию
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+<?php
+// ВЫВОД ПРОФИЛИРОВАНИЯ
+profile_mark('Page fully rendered');
+if (isset($_GET['profile'])) {
+    echo "<div style='position:fixed;bottom:0;left:0;right:0;background:#f8f9fa;border-top:2px solid #007bff;padding:15px;z-index:99999;max-height:40vh;overflow-y:auto;font-family:monospace;font-size:12px;'>";
+    echo "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;'>";
+    echo "<h3 style='margin:0;color:#007bff;'>⏱️ Профиль производительности</h3>";
+    echo "<button onclick='this.parentElement.parentElement.style.display=\"none\"' style='background:#dc3545;color:white;border:none;padding:5px 15px;border-radius:4px;cursor:pointer;'>✕ Закрыть</button>";
+    echo "</div>";
+    echo "<table style='width:100%;border-collapse:collapse;background:white;'>";
+    echo "<tr style='background:#007bff;color:white;'><th style='padding:8px;text-align:left;'>Этап</th><th style='padding:8px;text-align:right;width:100px;'>Время (мс)</th><th style='padding:8px;text-align:right;width:100px;'>Прирост (мс)</th></tr>";
+    
+    $prev = 0;
+    $total = round((microtime(true) - $_profile_start) * 1000, 2);
+    
+    foreach ($_profile_times as $label => $time) {
+        $delta = round($time - $prev, 2);
+        $color = $delta > 1000 ? '#dc3545' : ($delta > 500 ? '#ffc107' : '#28a745');
+        echo "<tr style='border-bottom:1px solid #dee2e6;'>";
+        echo "<td style='padding:8px;'>" . htmlspecialchars($label) . "</td>";
+        echo "<td style='padding:8px;text-align:right;font-weight:bold;'>" . $time . " мс</td>";
+        echo "<td style='padding:8px;text-align:right;font-weight:bold;color:" . $color . ";'>" . $delta . " мс</td>";
+        echo "</tr>";
+        $prev = $time;
+    }
+    
+    echo "<tr style='background:#f8f9fa;font-weight:bold;'>";
+    echo "<td style='padding:8px;'>ИТОГО</td>";
+    echo "<td style='padding:8px;text-align:right;color:#007bff;'>" . $total . " мс</td>";
+    echo "<td style='padding:8px;'></td>";
+    echo "</tr>";
+    echo "</table>";
+    echo "<div style='margin-top:10px;padding:10px;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;'>";
+    echo "<strong>💡 Подсказка:</strong> Этапы с временем > 500мс выделены оранжевым, > 1000мс - красным. Это узкие места!";
+    echo "</div>";
+    echo "</div>";
+}
+?>
 </body>
 </html>

@@ -12,7 +12,7 @@ function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES 
 
 /**
  * Возвращает массив остатков буфера по (order_number, filter_label)
- * Поля строки: order_number, filter_label, corrugated, assembled, buffer, last_corr_date, last_ass_date
+ * Поля строки: order_number, filter_label, corrugated, assembled, buffer, last_corr_date, last_ass_date, is_ignored
  *
  * Фильтры:
  * - date_from (Y-m-d)  — нижняя граница для план/факт (опционально)
@@ -20,6 +20,7 @@ function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES 
  * - order               — конкретная заявка (опционально)
  * - filter              — конкретный фильтр (опционально)
  * - include_zero        — если true, показывать и buffer<=0
+ * - show_ignored        — если true, показывать игнорируемые позиции
  */
 function get_buffer(PDO $pdo, array $opts = []): array {
     $date_from   = $opts['date_from'] ?? null;   // применяем отдельно к каждой подвыборке
@@ -27,6 +28,7 @@ function get_buffer(PDO $pdo, array $opts = []): array {
     $order       = $opts['order']     ?? null;
     $filter      = $opts['filter']    ?? null;
     $includeZero = !empty($opts['include_zero']);
+    $showIgnored = !empty($opts['show_ignored']);
 
     // --- подзапрос по гофре (что произведено) ---
     $wCorr = ["c.fact_count > 0"];
@@ -82,11 +84,17 @@ function get_buffer(PDO $pdo, array $opts = []): array {
             COALESCE(
                 CAST(pps.p_p_height AS DECIMAL(10,3)),
                 CAST(cp.height AS DECIMAL(10,3))
-            ) AS height
+            ) AS height,
+            IF(ign.id IS NOT NULL, 1, 0) AS is_ignored,
+            GROUP_CONCAT(DISTINCT bp.brigade ORDER BY bp.plan_date SEPARATOR ', ') AS machines,
+            COALESCE(ord.count, 0) AS order_count
         FROM ($corrSub) AS c
         LEFT JOIN ($asmSub) AS a
           ON a.order_number = c.order_number
          AND a.filter_label = c.filter_label
+        LEFT JOIN orders ord
+          ON ord.order_number = c.order_number
+         AND ord.filter = c.filter_label
         LEFT JOIN salon_filter_structure sfs 
           ON sfs.filter = c.filter_label
         LEFT JOIN paper_package_salon pps 
@@ -98,17 +106,78 @@ function get_buffer(PDO $pdo, array $opts = []): array {
             GROUP BY filter 
             HAVING COUNT(*) > 0
         ) cp ON cp.filter = c.filter_label
+        LEFT JOIN buffer_ignored_items ign
+          ON ign.order_number = c.order_number
+         AND ign.filter_label = c.filter_label
+        LEFT JOIN build_plan bp
+          ON bp.order_number = c.order_number
+         AND bp.filter = c.filter_label
+         AND bp.count > 0
     ";
 
+    $sql .= " GROUP BY c.order_number, c.filter_label";
+    
+    $havingConds = [];
     if (!$includeZero) {
-        $sql .= " HAVING buffer > 0";
+        $havingConds[] = "buffer > 0";
+    }
+    if (!$showIgnored) {
+        $havingConds[] = "is_ignored = 0";
+    }
+    
+    if ($havingConds) {
+        $sql .= " HAVING " . implode(" AND ", $havingConds);
     }
 
-    $sql .= " ORDER BY buffer DESC, c.order_number, c.filter_label";
+    $sql .= " ORDER BY height DESC, buffer DESC, c.order_number, c.filter_label";
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute(array_merge($paramsCorr, $paramsAsm));
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+// === API для управления игнорируемыми позициями ===
+if (isset($_POST['action']) && in_array($_POST['action'], ['ignore_item', 'unignore_item'], true)) {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        $pdo = new PDO($dsn, $user, $pass, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ]);
+
+        $action = $_POST['action'];
+        $order_number = $_POST['order_number'] ?? '';
+        $filter_label = $_POST['filter_label'] ?? '';
+
+        if ($order_number === '' || $filter_label === '') {
+            http_response_code(400);
+            echo json_encode(['ok'=>false, 'error'=>'Не указаны order_number или filter_label']);
+            exit;
+        }
+
+        if ($action === 'ignore_item') {
+            // Добавляем в игнор
+            $stmt = $pdo->prepare("
+                INSERT IGNORE INTO buffer_ignored_items (order_number, filter_label, created_by)
+                VALUES (?, ?, ?)
+            ");
+            $stmt->execute([$order_number, $filter_label, $_SERVER['REMOTE_USER'] ?? 'unknown']);
+            echo json_encode(['ok'=>true, 'action'=>'ignored']);
+        } elseif ($action === 'unignore_item') {
+            // Удаляем из игнора
+            $stmt = $pdo->prepare("
+                DELETE FROM buffer_ignored_items 
+                WHERE order_number = ? AND filter_label = ?
+            ");
+            $stmt->execute([$order_number, $filter_label]);
+            echo json_encode(['ok'=>true, 'action'=>'unignored']);
+        }
+        exit;
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['ok'=>false, 'error'=>$e->getMessage()]);
+        exit;
+    }
 }
 
 // ---------- контроллер ----------
@@ -118,6 +187,7 @@ $date_to    = $_GET['date_to']    ?? null;
 $order      = $_GET['order']      ?? null;
 $filter     = $_GET['filter']     ?? null;
 $includeZero= isset($_GET['include_zero']) && $_GET['include_zero'] == '1';
+$showIgnored= isset($_GET['show_ignored']) && $_GET['show_ignored'] == '1';
 
 try {
     $pdo = new PDO($dsn, $user, $pass, [
@@ -125,12 +195,28 @@ try {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
 
+    // === Автомиграция: создаем таблицу для игнорируемых позиций ===
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS buffer_ignored_items (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            order_number VARCHAR(50) NOT NULL,
+            filter_label VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_by VARCHAR(255) NULL,
+            note TEXT NULL,
+            UNIQUE KEY uniq_order_filter (order_number, filter_label),
+            KEY idx_order (order_number),
+            KEY idx_filter (filter_label)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
     $rows = get_buffer($pdo, [
         'date_from'    => $date_from,
         'date_to'      => $date_to,
         'order'        => $order,
         'filter'       => $filter,
         'include_zero' => $includeZero,
+        'show_ignored' => $showIgnored,
     ]);
 
     if ($format === 'json') {
@@ -145,6 +231,7 @@ try {
     <html lang="ru">
     <head>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
         <title>Буфер гофропакетов</title>
         <style>
             /* ===== Pro UI (neutral + single accent) ===== */
@@ -241,6 +328,7 @@ try {
 
             /* специфичные стили */
             .num{text-align:right; font-weight:500}
+            .col-machine{text-align:center; font-weight:600; color:var(--ink);}
             .filters{
                 display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; 
                 align-items:center; padding:12px; background:var(--panel); 
@@ -251,6 +339,40 @@ try {
             .filters button{padding:7px 14px; border-radius:9px; font-weight:600}
             .tag{font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px}
             .tag input[type="checkbox"]{margin:0}
+            
+            /* игнорируемые позиции */
+            tr.ignored-row{
+                background:#f3f4f6 !important; 
+                opacity:0.6; 
+                text-decoration:line-through;
+            }
+            
+            /* кнопки действий */
+            .btn-ignore, .btn-unignore{
+                padding:4px 10px; 
+                font-size:14px; 
+                border-radius:6px; 
+                border:1px solid; 
+                cursor:pointer; 
+                transition:all 0.2s;
+                background:transparent;
+            }
+            .btn-ignore{
+                color:#ef4444; 
+                border-color:#ef4444;
+            }
+            .btn-ignore:hover{
+                background:#ef4444; 
+                color:white;
+            }
+            .btn-unignore{
+                color:#10b981; 
+                border-color:#10b981;
+            }
+            .btn-unignore:hover{
+                background:#10b981; 
+                color:white;
+            }
             
             /* сортировка */
             .sortable{cursor:pointer; user-select:none; position:relative; transition:background-color 0.2s}
@@ -267,12 +389,310 @@ try {
                 color:var(--ink);
             }
 
-            /* адаптив */
+            /* Стили для кнопки детализации */
+            .btn-details{
+                background:transparent;
+                border:1px solid var(--border);
+                padding:4px 8px;
+                border-radius:6px;
+                cursor:pointer;
+                font-size:16px;
+                transition:all 0.2s;
+            }
+            .btn-details:hover{
+                background:var(--accent);
+                border-color:var(--accent);
+                transform:scale(1.1);
+            }
+
+            /* Модальное окно детальной информации */
+            .modal-details{
+                position:fixed;
+                top:0;
+                left:0;
+                right:0;
+                bottom:0;
+                z-index:9999;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+            }
+            .modal-details-overlay{
+                position:absolute;
+                top:0;
+                left:0;
+                right:0;
+                bottom:0;
+                background:rgba(0,0,0,0.5);
+                backdrop-filter:blur(2px);
+            }
+            .modal-details-content{
+                position:relative;
+                background:var(--panel);
+                border-radius:12px;
+                box-shadow:0 10px 40px rgba(0,0,0,0.3);
+                width:90%;
+                max-width:500px;
+                max-height:85vh;
+                overflow-y:auto;
+                z-index:10000;
+                animation:modalSlideIn 0.3s ease-out;
+            }
+            @keyframes modalSlideIn{
+                from{
+                    opacity:0;
+                    transform:translateY(30px) scale(0.95);
+                }
+                to{
+                    opacity:1;
+                    transform:translateY(0) scale(1);
+                }
+            }
+            .modal-details-header{
+                display:flex;
+                justify-content:space-between;
+                align-items:center;
+                padding:16px 20px;
+                border-bottom:1px solid var(--border);
+            }
+            .modal-details-header h3{
+                margin:0;
+                font-size:18px;
+                font-weight:600;
+                color:var(--ink);
+            }
+            .modal-close-btn{
+                background:transparent;
+                border:none;
+                font-size:24px;
+                color:var(--muted);
+                cursor:pointer;
+                padding:0;
+                width:32px;
+                height:32px;
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                border-radius:6px;
+                transition:all 0.2s;
+            }
+            .modal-close-btn:hover{
+                background:#f3f4f6;
+                color:var(--ink);
+            }
+            .modal-details-body{
+                padding:20px;
+            }
+            .detail-row{
+                display:flex;
+                justify-content:space-between;
+                align-items:center;
+                padding:12px 0;
+                border-bottom:1px solid #f0f0f0;
+            }
+            .detail-row:last-child{
+                border-bottom:none;
+            }
+            .detail-label{
+                font-weight:600;
+                color:var(--muted);
+                font-size:14px;
+            }
+            .detail-value{
+                font-weight:500;
+                color:var(--ink);
+                font-size:15px;
+                text-align:right;
+            }
+            .detail-value-big{
+                font-weight:700;
+                color:var(--accent);
+                font-size:24px;
+                text-align:right;
+            }
+            .highlight-row{
+                background:#f0f9ff;
+                margin:0 -10px;
+                padding:16px 10px !important;
+                border-radius:8px;
+                border:2px solid var(--accent) !important;
+            }
+            .detail-separator{
+                height:1px;
+                background:var(--border);
+                margin:8px 0;
+            }
+            .modal-details-footer{
+                padding:16px 20px;
+                border-top:1px solid var(--border);
+            }
+
+            /* адаптив для мобильных устройств */
             @media (max-width:768px){
-                .filters{flex-direction:column; align-items:stretch; gap:8px}
-                .filters input{min-width:auto; width:100%}
-                .panel table{font-size:12px}
-                .panel td,.panel th{padding:8px 6px}
+                /* Контейнер */
+                .container{padding:8px}
+                
+                /* Панели */
+                .panel{padding:12px; margin-bottom:12px; border-radius:8px}
+                .section-title{font-size:14px; margin-bottom:8px}
+                
+                /* СКРЫВАЕМ кнопку назад на мобильных */
+                .back-button{
+                    display:none !important;
+                }
+                
+                /* СКРЫВАЕМ панель фильтров на мобильных */
+                .filters-panel{
+                    display:none !important;
+                }
+                
+                /* СКРЫВАЕМ подсказку о прокрутке */
+                #scrollHint{
+                    display:none !important;
+                }
+                
+                /* Таблица - упрощенная версия для мобильных */
+                .panel table{
+                    font-size:13px;
+                    width:100%;
+                }
+                .panel td, .panel th{
+                    padding:10px 6px;
+                    font-size:13px;
+                }
+                .panel th{
+                    font-size:12px;
+                    padding:8px 4px;
+                }
+                
+                /* Показываем только нужные колонки на мобильных */
+                /* Скрываем: Заявка, Сгофрировано, Собрано, Последняя гофра, Последняя сборка, Действия */
+                .col-order,
+                .col-corrugated, 
+                .col-assembled, 
+                .col-last-corr, 
+                .col-last-asm,
+                .col-actions{
+                    display:none !important;
+                }
+                
+                /* Колонка с деталями */
+                .col-details{
+                    width:50px;
+                    text-align:center;
+                }
+                
+                /* Кнопка детализации */
+                .btn-details{
+                    padding:8px 10px;
+                    font-size:18px;
+                    min-width:44px;
+                    min-height:44px;
+                    display:inline-flex;
+                    align-items:center;
+                    justify-content:center;
+                }
+                
+                /* Колонка фильтра - расширяем, так как убрали заявку */
+                .col-filter{
+                    min-width:120px;
+                }
+                
+                /* Колонка высоты */
+                .col-height{
+                    width:60px;
+                    text-align:center;
+                }
+                /* Сокращенные заголовки для мобильных */
+                th.col-height::before{
+                    content:'H, мм';
+                    display:block;
+                }
+                th.col-height{
+                    font-size:0;
+                }
+                th.col-height::before{
+                    font-size:11px;
+                }
+                
+                /* Колонка машины */
+                .col-machine{
+                    width:50px;
+                    text-align:center;
+                    font-size:13px;
+                    font-weight:700;
+                    color:var(--ink);
+                }
+                
+                th.col-buffer::before{
+                    content:'📦 Буфер';
+                    display:block;
+                    font-size:12px;
+                }
+                
+                /* Колонка буфера - самая важная */
+                .col-buffer{
+                    min-width:80px;
+                    text-align:center;
+                    background:#f0f9ff;
+                }
+                .col-buffer strong{
+                    font-size:16px;
+                    color:var(--accent);
+                }
+                
+                /* Итоги */
+                #totals{
+                    font-size:16px;
+                    padding:14px;
+                    text-align:center;
+                    font-weight:700;
+                }
+                
+                /* Увеличиваем размер текста для лучшей читаемости */
+                body{font-size:14px}
+                
+                /* Модальное окно на мобильных */
+                .modal-details-content{
+                    width:95%;
+                    max-height:90vh;
+                }
+                .modal-details-body{
+                    padding:16px;
+                }
+                .detail-row{
+                    padding:10px 0;
+                }
+                .detail-value-big{
+                    font-size:28px;
+                }
+            }
+            
+            /* Дополнительные улучшения для сенсорных устройств */
+            @media (hover: none) and (pointer: coarse){
+                /* Увеличиваем размер кликабельных элементов */
+                button, input[type="submit"], .btn-ignore, .btn-unignore{
+                    min-height:44px;
+                    min-width:44px;
+                }
+                
+                /* Увеличиваем размер чекбоксов */
+                input[type="checkbox"]{
+                    width:20px;
+                    height:20px;
+                    cursor:pointer;
+                }
+                
+                /* Улучшаем интерактивность кнопок */
+                button:active, input[type="submit"]:active{
+                    transform:scale(0.98);
+                }
+            }
+            
+            /* Ориентация альбом для планшетов */
+            @media (min-width:769px) and (max-width:1024px){
+                .container{max-width:100%; padding:12px}
+                .panel table{font-size:13px}
             }
         </style>
 
@@ -280,11 +700,20 @@ try {
     <body>
     <div class="container">
         <div class="panel">
-            <div class="section-title">Буфер гофропакетов</div>
-            <p class="muted">Наличие заготовок в буфере (гофра → сборка)</p>
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+                <div>
+                    <div class="section-title" style="margin-bottom:4px;">Буфер гофропакетов</div>
+                    <p class="muted" style="margin:0;">Наличие заготовок в буфере (гофра → сборка)</p>
+                </div>
+                <a href="main.php" style="text-decoration:none;" class="back-button">
+                    <button type="button" style="padding:8px 16px; font-size:14px; white-space:nowrap;">
+                        ← Назад
+                    </button>
+                </a>
+            </div>
         </div>
 
-        <div class="panel">
+        <div class="panel filters-panel">
             <div class="section-title">Фильтры</div>
             <form class="filters" method="get">
                 <input type="date" name="date_from" value="<?=h($date_from)?>" placeholder="От даты">
@@ -292,6 +721,7 @@ try {
                 <input type="text" name="order"     value="<?=h($order)?>"   placeholder="Заявка (order_number)">
                 <input type="text" name="filter"    value="<?=h($filter)?>"  placeholder="Фильтр (filter_label)">
                 <label class="tag"><input type="checkbox" name="include_zero" value="1" <?= $includeZero?'checked':''; ?>> показывать нули/минусы</label>
+                <label class="tag"><input type="checkbox" name="show_ignored" value="1" <?= $showIgnored?'checked':''; ?>> показать игнорируемые</label>
                 <button type="submit">Показать</button>
                 <label class="tag">
                     <input type="checkbox" id="hideSmall"> Скрывать остатки меньше 30
@@ -301,32 +731,70 @@ try {
 
         <div class="panel">
             <div class="section-title">Данные буфера</div>
+            <div id="scrollHint" style="display:none; background:#e0e7ff; border:1px solid #c7d2fe; color:#3730a3; padding:8px 12px; border-radius:6px; margin-bottom:12px; font-size:13px; text-align:center;">
+                👈 Прокрутите таблицу влево-вправо для просмотра всех данных 👉
+            </div>
             <table>
                 <thead>
                 <tr>
-                    <th class="sortable" data-column="0">Заявка</th>
-                    <th class="sortable" data-column="1">Фильтр</th>
-                    <th class="sortable num" data-column="2">Высота (мм)</th>
-                    <th class="sortable num" data-column="3">Сгофрировано</th>
-                    <th class="sortable num" data-column="4">Собрано</th>
-                    <th class="sortable num" data-column="5">Буфер</th>
-                    <th class="sortable" data-column="6">Последняя гофра</th>
-                    <th class="sortable" data-column="7">Последняя сборка</th>
+                    <th class="col-details">👁</th>
+                    <th class="sortable col-order" data-column="1">Заявка</th>
+                    <th class="sortable col-filter" data-column="2">Фильтр</th>
+                    <th class="sortable num col-height" data-column="3">Высота (мм)</th>
+                    <th class="sortable col-machine" data-column="4">Машина</th>
+                    <th class="sortable num col-corrugated" data-column="5">Сгофрировано</th>
+                    <th class="sortable num col-assembled" data-column="6">Собрано</th>
+                    <th class="sortable num col-buffer" data-column="7">Буфер</th>
+                    <th class="sortable col-last-corr" data-column="8">Последняя гофра</th>
+                    <th class="sortable col-last-asm" data-column="9">Последняя сборка</th>
+                    <th class="col-actions">Действия</th>
                 </tr>
                 </thead>
                 <tbody>
                 <?php if (!$rows): ?>
-                    <tr><td colspan="8" class="tag">Нет данных под выбранные фильтры.</td></tr>
-                <?php else: foreach ($rows as $r): ?>
-                    <tr class="<?=($r['buffer']>0?'highlight':'')?>">
-                        <td><?=h($r['order_number'])?></td>
-                        <td><?=h($r['filter_label'])?></td>
-                        <td class="num"><?= $r['height'] ? rtrim(rtrim(number_format((float)$r['height'], 1, '.', ' '), '0'), '.') : '-' ?></td>
-                        <td class="num"><?=number_format((float)$r['corrugated'], 0, '.', ' ')?></td>
-                        <td class="num"><?=number_format((float)$r['assembled'],   0, '.', ' ')?></td>
-                        <td class="num"><strong><?=number_format((float)$r['buffer'], 0, '.', ' ')?></strong></td>
-                        <td><?=h($r['last_corr_date'] ?? '')?></td>
-                        <td><?=h($r['last_ass_date']  ?? '')?></td>
+                    <tr><td colspan="11" class="tag">Нет данных под выбранные фильтры.</td></tr>
+                <?php else: foreach ($rows as $r): 
+                    $isIgnored = !empty($r['is_ignored']);
+                    $rowClass = '';
+                    if ($isIgnored) {
+                        $rowClass = 'ignored-row';
+                    } elseif ($r['buffer'] > 0) {
+                        $rowClass = 'highlight';
+                    }
+                ?>
+                    <tr class="<?=$rowClass?>" 
+                        data-order="<?=h($r['order_number'])?>" 
+                        data-filter="<?=h($r['filter_label'])?>"
+                        data-height="<?= $r['height'] ? rtrim(rtrim(number_format((float)$r['height'], 1, '.', ' '), '0'), '.') : '-' ?>"
+                        data-corrugated="<?=number_format((float)$r['corrugated'], 0, '.', ' ')?>"
+                        data-assembled="<?=number_format((float)$r['assembled'], 0, '.', ' ')?>"
+                        data-buffer="<?=number_format((float)$r['buffer'], 0, '.', ' ')?>"
+                        data-last-corr="<?=h($r['last_corr_date'] ?? 'Не указано')?>"
+                        data-last-asm="<?=h($r['last_ass_date'] ?? 'Не указано')?>"
+                        data-machines="<?=h($r['machines'] ?? 'Не назначено')?>"
+                        data-order-count="<?=number_format((float)$r['order_count'], 0, '.', ' ')?>"
+                        data-ignored="<?=$isIgnored?'1':'0'?>">
+                        <td class="col-details">
+                            <button type="button" class="btn-details" onclick="showDetails(this)" title="Подробнее">
+                                👁
+                            </button>
+                        </td>
+                        <td class="col-order"><?=h($r['order_number'])?></td>
+                        <td class="col-filter"><strong><?=h($r['filter_label'])?></strong></td>
+                        <td class="num col-height"><?= $r['height'] ? rtrim(rtrim(number_format((float)$r['height'], 1, '.', ' '), '0'), '.') : '-' ?></td>
+                        <td class="col-machine"><?=h($r['machines'] ?? '-')?></td>
+                        <td class="num col-corrugated"><?=number_format((float)$r['corrugated'], 0, '.', ' ')?></td>
+                        <td class="num col-assembled"><?=number_format((float)$r['assembled'],   0, '.', ' ')?></td>
+                        <td class="num col-buffer"><strong><?=number_format((float)$r['buffer'], 0, '.', ' ')?></strong></td>
+                        <td class="col-last-corr"><?=h($r['last_corr_date'] ?? '')?></td>
+                        <td class="col-last-asm"><?=h($r['last_ass_date']  ?? '')?></td>
+                        <td class="col-actions" style="text-align:center;">
+                            <?php if ($isIgnored): ?>
+                                <button type="button" class="btn-unignore" data-order="<?=h($r['order_number'])?>" data-filter="<?=h($r['filter_label'])?>" title="Вернуть в буфер">↩️</button>
+                            <?php else: ?>
+                                <button type="button" class="btn-ignore" data-order="<?=h($r['order_number'])?>" data-filter="<?=h($r['filter_label'])?>" title="Игнорировать">✖</button>
+                            <?php endif; ?>
+                        </td>
                     </tr>
                 <?php endforeach; endif; ?>
                 </tbody>
@@ -340,11 +808,134 @@ try {
         </div>
     </div>
 
+    <!-- Модальное окно для детальной информации -->
+    <div id="detailsModal" class="modal-details" style="display:none;">
+        <div class="modal-details-overlay" onclick="closeDetailsModal()"></div>
+        <div class="modal-details-content">
+            <div class="modal-details-header">
+                <h3 id="modalTitle">Детали позиции</h3>
+                <button type="button" class="modal-close-btn" onclick="closeDetailsModal()">✖</button>
+            </div>
+            <div class="modal-details-body">
+                <div class="detail-row">
+                    <span class="detail-label">Заявка:</span>
+                    <span class="detail-value" id="detailOrder">-</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Высота:</span>
+                    <span class="detail-value" id="detailHeight">-</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">В заявке заказано:</span>
+                    <span class="detail-value" id="detailOrderCount">-</span>
+                </div>
+                <div class="detail-row" style="background:#f0fdf4; margin:0 -10px; padding:12px 10px; border-radius:8px; border:1px solid #86efac;">
+                    <span class="detail-label" style="color:#15803d;">Назначено машине:</span>
+                    <span class="detail-value" id="detailMachines" style="font-weight:700; color:#15803d; font-size:16px;">-</span>
+                </div>
+                <div class="detail-separator"></div>
+                <div class="detail-row highlight-row">
+                    <span class="detail-label">В буфере:</span>
+                    <span class="detail-value-big" id="detailBuffer">-</span>
+                </div>
+                <div class="detail-separator"></div>
+                <div class="detail-row">
+                    <span class="detail-label">Сгофрировано:</span>
+                    <span class="detail-value" id="detailCorrugated">-</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Последняя гофра:</span>
+                    <span class="detail-value" id="detailLastCorr">-</span>
+                </div>
+                <div class="detail-separator"></div>
+                <div class="detail-row">
+                    <span class="detail-label">Собрано:</span>
+                    <span class="detail-value" id="detailAssembled">-</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Последняя сборка:</span>
+                    <span class="detail-value" id="detailLastAsm">-</span>
+                </div>
+            </div>
+            <div class="modal-details-footer">
+                <button type="button" onclick="closeDetailsModal()" style="width:100%; padding:12px; background:var(--accent); color:white; border:none; border-radius:8px; font-size:15px; font-weight:600;">
+                    Закрыть
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script>
+        // === ФУНКЦИЯ ОТКРЫТИЯ МОДАЛЬНОГО ОКНА С ДЕТАЛЯМИ ===
+        function showDetails(btn) {
+            const row = btn.closest('tr');
+            if (!row) return;
+            
+            // Получаем данные из data-атрибутов строки
+            const order = row.dataset.order || '-';
+            const filter = row.dataset.filter || '-';
+            const height = row.dataset.height || '-';
+            const buffer = row.dataset.buffer || '0';
+            const corrugated = row.dataset.corrugated || '0';
+            const assembled = row.dataset.assembled || '0';
+            const lastCorr = row.dataset.lastCorr || 'Не указано';
+            const lastAsm = row.dataset.lastAsm || 'Не указано';
+            const machines = row.dataset.machines || 'Не назначено';
+            const orderCount = row.dataset.orderCount || '0';
+            
+            // Заполняем модальное окно данными
+            document.getElementById('detailOrder').textContent = order;
+            document.getElementById('detailHeight').textContent = height + (height !== '-' ? ' мм' : '');
+            document.getElementById('detailBuffer').textContent = buffer;
+            document.getElementById('detailCorrugated').textContent = corrugated;
+            document.getElementById('detailAssembled').textContent = assembled;
+            document.getElementById('detailLastCorr').textContent = lastCorr;
+            document.getElementById('detailLastAsm').textContent = lastAsm;
+            document.getElementById('detailMachines').textContent = machines;
+            document.getElementById('detailOrderCount').textContent = orderCount;
+            
+            // Обновляем заголовок модального окна
+            document.getElementById('modalTitle').textContent = filter;
+            
+            // Показываем модальное окно
+            document.getElementById('detailsModal').style.display = 'flex';
+            
+            // Блокируем прокрутку body
+            document.body.style.overflow = 'hidden';
+        }
+        
+        // === ФУНКЦИЯ ЗАКРЫТИЯ МОДАЛЬНОГО ОКНА ===
+        function closeDetailsModal() {
+            document.getElementById('detailsModal').style.display = 'none';
+            // Разблокируем прокрутку body
+            document.body.style.overflow = '';
+        }
+        
+        // Закрытие по клавише Escape
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeDetailsModal();
+            }
+        });
+        
+        // Показываем подсказку о прокрутке на мобильных устройствах (только на десктопе)
+        if (window.innerWidth > 768) {
+            const hint = document.getElementById('scrollHint');
+            if (hint) {
+                hint.style.display = 'block';
+                // Скрываем подсказку через 5 секунд
+                setTimeout(() => {
+                    hint.style.opacity = '0';
+                    hint.style.transition = 'opacity 1s';
+                    setTimeout(() => { hint.style.display = 'none'; }, 1000);
+                }, 5000);
+            }
+        }
+        
         document.getElementById('hideSmall').addEventListener('change', function() {
             const rows = document.querySelectorAll("table tbody tr");
             rows.forEach(tr => {
-                const bufCell = tr.querySelector("td:nth-child(6)"); // 6-й столбец — буфер (после добавления высоты)
+                const bufCell = tr.querySelector("td.col-buffer"); // Колонка буфера
                 if (!bufCell) return;
                 const val = parseInt(bufCell.textContent.replace(/\s+/g,'')) || 0;
                 if (this.checked && val < 30) {
@@ -360,7 +951,10 @@ try {
             let sum = 0;
             document.querySelectorAll("table tbody tr").forEach(tr => {
                 if (tr.style.display === "none") return;
-                const bufCell = tr.querySelector("td:nth-child(6)"); // 6-й столбец — буфер (после добавления высоты)
+                // Не учитываем игнорируемые позиции в подсчете
+                if (tr.classList.contains('ignored-row')) return;
+                
+                const bufCell = tr.querySelector("td.col-buffer"); // Колонка буфера
                 if (bufCell) {
                     const val = parseInt(bufCell.textContent.replace(/\s+/g,'')) || 0;
                     sum += val;
@@ -372,10 +966,12 @@ try {
         document.getElementById('hideSmall').addEventListener('change', function() {
             const rows = document.querySelectorAll("table tbody tr");
             rows.forEach(tr => {
-                const bufCell = tr.querySelector("td:nth-child(6)"); // 6-й столбец — буфер (после добавления высоты)
+                const bufCell = tr.querySelector("td.col-buffer"); // Колонка буфера
                 if (!bufCell) return;
                 const val = parseInt(bufCell.textContent.replace(/\s+/g,'')) || 0;
-                if (this.checked && val < 30) {
+                // Не скрываем игнорируемые строки, они уже отмечены визуально
+                const isIgnored = tr.classList.contains('ignored-row');
+                if (this.checked && val < 30 && !isIgnored) {
                     tr.style.display = "none";
                 } else {
                     tr.style.display = "";
@@ -413,10 +1009,10 @@ try {
                 let bValue = bCell.textContent.trim();
                 
                 // Обработка числовых значений
-                if (columnIndex >= 2 && columnIndex <= 5) { // числовые колонки
+                if (columnIndex === 3 || (columnIndex >= 5 && columnIndex <= 7)) { // числовые колонки (высота, сгофрировано, собрано, буфер)
                     aValue = parseFloat(aValue.replace(/\s+/g, '')) || 0;
                     bValue = parseFloat(bValue.replace(/\s+/g, '')) || 0;
-                } else if (columnIndex === 6 || columnIndex === 7) { // даты
+                } else if (columnIndex === 8 || columnIndex === 9) { // даты (последняя гофра, последняя сборка)
                     aValue = aValue === '' ? '0000-00-00' : aValue;
                     bValue = bValue === '' ? '0000-00-00' : bValue;
                 }
@@ -446,6 +1042,61 @@ try {
         // Добавляем обработчики кликов на заголовки
         document.querySelectorAll('th.sortable').forEach((th, index) => {
             th.addEventListener('click', () => sortTable(index));
+        });
+        
+        // === ФУНКЦИОНАЛ ИГНОРИРОВАНИЯ ПОЗИЦИЙ ===
+        
+        // Функция для отправки запроса на игнорирование/разигнорирование
+        async function toggleIgnore(orderNumber, filterLabel, action) {
+            try {
+                // Сохраняем текущую позицию прокрутки
+                sessionStorage.setItem('buffer_scroll_position', window.scrollY);
+                
+                const formData = new FormData();
+                formData.append('action', action);
+                formData.append('order_number', orderNumber);
+                formData.append('filter_label', filterLabel);
+                
+                const response = await fetch(window.location.pathname, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.ok) {
+                    // Перезагружаем страницу для обновления данных
+                    window.location.reload();
+                } else {
+                    alert('❌ Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('❌ Ошибка при выполнении операции: ' + error.message);
+            }
+        }
+        
+        // Восстанавливаем позицию прокрутки после перезагрузки
+        window.addEventListener('load', function() {
+            const savedPosition = sessionStorage.getItem('buffer_scroll_position');
+            if (savedPosition !== null) {
+                window.scrollTo(0, parseInt(savedPosition));
+                // Очищаем сохраненную позицию
+                sessionStorage.removeItem('buffer_scroll_position');
+            }
+        });
+        
+        // Обработчики для кнопок игнорирования
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('btn-ignore')) {
+                const order = e.target.dataset.order;
+                const filter = e.target.dataset.filter;
+                toggleIgnore(order, filter, 'ignore_item');
+            } else if (e.target.classList.contains('btn-unignore')) {
+                const order = e.target.dataset.order;
+                const filter = e.target.dataset.filter;
+                toggleIgnore(order, filter, 'unignore_item');
+            }
         });
     </script>
 

@@ -110,6 +110,7 @@ foreach ($result as $row) {
 
     $is_hourly = $tariff_name === 'почасовый';
     $apply_additions = $tariff_type !== 'fixed' && !$is_hourly;
+    $apply_edge_cuts = !$is_hourly; // надрезы применяются для всех тарифов кроме почасовых
 
     if ($apply_additions && strpos($tail, 'языч') !== false && isset($additions['tongue_glue'])) {
         $rate += $additions['tongue_glue'];
@@ -129,7 +130,7 @@ foreach ($result as $row) {
         $bonus_breakdown[$team]['трапеция']['count'] += $count;
     }
 
-    if ($apply_additions && !empty($has_edge_cuts) && isset($additions['edge_cuts'])) {
+    if ($apply_edge_cuts && !empty($has_edge_cuts) && isset($additions['edge_cuts'])) {
         $rate += $additions['edge_cuts'];
         $description[] = '+надрезы';
         if (!isset($bonus_breakdown[$team]['надрезы'])) {
@@ -155,8 +156,145 @@ foreach ($result as $row) {
 
 ksort($teams);
 
+// Добавляем стили для тултипа
+echo "<style>
+.brigade-header {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 16px 0 8px 0;
+}
+.salary-info-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    background: #2563eb;
+    color: white;
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: help;
+    position: relative;
+    vertical-align: super;
+    margin-left: 4px;
+}
+.salary-info-icon:hover {
+    background: #1e40af;
+    transform: scale(1.1);
+}
+.salary-tooltip {
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+    z-index: 1000;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 20px;
+    border-radius: 12px;
+    width: 550px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    top: 30px;
+    left: -20px;
+    transition: all 0.3s ease;
+    font-size: 13px;
+    line-height: 1.6;
+}
+.salary-info-icon:hover .salary-tooltip {
+    visibility: visible;
+    opacity: 1;
+    transform: translateY(5px);
+}
+.salary-tooltip h4 {
+    margin: 0 0 12px 0;
+    font-size: 16px;
+    border-bottom: 2px solid rgba(255,255,255,0.3);
+    padding-bottom: 8px;
+}
+.salary-tooltip ul {
+    margin: 8px 0;
+    padding-left: 20px;
+}
+.salary-tooltip li {
+    margin: 6px 0;
+}
+.salary-tooltip strong {
+    color: #fbbf24;
+}
+.salary-tooltip .highlight {
+    background: rgba(251, 191, 36, 0.2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+}
+.salary-tooltip .section {
+    margin: 12px 0;
+    padding: 12px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 8px;
+    border-left: 3px solid #fbbf24;
+}
+</style>";
+
 foreach ($teams as $team => $rows) {
-    echo "<h3>Бригада $team</h3>";
+    echo "<h3 class='brigade-header'>Бригада $team
+        <span class='salary-info-icon'>?
+            <div class='salary-tooltip'>
+                <h4>📊 Как рассчитывается заработная плата</h4>
+                
+                <div class='section'>
+                    <strong>🎯 Базовая ставка</strong>
+                    <ul>
+                        <li>Каждому фильтру присваивается <span class='highlight'>тариф</span> из таблицы salary_tariffs</li>
+                        <li>Тариф определяет базовую ставку (rate_per_unit) за единицу продукции</li>
+                        <li>Тарифы бывают трех типов: <strong>обычный</strong>, <strong>фиксированный (fixed)</strong> и <strong>почасовый</strong></li>
+                    </ul>
+                </div>
+
+                <div class='section'>
+                    <strong>💰 Доплаты (additions)</strong>
+                    <p style='margin: 8px 0;'>К базовой ставке могут добавляться доплаты из таблицы salary_additions:</p>
+                    <ul>
+                        <li><strong>+Язычок</strong> — если у фильтра есть язычок (tail содержит 'языч')<br>
+                        <em style='font-size:11px;'>⚠️ НЕ применяется для fixed и почасовых тарифов</em></li>
+                        
+                        <li><strong>+Трапеция</strong> — если форма фильтра 'трапеция'<br>
+                        <em style='font-size:11px;'>⚠️ НЕ применяется для fixed и почасовых тарифов</em></li>
+                        
+                        <li><strong>+Надрезы</strong> — если у фильтра есть надрезы (has_edge_cuts)<br>
+                        <em style='font-size:11px;'>✅ Применяется для ВСЕХ тарифов кроме почасовых!</em></li>
+                    </ul>
+                </div>
+
+                <div class='section'>
+                    <strong>🔧 Типы тарифов</strong>
+                    <ul>
+                        <li><strong>Обычный тариф:</strong> Базовая ставка + ВСЕ доплаты (язычок, трапеция, надрезы)</li>
+                        <li><strong>Фиксированный (fixed):</strong> Базовая ставка + только надрезы<br>
+                        <em style='font-size:11px;'>Язычок и трапеция НЕ добавляются</em></li>
+                        <li><strong>Почасовый:</strong> Ставка × количество часов, без доплат</li>
+                    </ul>
+                </div>
+
+                <div class='section'>
+                    <strong>🧮 Расчет итоговой зарплаты</strong>
+                    <p style='margin: 8px 0;'><strong>Для обычных и fixed тарифов:</strong></p>
+                    <code style='background:rgba(0,0,0,0.2); padding:8px; display:block; border-radius:6px;'>
+                    Зарплата = (Базовая ставка + Доплаты) × Количество фильтров
+                    </code>
+                    <p style='margin: 8px 0;'><strong>Для почасовых тарифов:</strong></p>
+                    <code style='background:rgba(0,0,0,0.2); padding:8px; display:block; border-radius:6px;'>
+                    Зарплата = Ставка × Количество часов
+                    </code>
+                </div>
+
+                <p style='margin-top: 12px; font-size: 11px; opacity: 0.8;'>
+                    💡 Детализация по доплатам показывается внизу отчета для каждой бригады
+                </p>
+            </div>
+        </span>
+    </h3>";
     echo "<table style='border: 1px solid black; border-collapse: collapse; font-size: 14px;'>
         <tr>
             <td>Фильтр</td>

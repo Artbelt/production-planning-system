@@ -228,13 +228,47 @@ function sumFactForDayMap($map){ $s=0; foreach($map as $v) $s+=(int)$v; return $
                         $carryIn   = $carryInfo[$d][$base]['carry_in']   ?? 0;   // закрываем прошлые долги
                         $missToday = $carryInfo[$d][$base]['miss_today'] ?? 0;   // новая нехватка сегодня
 
-                        $cls = ($fact >= $plan) ? 'ok' : ($fact>0 ? 'warn' : 'bad');
-                        if ($plan===0 && $fact>0) $cls = 'ok';
+                        // Вычисляем процент выполнения
+                        $percentage = $plan > 0 ? ($fact / $plan * 100) : 0;
+                        
+                        // Определяем класс и стиль
+                        $cls = 'tag '; // Базовый класс всегда
+                        $customStyle = '';
+                        
+                        // Градиент от 80% до 100%
+                        if ($plan > 0 && $percentage >= 80 && $percentage < 100) {
+                            // Нормализуем от 0 до 1 в диапазоне 80-100%
+                            $gradientPosition = ($percentage - 80) / 20;
+                            
+                            // Более мягкие, пастельные оттенки зеленого
+                            // Светло-зеленый (80%) -> зеленый (100%)
+                            // RGB: (180, 240, 180) -> (100, 220, 120)
+                            $r = round(180 - ($gradientPosition * (180 - 100)));
+                            $g = round(240 - ($gradientPosition * (240 - 220)));
+                            $b = round(180 - ($gradientPosition * (180 - 120)));
+                            
+                            // Прозрачность 0.5 (50%) - менее яркий
+                            $bgColor = "rgba($r, $g, $b, 0.5)";
+                            $borderColor = "rgba(" . max(0, $r - 20) . "," . max(0, $g - 20) . "," . max(0, $b - 20) . ", 0.6)";
+                            $textColor = '#2d5016'; // Темно-зеленый текст
+                            
+                            $customStyle = "background: $bgColor !important; border-color: $borderColor !important; color: $textColor !important; font-weight: 500 !important;";
+                        } elseif ($plan > 0 && $percentage >= 100) {
+                            // 100% и выше - приглушенный зеленый
+                            $customStyle = 'background: rgba(100, 220, 120, 0.5) !important; border-color: rgba(80, 200, 100, 0.6) !important; color: #2d5016 !important; font-weight: 500 !important;';
+                        } else {
+                            // Стандартные классы для других случаев
+                            if ($plan===0 && $fact>0) {
+                                $cls .= 'ok';
+                            } else {
+                                $cls .= ($fact >= $plan) ? 'ok' : ($fact>0 ? 'warn' : 'bad');
+                            }
+                        }
                         ?>
                         <li data-key="<?= htmlspecialchars(mb_strtolower($base)) ?>">
                             <div class="row">
                                 <strong><?= htmlspecialchars($base) ?></strong>
-                                <span class="tag <?= $cls ?>">План: <?= (int)$plan ?> • Факт: <?= (int)$fact ?></span>
+                                <span class="<?= $cls ?>" <?= $customStyle ? 'style="' . $customStyle . '"' : '' ?> title="Процент: <?= round($percentage, 1) ?>%">План: <?= (int)$plan ?> • Факт: <?= (int)$fact ?></span>
                             </div>
                             <?php if ($carryIn>0 || $missToday>0): ?>
                                 <div class="xtra">

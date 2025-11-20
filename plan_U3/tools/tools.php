@@ -1442,38 +1442,52 @@ function get_filter_data($target_filter){
     if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
     /** Разбор массива значений  */
     $filter_data = $result->fetch_assoc();
-    if (isset($filter_data['comment'])){
-        $result_array['comment'] = $filter_data['comment'];
-    }else{
+    
+    // Проверяем что данные найдены
+    if ($filter_data !== null) {
+        if (isset($filter_data['comment'])){
+            $result_array['comment'] = $filter_data['comment'];
+        }else{
+            $result_array['comment'] = '';
+        }
+        if (isset($filter_data['Diametr_outer'])){
+            $result_array['Diametr_outer'] = $filter_data['Diametr_outer'];
+        }else{
+            $result_array['Diametr_outer'] = '';
+        }
+        if (isset($filter_data['Diametr_inner_1'])){
+            $result_array['Diametr_inner_1'] = $filter_data['Diametr_inner_1'];
+        }else{
+            $result_array['Diametr_inner_1'] = '';
+        }
+        if (isset( $filter_data['Diametr_inner_2'])){
+            $result_array['Diametr_inner_2'] = $filter_data['Diametr_inner_2'];
+        }else{
+            $result_array['Diametr_inner_2'] = '';
+        }
+        if (isset($filter_data['Height'])){
+            $result_array['Height'] = $filter_data['Height'];
+        }else{
+            $result_array['Height'] = '';
+        }
+    } else {
+        // Если данных нет, заполняем пустыми значениями
         $result_array['comment'] = '';
-    }
-    if (isset($filter_data['Diametr_outer'])){
-        $result_array['Diametr_outer'] = $filter_data['Diametr_outer'];
-    }else{
         $result_array['Diametr_outer'] = '';
-    }
-    if (isset($filter_data['Diametr_inner_1'])){
-        $result_array['Diametr_inner_1'] = $filter_data['Diametr_inner_1'];
-    }else{
         $result_array['Diametr_inner_1'] = '';
-    }
-    if (isset( $filter_data['Diametr_inner_2'])){
-        $result_array['Diametr_inner_2'] = $filter_data['Diametr_inner_2'];
-    }else{
         $result_array['Diametr_inner_2'] = '';
-    }
-    if (isset($filter_data['Height'])){
-        $result_array['Height'] = $filter_data['Height'];
-    }else{
         $result_array['Height'] = '';
     }
 
     //крышка нижняя
-
-    if (!isset($filter_data['down_cap'])){
-        $result_array['down_cap'] = $filter_data['PU_down_cap'];
-    }else{
-        $result_array['down_cap'] =  $filter_data['down_cap'];
+    if ($filter_data !== null) {
+        if (!isset($filter_data['down_cap'])){
+            $result_array['down_cap'] = $filter_data['PU_down_cap'] ?? '';
+        }else{
+            $result_array['down_cap'] =  $filter_data['down_cap'];
+        }
+    } else {
+        $result_array['down_cap'] = '';
     }
 
 //    if ($filter_data['down_cap'] == null){
@@ -1483,10 +1497,14 @@ function get_filter_data($target_filter){
 //    }
 
     //крышка верхняя
-    if(!isset($filter_data['up_cap'])){
-        $result_array['up_cap'] = $filter_data['PU_up_cap'];
-    }else{
-        $result_array['up_cap'] =  $filter_data['up_cap'];
+    if ($filter_data !== null) {
+        if(!isset($filter_data['up_cap'])){
+            $result_array['up_cap'] = $filter_data['PU_up_cap'] ?? '';
+        }else{
+            $result_array['up_cap'] =  $filter_data['up_cap'];
+        }
+    } else {
+        $result_array['up_cap'] = '';
     }
 
 //    if ($filter_data['up_cap'] == null){
@@ -1495,12 +1513,12 @@ function get_filter_data($target_filter){
 //        $result_array['up_cap'] =  $filter_data['up_cap'];
 //    }
 
-    if (isset($filter_data['PU_up_cap'])){
+    if ($filter_data !== null && isset($filter_data['PU_up_cap'])){
         $result_array['up_cap_PU'] = $filter_data['PU_up_cap'];
     }else{
         $result_array['up_cap_PU'] = '';
     }
-    if (isset( $filter_data['PU_down_cap'])){
+    if ($filter_data !== null && isset($filter_data['PU_down_cap'])){
         $result_array['down_cap_PU'] = $filter_data['PU_down_cap'];
     }else{
         $result_array['down_cap_PU'] = '';

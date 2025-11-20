@@ -74,6 +74,23 @@ $databases = [
     ]
 ];
 
+// === Автомиграция: добавляем поле progress_count во все БД ===
+foreach ($databases as $dept => $dbConfig) {
+    try {
+        $mysqli = new mysqli($dbConfig['host'], $dbConfig['user'], $dbConfig['pass'], $dbConfig['name']);
+        if (!$mysqli->connect_errno) {
+            // Проверяем существование поля progress_count
+            $result = $mysqli->query("SHOW COLUMNS FROM laser_requests LIKE 'progress_count'");
+            if ($result && $result->num_rows === 0) {
+                $mysqli->query("ALTER TABLE laser_requests ADD COLUMN progress_count INT NOT NULL DEFAULT 0 AFTER quantity");
+            }
+            $mysqli->close();
+        }
+    } catch (Exception $e) {
+        // Игнорируем ошибки миграции
+    }
+}
+
 // Функция для получения всех заявок из всех баз данных
 function getAllLaserRequests($databases) {
     $allRequests = [];
@@ -87,7 +104,7 @@ function getAllLaserRequests($databases) {
         }
         
         // Получаем заявки из текущей БД
-        $sql = "SELECT *, '{$department}' as source_department FROM laser_requests ORDER BY created_at DESC";
+        $sql = "SELECT id, user_name, department, component_name, quantity, progress_count, desired_delivery_time, is_completed, completed_at, created_at, '{$department}' as source_department FROM laser_requests ORDER BY created_at DESC";
         $result = $mysqli->query($sql);
         
         if ($result) {
@@ -107,6 +124,45 @@ function getAllLaserRequests($databases) {
     return $allRequests;
 }
 
+// === API для обновления прогресса заявки ===
+if (isset($_POST['action']) && $_POST['action'] === 'update_progress') {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        $request_id = (int)($_POST['request_id'] ?? 0);
+        $department = $_POST['department'] ?? '';
+        $progress = (int)($_POST['progress'] ?? 0);
+        
+        if ($request_id <= 0 || $department === '' || !isset($databases[$department])) {
+            echo json_encode(['success' => false, 'error' => 'Неверные параметры']);
+            exit;
+        }
+        
+        $dbConfig = $databases[$department];
+        $mysqli = new mysqli($dbConfig['host'], $dbConfig['user'], $dbConfig['pass'], $dbConfig['name']);
+        
+        if ($mysqli->connect_errno) {
+            echo json_encode(['success' => false, 'error' => 'Ошибка подключения к БД']);
+            exit;
+        }
+        
+        $stmt = $mysqli->prepare("UPDATE laser_requests SET progress_count = ? WHERE id = ?");
+        $stmt->bind_param("ii", $progress, $request_id);
+        
+        if ($stmt->execute()) {
+            echo json_encode(['success' => true, 'progress' => $progress]);
+        } else {
+            echo json_encode(['success' => false, 'error' => $mysqli->error]);
+        }
+        
+        $stmt->close();
+        $mysqli->close();
+        exit;
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        exit;
+    }
+}
+
 // Обработка отметки выполнения заявки
 if (isset($_POST['action']) && $_POST['action'] === 'mark_completed' && isset($_POST['request_id']) && isset($_POST['department'])) {
     $request_id = (int)$_POST['request_id'];
@@ -123,16 +179,25 @@ if (isset($_POST['action']) && $_POST['action'] === 'mark_completed' && isset($_
             $stmt->bind_param("i", $request_id);
             
             if ($stmt->execute()) {
-                $success_message = "Заявка отмечена как выполненная!";
+                $_SESSION['success_message'] = "Заявка отмечена как выполненная!";
             } else {
-                $error_message = "Ошибка при обновлении заявки";
+                $_SESSION['error_message'] = "Ошибка при обновлении заявки";
             }
             
             $stmt->close();
             $mysqli->close();
         }
     }
+    
+    // Редирект для предотвращения повторной отправки при обновлении страницы
+    header('Location: index.php');
+    exit;
 }
+
+// Получаем сообщения из сессии
+$success_message = $_SESSION['success_message'] ?? null;
+$error_message = $_SESSION['error_message'] ?? null;
+unset($_SESSION['success_message'], $_SESSION['error_message']);
 
 // Получаем все заявки
 $allRequests = getAllLaserRequests($databases);
@@ -278,6 +343,67 @@ $allRequests = getAllLaserRequests($databases);
         .department-U4 { background: #fef3c7; color: #92400e; }
         .department-U5 { background: #fce7f3; color: #be185d; }
         
+        /* Прогресс */
+        .progress-cell {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+        
+        .progress-input {
+            width: 70px;
+            padding: 4px 8px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        .progress-input:focus {
+            outline: none;
+            border-color: var(--accent-solid);
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .progress-total {
+            color: var(--muted);
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .btn-save-progress {
+            background: var(--accent-solid);
+            color: white;
+            border: none;
+            padding: 4px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+        
+        .btn-save-progress:hover {
+            opacity: 0.9;
+            transform: scale(1.05);
+        }
+        
+        .progress-bar-container {
+            width: 100%;
+            height: 6px;
+            background: #e5e7eb;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s ease;
+        }
+        
         .success-message {
             background: #dcfce7;
             border: 1px solid #bbf7d0;
@@ -408,19 +534,58 @@ $allRequests = getAllLaserRequests($databases);
                 <table class="requests-table">
                     <thead>
                         <tr>
+                            <th>Участок</th>
+                            <th>Подал заявку</th>
                             <th>Комплектующие</th>
-                            <th>Количество</th>
+                            <th>Прогресс</th>
+                            <th>Дата подачи</th>
                             <th>Время поставки</th>
                             <th>Действия</th>
                         </tr>
                     </thead>
                     <tbody id="requestsTableBody">
                         <?php if (count($allRequests) > 0): ?>
-                            <?php foreach ($allRequests as $request): ?>
+                            <?php foreach ($allRequests as $request): 
+                                $progress = (int)($request['progress_count'] ?? 0);
+                                $total = (int)$request['quantity'];
+                                $progressPercent = $total > 0 ? round(($progress / $total) * 100) : 0;
+                            ?>
                                 <tr data-status="<?= $request['is_completed'] ? 'completed' : 'pending' ?>" 
-                                    data-department="<?= $request['source_department'] ?>">
+                                    data-department="<?= $request['source_department'] ?>"
+                                    data-request-id="<?= $request['id'] ?>">
+                                    <td><span class="department-badge department-<?= $request['source_department'] ?>"><?= $request['source_department'] ?></span></td>
+                                    <td><?= htmlspecialchars($request['user_name'] ?? 'Не указано') ?></td>
                                     <td><?= htmlspecialchars($request['component_name']) ?></td>
-                                    <td><?= $request['quantity'] ?></td>
+                                    <td>
+                                        <?php if (!$request['is_completed']): ?>
+                                            <div class="progress-cell">
+                                                <input type="number" 
+                                                       class="progress-input" 
+                                                       value="<?= $progress > 0 ? $progress : '' ?>"
+                                                       placeholder="0"
+                                                       min="0" 
+                                                       max="<?= $total ?>"
+                                                       data-request-id="<?= $request['id'] ?>"
+                                                       data-department="<?= $request['source_department'] ?>"
+                                                       oninput="updateProgressBar(this)"
+                                                       onkeydown="if(event.key === 'Enter') saveProgress(this)">
+                                                <span class="progress-total">/ <?= $total ?></span>
+                                                <button type="button" class="btn-save-progress" onclick="saveProgress(this.previousElementSibling.previousElementSibling)" title="Сохранить">✓</button>
+                                            </div>
+                                            <div class="progress-bar-container">
+                                                <div class="progress-bar-fill" style="width: <?= $progressPercent ?>%"></div>
+                                            </div>
+                                        <?php else: ?>
+                                            <span class="status-completed"><?= $progress ?> / <?= $total ?> (100%)</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <?php if ($request['created_at']): ?>
+                                            <?= date('d.m.Y H:i', strtotime($request['created_at'])) ?>
+                                        <?php else: ?>
+                                            Не указано
+                                        <?php endif; ?>
+                                    </td>
                                     <td>
                                         <?php if ($request['desired_delivery_time']): ?>
                                             <?= date('d.m.Y H:i', strtotime($request['desired_delivery_time'])) ?>
@@ -434,8 +599,7 @@ $allRequests = getAllLaserRequests($databases);
                                                 <input type="hidden" name="action" value="mark_completed">
                                                 <input type="hidden" name="request_id" value="<?= $request['id'] ?>">
                                                 <input type="hidden" name="department" value="<?= $request['source_department'] ?>">
-                                                <button type="submit" class="btn-complete" 
-                                                        onclick="return confirm('Отметить заявку как выполненную?')">
+                                                <button type="submit" class="btn-complete">
                                                     Выполнено
                                                 </button>
                                             </form>
@@ -447,7 +611,7 @@ $allRequests = getAllLaserRequests($databases);
                             <?php endforeach; ?>
                         <?php else: ?>
                             <tr>
-                                <td colspan="4" style="text-align: center; color: var(--muted); padding: 40px;">
+                                <td colspan="7" style="text-align: center; color: var(--muted); padding: 40px;">
                                     Нет заявок на лазерную резку
                                 </td>
                             </tr>
@@ -503,6 +667,9 @@ $allRequests = getAllLaserRequests($databases);
         async function updateTable() {
             if (isUpdating) return;
             isUpdating = true;
+            
+            // Сохраняем текущие несохраненные значения перед обновлением
+            savePendingProgress();
             
             // Обновляем индикатор состояния
             updateConnectionStatus('🟡 Обновление...');
@@ -635,7 +802,7 @@ $allRequests = getAllLaserRequests($databases);
             if (requests.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="4" style="text-align: center; color: var(--muted); padding: 40px;">
+                        <td colspan="7" style="text-align: center; color: var(--muted); padding: 40px;">
                             Нет заявок на лазерную резку
                         </td>
                     </tr>
@@ -654,6 +821,36 @@ $allRequests = getAllLaserRequests($databases);
                     : 'Не указано';
                 
                 const createdTime = new Date(request.created_at).toLocaleString('ru-RU');
+                const userName = request.user_name ? escapeHtml(request.user_name) : 'Не указано';
+                
+                const progress = parseInt(request.progress_count) || 0;
+                const total = parseInt(request.quantity) || 1;
+                const progressPercent = Math.round((progress / total) * 100);
+                
+                let progressHtml;
+                if (!isCompleted) {
+                    progressHtml = `
+                        <div class="progress-cell">
+                            <input type="number" 
+                                   class="progress-input" 
+                                   value="${progress > 0 ? progress : ''}"
+                                   placeholder="0"
+                                   min="0" 
+                                   max="${total}"
+                                   data-request-id="${request.id}"
+                                   data-department="${request.source_department}"
+                                   oninput="updateProgressBar(this)"
+                                   onkeydown="if(event.key === 'Enter') saveProgress(this)">
+                            <span class="progress-total">/ ${total}</span>
+                            <button type="button" class="btn-save-progress" onclick="saveProgress(this.previousElementSibling.previousElementSibling)" title="Сохранить">✓</button>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-fill" style="width: ${progressPercent}%"></div>
+                        </div>
+                    `;
+                } else {
+                    progressHtml = `<span class="status-completed">${progress} / ${total} (100%)</span>`;
+                }
                 
                 let actionHtml;
                 if (!isCompleted) {
@@ -662,8 +859,7 @@ $allRequests = getAllLaserRequests($databases);
                             <input type="hidden" name="action" value="mark_completed">
                             <input type="hidden" name="request_id" value="${request.id}">
                             <input type="hidden" name="department" value="${request.source_department}">
-                            <button type="submit" class="btn-complete" 
-                                    onclick="return confirm('Отметить заявку как выполненную?')">
+                            <button type="submit" class="btn-complete">
                                 Выполнено
                             </button>
                         </form>
@@ -674,9 +870,13 @@ $allRequests = getAllLaserRequests($databases);
                 
                 return `
                     <tr data-status="${isCompleted ? 'completed' : 'pending'}" 
-                        data-department="${request.source_department}">
+                        data-department="${request.source_department}"
+                        data-request-id="${request.id}">
+                        <td><span class="department-badge department-${request.source_department}">${request.source_department}</span></td>
+                        <td>${userName}</td>
                         <td>${escapeHtml(request.component_name)}</td>
-                        <td>${request.quantity}</td>
+                        <td>${progressHtml}</td>
+                        <td>${createdTime}</td>
                         <td>${deliveryTime}</td>
                         <td>${actionHtml}</td>
                     </tr>
@@ -685,8 +885,42 @@ $allRequests = getAllLaserRequests($databases);
             
             tbody.innerHTML = html;
             
+            // Восстанавливаем несохраненные значения из localStorage
+            restorePendingProgress();
+            
+            // Добавляем обработчики для автосохранения при вводе
+            attachInputHandlers();
+            
             // Восстанавливаем состояние фильтров после обновления таблицы
             restoreFilterState();
+        }
+        
+        // === Добавление обработчиков для автосохранения ===
+        function attachInputHandlers() {
+            const progressInputs = document.querySelectorAll('.progress-input');
+            progressInputs.forEach(input => {
+                input.addEventListener('input', function() {
+                    // Обновляем прогресс-бар в реальном времени (внутри также сохраняется в localStorage)
+                    updateProgressBar(this);
+                });
+            });
+        }
+        
+        // === Обновление прогресс-бара в реальном времени ===
+        function updateProgressBar(inputElement) {
+            const progress = parseInt(inputElement.value) || 0;
+            const total = parseInt(inputElement.max) || 1;
+            const percent = Math.round((progress / total) * 100);
+            
+            const row = inputElement.closest('tr');
+            const progressBar = row.querySelector('.progress-bar-fill');
+            
+            if (progressBar) {
+                progressBar.style.width = percent + '%';
+            }
+            
+            // Также сохраняем в localStorage
+            savePendingProgress();
         }
         
         // Функция для экранирования HTML
@@ -838,6 +1072,114 @@ $allRequests = getAllLaserRequests($databases);
             }
         }
         
+        // === Автосохранение несохраненных значений в localStorage ===
+        function savePendingProgress() {
+            const progressInputs = document.querySelectorAll('.progress-input');
+            const pendingData = {};
+            
+            progressInputs.forEach(input => {
+                const requestId = input.dataset.requestId;
+                const department = input.dataset.department;
+                const value = input.value.trim();
+                
+                if (requestId && department && value !== '') {
+                    const key = `${department}_${requestId}`;
+                    pendingData[key] = value;
+                }
+            });
+            
+            localStorage.setItem('laser_operator_pending_progress', JSON.stringify(pendingData));
+        }
+        
+        // === Восстановление несохраненных значений из localStorage ===
+        function restorePendingProgress() {
+            try {
+                const savedData = localStorage.getItem('laser_operator_pending_progress');
+                if (!savedData) return;
+                
+                const pendingData = JSON.parse(savedData);
+                
+                Object.keys(pendingData).forEach(key => {
+                    const [department, requestId] = key.split('_');
+                    const input = document.querySelector(
+                        `.progress-input[data-request-id="${requestId}"][data-department="${department}"]`
+                    );
+                    
+                    if (input && input.value === '') {
+                        input.value = pendingData[key];
+                    }
+                });
+            } catch (error) {
+                console.error('Ошибка восстановления данных:', error);
+            }
+        }
+        
+        // === Очистка сохраненного значения после успешной отправки ===
+        function clearPendingProgress(requestId, department) {
+            try {
+                const savedData = localStorage.getItem('laser_operator_pending_progress');
+                if (!savedData) return;
+                
+                const pendingData = JSON.parse(savedData);
+                const key = `${department}_${requestId}`;
+                
+                delete pendingData[key];
+                localStorage.setItem('laser_operator_pending_progress', JSON.stringify(pendingData));
+            } catch (error) {
+                console.error('Ошибка очистки данных:', error);
+            }
+        }
+        
+        // === Сохранение прогресса ===
+        async function saveProgress(inputElement) {
+            const requestId = inputElement.dataset.requestId;
+            const department = inputElement.dataset.department;
+            const progress = parseInt(inputElement.value) || 0;
+            
+            if (!requestId || !department) {
+                console.error('Отсутствуют необходимые данные');
+                return;
+            }
+            
+            try {
+                const formData = new FormData();
+                formData.append('action', 'update_progress');
+                formData.append('request_id', requestId);
+                formData.append('department', department);
+                formData.append('progress', progress);
+                
+                const response = await fetch(window.location.pathname, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Очищаем сохраненное значение из localStorage
+                    clearPendingProgress(requestId, department);
+                    
+                    // Обновляем прогресс-бар
+                    const row = inputElement.closest('tr');
+                    const progressBar = row.querySelector('.progress-bar-fill');
+                    const total = parseInt(inputElement.max) || 1;
+                    const percent = Math.round((progress / total) * 100);
+                    
+                    if (progressBar) {
+                        progressBar.style.width = percent + '%';
+                    }
+                    
+                    // Показываем уведомление
+                    console.log('Прогресс сохранен:', progress);
+                } else {
+                    alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+                }
+            } catch (error) {
+                console.error('Error saving progress:', error);
+                alert('Ошибка при сохранении прогресса');
+            }
+        }
+        
         function restoreFilterState() {
             const savedFilter = localStorage.getItem('laser_operator_filter') || 'pending';
             const buttons = document.querySelectorAll('.filter-btn');
@@ -884,6 +1226,12 @@ $allRequests = getAllLaserRequests($databases);
             // Восстанавливаем состояние фильтров
             restoreFilterState();
             
+            // Восстанавливаем несохраненные значения из localStorage
+            restorePendingProgress();
+            
+            // Добавляем обработчики для автосохранения при вводе
+            attachInputHandlers();
+            
             // Запрашиваем разрешение на уведомления с проверкой поддержки
             try {
                 if (typeof Notification !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
@@ -895,11 +1243,10 @@ $allRequests = getAllLaserRequests($databases);
                 console.log('Notification API не поддерживается:', error);
             }
             
-            // Определяем интервал обновления в зависимости от устройства
-            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-            const updateInterval = isMobile ? 10000 : 5000; // 10 секунд для мобильных, 5 для десктопа
+            // Увеличенный интервал обновления для предотвращения потери данных
+            const updateInterval = 60000; // 60 секунд (1 минута)
             
-            console.log(`Device type: ${isMobile ? 'Mobile' : 'Desktop'}, Update interval: ${updateInterval}ms`);
+            console.log(`Update interval: ${updateInterval}ms (60 секунд)`);
             
             // Обновляем таблицу с соответствующим интервалом
             setInterval(updateTable, updateInterval);

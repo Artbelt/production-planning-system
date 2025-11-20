@@ -21,14 +21,15 @@ try {
         exit;
     }
 
-    // Поиск позиций по названию фильтра только для активных заявок
+    // Поиск позиций по названию фильтра только для активных заявок (отдельно по рулонам)
     $stmt = $pdo->prepare("
         SELECT 
+            cp.id,
             cp.order_number,
             cp.filter_label,
             cp.plan_date,
-            SUM(cp.count) as plan_sum,
-            SUM(cp.fact_count) as fact_sum
+            cp.count as plan_sum,
+            cp.fact_count as fact_sum
         FROM corrugation_plan cp
         WHERE cp.filter_label LIKE :filter_name
           AND cp.order_number IN (
@@ -36,9 +37,8 @@ try {
               FROM orders 
               WHERE hide IS NULL OR hide != 1
           )
-        GROUP BY cp.order_number, cp.filter_label, cp.plan_date
-        ORDER BY cp.plan_date DESC, cp.order_number, cp.filter_label
-        LIMIT 50
+        ORDER BY cp.plan_date DESC, cp.order_number, cp.filter_label, cp.id
+        LIMIT 100
     ");
     
     $stmt->execute(['filter_name' => '%' . $filterName . '%']);

@@ -38,10 +38,22 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
         $raw = file_get_contents('php://input');
         $payload = $raw ? json_decode($raw, true) : [];
 
-        $normalizeFilter = function($s){
+        $normalizeFilter = function($s) use ($pdo) {
             $s = str_replace("\xC2\xA0", ' ', (string)$s);      // NBSP -> обычный пробел
             $s = preg_replace('/\s+/u', ' ', $s);               // схлопываем повторяющиеся пробелы/табуляции
-            return trim($s);
+            $s = trim($s);
+            
+            // Проверяем в таблице round_filter_structure для получения правильного регистра
+            if ($s !== '') {
+                $stmt = $pdo->prepare("SELECT filter FROM round_filter_structure WHERE UPPER(filter) = UPPER(?) LIMIT 1");
+                $stmt->execute([$s]);
+                $result = $stmt->fetch(PDO::FETCH_ASSOC);
+                if ($result) {
+                    return $result['filter']; // Возвращаем название с правильным регистром
+                }
+            }
+            
+            return $s;
         };
 
         /* save_plan ---------------------------------------------------------- */

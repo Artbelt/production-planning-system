@@ -20,21 +20,29 @@ function show_ads(){
 
     global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
 
-    $host = $mysql_host;
-    $db = $mysql_database;
-    $user = $mysql_user;
-    $pass = $mysql_user_pass;
-
-    try {
-        $pdo = new PDO("mysql:host=$host;dbname=$db", $user, $pass);
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-
-        // Запрос активных объявлений
-        $stmt = $pdo->prepare("SELECT * FROM ads WHERE expires_at >= NOW() ORDER BY expires_at ASC");
-        $stmt->execute();
-        $ads = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    } catch (PDOException $e) {
-        die("Ошибка подключения: " . $e->getMessage());
+    // ОПТИМИЗАЦИЯ: кэшируем объявления на 60 секунд
+    static $cached_ads = null;
+    static $cache_time = null;
+    
+    if ($cached_ads !== null && $cache_time !== null && (time() - $cache_time) < 60) {
+        $ads = $cached_ads;
+    } else {
+        $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+        if ($mysqli->connect_errno) {
+            $ads = [];
+        } else {
+            $stmt = $mysqli->prepare("SELECT title, content, expires_at FROM ads WHERE expires_at >= NOW() ORDER BY expires_at ASC");
+            if ($stmt && $stmt->execute()) {
+                $result = $stmt->get_result();
+                $ads = $result->fetch_all(MYSQLI_ASSOC);
+                $stmt->close();
+            } else {
+                $ads = [];
+            }
+            $mysqli->close();
+        }
+        $cached_ads = $ads;
+        $cache_time = time();
     }
     ?>
     <style>
@@ -244,28 +252,46 @@ function load_orders($list){
 function load_planned_orders(){
     global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
 
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
+    // ОПТИМИЗАЦИЯ: кэшируем список распланированных заявок на 2 минуты
+    static $cached_orders = null;
+    static $cache_time = null;
     
-    // Получаем только заявки, которые есть в таблице build_plan (распланированные)
-    $sql = "SELECT DISTINCT o.order_number, o.workshop 
-            FROM orders o 
-            INNER JOIN build_plan bp ON o.order_number = bp.order_number 
-            ORDER BY o.order_number DESC";
-    
-    if (!$result = $mysqli->query($sql)){
-        echo "Ошибка: {$mysqli->error}";
-        exit;
+    if ($cached_orders !== null && $cache_time !== null && (time() - $cache_time) < 120) {
+        $orders = $cached_orders;
+    } else {
+        $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
+        
+        // Оптимизированный запрос: используем подзапрос вместо JOIN для скорости
+        $sql = "SELECT DISTINCT order_number 
+                FROM build_plan 
+                WHERE order_number IS NOT NULL 
+                ORDER BY order_number DESC 
+                LIMIT 500";
+        
+        if (!$result = $mysqli->query($sql)){
+            echo "Ошибка: {$mysqli->error}";
+            exit;
+        }
+
+        $orders = [];
+        while ($row = $result->fetch_assoc()) {
+            $orders[] = $row['order_number'];
+        }
+        
+        $result->close();
+        $mysqli->close();
+        
+        // Сохраняем в кэш
+        $cached_orders = $orders;
+        $cache_time = time();
     }
 
     echo "<select id='selected_order' name='order_number'>";
-    while ($row = $result->fetch_assoc()) {
-        $val = htmlspecialchars($row['order_number'], ENT_QUOTES, 'UTF-8');
+    foreach ($orders as $order_num) {
+        $val = htmlspecialchars($order_num, ENT_QUOTES, 'UTF-8');
         echo "<option value=\"$val\">$val</option>";
     }
     echo "</select>";
-    
-    $result->close();
-    $mysqli->close();
 }
 
 /** СОздание <SELECT> списка с перечнем фильтров имеющихся в БД */
@@ -273,34 +299,47 @@ function load_filters_into_select(){
 
     global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
 
-    /** Создаем подключение к БД */
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
+    // ОПТИМИЗАЦИЯ: кэшируем список фильтров на 5 минут
+    static $cached_filters = null;
+    static $cache_time = null;
+    
+    if ($cached_filters !== null && $cache_time !== null && (time() - $cache_time) < 300) {
+        $sorted_values = $cached_filters;
+    } else {
+        /** Создаем подключение к БД */
+        $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
 
-    /** Выполняем запрос SQL для загрузки заявок*/
-    $sql = "SELECT DISTINCT filter FROM salon_filter_structure;";
+        /** Выполняем запрос SQL с LIMIT и фильтрацией пустых значений */
+        $sql = "SELECT DISTINCT filter FROM salon_filter_structure WHERE filter IS NOT NULL AND filter != '' ORDER BY filter LIMIT 5000;";
 
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-        exit;
+        /** Если запрос не удачный -> exit */
+        if (!$result = $mysqli->query($sql)){ 
+            echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
+            exit;
+        }
+
+        /** Собираем фильтры в массив (уже отсортированные запросом) */
+        $sorted_values = array();
+        while ($orders_data = $result->fetch_assoc()){
+            $sorted_values[] = $orders_data['filter'];
+        }
+        
+        /** Закрываем соединение */
+        $result->close();
+        $mysqli->close();
+        
+        // Сохраняем в кэш
+        $cached_filters = $sorted_values;
+        $cache_time = time();
     }
-
-    /** Создаем промежуточный массив для сортировки в него записываем данные, сортируем и выводим в список */
-    $sorted_values = array();
-    while ($orders_data = $result->fetch_assoc()){
-        array_push($sorted_values, $orders_data['filter']);
-    }
-    sort($sorted_values);
+    
+    /** Выводим select с экранированием */
     echo "<select name='analog_filter'>";
     echo "<option value=''>выбор фильтра</option>";
-    for ($x=0; $x < count($sorted_values); $x++){
-        echo "<option value='".$sorted_values[$x]."'>".$sorted_values[$x]."</option>";
+    foreach ($sorted_values as $filter){
+        echo "<option value='".htmlspecialchars($filter)."'>".htmlspecialchars($filter)."</option>";
     }
     echo "</select>";
-
-
-    /** Закрываем соединение */
-    $result->close();
-    $mysqli->close();
 }
 
 
@@ -692,103 +731,90 @@ function get_salon_filter_data($target_filter){
     if (isset( $paper_package_data['p_p_material'])){$result_array['paper_package_material'] = $paper_package_data['p_p_material'];}else{$result_array['paper_package_material'] ='';}
 
 
-    /** Вставка */
+    /** Получаем все данные из salon_filter_structure одним запросом */
     $sql = "SELECT * FROM salon_filter_structure WHERE filter = '".$target_filter."';";
     /** Если запрос не удачный -> exit */
     if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-   /** Разбор массивыа значений */
+   /** Разбор массива значений */
     $salon_filter_data = $result->fetch_assoc();
 
+    /** Вставка */
     if (isset($salon_filter_data['insertion_count'])){$result_array['insertion_count'] = $salon_filter_data['insertion_count'];}else{$result_array['insertion_count'] = '';}
 
-
     /** КОРОБКА ИНДИВИДУАЛЬНАЯ */
-    /** Выполняем запрос SQL */
-    $sql = "SELECT box FROM salon_filter_structure WHERE filter = '".$target_filter."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $box_data = $result->fetch_assoc();
-
-    if (isset($box_data['box'])){$result_array['box'] = $box_data['box'];}else{$result_array['box'] ='';}
+    if (isset($salon_filter_data['box'])){$result_array['box'] = $salon_filter_data['box'];}else{$result_array['box'] ='';}
 
     /** КОРОБКА ГРУППОВАЯ */
-    /** Выполняем запрос SQL */
-    $sql = "SELECT g_box FROM salon_filter_structure WHERE filter = '".$target_filter."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $g_box_data = $result->fetch_assoc();
-
-    if (isset($g_box_data['g_box'])){$result_array['g_box'] = $g_box_data['g_box'];}else{$result_array['g_box'] = '';}
-
+    if (isset($salon_filter_data['g_box'])){$result_array['g_box'] = $salon_filter_data['g_box'];}else{$result_array['g_box'] = '';}
 
     /** ПРИМЕЧАНИЯ */
-    /** Выполняем запрос SQL */
-    $sql = "SELECT comment FROM salon_filter_structure WHERE filter = '".$target_filter."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $comment_data = $result->fetch_assoc();
-
-    if (isset($comment_data['comment'])){$result_array['comment'] = $comment_data['comment'];}else{$result_array['comment'] = '';}
-
+    if (isset($salon_filter_data['comment'])){$result_array['comment'] = $salon_filter_data['comment'];}else{$result_array['comment'] = '';}
 
     /** Поролон */
-    $sql = "SELECT foam_rubber FROM salon_filter_structure WHERE filter = '".$target_filter."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $foam_rubber_data = $result->fetch_assoc();
-
-
-    if (isset($foam_rubber_data['foam_rubber'])){$result_array['foam_rubber'] = $foam_rubber_data['foam_rubber'];}else{$result_array['foam_rubber'] = '';}
-
+    if (isset($salon_filter_data['foam_rubber'])){$result_array['foam_rubber'] = $salon_filter_data['foam_rubber'];}else{$result_array['foam_rubber'] = '';}
 
     if ($result_array['foam_rubber'] == 'поролон'){
         $result_array['foam_rubber_checkbox_state'] = 'checked';
     } else  $result_array['foam_rubber_checkbox_state'] = '';
 
     /** Язычек */
-    $sql = "SELECT tail FROM salon_filter_structure WHERE filter = '".$target_filter."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $tail_data = $result->fetch_assoc();
-
-
-
-    if (isset($tail_data['tail'])){$result_array['tail'] = $tail_data['tail'];}else{$result_array['tail'] = '';}
-
+    if (isset($salon_filter_data['tail'])){$result_array['tail'] = $salon_filter_data['tail'];}else{$result_array['tail'] = '';}
 
     if ($result_array['tail']  == 'язычек'){
         $result_array['tail_checkbox_state'] = 'checked';
     } else  $result_array['tail_checkbox_state'] = '';
 
     /** Форма */
-    $sql = "SELECT form_factor FROM salon_filter_structure WHERE filter = '".$target_filter."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $form_factor_data = $result->fetch_assoc();
-
-
-    if (isset($form_factor_data['form_factor'])){$result_array['form_factor'] = $form_factor_data['form_factor'];}else{$result_array['form_factor'] ='';}
+    if (isset($salon_filter_data['form_factor'])){$result_array['form_factor'] = $salon_filter_data['form_factor'];}else{$result_array['form_factor'] ='';}
 
     if ($result_array['form_factor'] == 'трапеция'){
         $result_array['form_factor_checkbox_state'] = 'checked';
     } else  $result_array['form_factor_checkbox_state'] = '';
 
     /** Высота ленты*/
-    $sql = "SELECT side_type FROM salon_filter_structure WHERE filter = '".$target_filter."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $side_type_data = $result->fetch_assoc();
+    if (isset($salon_filter_data['side_type'])){$result_array['side_type'] = $salon_filter_data['side_type'];}else{$result_array['side_type'] ='';}
 
-    if (isset($side_type_data['side_type'])){$result_array['side_type'] = $side_type_data['side_type'];}else{$result_array['side_type'] ='';}
+    /** Надрезы */
+    if (isset($salon_filter_data['has_edge_cuts'])){
+        $result_array['has_edge_cuts'] = intval($salon_filter_data['has_edge_cuts']);
+    } else {
+        $result_array['has_edge_cuts'] = 0;
+    }
 
+    /** Тариф и сложность производства */
+    $tariff_complexity_data = $salon_filter_data;
 
+    if (isset($tariff_complexity_data['tariff_id']) && $tariff_complexity_data['tariff_id']){
+        $result_array['tariff_id'] = $tariff_complexity_data['tariff_id'];
+        
+        // Получаем информацию о тарифе из таблицы salary_tariffs
+        $tariff_id = $tariff_complexity_data['tariff_id'];
+        $sql_tariff = "SELECT tariff_name, rate_per_unit, type FROM salary_tariffs WHERE id = '".$tariff_id."';";
+        if ($result_tariff = $mysqli->query($sql_tariff)){
+            $tariff_data = $result_tariff->fetch_assoc();
+            if ($tariff_data){
+                $result_array['tariff_name'] = $tariff_data['tariff_name'] ?? '';
+                $result_array['tariff_rate'] = $tariff_data['rate_per_unit'] ?? '';
+                $result_array['tariff_type'] = $tariff_data['type'] ?? '';
+            } else {
+                $result_array['tariff_name'] = '';
+                $result_array['tariff_rate'] = '';
+                $result_array['tariff_type'] = '';
+            }
+            $result_tariff->close();
+        } else {
+            $result_array['tariff_name'] = '';
+            $result_array['tariff_rate'] = '';
+            $result_array['tariff_type'] = '';
+        }
+    } else {
+        $result_array['tariff_id'] = '';
+        $result_array['tariff_name'] = '';
+        $result_array['tariff_rate'] = '';
+        $result_array['tariff_type'] = '';
+    }
+
+    if (isset($tariff_complexity_data['build_complexity'])){$result_array['build_complexity'] = $tariff_complexity_data['build_complexity'];}else{$result_array['build_complexity'] = '';}
 
     /** Закрываем соединение */
     $result->close();

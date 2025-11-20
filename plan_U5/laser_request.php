@@ -103,6 +103,18 @@ foreach ($userDepartments as $dept) {
     }
 }
 
+// Получаем сообщение из сессии, если есть
+$success_message = null;
+$error_message = null;
+if (isset($_SESSION['success_message'])) {
+    $success_message = $_SESSION['success_message'];
+    unset($_SESSION['success_message']);
+}
+if (isset($_SESSION['error_message'])) {
+    $error_message = $_SESSION['error_message'];
+    unset($_SESSION['error_message']);
+}
+
 // Обработка добавления нового комплектующего (только для мастеров)
 if (isset($_POST['action']) && $_POST['action'] === 'add_component' && $isSupervisor) {
     $component_name = trim($_POST['component_name'] ?? '');
@@ -114,15 +126,19 @@ if (isset($_POST['action']) && $_POST['action'] === 'add_component' && $isSuperv
         $stmt->bind_param("sss", $component_name, $component_description, $user['full_name']);
         
         if ($stmt->execute()) {
-            $success_message = "Комплектующее успешно добавлено!";
+            $_SESSION['success_message'] = "Комплектующее успешно добавлено!";
         } else {
             if ($mysqli->errno === 1062) { // Duplicate entry
-                $error_message = "Комплектующее с таким названием уже существует!";
+                $_SESSION['error_message'] = "Комплектующее с таким названием уже существует!";
             } else {
-                $error_message = "Ошибка при добавлении комплектующего!";
+                $_SESSION['error_message'] = "Ошибка при добавлении комплектующего!";
             }
         }
         $stmt->close();
+        
+        // Редирект для предотвращения повторной отправки при обновлении страницы
+        header('Location: laser_request.php');
+        exit;
     }
 }
 
@@ -138,12 +154,19 @@ if ($components_result) {
 
 // Обработка отправки формы
 if (isset($_POST['action']) && $_POST['action'] === 'submit_request') {
-    $component_name = trim($_POST['component_name'] ?? '');
+    $component_type = trim($_POST['component_type'] ?? '');
+    $component_detail = trim($_POST['component_detail'] ?? '');
     $quantity = (int)($_POST['quantity'] ?? 0);
     $desired_delivery_date = $_POST['desired_delivery_date'] ?? '';
     $desired_delivery_hour = $_POST['desired_delivery_hour'] ?? '';
     
-    if ($component_name && $quantity > 0) {
+    // Объединяем тип и дополнительную информацию в одно название
+    $component_name = $component_type;
+    if ($component_detail) {
+        $component_name .= ' - ' . $component_detail;
+    }
+    
+    if ($component_type && $quantity > 0) {
         $insert_sql = "INSERT INTO laser_requests (user_name, department, component_name, quantity, desired_delivery_time) VALUES (?, ?, ?, ?, ?)";
         $stmt = $mysqli->prepare($insert_sql);
         
@@ -157,7 +180,10 @@ if (isset($_POST['action']) && $_POST['action'] === 'submit_request') {
         $stmt->execute();
         $stmt->close();
         
-        $success_message = "Заявка успешно отправлена!";
+        // Редирект для предотвращения повторной отправки при обновлении страницы
+        $_SESSION['success_message'] = "Заявка успешно отправлена!";
+        header('Location: laser_request.php');
+        exit;
     }
 }
 
@@ -180,8 +206,12 @@ if (isset($_POST['action']) && $_POST['action'] === 'mark_completed' && isset($_
         $stmt->execute();
         $stmt->close();
         
-        $success_message = "Заявка отмечена как выполненная!";
+        $_SESSION['success_message'] = "Заявка отмечена как выполненная!";
     }
+    
+    // Редирект для предотвращения повторной отправки при обновлении страницы
+    header('Location: laser_request.php');
+    exit;
 }
 
 // Получение заявок пользователя
@@ -511,6 +541,120 @@ $stmt->close();
             background: rgba(255,255,255,0.3);
         }
         
+        /* Стили для кнопки и панели цифр */
+        .btn-numpad {
+            background: var(--accent-solid);
+            color: var(--accent-ink);
+            border: none;
+            border-radius: var(--radius-sm);
+            padding: 8px 12px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 12px;
+            transition: all 0.2s;
+            white-space: nowrap;
+            min-width: 45px;
+            height: 38px;
+        }
+        
+        .btn-numpad:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        
+        .numpad-panel {
+            margin-top: 12px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            box-shadow: var(--shadow);
+            display: none;
+            animation: slideDown 0.3s ease;
+            overflow: hidden;
+        }
+        
+        .numpad-panel.active {
+            display: block;
+        }
+        
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .numpad-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            background: var(--accent);
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .numpad-title {
+            color: var(--accent-ink);
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        .numpad-close {
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: var(--accent-ink);
+            border-radius: 50%;
+            width: 28px;
+            height: 28px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 18px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            line-height: 1;
+        }
+        
+        .numpad-close:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: rotate(90deg);
+        }
+        
+        .numpad-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            padding: 16px;
+        }
+        
+        .numpad-btn {
+            background: var(--accent-solid);
+            color: var(--accent-ink);
+            border: none;
+            border-radius: var(--radius-sm);
+            padding: 16px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 16px;
+            transition: all 0.2s;
+            min-height: 50px;
+        }
+        
+        .numpad-btn:hover {
+            opacity: 0.9;
+            transform: scale(1.05);
+        }
+        
+        .numpad-btn:active {
+            transform: scale(0.95);
+        }
+        
     </style>
 </head>
 <body>
@@ -536,35 +680,99 @@ $stmt->close();
                 <input type="hidden" name="action" value="submit_request">
                 
                 <div class="form-group">
-                    <label for="component_name">Комплектующие:</label>
-                    <input type="text" id="component_name" name="component_name" required 
-                           placeholder="Введите название комплектующих..." 
-                           autocomplete="off" list="components_datalist">
-                    <datalist id="components_datalist">
-                        <?php foreach ($components_list as $component): ?>
-                            <option value="<?= htmlspecialchars($component) ?>">
-                        <?php endforeach; ?>
-                    </datalist>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div>
+                            <label for="component_type">Комплектующее:</label>
+                            <select id="component_type" name="component_type" required>
+                                <option value="">Выберите тип</option>
+                                <option value="Фланец">Фланец</option>
+                                <option value="Вставка">Вставка</option>
+                                <option value="Язычек">Язычек</option>
+                                <option value="Язычек">Рамка</option>
+                                <option value="Коробка">Коробка</option>
+                                <option value="Ящик">Ящик</option>
+                                <option value="Поролон">Поролон</option>
+                                <option value="Форсунка">Форсунка</option>
+                                <option value="Боковая лента">Боковая лента</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label for="component_detail">Номер:</label>
+                            <input type="text" id="component_detail" name="component_detail" 
+                                   placeholder="Введите номер..." 
+                                   autocomplete="off"
+                                   inputmode="none"
+                                   onfocus="openNumpadOnFocus()">
+                        </div>
+                    </div>
+                    <div id="numpad" class="numpad-panel">
+                        <div class="numpad-header">
+                            <span class="numpad-title">Панель ввода</span>
+                            <button type="button" class="numpad-close" onclick="closeNumpad()" title="Закрыть">✕</button>
+                        </div>
+                        <div class="numpad-grid">
+                            <button type="button" class="numpad-btn" onclick="insertNumber('1')">1</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumber('2')">2</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumber('3')">3</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumber('4')">4</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumber('5')">5</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumber('6')">6</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumber('7')">7</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumber('8')">8</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumber('9')">9</button>
+                            <button type="button" class="numpad-btn" onclick="clearInput()">C</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumber('0')">0</button>
+                            <button type="button" class="numpad-btn" onclick="backspaceInput()">⌫</button>
+                        </div>
+                    </div>
                 </div>
                 
                 <div class="form-group">
                     <label for="quantity">Количество штук:</label>
-                    <input type="number" id="quantity" name="quantity" required min="1" placeholder="Введите количество">
+                    <input type="text" id="quantity" name="quantity" required 
+                           placeholder="Введите количество" 
+                           autocomplete="off"
+                           inputmode="none"
+                           onfocus="openNumpadForField('quantity')" pattern="[0-9]+">
+                    <div id="numpad-quantity" class="numpad-panel">
+                        <div class="numpad-header">
+                            <span class="numpad-title">Панель ввода</span>
+                            <button type="button" class="numpad-close" onclick="closeNumpadForField('quantity')" title="Закрыть">✕</button>
+                        </div>
+                        <div class="numpad-grid">
+                            <button type="button" class="numpad-btn" onclick="insertNumberToField('quantity', '1')">1</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumberToField('quantity', '2')">2</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumberToField('quantity', '3')">3</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumberToField('quantity', '4')">4</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumberToField('quantity', '5')">5</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumberToField('quantity', '6')">6</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumberToField('quantity', '7')">7</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumberToField('quantity', '8')">8</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumberToField('quantity', '9')">9</button>
+                            <button type="button" class="numpad-btn" onclick="clearInputField('quantity')">C</button>
+                            <button type="button" class="numpad-btn" onclick="insertNumberToField('quantity', '0')">0</button>
+                            <button type="button" class="numpad-btn" onclick="backspaceInputField('quantity')">⌫</button>
+                        </div>
+                    </div>
                 </div>
                 
                 <div class="form-group">
-                    <label for="desired_delivery_date">Дата поставки:</label>
-                    <input type="date" id="desired_delivery_date" name="desired_delivery_date">
-                </div>
-                
-                <div class="form-group">
-                    <label for="desired_delivery_hour">Время поставки (час):</label>
-                    <select id="desired_delivery_hour" name="desired_delivery_hour">
-                        <option value="">Выберите час</option>
-                        <?php for ($h = 8; $h <= 18; $h++): ?>
-                            <option value="<?= sprintf('%02d', $h) ?>"><?= sprintf('%02d', $h) ?>:00</option>
-                        <?php endfor; ?>
-                    </select>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div>
+                            <label for="desired_delivery_date">Дата поставки:</label>
+                            <input type="date" id="desired_delivery_date" name="desired_delivery_date">
+                        </div>
+                        <div>
+                            <label for="desired_delivery_hour">Время:</label>
+                            <select id="desired_delivery_hour" name="desired_delivery_hour">
+                                <option value="">необязательно</option>
+                                <?php for ($h = 8; $h <= 18; $h++): ?>
+                                    <option value="<?= sprintf('%02d', $h) ?>"><?= sprintf('%02d', $h) ?>:00</option>
+                                <?php endfor; ?>
+                            </select>
+                        </div>
+                    </div>
                 </div>
                 
                 <button type="submit" class="btn">Отправить заявку</button>
@@ -648,6 +856,163 @@ $stmt->close();
             if (dateInput) {
                 const today = new Date();
                 dateInput.min = today.toISOString().split('T')[0];
+            }
+        });
+        
+        // Функции для работы с панелью цифр
+        function toggleNumpad() {
+            const numpad = document.getElementById('numpad');
+            if (numpad) {
+                numpad.classList.toggle('active');
+            }
+        }
+        
+        function openNumpadOnFocus() {
+            const numpad = document.getElementById('numpad');
+            if (numpad && !numpad.classList.contains('active')) {
+                numpad.classList.add('active');
+            }
+        }
+        
+        function closeNumpad() {
+            const numpad = document.getElementById('numpad');
+            if (numpad) {
+                numpad.classList.remove('active');
+            }
+        }
+        
+        function insertNumber(num) {
+            const input = document.getElementById('component_detail');
+            if (input) {
+                const cursorPos = input.selectionStart || input.value.length;
+                const textBefore = input.value.substring(0, cursorPos);
+                const textAfter = input.value.substring(cursorPos);
+                input.value = textBefore + num + textAfter;
+                
+                // Устанавливаем фокус и позицию курсора
+                setTimeout(() => {
+                    input.focus();
+                    input.setSelectionRange(cursorPos + 1, cursorPos + 1);
+                }, 0);
+            }
+        }
+        
+        function clearInput() {
+            const input = document.getElementById('component_detail');
+            if (input) {
+                input.value = '';
+                setTimeout(() => {
+                    input.focus();
+                }, 0);
+            }
+        }
+        
+        function backspaceInput() {
+            const input = document.getElementById('component_detail');
+            if (input) {
+                const cursorPos = input.selectionStart || input.value.length;
+                if (cursorPos > 0) {
+                    const textBefore = input.value.substring(0, cursorPos - 1);
+                    const textAfter = input.value.substring(cursorPos);
+                    input.value = textBefore + textAfter;
+                    
+                    setTimeout(() => {
+                        input.focus();
+                        input.setSelectionRange(cursorPos - 1, cursorPos - 1);
+                    }, 0);
+                }
+            }
+        }
+        
+        // Универсальные функции для работы с панелями разных полей
+        function toggleNumpadForField(fieldId) {
+            const numpad = document.getElementById('numpad-' + fieldId);
+            if (numpad) {
+                numpad.classList.toggle('active');
+            }
+        }
+        
+        function openNumpadForField(fieldId) {
+            const numpad = document.getElementById('numpad-' + fieldId);
+            if (numpad && !numpad.classList.contains('active')) {
+                numpad.classList.add('active');
+            }
+        }
+        
+        function closeNumpadForField(fieldId) {
+            const numpad = document.getElementById('numpad-' + fieldId);
+            if (numpad) {
+                numpad.classList.remove('active');
+            }
+        }
+        
+        function insertNumberToField(fieldId, num) {
+            const input = document.getElementById(fieldId);
+            if (input) {
+                const cursorPos = input.selectionStart || input.value.length;
+                const textBefore = input.value.substring(0, cursorPos);
+                const textAfter = input.value.substring(cursorPos);
+                input.value = textBefore + num + textAfter;
+                
+                // Устанавливаем фокус и позицию курсора
+                setTimeout(() => {
+                    input.focus();
+                    input.setSelectionRange(cursorPos + 1, cursorPos + 1);
+                }, 0);
+            }
+        }
+        
+        function clearInputField(fieldId) {
+            const input = document.getElementById(fieldId);
+            if (input) {
+                input.value = '';
+                setTimeout(() => {
+                    input.focus();
+                }, 0);
+            }
+        }
+        
+        function backspaceInputField(fieldId) {
+            const input = document.getElementById(fieldId);
+            if (input) {
+                const cursorPos = input.selectionStart || input.value.length;
+                if (cursorPos > 0) {
+                    const textBefore = input.value.substring(0, cursorPos - 1);
+                    const textAfter = input.value.substring(cursorPos);
+                    input.value = textBefore + textAfter;
+                    
+                    setTimeout(() => {
+                        input.focus();
+                        input.setSelectionRange(cursorPos - 1, cursorPos - 1);
+                    }, 0);
+                }
+            }
+        }
+        
+        // Закрываем панель при клике вне её
+        document.addEventListener('click', function(e) {
+            const numpad = document.getElementById('numpad');
+            const numpadQuantity = document.getElementById('numpad-quantity');
+            const numpadBtn = document.querySelector('.btn-numpad');
+            const componentDetail = document.getElementById('component_detail');
+            const quantityInput = document.getElementById('quantity');
+            
+            if (numpad && numpad.classList.contains('active')) {
+                if (!numpad.contains(e.target) && e.target !== numpadBtn && e.target !== componentDetail) {
+                    numpad.classList.remove('active');
+                }
+            }
+            
+            if (numpadQuantity && numpadQuantity.classList.contains('active')) {
+                const numpadBtns = document.querySelectorAll('.btn-numpad');
+                let isNumpadBtn = false;
+                numpadBtns.forEach(btn => {
+                    if (e.target === btn) isNumpadBtn = true;
+                });
+                
+                if (!numpadQuantity.contains(e.target) && !isNumpadBtn && e.target !== quantityInput) {
+                    numpadQuantity.classList.remove('active');
+                }
             }
         });
         
