@@ -749,6 +749,9 @@ echo "<!-- Аккуратная панель авторизации -->
                     
                     show_monthly_production();
                     profile_mark('show_monthly_production() completed');
+                    
+                    show_weekly_corrugation();
+                    profile_mark('show_weekly_corrugation() completed');
                     ?>
 
                     <div class="search-card">

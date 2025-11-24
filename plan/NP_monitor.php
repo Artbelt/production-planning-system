@@ -548,12 +548,14 @@ function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES|ENT_SUBSTITUTE, 
         .item-tile.done {background: hsla(142, 71%, 45%, 0.1); border-color: var(--success);}
         .item-tile.pending {background: hsla(38, 92%, 50%, 0.1); border-color: var(--warning);}
         .item-tile.overdue {background: hsla(0, 84%, 60%, 0.1); border-color: var(--danger);}
+        .item-tile.near-complete {background: linear-gradient(135deg, hsla(142, 71%, 65%, 0.15) 0%, hsla(142, 71%, 50%, 0.2) 100%); border-color: hsl(142, 71%, 50%);}
         .item-name {font-weight:600; font-size: 13px; line-height: 1.3;}
         .item-sub {font-size:11px; color: var(--muted-foreground);}
         .item-stats {font-size:13px; font-weight:600; margin-top: auto;}
         .item-stats.done {color: var(--success);}
         .item-stats.pending {color: var(--warning);}
         .item-stats.overdue {color: var(--danger);}
+        .item-stats.near-complete {color: hsl(142, 71%, 40%);}
         }
 
         .bale-chip {
@@ -583,6 +585,12 @@ function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES|ENT_SUBSTITUTE, 
             background: hsla(0, 84%, 60%, 0.1);
             color: var(--danger);
             border-color: var(--danger);
+        }
+
+        .bale-near-complete {
+            background: linear-gradient(135deg, hsla(142, 71%, 65%, 0.15) 0%, hsla(142, 71%, 50%, 0.2) 100%);
+            color: hsl(142, 71%, 40%);
+            border-color: hsl(142, 71%, 50%);
         }
     </style>
 </head>
@@ -853,8 +861,27 @@ function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES|ENT_SUBSTITUTE, 
                     const planned = parseInt(item.count) || 0;
                     const done = parseInt(item.fact_count) || 0;
                     const isDone = done >= planned;
-                    const isOverdue = !isDone && dateStr < today;
-                    const chipClass = isDone ? 'bale-done' : (isOverdue ? 'bale-overdue' : 'bale-pending');
+                    const percentDone = planned > 0 ? (done / planned) * 100 : 0;
+                    const isNearComplete = !isDone && percentDone >= 80;
+                    const isOverdue = !isDone && !isNearComplete && dateStr < today;
+                    
+                    let chipClass;
+                    let inlineStyle = '';
+                    
+                    if (isDone) {
+                        chipClass = 'bale-done';
+                    } else if (isNearComplete) {
+                        chipClass = 'bale-near-complete';
+                        // Градиент от светло-зеленого (80%) до зеленого (100%)
+                        const gradientPercent = Math.min((percentDone - 80) / 20, 1); // 0 при 80%, 1 при 100%
+                        const lightnessStart = 65 - (gradientPercent * 15); // от 65% до 50%
+                        const lightnessEnd = 50 - (gradientPercent * 5); // от 50% до 45%
+                        inlineStyle = `background: linear-gradient(135deg, hsla(142, 71%, ${lightnessStart}%, 0.2) 0%, hsla(142, 71%, ${lightnessEnd}%, 0.25) 100%); border-color: hsl(142, 71%, ${50 - gradientPercent * 5}%); color: hsl(142, 71%, ${40 - gradientPercent * 5}%);`;
+                    } else if (isOverdue) {
+                        chipClass = 'bale-overdue';
+                    } else {
+                        chipClass = 'bale-pending';
+                    }
                     
                     if (!isDone) notDoneCount++;
                     
@@ -867,7 +894,7 @@ function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES|ENT_SUBSTITUTE, 
                         filterName = filterName.substring(0, 8) + '..';
                     }
                     
-                    itemsHTML += `<span class="bale-chip ${chipClass}" title="${title}">${filterName} (${done}/${planned})</span>`;
+                    itemsHTML += `<span class="bale-chip ${chipClass}" style="${inlineStyle}" title="${title}">${filterName} (${done}/${planned})</span>`;
                 });
                 
                 if (itemsHTML === '') {
@@ -952,20 +979,47 @@ function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES|ENT_SUBSTITUTE, 
                     const planned = parseInt(item.count) || 0;
                     const done = parseInt(item.fact_count) || 0;
                     const isDone = done >= planned;
-                    const isOverdue = !isDone && dateStr < today;
+                    const percentDone = planned > 0 ? (done / planned) * 100 : 0;
+                    const isNearComplete = !isDone && percentDone >= 80;
+                    const isOverdue = !isDone && !isNearComplete && dateStr < today;
                     
-                    let statusClass = isDone ? 'done' : (isOverdue ? 'overdue' : 'pending');
+                    let statusClass;
+                    let inlineStyle = '';
+                    
+                    if (isDone) {
+                        statusClass = 'done';
+                    } else if (isNearComplete) {
+                        statusClass = 'near-complete';
+                        // Градиент от светло-зеленого (80%) до зеленого (100%)
+                        const gradientPercent = Math.min((percentDone - 80) / 20, 1); // 0 при 80%, 1 при 100%
+                        const lightnessStart = 65 - (gradientPercent * 15); // от 65% до 50%
+                        const lightnessEnd = 50 - (gradientPercent * 5); // от 50% до 45%
+                        inlineStyle = `background: linear-gradient(135deg, hsla(142, 71%, ${lightnessStart}%, 0.2) 0%, hsla(142, 71%, ${lightnessEnd}%, 0.25) 100%); border-color: hsl(142, 71%, ${50 - gradientPercent * 5}%);`;
+                    } else if (isOverdue) {
+                        statusClass = 'overdue';
+                    } else {
+                        statusClass = 'pending';
+                    }
                     
                     const tile = document.createElement('div');
                     tile.className = 'item-tile ' + statusClass;
+                    if (inlineStyle) {
+                        tile.style.cssText = inlineStyle;
+                    }
                     
                     const heightStr = item.height ? Math.round(item.height) : '—';
+                    
+                    let statsStyle = '';
+                    if (statusClass === 'near-complete') {
+                        const gradientPercent = Math.min((percentDone - 80) / 20, 1);
+                        statsStyle = `style="color: hsl(142, 71%, ${40 - gradientPercent * 5}%);"`;
+                    }
                     
                     tile.innerHTML = `
                         <div class="item-name">${escapeHtml(item.filter_label || '')}</div>
                         <div class="item-sub">${escapeHtml(item.order_number || '')}</div>
                         <div class="item-sub">Высота: ${heightStr} мм</div>
-                        <div class="item-stats ${statusClass}">Факт: ${done} / План: ${planned}</div>
+                        <div class="item-stats ${statusClass}" ${statsStyle}>Факт: ${done} / План: ${planned}</div>
                     `;
                     body.appendChild(tile);
                 });

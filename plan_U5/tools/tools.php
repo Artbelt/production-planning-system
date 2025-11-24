@@ -585,9 +585,91 @@ function show_monthly_production(){
     echo "<p>В текущем месяце произведено $total фильтров (с 1 числа по сегодня).";
 }
 
-
-
-
+/** Отображение сгофрированных гофропакетов за последние 10 дней */
+function show_weekly_corrugation(){
+    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
+    
+    $count = 0;
+    
+    // Начинаем плашку (карточку)
+    echo '<div class="production-card">';
+    echo '<div class="production-card-header">';
+    echo '<h3 class="production-card-title">Сгофрированные гофропакеты за последние 10 дней</h3>';
+    echo '</div>';
+    echo '<div class="production-card-body">';
+    
+    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+    if ($mysqli->connect_errno) {
+        echo "Ошибка подключения к БД";
+        return;
+    }
+    
+    // Собираем данные за все дни
+    $all_days_data = [];
+    
+    for ($a = 1; $a < 11; $a++) {
+        $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));
+        $production_date = reverse_date($production_date);
+        
+        // Получаем данные о сгофрированных гофропакетах из corrugation_plan
+        $sql = "SELECT 
+                    SUM(COALESCE(fact_count, 0)) as total_count
+                FROM corrugation_plan
+                WHERE plan_date = '$production_date'
+                AND COALESCE(fact_count, 0) > 0";
+        
+        $result = $mysqli->query($sql);
+        
+        if (!$result) {
+            continue;
+        }
+        
+        $total_count = 0;
+        if ($row = $result->fetch_assoc()) {
+            $total_count = (int)($row['total_count'] ?? 0);
+        }
+        
+        // Сохраняем данные для этого дня
+        $all_days_data[] = [
+            'date' => $production_date,
+            'total_count' => $total_count
+        ];
+        
+        $count = $count + $total_count;
+        
+        if ($result) {
+            $result->free();
+        }
+    }
+    
+    $mysqli->close();
+    
+    // Выводим таблицу
+    echo '<table class="production-table">';
+    echo '<thead><tr>';
+    echo '<th class="date-col">Дата</th>';
+    echo '<th class="total-col">Всего гофропакетов</th>';
+    echo '</tr></thead>';
+    echo '<tbody>';
+    
+    // Выводим данные по дням
+    foreach ($all_days_data as $day_data) {
+        echo '<tr>';
+        echo '<td class="date-col">' . htmlspecialchars($day_data['date']) . '</td>';
+        echo '<td class="total-col">' . $day_data['total_count'] . '</td>';
+        echo '</tr>';
+    }
+    
+    echo '</tbody></table>';
+    echo '</div>'; // закрываем production-card-body
+    
+    // Футер карточки со статистикой
+    echo '<div class="production-card-footer">';
+    $count_per_day = $count / 10;
+    echo "<div class='production-stat'><span class='production-stat-label'>Среднее количество в день:</span> <span class='production-stat-value'>".round($count_per_day, 0)."</span></div>";
+    echo '</div>'; // закрываем production-card-footer
+    echo '</div>'; // закрываем production-card
+}
 
 
 /** Создание <SELECT> списка с перечнем заявок */
