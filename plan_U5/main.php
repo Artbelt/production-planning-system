@@ -838,6 +838,7 @@ echo "<!-- Аккуратная панель авторизации -->
                     <button type="button" onclick="openAddToOrderModal()">Добавить к заявке...</button>
                     <form action='combine_orders.php' method='post' target='_blank' class="stack"><input type='submit' value='Объединение заявок'></form>
                     <button type="button" onclick="openDeleteOrdersModal()">Удалить заявку</button>
+                    <button type="button" onclick="window.location.href='edit_order.php'">Редактировать заявку</button>
                     
                     <div style="border-top: 1px dashed var(--border); margin: 8px 0;"></div>
                     
@@ -2000,6 +2001,7 @@ window.onclick = function(event) {
         </div>
     </div>
 
+
 <?php
 // ВЫВОД ПРОФИЛИРОВАНИЯ
 profile_mark('Page fully rendered');
@@ -2273,6 +2275,7 @@ async function deleteSelectedOrders() {
         deleteBtn.disabled = false;
     }
 }
+
 </script>
 <?php
 ?>

@@ -130,6 +130,130 @@ if (($_GET['action'] ?? '') === 'add_position' && $_SERVER['REQUEST_METHOD'] ===
     exit;
 }
 
+// Получить позиции заявки
+if (($_GET['action'] ?? '') === 'get_positions') {
+    try {
+        $order_number = trim((string)($_GET['order_number'] ?? ''));
+        
+        if ($order_number === '') {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Укажите номер заявки']);
+            exit;
+        }
+        
+        // Получаем позиции из таблицы orders
+        // Используем составной ключ для идентификации, так как в таблице нет id
+        // Используем основные поля: order_number, filter, count для создания уникального идентификатора
+        $stmt = $pdo->prepare("
+            SELECT 
+                CONCAT(COALESCE(`filter`, ''), '|', `count`) as position_key,
+                order_number,
+                `filter`,
+                `count`,
+                marking,
+                personal_packaging,
+                personal_label,
+                group_packaging,
+                packaging_rate,
+                group_label,
+                remark
+            FROM orders 
+            WHERE order_number = ? 
+            ORDER BY `filter`, `count`
+        ");
+        $stmt->execute([$order_number]);
+        $positions = $stmt->fetchAll();
+        
+        // Добавляем уникальный идентификатор для каждой позиции
+        // Используем индекс + основные поля для создания уникального id
+        foreach ($positions as $index => &$pos) {
+            $pos['id'] = $order_number . '|' . $pos['position_key'] . '|' . $index;
+            // Сохраняем также основные поля для удаления
+            $pos['_filter'] = $pos['filter'];
+            $pos['_count'] = $pos['count'];
+        }
+        unset($pos);
+        
+        echo json_encode(['ok' => true, 'positions' => $positions]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// Удалить позиции из заявки
+if (($_GET['action'] ?? '') === 'delete_positions' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $payload = json_decode(file_get_contents('php://input'), true);
+        if (!$payload) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Пустое тело запроса']);
+            exit;
+        }
+
+        $order_number = trim((string)($payload['order_number'] ?? ''));
+        $positions = $payload['positions'] ?? [];
+        
+        if ($order_number === '') {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Укажите номер заявки']);
+            exit;
+        }
+        
+        if (!is_array($positions) || count($positions) === 0) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Выберите позиции для удаления']);
+            exit;
+        }
+        
+        $pdo->beginTransaction();
+        
+        $deletedCount = 0;
+        
+        // Удаляем каждую позицию по переданным данным
+        foreach ($positions as $pos) {
+            $filter = trim((string)($pos['filter'] ?? ''));
+            $count = (int)($pos['count'] ?? 0);
+            
+            if ($count <= 0) {
+                continue; // Пропускаем некорректные данные
+            }
+            
+            // Удаляем позицию по основным полям (order_number, filter, count)
+            // Это должно быть достаточно для идентификации позиции в рамках заявки
+            if ($filter !== '') {
+                $deleteStmt = $pdo->prepare("
+                    DELETE FROM orders 
+                    WHERE order_number = ? AND `filter` = ? AND `count` = ?
+                    LIMIT 1
+                ");
+                $deleteStmt->execute([$order_number, $filter, $count]);
+            } else {
+                $deleteStmt = $pdo->prepare("
+                    DELETE FROM orders 
+                    WHERE order_number = ? AND (`filter` IS NULL OR `filter` = '') AND `count` = ?
+                    LIMIT 1
+                ");
+                $deleteStmt->execute([$order_number, $count]);
+            }
+            
+            $deletedCount += $deleteStmt->rowCount();
+        }
+        
+        $pdo->commit();
+        
+        echo json_encode(['ok' => true, 'deleted_count' => $deletedCount, 'message' => 'Позиции успешно удалены']);
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
 http_response_code(400);
 echo json_encode(['ok' => false, 'error' => 'Неверный запрос']);
 

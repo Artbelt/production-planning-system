@@ -91,148 +91,338 @@ function canAccessLaserRequests($userDepartments, $currentDepartment) {
 // Для main.php всегда проверяем доступ к цеху U3
 $canAccessLaser = canAccessLaserRequests($userDepartments, 'U3');
 
-echo "<link rel=\"stylesheet\" href=\"sheets.css\">";
-/** ---------------------------------------------------------------------------------------------------------------- */
-/**                                                  Блок авторизации                                                */
-/** ---------------------------------------------------------------------------------------------------------------- */
-
 // Устанавливаем переменные для совместимости со старым кодом
 $workshop = $currentDepartment;
 $advertisement = 'Информация';
 
 $application_name = 'Система управления производством на участке U3';
-
-//echo '<title>'.$workshop.'</title>';
-echo '<title>U3</title>';
-echo '<head>';
-//echo '<script> setInterval(() => window.location.reload(), 15000);</script>';//автообновление страницы каждые 15 сек
 ?>
-<style>
-    /* Стиль для кнопки */
-    .alert-button {
-        background-color: yellow; /* Зеленый фон */
-    }
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>U3</title>
+    <link rel="stylesheet" href="sheets.css">
 
-    /* Дополнительный стиль при наведении */
-    .alert-button:hover {
-        background-color: skyblue; /* Темно-зеленый фон при наведении */
-    }
-    
-    /* Стили для модального окна управления крышками */
-    .cap-modal {
-        display: none;
-        position: fixed;
-        z-index: 1000;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
-        overflow: auto;
-        background-color: rgba(0,0,0,0.5);
-    }
-    
-    .cap-modal-content {
-        background-color: white;
-        margin: 3% auto;
-        padding: 15px;
-        border: none;
-        border-radius: 6px;
-        width: 90%;
-        max-width: 500px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    
-    .cap-modal-close {
-        color: #aaa;
-        float: right;
-        font-size: 24px;
-        font-weight: bold;
-        cursor: pointer;
-        line-height: 1;
-    }
-    
-    .cap-modal-close:hover,
-    .cap-modal-close:focus {
-        color: #000;
-    }
-    
-    .cap-modal-content h1 {
-        color: #333;
-        border-bottom: 2px solid #6495ed;
-        padding-bottom: 6px;
-        margin-top: 0;
-        margin-bottom: 15px;
-        font-size: 20px;
-    }
-    
-    .cap-menu-grid {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 12px;
-        margin-top: 15px;
-    }
-    
-    .cap-menu-card {
-        background: #f9f9f9;
-        border: 2px solid #ddd;
-        border-radius: 6px;
-        padding: 12px;
-        text-align: center;
-        transition: all 0.3s;
-        cursor: pointer;
-        text-decoration: none;
-        color: #333;
-        display: block;
-    }
-    
-    .cap-menu-card:hover {
-        border-color: #6495ed;
-        background: #e8f0fe;
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-    }
-    
-    .cap-menu-card h2 {
-        margin: 0 0 6px 0;
-        color: #6495ed;
-        font-size: 14px;
-        font-weight: bold;
-    }
-    
-    .cap-menu-card p {
-        margin: 0;
-        color: #666;
-        font-size: 12px;
-    }
-</style>
+    <style>
+        /* ===== Pro UI (neutral + single accent) ===== */
+        :root{
+            --bg:#f6f7f9;
+            --panel:#ffffff;
+            --ink:#1f2937;
+            --muted:#6b7280;
+            --border:#e5e7eb;
+            --accent:#2457e6;
+            --accent-ink:#ffffff;
+            --danger:#dc2626;
+            --radius:12px;
+            --shadow:0 2px 12px rgba(2,8,20,.06);
+            --shadow-soft:0 1px 8px rgba(2,8,20,.05);
+        }
+        html,body{height:100%}
+        body{
+            margin:0; background:var(--bg); color:var(--ink);
+            font:14px/1.45 "Segoe UI", Roboto, Arial, sans-serif;
+            -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+        }
+        a{color:var(--accent); text-decoration:none}
+        a:hover{text-decoration:underline}
+
+        /* контейнер и сетка */
+        .container{ max-width:1280px; margin:0 auto; padding:16px; }
+        .layout{ width:100%; border-spacing:16px; border:0; background:transparent; }
+        .header-row .header-cell{ padding:0; border:0; background:transparent; }
+        .headerbar{ display:flex; align-items:center; gap:12px; padding:10px 4px; color:#374151; }
+        .headerbar .spacer{ flex:1; }
+
+        /* панели-колонки */
+        .content-row > td{ vertical-align:top; }
+        .panel{
+            background:var(--panel);
+            border:1px solid var(--border);
+            border-radius:var(--radius);
+            box-shadow:var(--shadow);
+            padding:14px;
+        }
+        .panel--main{ box-shadow:var(--shadow-soft); }
+        .section-title{
+            font-size:15px; font-weight:600; color:#111827;
+            margin:0 0 10px; padding-bottom:6px; border-bottom:1px solid var(--border);
+        }
+
+        /* таблицы внутри панелей как карточки */
+        .panel table{
+            width:100%;
+            border-collapse:collapse;
+            background:#fff;
+            border:1px solid var(--border);
+            border-radius:10px;
+            box-shadow:var(--shadow-soft);
+            overflow:hidden;
+        }
+        .panel td,.panel th{padding:10px;border-bottom:1px solid var(--border);vertical-align:top}
+        .panel tr:last-child td{border-bottom:0}
+
+        /* вертикальные стеки вместо <p> */
+        .stack{ display:flex; flex-direction:column; gap:8px; }
+        .stack-lg{ gap:12px; }
+
+        /* кнопки (единый стиль) */
+        button, input[type="submit"]{
+            appearance:none;
+            border:1px solid transparent;
+            cursor:pointer;
+            background:var(--accent);
+            color:var(--accent-ink);
+            padding:7px 14px;
+            border-radius:9px;
+            font-weight:600;
+            transition:background .2s, box-shadow .2s, transform .04s, border-color .2s;
+            box-shadow: 0 3px 6px rgba(0,0,0,0.12), 0 2px 4px rgba(0,0,0,0.08);
+        }
+        button:hover, input[type="submit"]:hover{ background:#1e47c5; box-shadow:0 2px 8px rgba(2,8,20,.10); transform:translateY(-1px); }
+        button:active, input[type="submit"]:active{ transform:translateY(0); }
+        button:disabled, input[type="submit"]:disabled{
+            background:#e5e7eb; color:#9ca3af; border-color:#e5e7eb; box-shadow:none; cursor:not-allowed;
+        }
+        /* если где-то остались инлайновые background — приглушим */
+        input[type="submit"][style*="background"], button[style*="background"]{
+            background:var(--accent)!important; color:#fff!important;
+        }
+
+        /* Стиль для кнопки */
+        .alert-button {
+            background-color: yellow !important;
+        }
+        .alert-button:hover {
+            background-color: skyblue !important;
+        }
+
+        /* модальные окна */
+        .modal, .cap-modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        .modal-content, .cap-modal-content {
+            background-color: var(--panel);
+            margin: 5% auto;
+            padding: 20px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--ink);
+        }
+        .close, .cap-modal-close {
+            color: var(--muted);
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            line-height: 1;
+            float: right;
+        }
+        .close:hover, .cap-modal-close:hover {
+            color: var(--ink);
+        }
+        .cap-modal-content h1 {
+            color: #333;
+            border-bottom: 2px solid #6495ed;
+            padding-bottom: 6px;
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-size: 20px;
+        }
+        .cap-menu-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-top: 15px;
+        }
+        .cap-menu-card {
+            background: #f9f9f9;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            padding: 12px;
+            text-align: center;
+            transition: all 0.3s;
+            cursor: pointer;
+            text-decoration: none;
+            color: #333;
+            display: block;
+        }
+        .cap-menu-card:hover {
+            border-color: #6495ed;
+            background: #e8f0fe;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .cap-menu-card h2 {
+            margin: 0 0 6px 0;
+            color: #6495ed;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .cap-menu-card p {
+            margin: 0;
+            color: #666;
+            font-size: 12px;
+        }
+
+        /* поля ввода/селекты */
+        input[type="text"], input[type="date"], input[type="number"], input[type="password"],
+        textarea, select{
+            min-width:180px; padding:7px 10px;
+            border:1px solid var(--border); border-radius:9px;
+            background:#fff; color:var(--ink); outline:none;
+            transition:border-color .2s, box-shadow .2s;
+        }
+        input:focus, textarea:focus, select:focus{
+            border-color:#c7d2fe; box-shadow:0 0 0 3px #e0e7ff;
+        }
+        textarea{min-height:92px; resize:vertical}
+
+        /* инфоблоки */
+        .alert{
+            background:#fffbe6; border:1px solid #f4e4a4; color:#634100;
+            padding:10px; border-radius:9px; margin:12px 0; font-weight:600;
+        }
+        .important-message{
+            background:#fff1f2; border:1px solid #ffd1d8; color:#6b1220;
+            padding:12px; border-radius:9px; margin:12px 0; font-weight:700;
+        }
+        .highlight_green{
+            background:#e7f5ee; color:#0f5132; border:1px solid #cfe9db;
+            padding:2px 6px; border-radius:6px; font-weight:600;
+        }
+        .highlight_red{
+            background:#fff7e6; color:#7a3e00; border:1px solid #ffe1ad;
+            padding:2px 6px; border-radius:6px; font-weight:600;
+        }
+
+        /* чипы заявок справа */
+        .saved-orders{
+            display:block; margin-top:8px;
+            width:100%; box-sizing:border-box;
+        }
+        .saved-orders form{
+            display:flex; flex-wrap:wrap; gap:6px; width:100%;
+            margin:0; padding:0;
+        }
+        .saved-orders input[type="submit"],
+        .saved-orders button[type="submit"]{
+            display:inline-flex; 
+            align-items:center;
+            margin:0!important; padding:6px 12px!important;
+            border-radius:8px;
+            background:var(--accent); color:#fff;
+            border:none!important; box-shadow:0 1px 3px rgba(0,0,0,0.1);
+            font-size:13px; font-weight:500;
+            transition:all 0.2s;
+            white-space:nowrap;
+            flex-shrink:0;
+            cursor:pointer;
+            box-sizing:border-box;
+            line-height:1.4;
+        }
+        .saved-orders input[type="submit"]:hover,
+        .saved-orders button[type="submit"]:hover{
+            background:#1e47c5; transform:translateY(-1px);
+            box-shadow:0 2px 6px rgba(0,0,0,0.15);
+        }
+        .saved-orders input[type="submit"].alert-button,
+        .saved-orders button[type="submit"].alert-button{
+            background:#f59e0b!important;
+        }
+        .saved-orders input[type="submit"].alert-button:hover,
+        .saved-orders button[type="submit"].alert-button:hover{
+            background:#d97706!important;
+        }
+
+        /* карточка поиска */
+        .search-card{
+            border:1px solid var(--border);
+            border-radius:10px; background:#fff;
+            box-shadow:var(--shadow-soft); padding:12px; margin-top:8px;
+        }
+        .muted{color:var(--muted)}
+
+        /* адаптив */
+        @media (max-width:1100px){
+            .layout{ border-spacing:10px; }
+            .content-row > td{ display:block; width:auto!important; }
+        }
+        .topbar{
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            padding:10px 18px;
+            background:var(--panel);
+            border-bottom:1px solid var(--border);
+            box-shadow:var(--shadow-soft);
+            border-radius:var(--radius);
+            margin-bottom:16px;
+        }
+        .topbar-left, .topbar-right, .topbar-center{
+            display:flex;
+            align-items:center;
+            gap:10px;
+        }
+        .topbar-center{
+            font-weight:600;
+            font-size:15px;
+            color:var(--ink);
+        }
+        .logo{
+            font-size:18px;
+            font-weight:700;
+            color:var(--accent);
+        }
+        .system-name{
+            font-size:14px;
+            font-weight:500;
+            color:var(--muted);
+        }
+        .logout-btn{
+            background:var(--accent);
+            color:var(--accent-ink);
+            padding:6px 12px;
+            border-radius:8px;
+            font-weight:600;
+            box-shadow:0 2px 6px rgba(0,0,0,0.08);
+        }
+        .logout-btn:hover{
+            background:#1e47c5;
+            text-decoration:none;
+        }
+    </style>
+</head>
+<body>
+
 
 
 <?php
-echo '</head>';
-
-
-
-/** ---------------------------------------------------------------------------------------------------------------- */
-/**                                                 конец авторизации                                                */
-/** ---------------------------------------------------------------------------------------------------------------- */
-
-/** ---------------------------------------------------------------------------------------------------------------- */
-/**                                              Шапка главного окна                                                 */
-/** ---------------------------------------------------------------------------------------------------------------- */
-echo "<table  width=100% height=100% style='background-color: #6495ed' >"
-    ."<tr height='10%' align='center' style='background-color: #dedede'><td width='20%' >Подразделение: U3";
-
-edit_access_button_draw();
-
-if (is_edit_access_granted()){
-    echo '<div id = "alert_div_1" style="width: 220; height: 5; background-color: lightgreen;"></div><p>';
-}else{
-    echo '<div id = "alert_div_2" style="width: 220; height: 5; background-color: gray;"></div><p>';
-}
-
-echo "</td><td width='80%'><!--#application_name=--><br>".$application_name."<br></td>"
-    ."<td ><!-- Панель авторизации перенесена вверх --></td></tr>";
-    
 // Добавляем аккуратную панель авторизации
 echo "<!-- Аккуратная панель авторизации -->
 <div style='position: fixed; top: 10px; right: 10px; background: white; padding: 12px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; border: 1px solid #e5e7eb;'>
@@ -249,128 +439,99 @@ echo "<!-- Аккуратная панель авторизации -->
         <a href='../auth/logout.php' style='padding: 6px 12px; background: #f3f4f6; color: #374151; text-decoration: none; border-radius: 4px; font-size: 12px; font-weight: 500; transition: background-color 0.2s;' onmouseover='this.style.background=\"#e5e7eb\"' onmouseout='this.style.background=\"#f3f4f6\"'>Выход</a>
     </div>
 </div>";
-
-echo "<tr height='10%' align='center' ><td colspan='3'><br>";
-
-/** Раздел объявлений */
-echo $advertisement."</td></tr>";
-
-
-/** ---------------------------------------------------------------------------------------------------------------- */
-/**                                                 Раздел ОПЕРАЦИИ                                                  */
-/** ---------------------------------------------------------------------------------------------------------------- */
-echo "<tr align='center'><td>"
-    ."<table  height='100%' width='100%' bgcolor='white' style='border-collapse: collapse'>"
-    ."<tr height='80%'><td>Операции: <p>";
-
 ?>
-<a href="product_output.php" target="_blank" rel="noopener noreferrer">
-    <button style="height: 20px; width: 220px">Выпуск продукции</button>
-</a>
-<?php
-echo "<button type='button' onclick='openCapManagementModal()' style='height: 20px; width: 220px'>Операции с крышками</button>"
-    ."<form action='parts_output_for_workers.php' method='post' target='_blank' ><input type='submit' value='Выпуск гофропакетов' style=\"height: 20px; width: 220px\"></form>";
-    
-if ($canAccessLaser) {
-    echo "<a href='laser_request.php' target='_blank' rel='noopener noreferrer'>";
-    echo "<button type='button' style='height: 20px; width: 220px'>Заявка на лазер</button>";
-    echo "</a>";
-    }
-echo "<p>Информация: <p>";
-    ?>
-    <form action='summary_plan_U3.php' method='post' target='_blank'>
-        <input type='submit' value='Сводный план У3' style='height: 20px; width: 220px'>
-    </form>
-    <form action='dimensions_report.php' method='post' target='_blank' ><input type='submit' value='Таблица размеров для участка'  style=\"height: 20px; width: 220px\"></form>
-    <form action='product_output_view.php' method='post' target='_blank' ><input type='submit' value='Обзор выпуска продукции'  style=\"height: 20px; width: 220px\"></form>
-<form action="gofra_packages_table.php" method="post" target="_blank">
-    <input type="hidden" name="workshop" value="<?= htmlspecialchars($workshop) ?>">
-    <input type="submit" value="Кол-во гофропакетов из рулона">
-</form>
-</td></tr>
-    <tr bgcolor='#6495ed'><td>
+
+<div class="container">
+    <table class="layout">
+        <!-- Шапка -->
+        <tr class="header-row">
+            <td class="header-cell" colspan="3">
+                <div class="topbar">
+                    <div class="topbar-left">
+                        <span class="logo">U3</span>
+                        <span class="system-name">Система управления</span>
+                        <?php edit_access_button_draw(); ?>
+                        <?php if (is_edit_access_granted()): ?>
+                            <div id="alert_div_1" style="width: 10px; height: 10px; background-color: lightgreen; border-radius: 50%; display: inline-block;"></div>
+                        <?php else: ?>
+                            <div id="alert_div_2" style="width: 10px; height: 10px; background-color: gray; border-radius: 50%; display: inline-block;"></div>
+                        <?php endif; ?>
+                    </div>
+                    <div class="topbar-center">
+                        <?php echo htmlspecialchars($application_name); ?>
+                    </div>
+                    <div class="topbar-right">
+                        <!-- Панель авторизации перенесена вверх -->
+                    </div>
+                </div>
+            </td>
+        </tr>
+
+        <!-- Контент: 3 колонки -->
+        <tr class="content-row">
+            <!-- Левая панель -->
+            <td class="panel panel--left" style="width:30%;">
 
 
-    <?php
-    /** ---------------------------------------------------------------------------------------------------------------- */
-    /**                                                 Раздел ПРИЛОЖЕНИЯ                                                */
-    /** ---------------------------------------------------------------------------------------------------------------- */
-    echo "Управление данными <p>"
-    /**
-    ."<form action='[DEL]add_filter_into_db.php' method='post'>"
-    ."<input type='hidden' name='workshop' value='$workshop'>"
-    ."<input type='submit'  value='добавить фильтр в БД-----ххх'  style=\"height: 20px; width: 220px\">"
-    ."</form>"
-     */
-    /** Добавление полной информации по фильтру  */
-    . "<form action='add_round_filter_into_db.php' method='post' target='_blank' >"
-    ."<input type='hidden' name='workshop' value='$workshop'>"
-    ."<input type='submit'  value='добавить фильтр в БД(full)'  style=\"height: 20px; width: 220px\">"
-    ."</form>"
+                <div class="section-title">Операции</div>
+                <div class="stack">
+                    <a href="product_output.php" target="_blank" rel="noopener" class="stack"><button>Выпуск продукции</button></a>
+                    <button type="button" onclick="openCapManagementModal()">Операции с крышками</button>
+                    <form action="parts_output_for_workers.php" method="post" target="_blank" class="stack"><input type="submit" value="Выпуск гофропакетов"></form>
+                    <?php if ($canAccessLaser): ?>
+                    <a href="laser_request.php" target="_blank" rel="noopener" class="stack"><button type="button">Заявка на лазер</button></a>
+                    <?php endif; ?>
+                </div>
 
-    ."<form action='edit_filter_properties.php' method='post' target='_blank' >"
-    ."<input type='hidden' name='workshop' value='$workshop'>"
-    ."<input type='submit'  value='изменить параметры фильтра'  style=\"height: 20px; width: 220px\">"
-    ."</form>"
+                <div class="section-title" style="margin-top:14px">Информация</div>
+                <div class="stack">
+                    <form action="summary_plan_U3.php" method="post" target="_blank" class="stack"><input type="submit" value="Сводный план У3"></form>
+                    <form action="dimensions_report.php" method="post" target="_blank" class="stack"><input type="submit" value="Таблица размеров для участка"></form>
+                    <form action="product_output_view.php" method="post" target="_blank" class="stack"><input type="submit" value="Обзор выпуска продукции"></form>
+                    <form action="gofra_packages_table.php" method="post" target="_blank" class="stack">
+                        <input type="hidden" name="workshop" value="<?= htmlspecialchars($workshop) ?>">
+                        <input type="submit" value="Кол-во гофропакетов из рулона">
+                    </form>
+                </div>
 
-    ."<form action='manufactured_production_editor.php' method='post' target='_blank'>"
-    ."<input type='hidden' name='workshop' value='U3'>"
-    ."<input type='submit'  value='Редактор выпуска продукции'  style=\"height: 20px; width: 220px\">"
-    ."</form>"
+                <div class="section-title" style="margin-top:14px">Управление данными</div>
+                <div class="stack">
+                    <form action="add_round_filter_into_db.php" method="post" target="_blank" class="stack">
+                        <input type="hidden" name="workshop" value="<?= htmlspecialchars($workshop) ?>">
+                        <input type="submit" value="Добавить фильтр в БД(full)">
+                    </form>
+                    <form action="edit_filter_properties.php" method="post" target="_blank" class="stack">
+                        <input type="hidden" name="workshop" value="<?= htmlspecialchars($workshop) ?>">
+                        <input type="submit" value="Изменить параметры фильтра">
+                    </form>
+                    <form action="manufactured_production_editor.php" method="post" target="_blank" class="stack">
+                        <input type="hidden" name="workshop" value="U3">
+                        <input type="submit" value="Редактор выпуска продукции">
+                    </form>
+                    <form action="manufactured_parts_editor.php" method="post" target="_blank" class="stack">
+                        <input type="hidden" name="workshop" value="U3">
+                        <input type="submit" value="Редактор выпуска комплектующих">
+                    </form>
+                </div>
 
-    ."<form action='manufactured_parts_editor.php' method='post' target='_blank'>"
-    ."<input type='hidden' name='workshop' value='U3'>"
-    ."<input type='submit'  value='Редактор выпуска комплектующих'  style=\"height: 20px; width: 220px\">"
-    ."</form>";
-?>
-<form action="create_ad.php" method="post" style="display: flex; flex-direction: column; max-width: 400px; gap: 10px;">
-    <label style="display: flex; flex-direction: column; font-weight: bold;">
-        <span>Название объявления</span>
-        <input type="text" name="title" placeholder="Введите название" required
-               style="padding: 8px; font-size: 16px; border: 1px solid #ccc; border-radius: 5px;">
-    </label>
+                <div class="section-title" style="margin-top:14px">Объявление</div>
+                <div class="stack">
+                    <button onclick="openCreateAdModal()">Создать объявление</button>
+                </div>
+            </td>
 
-    <label style="display: flex; flex-direction: column; font-weight: bold;">
-        <span>Текст объявления</span>
-        <textarea name="content" placeholder="Введите текст" required
-                  style="padding: 8px; font-size: 16px; border: 1px solid #ccc; border-radius: 5px; resize: vertical; min-height: 100px;"></textarea>
-    </label>
+            <!-- Центральная панель -->
+            <td class="panel panel--main" style="width:40%;">
 
-    <label style="display: flex; flex-direction: column; font-weight: bold;">
-        <span>Дата окончания</span>
-        <input type="date" name="expires_at" required
-               style="padding: 8px; font-size: 16px; border: 1px solid #ccc; border-radius: 5px;">
-    </label>
-
-    <button type="submit"
-            style="padding: 10px; font-size: 16px; background-color: #007bff; color: white; cursor: pointer; border: none; border-radius: 5px;"
-            onmouseover="this.style.backgroundColor='#0056b3'"
-            onmouseout="this.style.backgroundColor='#007bff'">
-        Создать объявление
-    </button>
-</form>
-
-
-<?php
-echo"</td></tr>"
-    ."</table>";
-
-/** ---------------------------------------------------------------------------------------------------------------- */
-/**                                                 Раздел ЗАДАЧИ                                                    */
-/** ---------------------------------------------------------------------------------------------------------------- */
-echo "</td><td>"
-    ."<table height='100%' width='100%' bgcolor='white' style='border-collapse: collapse'>";
-
-
-echo "<tr><td style='color: cornflowerblue'> <p>";
-
-if ($userRole === 'supervisor') {
+                <?php
+                // Виджет задач для мастеров
+                if ($userRole === 'supervisor') {
     $tasksError = null;
     $myTasks = [];
     
     try {
         $pdo_tasks = new PDO(
-            "mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4",
+            "mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4",
             "root",
             "",
             [
@@ -395,191 +556,162 @@ if ($userRole === 'supervisor') {
                 due_date ASC
             LIMIT 5
         ");
-        $stmt_tasks->execute([$session['user_id'], $currentDepartment]);
-        $myTasks = $stmt_tasks->fetchAll();
-    } catch (Exception $e) {
-        $tasksError = $e->getMessage();
-    }
-    
-    echo "<div style='background:#f8f9fa;border:2px solid #667eea;padding:16px;border-radius:8px;margin-bottom:16px;'>";
-    echo "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #e5e7eb;'>";
-    echo "<h3 style='margin:0;font-size:16px;font-weight:600;color:#374151;'>Мои задачи</h3>";
-    $taskCount = count($myTasks);
-    echo "<span style='background:#667eea;color:#fff;padding:4px 10px;border-radius:999px;font-weight:600;font-size:13px;'>$taskCount</span>";
-    echo "</div>";
-    
-    if ($tasksError) {
-        echo "<div style='color:#b91c1c;font-size:13px;'>Не удалось загрузить задачи: " . htmlspecialchars($tasksError) . "</div>";
-    } elseif ($taskCount === 0) {
-        echo "<div style='color:#6b7280;font-size:13px;'>У вас нет активных задач.</div>";
-    } else {
-        $today = new DateTime();
-        $today->setTime(0, 0, 0);
-        echo "<div style='display:flex;flex-direction:column;gap:10px;'>";
-        
-        foreach ($myTasks as $task) {
-            $dueDate = $task['due_date'] ? new DateTime($task['due_date']) : null;
-            if ($dueDate) {
-                $dueDate->setTime(0, 0, 0);
-            }
-            $isOverdue = $dueDate ? ($dueDate < $today) : false;
-            
-            $priorityColors = [
-                'urgent' => ['bg' => '#fee2e2', 'text' => '#991b1b', 'label' => 'Срочно'],
-                'high' => ['bg' => '#fef3c7', 'text' => '#92400e', 'label' => 'Высокий'],
-                'normal' => ['bg' => '#e0e7ff', 'text' => '#3730a3', 'label' => 'Обычный'],
-                'low' => ['bg' => '#ecfdf5', 'text' => '#047857', 'label' => 'Низкий'],
-            ];
-            $priority = $priorityColors[$task['priority'] ?? 'normal'] ?? $priorityColors['normal'];
-            
-            echo "<div style='background:#fff;padding:12px;border-radius:6px;border:1px solid #e5e7eb;'>";
-            echo "<div style='display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;'>";
-            echo "<div style='font-weight:600;font-size:14px;color:#1f2937;flex:1;'>" . htmlspecialchars($task['title']) . "</div>";
-            echo "<span style='background:{$priority['bg']};color:{$priority['text']};padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;'>{$priority['label']}</span>";
-            echo "</div>";
-            
-            if (!empty($task['description'])) {
-                $desc = mb_substr($task['description'], 0, 120);
-                if (mb_strlen($task['description']) > 120) {
-                    $desc .= '...';
+                        $stmt_tasks->execute([$session['user_id'], $currentDepartment]);
+                        $myTasks = $stmt_tasks->fetchAll();
+                        
+                        $taskCount = count($myTasks);
+                        
+                        if ($taskCount > 0):
+                            $today = new DateTime();
+                            $today->setTime(0, 0, 0);
+                ?>
+                <!-- Виджет задач -->
+                <div style="background: #f8f9fa; border: 2px solid #667eea; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 2px solid #e5e7eb;">
+                        <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: #374151;">
+                            Мои задачи
+                        </h3>
+                        <span style="background: #667eea; color: white; padding: 4px 10px; border-radius: 999px; font-weight: 600; font-size: 13px;">
+                            <?php echo $taskCount; ?>
+                        </span>
+                    </div>
+                    
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                        <?php foreach ($myTasks as $task):
+                            $dueDate = new DateTime($task['due_date']);
+                            $dueDate->setTime(0, 0, 0);
+                            $isOverdue = $dueDate < $today;
+                            
+                            $priorityColors = [
+                                'urgent' => ['bg' => '#fee2e2', 'text' => '#991b1b'],
+                                'high' => ['bg' => '#fef3c7', 'text' => '#92400e'],
+                                'normal' => ['bg' => 'rgba(255, 255, 255, 0.3)', 'text' => 'white'],
+                                'low' => ['bg' => 'rgba(255, 255, 255, 0.2)', 'text' => 'rgba(255, 255, 255, 0.8)']
+                            ];
+                            $priorityLabels = ['urgent' => 'Срочно', 'high' => 'Высокий', 'normal' => 'Обычный', 'low' => 'Низкий'];
+                            $priority = $task['priority'];
+                        ?>
+                        <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #e5e7eb;">
+                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 6px;">
+                                <div style="font-weight: 600; font-size: 14px; color: #1f2937; flex: 1;"><?php echo htmlspecialchars($task['title']); ?></div>
+                                <span style="background: <?php echo $priorityColors[$priority]['bg']; ?>; color: <?php echo $priorityColors[$priority]['text']; ?>; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600;">
+                                    <?php echo $priorityLabels[$priority]; ?>
+                                </span>
+                            </div>
+                            <?php if ($task['description']): ?>
+                            <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px; line-height: 1.4;">
+                                <?php echo nl2br(htmlspecialchars(mb_substr($task['description'], 0, 80) . (mb_strlen($task['description']) > 80 ? '...' : ''))); ?>
+                            </div>
+                            <?php endif; ?>
+                            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+                                <span style="color: #9ca3af;">До: <strong style="<?php echo $isOverdue ? 'color: #ef4444;' : 'color: #374151;'; ?>"><?php echo $dueDate->format('d.m.Y'); ?></strong></span>
+                                <div style="display: flex; gap: 5px;">
+                                    <?php if ($task['status'] === 'pending'): ?>
+                                    <button onclick="updateTaskStatus(<?php echo $task['id']; ?>, 'in_progress')" style="padding: 3px 10px; border: 1px solid #d1d5db; background: white; color: #374151; border-radius: 4px; cursor: pointer; font-size: 11px;">
+                                        Начать
+                                    </button>
+                                    <?php endif; ?>
+                                    <button onclick="updateTaskStatus(<?php echo $task['id']; ?>, 'completed')" style="padding: 3px 10px; background: #10b981; border: none; color: white; border-radius: 4px; cursor: pointer; font-size: 11px;">
+                                        Завершить
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                
+                <script>
+                async function updateTaskStatus(taskId, status) {
+                    try {
+                        const response = await fetch('/tasks_manager/tasks_api.php?action=update_status', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ task_id: taskId, status: status })
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.ok) {
+                            const messages = {
+                                'in_progress': '▶️ Задача взята в работу',
+                                'completed': '✅ Задача выполнена!'
+                            };
+                            alert(messages[status] || 'Статус обновлен');
+                            location.reload();
+                        } else {
+                            alert('❌ Ошибка: ' + data.error);
+                        }
+                    } catch (error) {
+                        alert('❌ Ошибка: ' + error.message);
+                    }
                 }
-                echo "<div style='font-size:12px;color:#6b7280;margin-bottom:8px;line-height:1.4;'>" . nl2br(htmlspecialchars($desc)) . "</div>";
-            }
-            
-            $dueText = $dueDate ? $dueDate->format('d.m.Y') : 'Без срока';
-            $dueStyle = $isOverdue ? 'color:#ef4444;font-weight:600;' : 'color:#374151;font-weight:600;';
-            
-            echo "<div style='display:flex;justify-content:space-between;align-items:center;font-size:11px;'>";
-            echo "<span style='color:#9ca3af;'>До: <strong style='$dueStyle'>$dueText</strong></span>";
-            echo "<div style='display:flex;gap:5px;'>";
-            if ($task['status'] === 'pending') {
-                echo "<button onclick=\"updateTaskStatus({$task['id']}, 'in_progress')\" style='padding:3px 10px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:4px;cursor:pointer;font-size:11px;'>Начать</button>";
-            }
-            echo "<button onclick=\"updateTaskStatus({$task['id']}, 'completed')\" style='padding:3px 10px;background:#10b981;border:none;color:#fff;border-radius:4px;cursor:pointer;font-size:11px;'>Завершить</button>";
-            echo "</div></div></div>";
-        }
-        
-        echo "</div>";
-        
-        echo "<script>
-        async function updateTaskStatus(taskId, status) {
-            try {
-                const response = await fetch('/tasks_manager/tasks_api.php?action=update_status', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ task_id: taskId, status: status })
-                });
-                const data = await response.json();
-                if (data.ok) {
-                    const messages = {
-                        'in_progress': '▶️ Задача взята в работу',
-                        'completed': '✅ Задача выполнена!'
-                    };
-                    alert(messages[status] || 'Статус обновлен');
-                    location.reload();
-                } else {
-                    alert('❌ Ошибка: ' + data.error);
+                </script>
+                <?php 
+                        endif; // if ($taskCount > 0)
+                    } catch (Exception $e) {
+                        // Тихо игнорируем ошибки
+                    }
                 }
-            } catch (error) {
-                alert('❌ Ошибка: ' + error.message);
-            }
-        }
-        </script>";
-    }
-    
-    echo "</div>";
-}
+                ?>
+                
+                <div class="section-title">Объявления</div>
+                <div class="stack-lg">
 
-show_ads();
-echo "Изготовленая продукция за последние 10 дней:";
-show_weekly_production();
-echo "<p>Изготовленные гофропакеты за последние 10 дней<p>";
+                    <?php 
+                    show_ads();
+                    
+                    show_weekly_production();
+                    
+                    show_weekly_parts();
+                    ?>
 
+                    <div class="search-card">
+                        <h4 style="margin:0 0 8px;">Поиск заявок по фильтру</h4>
+                        <div class="stack">
+                            <label for="filterSelect">Фильтр:</label>
+                            <?php 
+                            load_filters_into_select();
+                            ?>
+                        </div>
+                        <div id="filterSearchResult" style="margin-top:10px;"></div>
+                    </div>
+                </div>
 
-show_weekly_parts();
+                <script>
+                    (function(){
+                        const resultBox = document.getElementById('filterSearchResult');
+                        function getSelectEl(){ return document.querySelector('select[name="analog_filter"]'); }
+                        async function runSearch(){
+                            const sel = getSelectEl();
+                            if(!sel){ resultBox.innerHTML = '<div class="muted">Не найден выпадающий список.</div>'; return; }
+                            const val = sel.value.trim();
+                            if(!val){ resultBox.innerHTML = '<div class="muted">Выберите фильтр…</div>'; return; }
+                            resultBox.textContent = 'Загрузка…';
+                            try{
+                                const formData = new FormData(); formData.append('filter', val);
+                                const resp = await fetch('search_filter_in_the_orders.php', { method:'POST', body:formData });
+                                if(!resp.ok){ resultBox.innerHTML = `<div class="alert">Ошибка запроса: ${resp.status} ${resp.statusText}</div>`; return; }
+                                resultBox.innerHTML = await resp.text();
+                            }catch(e){ resultBox.innerHTML = `<div class="alert">Ошибка: ${e}</div>`; }
+                        }
+                        const sel = getSelectEl(); if(sel){ sel.id='filterSelect'; sel.addEventListener('change', runSearch); }
+                    })();
+                </script>
+            </td>
 
-?>
-<div style="max-width:600px;padding:12px;border:1px solid #ddd;border-radius:10px;margin:12px 0;">
-    <h4 style="margin:0 0 8px;">Поиск заявок по фильтру</h4>
-
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <label for="filterSelect">Фильтр:</label>
-        <?php
-        load_filters_into_select(); // <select name="analog_filter">
-        ?>
-    </div>
-
-    <div id="filterSearchResult" style="margin-top:12px;"></div>
-</div>
-
-<script>
-    (function(){
-        const resultBox = document.getElementById('filterSearchResult');
-
-        function getSelectEl(){
-            return document.querySelector('select[name="analog_filter"]');
-        }
-
-        async function runSearch(){
-            const sel = getSelectEl();
-            if(!sel){ resultBox.innerHTML = '<div style="color:red">Не найден выпадающий список.</div>'; return; }
-            const val = sel.value.trim();
-            if(!val){ resultBox.innerHTML = '<div style="color:#666">Выберите фильтр…</div>'; return; }
-
-            resultBox.innerHTML = 'Загрузка…';
-
-            try{
-                const formData = new FormData();
-                formData.append('filter', val);
-
-                const resp = await fetch('search_filter_in_the_orders.php', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                if(!resp.ok){
-                    resultBox.innerHTML = `<div style="color:red">Ошибка запроса: ${resp.status} ${resp.statusText}</div>`;
-                    return;
+            <!-- Правая панель -->
+            <td class="panel panel--right" style="width:30%;">
+                <?php
+                /* ОПТИМИЗИРОВАННАЯ загрузка заявок */
+                $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+                if ($mysqli->connect_errno) { 
+                    echo 'Возникла проблема на сайте'; 
+                    exit; 
                 }
-
-                const html = await resp.text();
-                resultBox.innerHTML = html;
-            }catch(e){
-                resultBox.innerHTML = `<div style="color:red">Ошибка: ${e}</div>`;
-            }
-        }
-
-        const sel = getSelectEl();
-        if(sel){
-            sel.id = 'filterSelect'; // для label for
-            sel.addEventListener('change', runSearch);
-        }
-    })();
-</script>
-<?php
-
-
-echo "</td></tr><tr><td></td></tr>"
-    ."</table>"
-    ."</td><td>";
-
-/** ---------------------------------------------------------------------------------------------------------------- */
-/**                                                 Раздел ЗАЯВКИ                                                    */
-/** ---------------------------------------------------------------------------------------------------------------- */
-
-/** Форма загрузки файла с заявкой в БД */
-echo '<table height="100%" ><tr><td bgcolor="white" style="border-collapse: collapse">Сохраненные заявки<p>';
-
-
-/** Подключаемся к БД */
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    /** Если не получилось подключиться */
-    echo 'Возникла проблема на сайте'
-        . "Номер ошибки: " . $mysqli->connect_errno . "\n"
-        . "Ошибка: " . $mysqli->connect_error . "\n";
-    exit;
-}
+                
+                echo '<div class="section-title">Сохраненные заявки</div>';
+                echo '<div class="saved-orders">';
 
 /** Выполняем запрос SQL для загрузки заявок*/
 $sql = "SELECT DISTINCT order_number, workshop, hide FROM orders;";
@@ -589,10 +721,10 @@ if (!$result = $mysqli->query($sql)){
     exit;
 }
 /** Разбираем результат запроса */
-if ($result->num_rows === 0) { echo "В базе нет ни одной заявки";}
+if ($result->num_rows === 0) { echo "<div class='muted'>В базе нет ни одной заявки</div>";}
 
 /** Разбор массива значений  */
-echo '<form action="show_order.php" method="post" target="_blank" >';
+echo '<form action="show_order.php" method="post" target="_blank" style="display:flex; flex-wrap:wrap; gap:6px; width:100%;">';
 
 // Группируем заявки для отображения
 $orders_list = [];
@@ -633,65 +765,64 @@ foreach ($orders_list as $order_num => $orders_data){
         $progress = round(($total_produced / $total_planned) * 100);
     }
     
-    // Формируем значение с меньшим шрифтом для процента
-    $btnStyle = "height: 20px; width: 215px; font-size: 13px;";
-    $btnClass = str_contains($order_num, '[!]') ? "class='alert-button'" : "";
-    
-    echo "<button type='submit' name='order_number' value='{$order_num}' {$btnClass} style=\"{$btnStyle}\" title='Прогресс выполнения: {$progress}%'>";
-    echo "<span style='font-size: 13px;'>{$order_num}</span> ";
-    echo "<span style='font-size: 10px; opacity: 0.8;'>[{$progress}%]</span>";
-    echo "</button>";
-}
-echo '</form>';
+                    // Формируем аккуратные кнопки заявок
+                    $btnClass = str_contains($order_num, '[!]') ? "alert-button" : "";
+                    $order_display = htmlspecialchars($order_num);
+                    
+                    echo "<button type='submit' name='order_number' value='{$order_display}' class='{$btnClass}' title='Прогресс выполнения: {$progress}%'>";
+                    echo htmlspecialchars($order_num);
+                    if ($progress > 0) {
+                        echo " <span style='font-size:11px; opacity:0.9;'>[{$progress}%]</span>";
+                    }
+                    echo "</button>";
+                }
+                echo '</form>';
+                echo '</div>';
 
-?>
-<form action="archived_orders.php" target="_blank">
-    <input type="submit" value="Архив заявок" style="height: 20px; width: 215px">
-</form>
+                echo '<div class="section-title" style="margin-top:14px">Операции над заявками</div>';
+                echo '<div class="stack">';
+                echo "<form action='new_order.php' method='post' target='_blank' class='stack'>"
+                    ."<input type='submit' value='Создать заявку вручную'>"
+                    ."</form>";
+                echo "<form action='planning_manager.php' method='post' target='_blank' class='stack'>"
+                    ."<input type='submit' value='Менеджер планирования'>"
+                    ."</form>";
+                echo "<form action='combine_orders.php' method='post' target='_blank' class='stack'>"
+                    ."<input type='submit' value='Объединение заявок'>"
+                    ."</form>";
+                echo "<form action='NP_cut_index.php' method='post' target='_blank' class='stack'>"
+                    ."<input type='submit' value='Планирование работы (new)'>"
+                    ."</form>";
+                echo "<form action='archived_orders.php' target='_blank' class='stack'>"
+                    ."<input type='submit' value='Архив заявок'>"
+                    ."</form>";
+                echo '</div>';
+
+                echo '<div class="section-title" style="margin-top:14px">Мониторинг выполнения плана</div>';
+                echo '<div class="stack">';
+                echo "<form action='plan_monitoring.php' method='post' target='_blank' class='stack'>"
+                    ."<input type='submit' value='Просмотр плана'>";
+                load_plans();
+                echo "</form>";
+                echo "<button onclick=\"window.open('http://localhost/plan_U3/json_editor.html', '_blank');\">Редактор плана</button>";
+                echo '</div>';
+
+                echo '<div class="section-title" style="margin-top:14px">Загрузка заявок</div>';
+                echo '<div class="stack">';
+                echo '<form enctype="multipart/form-data" action="load_file.php" method="POST" target="_blank" class="stack">'
+                    .'<input type="hidden" name="MAX_FILE_SIZE" value="3000000" />'
+                    .'<label>Добавить заявку в систему:</label>'
+                    .'<input name="userfile" type="file" />'
+                    .'<input type="submit" value="Загрузить файл" />'
+                    .'</form>';
+                echo '</div>';
+                ?>
+            </td>
+        </tr>
+    </table>
+</div>
 
 <?php
-
-/** Блок распланированных заявок  */
-echo "Операции над заявками<p>";
-echo "<form action='new_order.php' method='post' target='_blank'>"
-    ."<input type='submit' value='Создать заявку вручную' style='height: 20px; width: 220px'>"
-    ."</form>";
-echo "<form action='planning_manager.php' method='post'  target='_blank' >"
-    ."<input type='submit' value='Менеджер планирования' style='height: 20px; width: 220px'>"
-    ."</form>";
-echo "<form action='combine_orders.php' method='post' target='_blank' >"
-    ."<input type='submit' value='Объединение заявок' style='height: 20px; width: 220px'>"
-    ."</form>";
-echo "<form action='NP_cut_index.php' method='post' target='_blank'>"
-    ."<input type='submit' value='Планирование работы (new)' style='height: 20px; width: 220px'>"
-    ."</form>";
-
-/** Блок анализа производства */
-echo "Мониторинг выполнения плана<p>";
-echo "<form action='plan_monitoring.php' method='post' target='_blank' >"
-    ."<input type='submit' value='Просмотр плана ' style='height: 20px; width: 140px'>";
-load_plans();
-echo "</form>";
-
-
-
-echo "<button onclick=\"window.open('http://localhost/plan_U3/json_editor.html', '_blank');\">Редактор плана</button>";
-
-
-
-
-/** Блок загрузки заявок */
-echo "</td></tr><tr><td height='20%'>"
-    .'<form enctype="multipart/form-data" action="load_file.php" method="POST" target="_blank" >'
-    .'<input type="hidden" name="MAX_FILE_SIZE" value="3000000" />'
-    .'Добавить заявку в систему: <input name="userfile" type="file" /><br>'
-    .'<input type="submit" value="Загрузить файл"  style="height: 20px; width: 220px" />'
-    .'</form>'
-    .'</td></tr></table>';
-
-/** конец формы загрузки */
-echo "</td></tr></table>";
-echo "</td></tr></table>";
 // Получаем список заявок для модального окна управления крышками (используем тот же алгоритм, что и для основного списка)
 $cap_orders_list = [];
 $sql_orders_modal = "SELECT DISTINCT order_number, workshop, hide FROM orders";
@@ -714,11 +845,10 @@ if ($result_orders_modal = $mysqli->query($sql_orders_modal)) {
     rsort($cap_orders_list);
     $result_orders_modal->close();
 }
-
-$result->close();
+// Закрываем соединение с БД
 $mysqli->close();
-
 ?>
+
 
 <!-- Модальное окно управления крышками -->
 <div id="capManagementModal" class="cap-modal">
@@ -771,8 +901,48 @@ window.onclick = function(event) {
 document.addEventListener('keydown', function(event) {
     if (event.key === 'Escape') {
         document.getElementById('capManagementModal').style.display = 'none';
+        document.getElementById('createAdModal').style.display = 'none';
     }
 });
 
+function openCreateAdModal() {
+    document.getElementById('createAdModal').style.display = 'block';
+}
+
+function closeCreateAdModal() {
+    document.getElementById('createAdModal').style.display = 'none';
+}
+
 </script>
+
+<!-- Модальное окно создания объявления -->
+<div id="createAdModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <div class="modal-title">Создать объявление</div>
+            <span class="close" onclick="closeCreateAdModal()">&times;</span>
+        </div>
+        <form action="create_ad.php" method="post" class="stack-lg">
+            <label>
+                <span style="font-weight: 600; display: block; margin-bottom: 4px;">Название объявления</span>
+                <input type="text" name="title" placeholder="Введите название" required>
+            </label>
+            <label>
+                <span style="font-weight: 600; display: block; margin-bottom: 4px;">Текст объявления</span>
+                <textarea name="content" placeholder="Введите текст" required></textarea>
+            </label>
+            <label>
+                <span style="font-weight: 600; display: block; margin-bottom: 4px;">Дата окончания</span>
+                <input type="date" name="expires_at" required>
+            </label>
+            <div style="display: flex; gap: 10px;">
+                <button type="submit">Создать объявление</button>
+                <button type="button" onclick="closeCreateAdModal()" style="background: var(--muted);">Отмена</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+</body>
+</html>
 
