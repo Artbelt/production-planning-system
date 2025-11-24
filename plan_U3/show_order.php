@@ -160,9 +160,10 @@ while ($row = $result->fetch_assoc()){
     }else{
         echo "<td>".$difference."</td>";
     }
-    //echo "<td>".manufactured_part_count($row['filter'],$order_number);"</td></tr>";
-    echo "<td>".show_prepared_caps($row['filter'])."</td>";
-    echo "<td>".manufactured_part_count($row['filter'],$order_number)."</td></tr>";
+    // Убраны ссылки на старые таблицы list_of_caps, list_of_filled_caps
+    echo "<td>-</td>";
+    // Убраны ссылки на старую таблицу manufactured_parts
+    echo "<td>-</td></tr>";
 
 }
 

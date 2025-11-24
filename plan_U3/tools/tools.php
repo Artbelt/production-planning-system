@@ -359,7 +359,7 @@ function load_orders($list, $selection, $form){
     $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
 
     /** Выполняем запрос SQL для загрузки заявок*/
-    $sql = "SELECT DISTINCT order_number, workshop FROM orders;";
+    $sql = "SELECT DISTINCT order_number, workshop FROM orders WHERE hide IS NULL OR hide = 0;";
 
     if (!isset($form)){
         $form = 'form';
@@ -616,172 +616,173 @@ function modify_date($string_date, $modifier){
 }
 
 
-/** Списание фильтров в выпущенную продукцию, + списание количества залитых крышек в выпущенные фильтры
+/** Списание фильтров в выпущенную продукцию, + списание крышек в выпущенные фильтры (новая система)
  * @param $date_of_production
  * @param $order_number
  * @param $filters
+ * @param $user_id - ID пользователя (опционально)
+ * @param $user_name - Имя пользователя (опционально)
  * @return bool
  */
-function write_of_filters($date_of_production, $order_number, $filters){
+function write_of_filters($date_of_production, $order_number, $filters, $user_id = null, $user_name = null){
 
     global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
 
+    // Пытаемся получить user_id и user_name из сессии если не переданы
+    if ($user_id === null || $user_name === null) {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        if ($user_id === null && isset($_SESSION['auth_user_id'])) {
+            $user_id = $_SESSION['auth_user_id'];
+        }
+        if ($user_name === null && isset($_SESSION['auth_full_name'])) {
+            $user_name = $_SESSION['auth_full_name'];
+        }
+    }
+
     /** Создаем подключение к БД */
     $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
+    if ($mysqli->connect_errno) {
+        echo "Ошибка подключения к БД: " . $mysqli->connect_error;
+        return false;
+    }
+    $mysqli->set_charset("utf8mb4");
+
+    // Инициализируем таблицы если их нет
+    $cap_db_init_path = dirname(__DIR__) . '/cap_db_init.php';
+    if (file_exists($cap_db_init_path)) {
+        require_once($cap_db_init_path);
+    }
 
     /** Цикл для разбора значений массива со значениями "фильтер - количество" */
     foreach ($filters as $filter_record) {
 
         /** Получили значение {елемент масива[фильтр][количество]} */
         $filter_name = $filter_record[0];
-        $filter_count = $filter_record[1];
+        $filter_count = intval($filter_record[1]);
 
         /** Форматируем sql-запрос, "записать в БД -> дата -> заявка -> фильтер -> количство" */
         $sql = "INSERT INTO manufactured_production (date_of_production, name_of_filter, count_of_filters, name_of_order) 
                 VALUES ('$date_of_production','$filter_name','$filter_count','$order_number')";
 
         /** Выполняем запрос. Если запрос не удачный -> exit */
-        if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
+        if (!$result = $mysqli->query($sql)){ 
+            echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
             /** в случае неудачи функция выводит FALSЕ */
             return false;
-            exit;
         }
 
-        /** СПИСАНИЕ СКВОЗНОЙ КРЫШКИ  */
-        /** 1 смотрим какие крышки входят в состав фильтра */
-        $sql = "SELECT up_cap FROM round_filter_structure WHERE filter = '$filter_name'";
-
-        /** Выполняем запрос. Если запрос не удачный -> exit */
-        if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-            /** в случае неудачи функция выводит FALSЕ */
-            return false;
-            exit;
+        /** СПИСАНИЕ КРЫШЕК - НОВАЯ СИСТЕМА */
+        /** Получаем информацию о крышках для фильтра */
+        $sql = "SELECT up_cap, down_cap FROM round_filter_structure WHERE filter = ?";
+        $stmt = $mysqli->prepare($sql);
+        
+        if (!$stmt) {
+            echo "Ошибка подготовки запроса: " . $mysqli->error;
+            continue;
         }
+        
+        $stmt->bind_param("s", $filter_name);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $caps_data = $result->fetch_assoc();
+        $stmt->close();
 
-        /** Если в фильтре есть крышкa то делаем списание крышки со склада */
-        $row = $result->fetch_assoc();
-        $cap = $row['up_cap'];
-        //echo $cap.'---------------------';
-        if ( $cap!= ''){
-            if (strpos($cap,'скв')){
-            /** если в названии крышки есть буквы "скв" значит сквозная и использована может быть только после заливки уплотниителя, поэтому списывать будем крышки из таблицы залитых крышек */
-                /** @var  $previous_count_of_caps колтичество крышек на складе до списания */
-                $previous_count_of_caps = 0;
-                $actual_count_of_caps = 0;
-                $up_cap = $cap;
-
-                /** @var находим количество крішек на складе $sql */
-                $sql = "SELECT cap_count FROM list_of_filled_caps WHERE name_of_cap = '$up_cap'";
-                /** Выполняем запрос. Если запрос не удачный -> exit */
-                if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-                    /** в случае неудачи функция выводит FALSЕ */
-                    return false;
-                    exit;
-                }
-                $row = $result->fetch_assoc();
-                $previous_count_of_caps = $row['cap_count'];
-
-                $actual_count_of_caps = $previous_count_of_caps - $filter_count;
-                /** Изменяем количество крышек на складе  */
-                $sql = "UPDATE list_of_filled_caps SET cap_count = '$actual_count_of_caps' WHERE name_of_cap ='$up_cap'";
-                /** Выполняем запрос. Если запрос не удачный -> exit */
-                if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-                    /** в случае неудачи функция выводит FALSЕ */
-                    return false;
-                    exit;
-                }
+        if ($caps_data) {
+            // Обрабатываем верхнюю крышку
+            if (!empty($caps_data['up_cap'])) {
+                $up_cap = trim($caps_data['up_cap']);
+                write_off_cap($mysqli, $up_cap, $filter_count, $date_of_production, $order_number, $filter_name, $user_id, $user_name);
             }
-            // записіваем в журнал движение крішки
+
+            // Обрабатываем нижнюю крышку
+            if (!empty($caps_data['down_cap'])) {
+                $down_cap = trim($caps_data['down_cap']);
+                write_off_cap($mysqli, $down_cap, $filter_count, $date_of_production, $order_number, $filter_name, $user_id, $user_name);
+            }
+        }
+
+        // Также записываем в старый журнал для совместимости
+        if (!empty($caps_data['up_cap'])) {
+            $up_cap = trim($caps_data['up_cap']);
             $sql = "INSERT INTO cap_log (date_of_operation, name_of_cap_field, count_of_caps, cap_action) 
-                VALUES ('$date_of_production','$up_cap','$filter_count','OUT')";
-            if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-                /** в случае неудачи функция выводит FALSЕ */
-                return false;
-                exit;
-            }
+                    VALUES ('$date_of_production','$up_cap','$filter_count','OUT')
+                    ON DUPLICATE KEY UPDATE count_of_caps = count_of_caps";
+            $mysqli->query($sql);
         }
-
-        /** СПИСАНИЕ ГЛУХОЙ (СКВОЗНОЙ) КРЫШКИ  */
-        $down_cap = 0;
-        /** 1 смотрим какие крышки входят в состав фильтра */
-        $sql = "SELECT down_cap FROM round_filter_structure WHERE filter = '$filter_name'";
-
-        /** Выполняем запрос. Если запрос не удачный -> exit */
-        if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-            /** в случае неудачи функция выводит FALSЕ */
-            return false;
-            exit;
-        }
-        /** Если в фильтре есть крышкa то делаем списание крышки со склада */
-        $row = $result->fetch_assoc();
-        $cap = $row['down_cap'];
-        //echo $cap.'---------------------';
-        if ( $cap!= ''){
-            if (strpos($cap,'скв')){ // если крішка нижняя сквозная
-                /** если в названии крышки есть буквы "скв" значит сквозная и использована может быть только после заливки уплотниителя, поэтому списывать будем крышки из таблицы залитых крышек */
-                /** @var  $previous_count_of_caps колтичество крышек на складе до списания */
-                $previous_count_of_caps = 0;
-                $actual_count_of_caps = 0;
-                $down_cap = $cap;
-
-                /** @var находим количество крішек на складе $sql */
-                $sql = "SELECT cap_count FROM list_of_filled_caps WHERE name_of_cap = '$down_cap'";
-                /** Выполняем запрос. Если запрос не удачный -> exit */
-                if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-                    /** в случае неудачи функция выводит FALSЕ */
-                    return false;
-                    exit;
-                }
-                $row = $result->fetch_assoc();
-                $previous_count_of_caps = $row['cap_count'];
-
-                $actual_count_of_caps = $previous_count_of_caps - $filter_count;
-                /** Изменяем количество крышек на складе  */
-                $sql = "UPDATE list_of_filled_caps SET cap_count = '$actual_count_of_caps' WHERE name_of_cap ='$up_cap'";
-                /** Выполняем запрос. Если запрос не удачный -> exit */
-                if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-                    /** в случае неудачи функция выводит FALSЕ */
-                    return false;
-                    exit;
-                }
-            } else { // если крішка нижняя глухая:
-                        $previous_count_of_caps = 0;
-                        $actual_count_of_caps = 0;
-                        $down_cap = $cap;
-                        /** @var находим количество крішек на складе $sql */
-                        $sql = "SELECT cap_count FROM list_of_caps WHERE name_of_cap = '$down_cap'";
-                        /** Выполняем запрос. Если запрос не удачный -> exit */
-                        if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-                            /** в случае неудачи функция выводит FALSЕ */
-                            return false;
-                            exit;
-                        }
-                        $row = $result->fetch_assoc();
-                        $previous_count_of_caps = $row['cap_count'];
-
-                        $actual_count_of_caps = $previous_count_of_caps - $filter_count;
-                        /** Изменяем количество крышек на складе  */
-                        $sql = "UPDATE list_of_caps SET cap_count = '$actual_count_of_caps' WHERE name_of_cap ='$down_cap'";
-                        /** Выполняем запрос. Если запрос не удачный -> exit */
-                        if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-                            /** в случае неудачи функция выводит FALSЕ */
-                            return false;
-                            exit;
-                        }
-                   }
-        }
-        // записіваем в журнал движение крішки
-        $sql = "INSERT INTO cap_log (date_of_operation, name_of_cap_field, count_of_caps, cap_action) 
-                VALUES ('$date_of_production','$down_cap','$filter_count','OUT')";
-        if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-            /** в случае неудачи функция выводит FALSЕ */
-            return false;
-            exit;
+        if (!empty($caps_data['down_cap'])) {
+            $down_cap = trim($caps_data['down_cap']);
+            $sql = "INSERT INTO cap_log (date_of_operation, name_of_cap_field, count_of_caps, cap_action) 
+                    VALUES ('$date_of_production','$down_cap','$filter_count','OUT')
+                    ON DUPLICATE KEY UPDATE count_of_caps = count_of_caps";
+            $mysqli->query($sql);
         }
     }
 
     /** Закрываем соединение */
+    $mysqli->close();
     return true;
+}
+
+/** Вспомогательная функция для списания крышки
+ * @param $mysqli - соединение с БД
+ * @param $cap_name - название крышки
+ * @param $quantity - количество для списания
+ * @param $date - дата операции
+ * @param $order_number - номер заявки
+ * @param $filter_name - название фильтра
+ * @param $user_id - ID пользователя
+ * @param $user_name - имя пользователя
+ */
+function write_off_cap($mysqli, $cap_name, $quantity, $date, $order_number, $filter_name, $user_id, $user_name) {
+    // Проверяем остаток
+    $stmt = $mysqli->prepare("SELECT current_quantity FROM cap_stock WHERE cap_name = ?");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param("s", $cap_name);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $stock_row = $result->fetch_assoc();
+    $stmt->close();
+
+    $current_qty = $stock_row ? intval($stock_row['current_quantity']) : 0;
+    
+    // Если крышки нет в таблице остатков, создаем запись с нулевым остатком
+    if (!$stock_row) {
+        $stmt = $mysqli->prepare("INSERT INTO cap_stock (cap_name, current_quantity) VALUES (?, 0)");
+        if ($stmt) {
+            $stmt->bind_param("s", $cap_name);
+            $stmt->execute();
+            $stmt->close();
+        }
+    }
+
+    // Списываем крышку (уменьшаем остаток)
+    $new_qty = max(0, $current_qty - $quantity);
+    $stmt = $mysqli->prepare("UPDATE cap_stock SET current_quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE cap_name = ?");
+    if ($stmt) {
+        $stmt->bind_param("is", $new_qty, $cap_name);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    // Записываем движение в cap_movements
+    $stmt = $mysqli->prepare("
+        INSERT INTO cap_movements 
+        (date, cap_name, operation_type, quantity, order_number, filter_name, production_date, user_id, user_name)
+        VALUES (?, ?, 'PRODUCTION_OUT', ?, ?, ?, ?, ?, ?)
+    ");
+    if ($stmt) {
+        // Типы: s=string, i=integer: date(s), cap_name(s), quantity(i), order_number(s), filter_name(s), production_date(s), user_id(i), user_name(s)
+        // Всего 8 параметров: date, cap_name, quantity, order_number, filter_name, production_date, user_id, user_name
+        $stmt->bind_param("ssisssis", $date, $cap_name, $quantity, $order_number, $filter_name, $date, $user_id, $user_name);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    // Старая таблица list_of_caps больше не используется
 }
 
 /** Занесение комплектующих. Внесение гофропакетов в БД в таблицу "лог(manufactured_parts)" и в таблицу "склад(list_of_parts)"

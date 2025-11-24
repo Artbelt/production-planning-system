@@ -117,6 +117,93 @@ echo '<head>';
     .alert-button:hover {
         background-color: skyblue; /* Темно-зеленый фон при наведении */
     }
+    
+    /* Стили для модального окна управления крышками */
+    .cap-modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        background-color: rgba(0,0,0,0.5);
+    }
+    
+    .cap-modal-content {
+        background-color: white;
+        margin: 3% auto;
+        padding: 15px;
+        border: none;
+        border-radius: 6px;
+        width: 90%;
+        max-width: 500px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .cap-modal-close {
+        color: #aaa;
+        float: right;
+        font-size: 24px;
+        font-weight: bold;
+        cursor: pointer;
+        line-height: 1;
+    }
+    
+    .cap-modal-close:hover,
+    .cap-modal-close:focus {
+        color: #000;
+    }
+    
+    .cap-modal-content h1 {
+        color: #333;
+        border-bottom: 2px solid #6495ed;
+        padding-bottom: 6px;
+        margin-top: 0;
+        margin-bottom: 15px;
+        font-size: 20px;
+    }
+    
+    .cap-menu-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        margin-top: 15px;
+    }
+    
+    .cap-menu-card {
+        background: #f9f9f9;
+        border: 2px solid #ddd;
+        border-radius: 6px;
+        padding: 12px;
+        text-align: center;
+        transition: all 0.3s;
+        cursor: pointer;
+        text-decoration: none;
+        color: #333;
+        display: block;
+    }
+    
+    .cap-menu-card:hover {
+        border-color: #6495ed;
+        background: #e8f0fe;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    
+    .cap-menu-card h2 {
+        margin: 0 0 6px 0;
+        color: #6495ed;
+        font-size: 14px;
+        font-weight: bold;
+    }
+    
+    .cap-menu-card p {
+        margin: 0;
+        color: #666;
+        font-size: 12px;
+    }
 </style>
 
 
@@ -181,7 +268,7 @@ echo "<tr align='center'><td>"
     <button style="height: 20px; width: 220px">Выпуск продукции</button>
 </a>
 <?php
-echo "<form action='cap_storage.php' method='post' target='_blank' ><input type='submit' value='Операции с крышками'  style=\"height: 20px; width: 220px\"></form>"
+echo "<button type='button' onclick='openCapManagementModal()' style='height: 20px; width: 220px'>Операции с крышками</button>"
     ."<form action='parts_output_for_workers.php' method='post' target='_blank' ><input type='submit' value='Выпуск гофропакетов' style=\"height: 20px; width: 220px\"></form>";
     
 if ($canAccessLaser) {
@@ -605,8 +692,87 @@ echo "</td></tr><tr><td height='20%'>"
 /** конец формы загрузки */
 echo "</td></tr></table>";
 echo "</td></tr></table>";
+// Получаем список заявок для модального окна управления крышками (используем тот же алгоритм, что и для основного списка)
+$cap_orders_list = [];
+$sql_orders_modal = "SELECT DISTINCT order_number, workshop, hide FROM orders";
+if ($result_orders_modal = $mysqli->query($sql_orders_modal)) {
+    // Группируем заявки для отображения (как на main.php)
+    $orders_temp_modal = [];
+    while ($orders_data_modal = $result_orders_modal->fetch_assoc()) {
+        if ($orders_data_modal['hide'] != 1) {
+            $order_num = $orders_data_modal['order_number'];
+            if (!isset($orders_temp_modal[$order_num])) {
+                $orders_temp_modal[$order_num] = $orders_data_modal;
+            }
+        }
+    }
+    // Преобразуем в простой массив и сортируем по убыванию
+    foreach ($orders_temp_modal as $order_num => $order_data) {
+        $cap_orders_list[] = $order_num;
+    }
+    // Сортируем по убыванию (новые заявки сверху)
+    rsort($cap_orders_list);
+    $result_orders_modal->close();
+}
+
 $result->close();
 $mysqli->close();
 
-
 ?>
+
+<!-- Модальное окно управления крышками -->
+<div id="capManagementModal" class="cap-modal">
+    <div class="cap-modal-content">
+        <span class="cap-modal-close" onclick="closeCapManagementModal()">&times;</span>
+        <h1>Управление крышками</h1>
+        
+        <div class="cap-menu-grid">
+            <a href="cap_income.php" class="cap-menu-card" target="_blank">
+                <h2>Прием крышек</h2>
+                <p>Внести информацию о поступлении крышек на склад</p>
+            </a>
+            
+            <a href="cap_stock_view.php" class="cap-menu-card" target="_blank">
+                <h2>Остатки на складе</h2>
+                <p>Просмотр текущих остатков крышек</p>
+            </a>
+            
+            <a href="cap_movements_view.php" class="cap-menu-card" target="_blank">
+                <h2>Движение по заявке</h2>
+                <p>Просмотр движения крышек по конкретной заявке</p>
+            </a>
+            
+            <a href="cap_history.php" class="cap-menu-card" target="_blank">
+                <h2>История операций</h2>
+                <p>Просмотр всех операций с крышками</p>
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+function openCapManagementModal() {
+    document.getElementById('capManagementModal').style.display = 'block';
+}
+
+function closeCapManagementModal() {
+    document.getElementById('capManagementModal').style.display = 'none';
+}
+
+// Закрытие модального окна при клике вне его
+window.onclick = function(event) {
+    const modal = document.getElementById('capManagementModal');
+    if (event.target == modal) {
+        modal.style.display = 'none';
+    }
+}
+
+// Закрытие модального окна по клавише ESC
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        document.getElementById('capManagementModal').style.display = 'none';
+    }
+});
+
+</script>
+
