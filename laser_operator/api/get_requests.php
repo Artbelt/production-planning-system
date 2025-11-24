@@ -148,14 +148,43 @@ function getAllLaserRequests($databases) {
                 continue;
             }
             
-            // Автомиграция: добавляем поле progress_count если его нет
+            // Автомиграция: добавляем необходимые поля если их нет
             $columnCheck = $mysqli->query("SHOW COLUMNS FROM laser_requests LIKE 'progress_count'");
             if ($columnCheck && $columnCheck->num_rows === 0) {
                 $mysqli->query("ALTER TABLE laser_requests ADD COLUMN progress_count INT NOT NULL DEFAULT 0 AFTER quantity");
             }
-        
-            // Безопасный запрос с проверкой
-            $sql = "SELECT id, user_name, department, component_name, quantity, progress_count, desired_delivery_time, is_completed, completed_at, created_at, '{$department}' as source_department FROM laser_requests ORDER BY created_at DESC LIMIT 100";
+            
+            // Проверяем существование поля is_cancelled
+            $checkCancelled = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'is_cancelled'");
+            if ($checkCancelled && $checkCancelled->fetch_row()[0] == 0) {
+                $mysqli->query("ALTER TABLE laser_requests ADD COLUMN is_cancelled BOOLEAN DEFAULT FALSE AFTER is_completed");
+            }
+            
+            // Проверяем существование поля cancelled_at
+            $checkCancelledAt = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'cancelled_at'");
+            if ($checkCancelledAt && $checkCancelledAt->fetch_row()[0] == 0) {
+                $mysqli->query("ALTER TABLE laser_requests ADD COLUMN cancelled_at TIMESTAMP NULL AFTER is_cancelled");
+            }
+            
+            // Проверяем существование поля completed_by
+            $checkCompletedBy = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'completed_by'");
+            if ($checkCompletedBy && $checkCompletedBy->fetch_row()[0] == 0) {
+                $mysqli->query("ALTER TABLE laser_requests ADD COLUMN completed_by VARCHAR(255) NULL AFTER completed_at");
+            }
+            
+            // Проверяем существование колонки is_cancelled перед использованием в запросе
+            $hasCancelledColumn = false;
+            $checkColumn = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'is_cancelled'");
+            if ($checkColumn && $checkColumn->fetch_row()[0] > 0) {
+                $hasCancelledColumn = true;
+            }
+            
+            // Безопасный запрос с проверкой (исключаем отмененные заявки, если колонка существует)
+            if ($hasCancelledColumn) {
+                $sql = "SELECT id, user_name, department, component_name, quantity, progress_count, desired_delivery_time, is_completed, completed_at, created_at, '{$department}' as source_department FROM laser_requests WHERE (is_cancelled = FALSE OR is_cancelled IS NULL) ORDER BY created_at DESC LIMIT 100";
+            } else {
+                $sql = "SELECT id, user_name, department, component_name, quantity, progress_count, desired_delivery_time, is_completed, completed_at, created_at, '{$department}' as source_department FROM laser_requests ORDER BY created_at DESC LIMIT 100";
+            }
             
             if (!$result = $mysqli->query($sql)) {
                 $error = "Ошибка запроса к БД {$department}: " . $mysqli->error;

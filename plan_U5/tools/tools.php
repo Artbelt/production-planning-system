@@ -111,30 +111,447 @@ function show_ads(){
 
 /** Отображение выпуска продукции за последнюю неделю */
 function show_weekly_production(){
+    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
+    
     $count = 0;
-    echo "изготовленая продукция за последние 10 дней:<p> ";
-    for ($a = 1; $a < 11; $a++) {
-
-        $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));;
-        $production_date = reverse_date($production_date);
-        $sql = "SELECT * FROM manufactured_production WHERE date_of_production = '$production_date';";
-        $result = mysql_execute($sql);
-        /** @var $x $variant counter */
-        $x = 0;
-        foreach ($result as $variant) {
-            $x += $variant['count_of_filters'];
-        }
-        /** Выводим сумму фильтров */
-        echo $production_date . " " . $x . " шт <br>";
-        $count = $count + $x;
-
+    
+    // Начинаем плашку (карточку)
+    echo '<div class="production-card">';
+    echo '<div class="production-card-header">';
+    echo '<h3 class="production-card-title">Изготовленная продукция за последние 10 дней</h3>';
+    echo '</div>';
+    echo '<div class="production-card-body">';
+    
+    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+    if ($mysqli->connect_errno) {
+        echo "Ошибка подключения к БД";
+        return;
     }
+    
+    $SHIFT_HOURS = 11.5; // длительность смены в часах
+    
+    // Собираем данные за все дни
+    $all_days_data = [];
+    
+    for ($a = 1; $a < 11; $a++) {
+        $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));
+        $production_date = reverse_date($production_date);
+        
+        // Получаем данные с build_complexity для расчета процентов
+        $sql = "SELECT 
+                    mp.team,
+                    mp.count_of_filters,
+                    COALESCE(sfs.build_complexity, 0) AS build_complexity
+                FROM manufactured_production mp
+                LEFT JOIN salon_filter_structure sfs ON sfs.filter = mp.name_of_filter
+                WHERE mp.date_of_production = '$production_date'
+                ORDER BY mp.team";
+        
+        $result = $mysqli->query($sql);
+        
+        if (!$result) {
+            continue;
+        }
+        
+        // Группируем по бригадам, затем объединяем по машинам
+        $teams_data = [];
+        $total_count = 0;
+        
+        while ($row = $result->fetch_assoc()) {
+            $team = (int)$row['team'];
+            $count_filters = (int)$row['count_of_filters'];
+            $build_complexity = (float)$row['build_complexity'];
+            
+            if (!isset($teams_data[$team])) {
+                $teams_data[$team] = [
+                    'count' => 0,
+                    'norms_sum' => 0.0 // сумма норм (count / build_complexity)
+                ];
+            }
+            
+            $teams_data[$team]['count'] += $count_filters;
+            $total_count += $count_filters;
+            
+            // Рассчитываем нормы для процента выполнения
+            if ($build_complexity > 0) {
+                $teams_data[$team]['norms_sum'] += $count_filters / $build_complexity;
+            }
+        }
+        
+        // Объединяем данные по машинам:
+        // Машина 1: бригады 1 и 2
+        // Машина 2: бригады 3 и 4
+        $machines_data = [];
+        for ($machine = 1; $machine <= 2; $machine++) {
+            $machines_data[$machine] = [
+                'count' => 0,
+                'norms_sum' => 0.0
+            ];
+            
+            // Определяем какие бригады относятся к этой машине
+            $team_start = ($machine == 1) ? 1 : 3;
+            $team_end = ($machine == 1) ? 2 : 4;
+            
+            for ($team = $team_start; $team <= $team_end; $team++) {
+                if (isset($teams_data[$team])) {
+                    $machines_data[$machine]['count'] += $teams_data[$team]['count'];
+                    $machines_data[$machine]['norms_sum'] += $teams_data[$team]['norms_sum'];
+                }
+            }
+        }
+        
+        // Сохраняем данные для этого дня
+        $all_days_data[] = [
+            'date' => $production_date,
+            'total_count' => $total_count,
+            'machines' => $machines_data
+        ];
+        
+        $count = $count + $total_count;
+        
+        if ($result) {
+            $result->free();
+        }
+    }
+    
+    $mysqli->close();
+    
+    // Выводим таблицу
+    echo '<style>
+        .production-card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(2, 8, 20, 0.06);
+            margin: 12px 0;
+            overflow: hidden;
+        }
+        .production-card-header {
+            padding: 10px 12px;
+            border-bottom: 1px solid #e5e7eb;
+            background-color: #ffffff;
+        }
+        .production-card-title {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 600;
+            color: #111827;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .production-card-body {
+            padding: 10px 12px;
+            background-color: #ffffff;
+        }
+        .production-card-footer {
+            padding: 10px 12px;
+            background-color: #ffffff;
+            border-top: 1px solid #e5e7eb;
+        }
+        .production-table {
+            border-collapse: separate;
+            border-spacing: 0;
+            width: 100%;
+            max-width: 1000px;
+            margin: 8px 0;
+            font-size: 12px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+        .production-table th {
+            background-color: #f8f9fa;
+            padding: 6px 10px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+            font-weight: normal;
+            color: #495057;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .production-table th:first-child {
+            border-top-left-radius: 8px;
+        }
+        .production-table th:last-child {
+            border-top-right-radius: 8px;
+        }
+        .production-table td {
+            padding: 6px 10px;
+            border-bottom: 1px solid #f1f3f5;
+            color: #6c757d;
+        }
+        .production-table tbody tr {
+            background-color: #ffffff;
+            transition: background-color 0.2s ease;
+        }
+        .production-table tbody tr:nth-child(even) {
+            background-color: #fafbfc;
+        }
+        .production-table tbody tr:hover {
+            background-color: #f0f4f8;
+        }
+        .production-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        .production-table .date-col {
+            font-weight: normal;
+            color: #495057;
+        }
+        .production-table .total-col {
+            font-weight: normal;
+            text-align: right;
+            color: #495057;
+        }
+        .production-table .team-col {
+            text-align: right;
+            color: #6c757d;
+        }
+        .production-table .team-col .percentage-link {
+            color: #4a90e2;
+            text-decoration: none;
+            transition: color 0.2s ease;
+        }
+        .production-table .team-col .percentage-link:hover {
+            color: #357abd;
+            text-decoration: underline;
+        }
+        .production-stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+        }
+        .production-stat-label {
+            color: #6c757d;
+            font-weight: 500;
+        }
+        .production-stat-value {
+            font-weight: 600;
+            font-size: 13px;
+        }
+    </style>';
+    
+    echo '<table class="production-table">';
+    echo '<thead><tr>';
+    echo '<th class="date-col">Дата</th>';
+    echo '<th class="total-col">Всего</th>';
+    
+    // Заголовки для машин
+    for ($m = 1; $m <= 2; $m++) {
+        echo '<th class="team-col">Машина ' . $m . '</th>';
+    }
+    echo '</tr></thead>';
+    echo '<tbody>';
+    
+    // Выводим данные по дням
+    foreach ($all_days_data as $day_data) {
+        echo '<tr>';
+        echo '<td class="date-col">' . htmlspecialchars($day_data['date']) . '</td>';
+        echo '<td class="total-col">' . $day_data['total_count'] . '</td>';
+        
+        // Выводим данные по машинам
+        for ($m = 1; $m <= 2; $m++) {
+            echo '<td class="team-col">';
+            if (isset($day_data['machines'][$m]) && $day_data['machines'][$m]['count'] > 0) {
+                $machine_data = $day_data['machines'][$m];
+                $machine_count = $machine_data['count'];
+                $norms_sum = $machine_data['norms_sum'];
+                $percentage = $norms_sum > 0 ? round($norms_sum * 100, 0) : 0;
+                
+                // Определяем какие бригады относятся к этой машине для клика
+                $team_start = ($m == 1) ? 1 : 3;
+                $team_end = ($m == 1) ? 2 : 4;
+                $team_ids = range($team_start, $team_end);
+                $team_ids_str = implode(',', $team_ids);
+                
+                echo $machine_count . ' <span class="percentage-link" data-date="' . htmlspecialchars($day_data['date']) . '" data-teams="' . htmlspecialchars($team_ids_str) . '" style="cursor: pointer; color: #0066cc; text-decoration: underline;">' . $percentage . '%</span>';
+            } else {
+                echo '-';
+            }
+            echo '</td>';
+        }
+        echo '</tr>';
+    }
+    
+    echo '</tbody></table>';
+    echo '</div>'; // закрываем production-card-body
+    
+    // Футер карточки со статистикой
+    echo '<div class="production-card-footer">';
     $count_per_day = $count / 10;
     if ($count_per_day > 1000){
-        echo "Среднее количество в смену: <span class='highlight_green' title='Это количество обеспечит 30 000 фильтров в месяц'>".$count_per_day."</span>";
+        echo "<div class='production-stat'><span class='production-stat-label'>Среднее количество в смену:</span> <span class='production-stat-value highlight_green' title='Это количество обеспечит 30 000 фильтров в месяц'>".round($count_per_day, 0)."</span></div>";
     } else {
-        echo "Среднее количество в смену: <span class='highlight_red' title='Это количество НЕ обеспечит 30 000 фильтров в месяц'>".$count_per_day."</span>";
+        echo "<div class='production-stat'><span class='production-stat-label'>Среднее количество в смену:</span> <span class='production-stat-value highlight_red' title='Это количество НЕ обеспечит 30 000 фильтров в месяц'>".round($count_per_day, 0)."</span></div>";
     }
+    echo '</div>'; // закрываем production-card-footer
+    echo '</div>'; // закрываем production-card
+    
+    // Модальное окно для детального расчета процентов
+    ?>
+    <div id="percentageDetailModal" style="display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); justify-content: center; align-items: center;">
+        <div style="background-color: white; padding: 20px; border-radius: 8px; max-width: 800px; max-height: 90vh; overflow-y: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1); position: relative;">
+            <span id="closePercentageModal" style="position: absolute; right: 15px; top: 15px; font-size: 28px; font-weight: bold; color: #999; cursor: pointer; line-height: 1;">&times;</span>
+            <h3 id="percentageModalTitle" style="margin-top: 0; margin-bottom: 15px;">Детальный расчет процентов</h3>
+            <div id="percentageModalContent" style="min-height: 200px;">
+                <div style="text-align: center; padding: 40px;">Загрузка данных...</div>
+            </div>
+        </div>
+    </div>
+    
+    <style>
+        .percentage-link:hover {
+            color: #004499 !important;
+        }
+        #percentageDetailModal table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        #percentageDetailModal th {
+            background-color: #f3f4f6;
+            padding: 8px;
+            text-align: left;
+            border: 1px solid #ddd;
+            font-weight: bold;
+        }
+        #percentageDetailModal td {
+            padding: 8px;
+            border: 1px solid #ddd;
+        }
+        #percentageDetailModal tr:nth-child(even) {
+            background-color: #f9fafb;
+        }
+        .percentage-summary {
+            background-color: #eff6ff;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+    </style>
+    
+    <script>
+    (function() {
+        // Проверяем, не инициализированы ли уже обработчики
+        if (window.percentageModalInitialized) {
+            return;
+        }
+        window.percentageModalInitialized = true;
+        
+        // Обработчик клика на проценты (делегирование событий)
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('percentage-link')) {
+                e.preventDefault();
+                const date = e.target.getAttribute('data-date');
+                const teams = e.target.getAttribute('data-teams') || e.target.getAttribute('data-team');
+                showPercentageDetails(date, teams);
+            }
+        });
+        
+        // Закрытие модального окна
+        const closeBtn = document.getElementById('closePercentageModal');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function() {
+                document.getElementById('percentageDetailModal').style.display = 'none';
+            });
+        }
+        
+        // Закрытие при клике вне модального окна
+        const modal = document.getElementById('percentageDetailModal');
+        if (modal) {
+            modal.addEventListener('click', function(e) {
+                if (e.target.id === 'percentageDetailModal') {
+                    this.style.display = 'none';
+                }
+            });
+        }
+        
+        // Закрытие по клавише Escape
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && modal && modal.style.display === 'flex') {
+                modal.style.display = 'none';
+            }
+        });
+        
+        // Функция показа детального расчета
+        function showPercentageDetails(date, teams) {
+            const modal = document.getElementById('percentageDetailModal');
+            const title = document.getElementById('percentageModalTitle');
+            const content = document.getElementById('percentageModalContent');
+            
+            // Определяем название (машина или бригада)
+            const teamArray = teams.split(',');
+            let titleText = '';
+            if (teamArray.length > 1) {
+                const machineNum = teamArray[0] <= 2 ? 1 : 2;
+                titleText = 'Детальный расчет процентов - Машина ' + machineNum + ' (' + date + ')';
+            } else {
+                titleText = 'Детальный расчет процентов - Бригада ' + teams + ' (' + date + ')';
+            }
+            
+            title.textContent = titleText;
+            content.innerHTML = '<div style="text-align: center; padding: 40px;">Загрузка данных...</div>';
+            modal.style.display = 'flex';
+            
+            // Загружаем данные через AJAX
+            fetch('get_team_percentage_details.php?date=' + encodeURIComponent(date) + '&teams=' + encodeURIComponent(teams))
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('HTTP error! status: ' + response.status);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка: ' + escapeHtml(data.error) + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.items || data.items.length === 0) {
+                        content.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">Нет данных для отображения</div>';
+                        return;
+                    }
+                    
+                    let html = '<div class="percentage-summary">';
+                    html += '<strong>Итого:</strong> <strong>' + data.total_count + ' шт</strong> | ';
+                    html += '<strong>Сумма норм:</strong> <strong>' + (data.norms_sum ? data.norms_sum.toFixed(3) : '0.000') + '</strong> | ';
+                    html += '<strong>Процент выполнения:</strong> <strong>' + data.percentage + '%</strong>';
+                    html += '</div>';
+                    
+                    html += '<table>';
+                    html += '<thead><tr><th>Фильтр</th><th>Заявка</th><th>Изготовлено</th><th>Норма (шт/смену)</th><th>Норм</th><th>% выполнения</th></tr></thead>';
+                    html += '<tbody>';
+                    
+                    data.items.forEach(function(item) {
+                        html += '<tr>';
+                        html += '<td>' + escapeHtml(item.filter_name || '-') + '</td>';
+                        html += '<td>' + escapeHtml(item.order_number || '-') + '</td>';
+                        html += '<td>' + item.count + ' шт</td>';
+                        html += '<td>' + (item.build_complexity > 0 ? item.build_complexity.toFixed(2) : '-') + '</td>';
+                        html += '<td>' + (item.norms > 0 ? item.norms.toFixed(3) : '-') + '</td>';
+                        html += '<td>' + (item.item_percentage > 0 ? item.item_percentage + '%' : '-') + '</td>';
+                        html += '</tr>';
+                    });
+                    
+                    html += '</tbody></table>';
+                    content.innerHTML = html;
+                })
+                .catch(error => {
+                    content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка загрузки данных: ' + escapeHtml(error.message) + '</div>';
+                });
+        }
+        
+        // Функция экранирования HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    })();
+    </script>
+    <?php
 
 }
 /** Выборка имен фильтров */

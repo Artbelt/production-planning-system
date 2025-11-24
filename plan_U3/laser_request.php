@@ -79,8 +79,25 @@ CREATE TABLE IF NOT EXISTS laser_requests (
 $mysqli->query($create_table_sql);
 
 // Добавляем поле completed_at, если оно не существует
-$alter_sql = "ALTER TABLE laser_requests ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP NULL AFTER is_completed";
-$mysqli->query($alter_sql);
+$check_completed_at = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS 
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'completed_at'");
+if ($check_completed_at && $check_completed_at->fetch_row()[0] == 0) {
+    $mysqli->query("ALTER TABLE laser_requests ADD COLUMN completed_at TIMESTAMP NULL AFTER is_completed");
+}
+
+// Добавляем поле is_cancelled, если оно не существует
+$check_cancelled = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS 
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'is_cancelled'");
+if ($check_cancelled && $check_cancelled->fetch_row()[0] == 0) {
+    $mysqli->query("ALTER TABLE laser_requests ADD COLUMN is_cancelled BOOLEAN DEFAULT FALSE AFTER is_completed");
+}
+
+// Добавляем поле cancelled_at, если оно не существует
+$check_cancelled_at = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS 
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'cancelled_at'");
+if ($check_cancelled_at && $check_cancelled_at->fetch_row()[0] == 0) {
+    $mysqli->query("ALTER TABLE laser_requests ADD COLUMN cancelled_at TIMESTAMP NULL AFTER is_cancelled");
+}
 
 // Создание таблицы для справочника комплектующих
 $create_components_table_sql = "
@@ -181,6 +198,38 @@ if (isset($_POST['action']) && $_POST['action'] === 'mark_completed' && isset($_
         $stmt->close();
         
         $success_message = "Заявка отмечена как выполненная!";
+    }
+}
+
+// Обработка отмены заявки
+if (isset($_POST['action']) && $_POST['action'] === 'cancel_request' && isset($_POST['request_id'])) {
+    $request_id = (int)$_POST['request_id'];
+    
+    // Проверяем, что заявка принадлежит пользователю и не выполнена
+    $check_sql = "SELECT id, is_completed, is_cancelled FROM laser_requests WHERE id = ? AND user_name = ? AND department = ?";
+    $stmt = $mysqli->prepare($check_sql);
+    $stmt->bind_param("iss", $request_id, $user['full_name'], $currentDepartment);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $request = $result->fetch_assoc();
+    
+    if ($request && !$request['is_completed'] && !$request['is_cancelled']) {
+        // Отмечаем как отмененную и записываем время отмены
+        $update_sql = "UPDATE laser_requests SET is_cancelled = TRUE, cancelled_at = NOW() WHERE id = ?";
+        $stmt = $mysqli->prepare($update_sql);
+        $stmt->bind_param("i", $request_id);
+        $stmt->execute();
+        $stmt->close();
+        
+        $success_message = "Заявка успешно отменена!";
+    } else {
+        if ($request && $request['is_completed']) {
+            $error_message = "Нельзя отменить выполненную заявку!";
+        } elseif ($request && $request['is_cancelled']) {
+            $error_message = "Заявка уже отменена!";
+        } else {
+            $error_message = "Заявка не найдена или у вас нет прав на её отмену!";
+        }
     }
 }
 
@@ -362,6 +411,11 @@ $stmt->close();
             font-weight: 500;
         }
         
+        .status-cancelled{
+            color: #dc2626;
+            font-weight: 500;
+        }
+        
         .btn-complete{
             background: var(--accent);
             color: var(--accent-ink);
@@ -377,6 +431,34 @@ $stmt->close();
         .btn-complete:hover{
             opacity: 0.9;
             transform: translateY(-1px);
+        }
+        
+        .btn-cancel{
+            background: #dc2626;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .btn-cancel:hover{
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        
+        .btn-cancel:disabled{
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .action-buttons{
+            display: flex;
+            gap: 8px;
+            align-items: center;
         }
         
         /* Адаптивные стили для мобильных устройств */
@@ -581,6 +663,7 @@ $stmt->close();
                         <th>Комплектующие</th>
                         <th>Количество</th>
                         <th>Статус</th>
+                        <th>Действия</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -590,15 +673,37 @@ $stmt->close();
                                 <td><?= htmlspecialchars($request['component_name']) ?></td>
                                 <td><?= $request['quantity'] ?></td>
                                 <td>
-                                    <span class="<?= $request['is_completed'] ? 'status-completed' : 'status-pending' ?>">
-                                        <?= $request['is_completed'] ? 'Выполнено' : 'В работе' ?>
+                                    <?php
+                                    $status_class = 'status-pending';
+                                    $status_text = 'В работе';
+                                    if ($request['is_cancelled'] ?? false) {
+                                        $status_class = 'status-cancelled';
+                                        $status_text = 'Отменено';
+                                    } elseif ($request['is_completed'] ?? false) {
+                                        $status_class = 'status-completed';
+                                        $status_text = 'Выполнено';
+                                    }
+                                    ?>
+                                    <span class="<?= $status_class ?>">
+                                        <?= $status_text ?>
                                     </span>
+                                </td>
+                                <td>
+                                    <?php if (!($request['is_completed'] ?? false) && !($request['is_cancelled'] ?? false)): ?>
+                                        <form method="POST" action="" style="display: inline-block;" onsubmit="return confirm('Вы уверены, что хотите отменить эту заявку?');">
+                                            <input type="hidden" name="action" value="cancel_request">
+                                            <input type="hidden" name="request_id" value="<?= $request['id'] ?>">
+                                            <button type="submit" class="btn-cancel">Отменить</button>
+                                        </form>
+                                    <?php else: ?>
+                                        <span style="color: var(--muted); font-size: 12px;">—</span>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="3" style="text-align: center; color: var(--muted); padding: 20px;">
+                            <td colspan="4" style="text-align: center; color: var(--muted); padding: 20px;">
                                 У вас пока нет заявок
                             </td>
                         </tr>

@@ -105,15 +105,33 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
         #planArea{margin-top:12px;overflow:auto;max-height:calc(100vh - 300px);background:#fff;border-radius:10px;box-shadow:0 1px 6px rgba(0,0,0,.05);border:1px solid #e5e7eb}
 
         table{border-collapse:separate;border-spacing:0;width:100%;table-layout:fixed}
-        th,td{border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;padding:6px;font-size:12px;text-align:center;white-space:nowrap;height:26px;background:#fff}
+        th,td{border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;padding:6px;font-size:12px;text-align:center;white-space:nowrap;height:26px;background:#fff;user-select:none;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none}
+        /* Курсор для всех ячеек по умолчанию */
+        td{cursor:pointer !important;transition:background-color 0.2s}
+        td:hover{background-color:#f0f8ff !important}
+        /* Исключения */
+        td.cell-done:not(.highlight){cursor:not-allowed !important}
+        td.left-label{cursor:default !important}
+        /* Выделенные ячейки всегда кликабельны */
+        td.highlight{cursor:pointer !important;pointer-events:auto !important}
         th{background:#f0f3f8;font-weight:600;position:sticky;top:0;z-index:3}
         th:first-child,td:first-child{width:var(--leftcol);min-width:var(--leftcol);max-width:var(--leftcol);text-align:left;white-space:normal}
         th:not(:first-child),td:not(:first-child){width:var(--daycol)}
-        .highlight{background:#d1ecf1 !important;outline:1px solid #0bb}
         .overload{background:#f8d7da !important}
         
+        /* Заливка распланированных ячеек - должна быть после всех других стилей td */
+        table td.highlight{background-color:#4fc3f7 !important;background:#4fc3f7 !important;outline:2px solid #0277bd !important;box-shadow:inset 0 0 0 1px rgba(2,119,189,0.4) !important}
+        td.highlight:not(.left-label){background-color:#4fc3f7 !important;background:#4fc3f7 !important;outline:2px solid #0277bd !important;box-shadow:inset 0 0 0 1px rgba(2,119,189,0.4) !important}
+        /* Дополнительная гарантия применения стиля */
+        td[data-bale-id].highlight{background-color:#4fc3f7 !important;background:#4fc3f7 !important;outline:2px solid #0277bd !important}
+        /* Максимальная специфичность для выделенных ячеек */
+        table tbody td.highlight{background-color:#4fc3f7 !important;outline:2px solid #0277bd !important}
+        td.cell-done.highlight{background-color:#4fc3f7 !important;outline:2px solid #0277bd !important;opacity:1 !important}
+        
         /* Ячейки порезанных бухт */
-        td.cell-done{background:#e8f5e9 !important;pointer-events:none;opacity:0.7}
+        td.cell-done:not(.highlight){background:#e8f5e9 !important;pointer-events:none;opacity:0.7}
+        /* Выделенные ячейки всегда активны */
+        td.cell-done.highlight{pointer-events:auto !important;opacity:1 !important}
 
         /* Липкий перший стовпець */
         th:first-child {
@@ -463,34 +481,18 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
                 const td = document.createElement('td');
                 td.dataset.date = ds;
                 td.dataset.baleId = b.bale_id;
+                td.setAttribute('data-is-done', isDone ? '1' : '0');
 
                 // Если бухта порезана, делаем ячейки неактивными
                 if (isDone) {
                     td.classList.add('cell-done');
                 }
 
-                if (selected[ds] && selected[ds].includes(b.bale_id)) td.classList.add('highlight');
-
-                td.onclick = () => {
-                    const bid = b.bale_id;
-                    // зняти підсвітку з усіх клітинок цієї бухти
-                    document.querySelectorAll(`td[data-bale-id="${bid}"]`).forEach(c => c.classList.remove('highlight'));
-                    // прибрати зі всіх днів
-                    Object.keys(selected).forEach(k=>{
-                        const arr = selected[k];
-                        if (!arr) return;
-                        const i = arr.indexOf(bid);
-                        if (i>=0) { arr.splice(i,1); if(!arr.length) delete selected[k]; }
-                    });
-                    // додати на поточний день
-                    if (!selected[ds]) selected[ds] = [];
-                    selected[ds].push(bid);
+                if (selected[ds] && selected[ds].includes(b.bale_id)) {
                     td.classList.add('highlight');
-
-                    updateTotals();
-                    updateLeftMarkers();
-                    updateHeightProgress();   // ← оновити прогрес у чіпах
-                };
+                    td.style.backgroundColor = '#4fc3f7';
+                    td.style.outline = '2px solid #0277bd';
+                }
 
                 row.appendChild(td);
             }
@@ -500,6 +502,73 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
 
         table.appendChild(tbody);
         container.appendChild(table);
+        
+        // Делегирование событий на уровне таблицы
+        table.addEventListener('click', function(e) {
+            let td = e.target;
+            // Ищем ближайший td с data-bale-id
+            while (td && td.tagName !== 'TD') {
+                td = td.parentElement;
+            }
+            if (!td || !td.dataset.baleId) return;
+            
+            const bid = parseInt(td.dataset.baleId, 10);
+            const currentDs = td.dataset.date;
+            const isDone = td.getAttribute('data-is-done') === '1';
+            const hasHighlight = td.classList.contains('highlight');
+            
+            console.log('Клик:', {bid, currentDs, isDone, hasHighlight, isSelected: selected[currentDs]?.includes(bid)});
+            
+            // Блокируем все клики по порезанным бухтам (нельзя ни назначать, ни снимать выделение)
+            if (isDone) {
+                alert('Порезанные бухты нельзя перемещать или изменять!');
+                return;
+            }
+            
+            // Если уже выделена на эту дату - снимаем выделение
+            if (hasHighlight && selected[currentDs] && selected[currentDs].includes(bid)) {
+                console.log('Снимаем выделение');
+                td.classList.remove('highlight');
+                td.style.backgroundColor = '';
+                td.style.outline = '';
+                const arr = selected[currentDs];
+                if (arr) {
+                    const i = arr.indexOf(bid);
+                    if (i >= 0) {
+                        arr.splice(i, 1);
+                        if (!arr.length) delete selected[currentDs];
+                    }
+                }
+            } else {
+                console.log('Назначаем бухту на дату:', currentDs);
+                // зняти підсвітку з усіх клітинок цієї бухти
+                document.querySelectorAll(`td[data-bale-id="${bid}"]`).forEach(c => {
+                    c.classList.remove('highlight');
+                    c.style.backgroundColor = '';
+                    c.style.outline = '';
+                });
+                // прибрати зі всіх днів
+                Object.keys(selected).forEach(k=>{
+                    const arr = selected[k];
+                    if (!arr) return;
+                    const i = arr.indexOf(bid);
+                    if (i>=0) { arr.splice(i,1); if(!arr.length) delete selected[k]; }
+                });
+                // додати на поточний день
+                if (!selected[currentDs]) selected[currentDs] = [];
+                if (!selected[currentDs].includes(bid)) {
+                    selected[currentDs].push(bid);
+                }
+                td.classList.add('highlight');
+                td.style.backgroundColor = '#4fc3f7';
+                td.style.outline = '2px solid #0277bd';
+                console.log('Бухта назначена, selected:', selected);
+            }
+
+            updateTotals();
+            updateLeftMarkers();
+            updateHeightProgress();
+        });
 
         // Липкий підсумок годин
         const totalsBar = document.createElement('div');

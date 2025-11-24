@@ -569,6 +569,10 @@ $shiftData = getShiftData($pressDbConfig, $currentDate);
         <div class="controls">
             <input type="date" id="shift-date" value="<?= htmlspecialchars($currentDate) ?>" onchange="updatePage()">
             
+            <a href="statistics.php" style="padding: 10px 16px; background: #3498db; color: white; text-decoration: none; border-radius: 8px; border: 1px solid #2980b9; font-weight: 600; font-size: 14px;">
+                📊 Статистика
+            </a>
+            
             <?php 
             // Проверяем, является ли пользователь admin или director
             $canManageBoxes = false;

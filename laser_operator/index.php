@@ -46,6 +46,50 @@ if (!$hasLaserOperatorAccess) {
     die("У вас нет доступа к модулю оператора лазерной резки");
 }
 
+// Создаем таблицу для хранения информации об операторе на день (если её нет)
+try {
+    $pdo = $db->getConnection();
+    $pdo->exec("CREATE TABLE IF NOT EXISTS laser_operator_daily (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        date DATE NOT NULL UNIQUE,
+        operator_id INT NOT NULL,
+        operator_surname VARCHAR(255) NOT NULL,
+        operator_full_name VARCHAR(255) NOT NULL,
+        first_login_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_date (date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+} catch (Exception $e) {
+    error_log("Ошибка создания таблицы laser_operator_daily: " . $e->getMessage());
+}
+
+// Сохраняем фамилию оператора при первом входе утром
+try {
+    $today = date('Y-m-d');
+    
+    // Проверяем, есть ли уже запись на сегодня
+    $existing = $db->selectOne("SELECT id FROM laser_operator_daily WHERE date = ?", [$today]);
+    
+    if (!$existing) {
+        // Извлекаем фамилию из полного имени
+        $fullName = $user['full_name'] ?? '';
+        $nameParts = explode(' ', trim($fullName));
+        $surname = !empty($nameParts[0]) ? $nameParts[0] : $fullName;
+        
+        // Сохраняем информацию об операторе на сегодня
+        $db->insert("INSERT INTO laser_operator_daily (date, operator_id, operator_surname, operator_full_name) 
+                     VALUES (?, ?, ?, ?)", 
+                     [
+                         $today,
+                         $session['user_id'],
+                         $surname,
+                         $fullName
+                     ]);
+    }
+} catch (Exception $e) {
+    // Игнорируем ошибки, чтобы не блокировать работу модуля
+    error_log("Ошибка сохранения оператора на день: " . $e->getMessage());
+}
+
 // Настройки подключений к базам данных всех участков
 $databases = [
     'U2' => [
@@ -74,7 +118,7 @@ $databases = [
     ]
 ];
 
-// === Автомиграция: добавляем поле progress_count во все БД ===
+// === Автомиграция: добавляем необходимые поля во все БД ===
 foreach ($databases as $dept => $dbConfig) {
     try {
         $mysqli = new mysqli($dbConfig['host'], $dbConfig['user'], $dbConfig['pass'], $dbConfig['name']);
@@ -84,10 +128,30 @@ foreach ($databases as $dept => $dbConfig) {
             if ($result && $result->num_rows === 0) {
                 $mysqli->query("ALTER TABLE laser_requests ADD COLUMN progress_count INT NOT NULL DEFAULT 0 AFTER quantity");
             }
+            
+            // Проверяем существование поля is_cancelled
+            $result = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'is_cancelled'");
+            if ($result && $result->fetch_row()[0] == 0) {
+                $mysqli->query("ALTER TABLE laser_requests ADD COLUMN is_cancelled BOOLEAN DEFAULT FALSE AFTER is_completed");
+            }
+            
+            // Проверяем существование поля cancelled_at
+            $result = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'cancelled_at'");
+            if ($result && $result->fetch_row()[0] == 0) {
+                $mysqli->query("ALTER TABLE laser_requests ADD COLUMN cancelled_at TIMESTAMP NULL AFTER is_cancelled");
+            }
+            
+            // Проверяем существование поля completed_by
+            $result = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'completed_by'");
+            if ($result && $result->fetch_row()[0] == 0) {
+                $mysqli->query("ALTER TABLE laser_requests ADD COLUMN completed_by VARCHAR(255) NULL AFTER completed_at");
+            }
+            
             $mysqli->close();
         }
     } catch (Exception $e) {
         // Игнорируем ошибки миграции
+        error_log("Migration error for {$dept}: " . $e->getMessage());
     }
 }
 
@@ -103,8 +167,19 @@ function getAllLaserRequests($databases) {
             continue;
         }
         
-        // Получаем заявки из текущей БД
-        $sql = "SELECT id, user_name, department, component_name, quantity, progress_count, desired_delivery_time, is_completed, completed_at, created_at, '{$department}' as source_department FROM laser_requests ORDER BY created_at DESC";
+        // Проверяем существование колонки is_cancelled перед использованием
+        $hasCancelledColumn = false;
+        $checkColumn = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'is_cancelled'");
+        if ($checkColumn && $checkColumn->fetch_row()[0] > 0) {
+            $hasCancelledColumn = true;
+        }
+        
+        // Получаем заявки из текущей БД (исключаем отмененные, если колонка существует)
+        if ($hasCancelledColumn) {
+            $sql = "SELECT id, user_name, department, component_name, quantity, progress_count, desired_delivery_time, is_completed, completed_at, created_at, '{$department}' as source_department FROM laser_requests WHERE (is_cancelled = FALSE OR is_cancelled IS NULL) ORDER BY created_at DESC";
+        } else {
+            $sql = "SELECT id, user_name, department, component_name, quantity, progress_count, desired_delivery_time, is_completed, completed_at, created_at, '{$department}' as source_department FROM laser_requests ORDER BY created_at DESC";
+        }
         $result = $mysqli->query($sql);
         
         if ($result) {
@@ -168,15 +243,19 @@ if (isset($_POST['action']) && $_POST['action'] === 'mark_completed' && isset($_
     $request_id = (int)$_POST['request_id'];
     $department = $_POST['department'];
     
+    // Получаем полное имя текущего пользователя для сохранения в completed_by
+    // Используем полное имя, чтобы потом можно было извлечь фамилию
+    $operatorLogin = $user['full_name'] ?? ($user['phone'] ?? 'Неизвестно');
+    
     if (isset($databases[$department])) {
         $dbConfig = $databases[$department];
         $mysqli = new mysqli($dbConfig['host'], $dbConfig['user'], $dbConfig['pass'], $dbConfig['name']);
         
         if (!$mysqli->connect_errno) {
-            // Обновляем статус заявки
-            $update_sql = "UPDATE laser_requests SET is_completed = TRUE, completed_at = NOW() WHERE id = ?";
+            // Обновляем статус заявки с сохранением логина оператора
+            $update_sql = "UPDATE laser_requests SET is_completed = TRUE, completed_at = NOW(), completed_by = ? WHERE id = ?";
             $stmt = $mysqli->prepare($update_sql);
-            $stmt->bind_param("i", $request_id);
+            $stmt->bind_param("si", $operatorLogin, $request_id);
             
             if ($stmt->execute()) {
                 $_SESSION['success_message'] = "Заявка отмечена как выполненная!";
@@ -482,6 +561,116 @@ $allRequests = getAllLaserRequests($databases);
             transform: translateY(-1px);
         }
         
+        /* Виджет статистики */
+        .statistics-widget {
+            background: var(--panel);
+            border-radius: var(--radius);
+            padding: 12px;
+            margin-bottom: 16px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+        }
+        
+        .statistics-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        
+        .statistics-title {
+            color: var(--ink);
+            font-size: 14px;
+            font-weight: 600;
+            margin: 0;
+        }
+        
+        .statistics-days-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 10px;
+        }
+        
+        .statistics-day-card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
+            transition: all 0.2s ease;
+        }
+        
+        .statistics-day-card:hover {
+            border-color: var(--accent-solid);
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.1);
+        }
+        
+        .statistics-day-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .statistics-day-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--ink);
+            margin: 0;
+        }
+        
+        .statistics-day-date {
+            font-size: 10px;
+            color: var(--muted);
+        }
+        
+        .statistics-day-summary {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+            padding: 8px;
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+            border-radius: 6px;
+        }
+        
+        .statistics-day-summary-item {
+            flex: 1;
+            text-align: center;
+        }
+        
+        .statistics-day-summary-value {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--accent-solid);
+            margin-bottom: 2px;
+            line-height: 1.2;
+        }
+        
+        .statistics-day-summary-label {
+            font-size: 9px;
+            color: var(--muted);
+            text-transform: uppercase;
+            font-weight: 500;
+            line-height: 1.2;
+        }
+        
+        .statistics-day-empty {
+            text-align: center;
+            color: var(--muted);
+            padding: 12px;
+            font-size: 11px;
+        }
+        
+        .statistics-loading {
+            text-align: center;
+            color: var(--muted);
+            padding: 20px;
+            font-size: 12px;
+        }
+        
         @media (max-width: 768px) {
             .container {
                 padding: 12px;
@@ -495,6 +684,27 @@ $allRequests = getAllLaserRequests($databases);
             
             .requests-table {
                 min-width: 500px;
+            }
+            
+            .statistics-days-grid {
+                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+                gap: 8px;
+            }
+            
+            .statistics-widget {
+                padding: 10px;
+            }
+            
+            .statistics-day-card {
+                padding: 8px;
+            }
+            
+            .statistics-day-summary-value {
+                font-size: 12px;
+            }
+            
+            .statistics-day-summary-label {
+                font-size: 8px;
             }
         }
     </style>
@@ -513,6 +723,16 @@ $allRequests = getAllLaserRequests($databases);
         <?php if (isset($error_message)): ?>
             <div class="error-message"><?= htmlspecialchars($error_message) ?></div>
         <?php endif; ?>
+        
+        <!-- Виджет статистики -->
+        <div class="statistics-widget">
+            <div class="statistics-header">
+                <h2 class="statistics-title">Статистика за последние 4 дня</h2>
+            </div>
+            <div id="statistics-content" class="statistics-loading">
+                Загрузка статистики...
+            </div>
+        </div>
         
         <div class="panel">
             <div class="section-title">
@@ -1213,6 +1433,76 @@ $allRequests = getAllLaserRequests($databases);
             });
         }
         
+        // === Функция для загрузки статистики ===
+        async function loadStatistics() {
+            try {
+                const response = await fetch('api/get_statistics.php');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                if (data.success && data.days) {
+                    displayStatistics(data.days);
+                } else {
+                    document.getElementById('statistics-content').innerHTML = 
+                        '<div class="statistics-day-empty">Нет данных</div>';
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки статистики:', error);
+                document.getElementById('statistics-content').innerHTML = 
+                    '<div class="statistics-day-empty">Ошибка загрузки статистики</div>';
+            }
+        }
+        
+        // === Функция для отображения статистики ===
+        function displayStatistics(days) {
+            const content = document.getElementById('statistics-content');
+            
+            if (!days || days.length === 0) {
+                content.innerHTML = '<div class="statistics-day-empty">Нет данных</div>';
+                return;
+            }
+            
+            // Формируем HTML для плашек по дням
+            const html = days.map(day => {
+                // Формируем заголовок с фамилией оператора (но не для сегодня)
+                let dayTitle = day.date_label;
+                // Для сегодняшнего дня не показываем фамилию, только "Сегодня"
+                if (day.date_label !== 'Сегодня' && day.operator_surname) {
+                    dayTitle = day.operator_surname;
+                }
+                
+                return `
+                    <div class="statistics-day-card">
+                        <div class="statistics-day-header">
+                            <h3 class="statistics-day-title">${dayTitle}</h3>
+                            <span class="statistics-day-date">${day.date_formatted}</span>
+                        </div>
+                        <div class="statistics-day-summary">
+                            <div class="statistics-day-summary-item">
+                                <div class="statistics-day-summary-value">${day.created_count || 0}</div>
+                                <div class="statistics-day-summary-label">Создано</div>
+                            </div>
+                            <div class="statistics-day-summary-item">
+                                <div class="statistics-day-summary-value">${day.completed_count || 0}</div>
+                                <div class="statistics-day-summary-label">Выполнено</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            content.innerHTML = `<div class="statistics-days-grid">${html}</div>`;
+        }
+        
+        // === Обновление статистики ===
+        function updateStatistics() {
+            loadStatistics();
+        }
+        
         // Инициализация
         document.addEventListener('DOMContentLoaded', function() {
             // Инициализация всплывающего окна
@@ -1232,6 +1522,9 @@ $allRequests = getAllLaserRequests($databases);
             // Добавляем обработчики для автосохранения при вводе
             attachInputHandlers();
             
+            // Загружаем статистику
+            loadStatistics();
+            
             // Запрашиваем разрешение на уведомления с проверкой поддержки
             try {
                 if (typeof Notification !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
@@ -1244,12 +1537,15 @@ $allRequests = getAllLaserRequests($databases);
             }
             
             // Увеличенный интервал обновления для предотвращения потери данных
-            const updateInterval = 60000; // 60 секунд (1 минута)
+            const updateInterval = 30000; // 30 секунд
             
-            console.log(`Update interval: ${updateInterval}ms (60 секунд)`);
+            console.log(`Update interval: ${updateInterval}ms (30 секунд)`);
             
             // Обновляем таблицу с соответствующим интервалом
             setInterval(updateTable, updateInterval);
+            
+            // Обновляем статистику каждые 60 секунд
+            setInterval(updateStatistics, 60000);
             
             // Первое обновление через 2 секунды после загрузки
             setTimeout(updateTable, 2000);

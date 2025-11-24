@@ -85,8 +85,19 @@ function getAllLaserRequestsDetailed($databases) {
             continue;
         }
         
-        // Получаем заявки из текущей БД
-        $sql = "SELECT *, '{$department}' as source_department FROM laser_requests ORDER BY created_at DESC";
+        // Проверяем существование колонки is_cancelled перед использованием
+        $hasCancelledColumn = false;
+        $checkColumn = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'is_cancelled'");
+        if ($checkColumn && $checkColumn->fetch_row()[0] > 0) {
+            $hasCancelledColumn = true;
+        }
+        
+        // Получаем заявки из текущей БД (исключаем отмененные, если колонка существует)
+        if ($hasCancelledColumn) {
+            $sql = "SELECT *, '{$department}' as source_department FROM laser_requests WHERE (is_cancelled = FALSE OR is_cancelled IS NULL) ORDER BY created_at DESC";
+        } else {
+            $sql = "SELECT *, '{$department}' as source_department FROM laser_requests ORDER BY created_at DESC";
+        }
         $result = $mysqli->query($sql);
         
         if ($result) {
