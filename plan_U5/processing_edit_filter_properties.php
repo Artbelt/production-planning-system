@@ -1,5 +1,6 @@
 <?php
 require_once('tools/tools.php');
+require_once('tools/backup_before_update.php');
 
 $filter_name = $_POST['filter_name'] ?? '';
 $category = $_POST['category'] ?? 'Салонный';
@@ -18,16 +19,17 @@ $p_p_remark = $_POST['p_p_remark'] ?? '';
 $p_p_material = $_POST['p_p_material'] ?? '';
 
 /** ВСТАВКА */
-$insertion_count = $_POST['insertions_count'] ?? '';
+// ВАЖНО: Используем null вместо пустой строки, чтобы не очищать существующие данные
+$insertion_count = !empty($_POST['insertions_count']) ? trim($_POST['insertions_count']) : null;
 
 /** УПАКОВКА ИНД*/
-$box = $_POST['box'] ?? '';
+$box = !empty($_POST['box']) ? trim($_POST['box']) : null;
 /** УПАКОВКА ГР */
-$g_box = $_POST['g_box'] ?? '';
+$g_box = !empty($_POST['g_box']) ? trim($_POST['g_box']) : null;
 /** ПРИМЕЧАНИЕ */
-$remark = $_POST['remark'] ?? '';
+$remark = !empty($_POST['remark']) ? trim($_POST['remark']) : null;
 /** Высота ленты  */
-$side_type = $_POST['side_type'] ?? '';
+$side_type = !empty($_POST['side_type']) ? trim($_POST['side_type']) : null;
 /** Поролон */
 $foam_rubber = isset($_POST['foam_rubber']) ? 'поролон' : '';
 /** Язычек */
@@ -72,17 +74,28 @@ if ($mysqli->connect_errno) {
     die("Ошибка подключения к БД: " . $mysqli->connect_error);
 }
 
-/** Обновляем основные поля фильтра */
+// ЗАЩИТА: Создаем резервную копию перед обновлением
+backup_filter_before_update($mysqli, $filter_name);
+
+// ЗАЩИТА: Получаем текущие значения перед обновлением
+$stmt_current = $mysqli->prepare("SELECT box, insertion_count, g_box, side_type FROM salon_filter_structure WHERE filter = ?");
+$stmt_current->bind_param('s', $filter_name);
+$stmt_current->execute();
+$current_data = $stmt_current->get_result()->fetch_assoc();
+$stmt_current->close();
+
+// ЗАЩИТА: Используем COALESCE - обновляем только если новое значение не пустое, иначе оставляем старое
+// Это предотвращает случайную очистку данных
 $sql = "UPDATE salon_filter_structure SET 
         category = ?,
-        insertion_count = ?,
-        box = ?,
-        g_box = ?,
-        comment = ?,
+        insertion_count = COALESCE(NULLIF(?, ''), insertion_count),
+        box = COALESCE(NULLIF(?, ''), box),
+        g_box = COALESCE(NULLIF(?, ''), g_box),
+        comment = COALESCE(NULLIF(?, ''), comment),
         foam_rubber = ?,
         form_factor = ?,
         tail = ?,
-        side_type = ?,
+        side_type = COALESCE(NULLIF(?, ''), side_type),
         has_edge_cuts = ?
         WHERE filter = ?";
 
@@ -91,16 +104,23 @@ if (!$stmt) {
     die("Ошибка подготовки запроса: " . $mysqli->error);
 }
 
+// Преобразуем null в пустую строку для COALESCE
+$insertion_count_safe = $insertion_count ?? '';
+$box_safe = $box ?? '';
+$g_box_safe = $g_box ?? '';
+$remark_safe = $remark ?? '';
+$side_type_safe = $side_type ?? '';
+
 $stmt->bind_param('ssssssssssi', 
     $category,
-    $insertion_count,
-    $box,
-    $g_box,
-    $remark,
+    $insertion_count_safe,
+    $box_safe,
+    $g_box_safe,
+    $remark_safe,
     $foam_rubber,
     $form_factor,
     $tail,
-    $side_type,
+    $side_type_safe,
     $has_edge_cuts,
     $filter_name
 );

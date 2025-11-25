@@ -24,10 +24,12 @@ if (!$hasPlanReadyCol) {
     $pdo->exec("ALTER TABLE orders ADD plan_ready TINYINT(1) NOT NULL DEFAULT 0");
 }
 
-/* Бухты из cut_plans с complexity */
-$stmt = $pdo->prepare("SELECT cp.bale_id, cp.filter, cp.height, cp.width, sfs.build_complexity
+/* Бухты из cut_plans с complexity и данными для расчета фильтров */
+$stmt = $pdo->prepare("SELECT cp.bale_id, cp.filter, cp.height, cp.width, cp.fact_length, cp.length, 
+                              sfs.build_complexity, pps.p_p_pleats_count AS pleats_count
                        FROM cut_plans cp
                        LEFT JOIN salon_filter_structure sfs ON TRIM(cp.filter) = TRIM(sfs.filter)
+                       LEFT JOIN paper_package_salon pps ON pps.p_p_name = sfs.paper_package
                        WHERE cp.order_number = ?
                        ORDER BY cp.bale_id, cp.strip_no");
 $stmt->execute([$order]);
@@ -42,6 +44,9 @@ foreach ($rows as $r) {
         'height' => (float)$r['height'],
         'width'  => (float)$r['width'],
         'complexity' => $r['build_complexity'] !== null ? (float)$r['build_complexity'] : null,
+        'fact_length' => $r['fact_length'] !== null ? (float)$r['fact_length'] : null,
+        'length' => $r['length'] !== null ? (float)$r['length'] : null,
+        'pleats_count' => $r['pleats_count'] !== null ? (int)$r['pleats_count'] : null,
     ];
 }
 
@@ -166,7 +171,7 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
         
         /* Бухты, которые должны быть порезаны, но еще не порезаны */
         td.left-label.bale-overdue{background:#fef3c7 !important;box-shadow:inset 4px 0 0 #f59e0b}
-        td.left-label.bale-overdue::after{content:"⚠";position:absolute;right:8px;top:50%;transform:translateY(-50%);color:#f59e0b;font-weight:bold;font-size:16px;z-index:1}
+        td.left-label.bale-overdue::after{content:"⚠";position:absolute;right:8px;bottom:4px;color:#f59e0b;font-weight:bold;font-size:16px;z-index:1}
         
         /* Кружочок зі складністю */
         .complexity-badge{
@@ -177,7 +182,7 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
             height:32px;
             border-radius:50%;
             background:transparent;
-            border:1.5px solid #d1d5db;
+            border:1.5px solid #dc2626;
             color:#6b7280;
             display:flex;
             align-items:center;
@@ -187,6 +192,29 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
             cursor:help;
             z-index:2;
             line-height:1;
+        }
+
+        /* Индикатор количества фильтров */
+        .filter-count-badge{
+            position:absolute;
+            top:2px;
+            right:8px;
+            width:auto;
+            min-width:24px;
+            height:18px;
+            border-radius:4px;
+            background:#e0f2fe;
+            border:1.5px solid #38bdf8;
+            color:#0369a1;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            font-size:10px;
+            font-weight:600;
+            cursor:help;
+            z-index:2;
+            line-height:1;
+            padding:0 6px;
         }
 
         /* тільки окремі висоти */
@@ -445,10 +473,28 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
                 }
             }
             
+            // Подсчитываем количество фильтров из всех полос бухты
+            // Формула: для каждой полосы cnt = floor(L / L_one), где L_one = (H * 2 * Z) / 1000
+            let totalFilterCount = 0;
+            b.strips.forEach(s => {
+                const H = Number(s.height); // высота фильтра в мм
+                const Z = s.pleats_count !== null ? Number(s.pleats_count) : 0; // количество гофр
+                const L = s.fact_length !== null ? Number(s.fact_length) : (s.length !== null ? Number(s.length) : null); // длина полосы в метрах
+                
+                if (L !== null && L > 0 && H > 0 && Z > 0) {
+                    const L_one = (H * 2 * Z) / 1000.0; // длина одного фильтра в метрах
+                    if (L_one > 0) {
+                        const cnt = Math.floor(L / L_one);
+                        totalFilterCount += cnt;
+                    }
+                }
+            });
+            
             const tooltip = b.strips
                 .map(s => `${s.filter} [${s.height}] ${s.width}мм${s.complexity ? ' (сложность: '+s.complexity+')' : ''}`)
                 .join('\n')
-                + (avgComplexity ? '\n\nСредняя сложность: ' + avgComplexity.toFixed(1) : '');
+                + (avgComplexity ? '\n\nСредняя сложность: ' + avgComplexity.toFixed(1) : '')
+                + (totalFilterCount > 0 ? `\n\nКоличество фильтров: ${totalFilterCount}` : '');
             
             const left = document.createElement('td');
             left.className = 'left-label';
@@ -469,10 +515,18 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
                 left.title = tooltip;
             }
             
+            let badgesHTML = '';
+            if (totalFilterCount > 0) {
+                badgesHTML += `<div class="filter-count-badge" title="Количество фильтров из бухты: ${totalFilterCount}">${totalFilterCount}</div>`;
+            }
+            if (displayComplexity) {
+                badgesHTML += `<div class="complexity-badge" title="Средняя сложность сборки: ${avgComplexity.toFixed(1)}">${displayComplexity}</div>`;
+            }
+            
             left.innerHTML = '<strong>Бухта '+b.bale_id+'</strong><div class="bale-label">'
                 + uniqHeights.map(h=>`<span class="hval" data-h="${h}">[${h}]</span>`).join(' ')
                 + '</div>'
-                + (displayComplexity ? `<div class="complexity-badge" title="Средняя сложность сборки: ${avgComplexity.toFixed(1)}">${displayComplexity}</div>` : '');
+                + badgesHTML;
             row.appendChild(left);
 
             for(let d=0; d<days; d++){

@@ -106,6 +106,34 @@ try {
     $stmt->execute([$order]);
     $complexity_analysis = $stmt->fetch(PDO::FETCH_ASSOC);
     
+    // Подсчет фильтров по материалам (белый и угольный)
+    // Считаем из заявки (orders) по материалу из paper_package_salon через salon_filter_structure
+    $stmt = $pdo->prepare("
+        SELECT 
+            CASE 
+                WHEN UPPER(TRIM(pps.p_p_material)) = 'CARBON' THEN 'carbon'
+                ELSE 'white'
+            END as material_type,
+            SUM(o.count) as filter_count
+        FROM orders o
+        LEFT JOIN salon_filter_structure sfs ON TRIM(o.filter) = TRIM(sfs.filter)
+        LEFT JOIN paper_package_salon pps ON pps.p_p_name = sfs.paper_package
+        WHERE o.order_number = ? AND (o.hide IS NULL OR o.hide != 1)
+        GROUP BY material_type
+    ");
+    $stmt->execute([$order]);
+    $material_filters = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    $white_filters = 0;
+    $carbon_filters = 0;
+    foreach ($material_filters as $mf) {
+        if ($mf['material_type'] === 'white') {
+            $white_filters = (int)$mf['filter_count'];
+        } elseif ($mf['material_type'] === 'carbon') {
+            $carbon_filters = (int)$mf['filter_count'];
+        }
+    }
+    
     echo json_encode([
         'ok' => true,
         'total_filters' => (int)$order_info['total_count'],
@@ -118,7 +146,11 @@ try {
         ],
         'dates' => $dates,
         'heights' => $heights_data,
-        'complexity' => $complexity_analysis
+        'complexity' => $complexity_analysis,
+        'materials' => [
+            'white' => $white_filters,
+            'carbon' => $carbon_filters
+        ]
     ]);
     
 } catch (Exception $e) {

@@ -984,6 +984,22 @@ try{
                 `;
             }
             
+            // Фильтры по материалам
+            if (data.materials) {
+                html += `
+                    <div class="info-card">
+                        <h4>Из белого материала</h4>
+                        <div class="info-value">${data.materials.white || 0}</div>
+                        <div class="info-label">фильтров</div>
+                    </div>
+                    <div class="info-card">
+                        <h4>Из угольного материала</h4>
+                        <div class="info-value">${data.materials.carbon || 0}</div>
+                        <div class="info-label">фильтров</div>
+                    </div>
+                `;
+            }
+            
             html += '</div>';
             
             // Распределение по высотам плиткой

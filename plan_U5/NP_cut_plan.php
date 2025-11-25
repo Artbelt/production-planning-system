@@ -157,13 +157,26 @@ try{
     $sqlAssort="
     SELECT
       sfs.filter               AS filter,
-      pps.p_p_material         AS material,
-      pps.p_p_width            AS strip_width_mm,
-      pps.p_p_height           AS pleat_height_mm
+      COALESCE(pps1.p_p_material, pps2.p_p_material, 'Simple') AS material,
+      COALESCE(pps1.p_p_width, pps2.p_p_width, cp_width.width, 0) AS strip_width_mm,
+      COALESCE(pps1.p_p_height, pps2.p_p_height, cp_height.height, 0) AS pleat_height_mm
     FROM salon_filter_structure sfs
-    JOIN paper_package_salon pps ON pps.p_p_name = sfs.paper_package
-    GROUP BY sfs.filter, pps.p_p_material, pps.p_p_width, pps.p_p_height
-    ORDER BY pps.p_p_material, sfs.filter";
+    LEFT JOIN paper_package_salon pps1 ON pps1.p_p_name = sfs.paper_package
+    LEFT JOIN paper_package_salon pps2 ON pps2.p_p_name = CONCAT('гофропакет ', sfs.filter)
+    LEFT JOIN (
+        SELECT TRIM(filter) as filter, MAX(width) as width 
+        FROM cut_plans 
+        WHERE width IS NOT NULL AND width > 0
+        GROUP BY TRIM(filter)
+    ) cp_width ON TRIM(cp_width.filter) = TRIM(sfs.filter)
+    LEFT JOIN (
+        SELECT TRIM(filter) as filter, MAX(height) as height 
+        FROM cut_plans 
+        WHERE height IS NOT NULL AND height > 0
+        GROUP BY TRIM(filter)
+    ) cp_height ON TRIM(cp_height.filter) = TRIM(sfs.filter)
+    GROUP BY sfs.filter, pps1.p_p_material, pps2.p_p_material, pps1.p_p_width, pps2.p_p_width, cp_width.width, pps1.p_p_height, pps2.p_p_height, cp_height.height
+    ORDER BY COALESCE(pps1.p_p_material, pps2.p_p_material, 'Simple'), sfs.filter";
     $assort = $pdo->query($sqlAssort)->fetchAll();
 
     /* НОВЫЕ позиции в заказе — их НЕТ в справочнике (для модалки) */

@@ -309,6 +309,27 @@
         let box_summ = document.getElementById("box_summ");
         box_summ.innerText = COFIL * COFIR;
 
+        // Расчет внутренних размеров ящика
+        // Толщина стенок гофрокартона: 3 мм с каждой стороны (всего 6 мм)
+        const wall_thickness = 3; // толщина одной стенки в мм
+        const inner_length = C - (2 * wall_thickness); // внутренняя длина
+        const inner_width = D - (2 * wall_thickness);  // внутренняя ширина
+        const inner_height = A - (2 * wall_thickness); // внутренняя высота
+
+        // Вывод внутренних размеров
+        let inner_length_elem = document.getElementById("inner_length");
+        if (inner_length_elem) {
+            inner_length_elem.innerText = Math.round(inner_length);
+        }
+        let inner_width_elem = document.getElementById("inner_width");
+        if (inner_width_elem) {
+            inner_width_elem.innerText = Math.round(inner_width);
+        }
+        let inner_height_elem = document.getElementById("inner_height");
+        if (inner_height_elem) {
+            inner_height_elem.innerText = Math.round(inner_height);
+        }
+
     }
 
     function check_input() {
@@ -418,6 +439,24 @@
             <div class="result-item">
                 <div class="result-value" id="box_summ">-</div>
                 <div class="result-label">Всего коробок</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="section-title">Внутренние размеры ящика</div>
+        <div class="results">
+            <div class="result-item">
+                <div class="result-value" id="inner_length">-</div>
+                <div class="result-label">Длина (мм)</div>
+            </div>
+            <div class="result-item">
+                <div class="result-value" id="inner_width">-</div>
+                <div class="result-label">Ширина (мм)</div>
+            </div>
+            <div class="result-item">
+                <div class="result-value" id="inner_height">-</div>
+                <div class="result-label">Высота (мм)</div>
             </div>
         </div>
     </div>
