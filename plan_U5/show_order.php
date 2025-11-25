@@ -418,10 +418,10 @@ $page_title = $order_number ? $order_number : "Заявка";
     }
 
     /**
-     * Грузим FАCT гофропакетов из corrugation_plan:
+     * Грузим FACT гофропакетов из manufactured_corrugated_packages:
      * - по заявке и фильтру
-     * - суммируем fact_count
-     * - для тултипа возвращаем разбивку по plan_date (по каждой строке плана, где fact_count>0)
+     * - суммируем count
+     * - для тултипа возвращаем разбивку по date_of_production
      *
      * Возвращает [ $dateList, $totalFact ] как в renderTooltipCell
      */
@@ -437,12 +437,13 @@ $page_title = $order_number ? $order_number : "Заявка";
         $filterLabel = normalize_filter_label($filterLabel);
 
         $stmt = $pdo->prepare("
-        SELECT plan_date, COALESCE(fact_count,0) AS fact_count
-        FROM corrugation_plan
+        SELECT date_of_production, SUM(COALESCE(count,0)) AS fact_count
+        FROM manufactured_corrugated_packages
         WHERE order_number = ?
           AND TRIM(SUBSTRING_INDEX(filter_label, ' [', 1)) = ?
-          AND COALESCE(fact_count,0) > 0
-        ORDER BY plan_date
+          AND COALESCE(count,0) > 0
+        GROUP BY date_of_production
+        ORDER BY date_of_production
     ");
         $stmt->execute([$orderNumber, $filterLabel]);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -450,7 +451,7 @@ $page_title = $order_number ? $order_number : "Заявка";
         $dateList = [];
         $total = 0;
         foreach ($rows as $r) {
-            $dateList[] = $r['plan_date'];
+            $dateList[] = $r['date_of_production'];
             $dateList[] = (int)$r['fact_count'];
             $total += (int)$r['fact_count'];
         }
@@ -487,7 +488,7 @@ $page_title = $order_number ? $order_number : "Заявка";
 
     // Номер заявки уже получен в начале файла
 
-    // Подключим отдельный PDO для выборок из corrugation_plan (факт гофропакетов)
+    // Подключим отдельный PDO для выборок из manufactured_corrugated_packages (факт гофропакетов)
     $pdo_corr = new PDO("mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4", "root", "");
     $pdo_corr->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
@@ -498,7 +499,7 @@ $page_title = $order_number ? $order_number : "Заявка";
     $filter_count_in_order = 0;   // всего фильтров по заявке (план)
     $filter_count_produced = 0;   // Всего изготовлено готовых фильтров (факт) — из select_produced_filters_by_order
     $count = 0;                   // номер п/п
-    $corr_fact_summ = 0;          // суммарно изготовлено гофропакетов по всей заявке (из corrugation_plan)
+    $corr_fact_summ = 0;          // суммарно изготовлено гофропакетов по всей заявке (из manufactured_corrugated_packages)
 
     // Отрисовка таблицы
     echo "<h3>Заявка: ".htmlspecialchars($order_number)."</h3>";
@@ -533,7 +534,7 @@ $page_title = $order_number ? $order_number : "Заявка";
 
         $difference = (int)$row['count'] - $total_qty_filters;
 
-        // Гофропакеты: теперь из corrugation_plan.fact_count
+        // Гофропакеты: теперь из manufactured_corrugated_packages
         list($corr_date_list, $corr_total) = get_corr_fact_for_filter($pdo_corr, $order_number, $row['filter']);
         $corr_fact_summ += (int)$corr_total;
 
@@ -565,7 +566,7 @@ $page_title = $order_number ? $order_number : "Заявка";
         // Остаток по фильтрам
         echo "<td>".(int)$difference."</td>";
 
-        // Новая логика «Изготовленные гофропакеты, шт» — из corrugation_plan.fact_count (+ тултип по plan_date)
+        // Логика «Изготовленные гофропакеты, шт» — из manufactured_corrugated_packages (+ тултип по date_of_production)
         echo renderTooltipCell($corr_date_list, (int)$corr_total);
 
         echo "</tr>";

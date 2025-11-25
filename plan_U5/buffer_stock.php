@@ -31,31 +31,32 @@ function get_buffer(PDO $pdo, array $opts = []): array {
     $showIgnored = !empty($opts['show_ignored']);
 
     // --- подзапрос по гофре (что произведено) ---
-    $wCorr = ["c.fact_count > 0"];
+    // Теперь используем manufactured_corrugated_packages вместо fact_count из corrugation_plan
+    $wCorr = ["mcp.count > 0"];
     $paramsCorr = [];
-    if ($date_from) { $wCorr[] = "c.plan_date >= ?"; $paramsCorr[] = $date_from; }
-    if ($date_to)   { $wCorr[] = "c.plan_date <= ?"; $paramsCorr[] = $date_to; }
-    if ($order)     { $wCorr[] = "c.order_number = ?"; $paramsCorr[] = $order; }
-    if ($filter)    { $wCorr[] = "c.filter_label = ?"; $paramsCorr[] = $filter; }
+    if ($date_from) { $wCorr[] = "mcp.date_of_production >= ?"; $paramsCorr[] = $date_from; }
+    if ($date_to)   { $wCorr[] = "mcp.date_of_production <= ?"; $paramsCorr[] = $date_to; }
+    if ($order)     { $wCorr[] = "mcp.order_number = ?"; $paramsCorr[] = $order; }
+    if ($filter)    { $wCorr[] = "mcp.filter_label = ?"; $paramsCorr[] = $filter; }
     $whereCorr = $wCorr ? ("WHERE ".implode(" AND ", $wCorr)) : "";
 
     $corrSub = "
         SELECT
-            c.order_number,
-            c.filter_label,
-            SUM(COALESCE(c.fact_count,0)) AS corrugated,
-            MAX(c.plan_date)              AS last_corr_date,
+            mcp.order_number,
+            mcp.filter_label,
+            SUM(COALESCE(mcp.count,0)) AS corrugated,
+            MAX(mcp.date_of_production) AS last_corr_date,
             COALESCE(
                 GROUP_CONCAT(
-                    CONCAT(c.plan_date, ':', c.fact_count) 
-                    ORDER BY c.plan_date DESC 
+                    CONCAT(mcp.date_of_production, ':', mcp.count) 
+                    ORDER BY mcp.date_of_production DESC 
                     SEPARATOR '|'
                 ),
                 ''
             ) AS corr_details
-        FROM corrugation_plan c
+        FROM manufactured_corrugated_packages mcp
         $whereCorr
-        GROUP BY c.order_number, c.filter_label
+        GROUP BY mcp.order_number, mcp.filter_label
     ";
 
     // --- подзапрос по сборке (что уже забрали) ---

@@ -21,21 +21,26 @@ try {
         exit;
     }
 
-    // Поиск позиций по названию фильтра только для активных заявок
+    // Поиск позиций по названию фильтра
+    // План из corrugation_plan, факт из manufactured_corrugated_packages
     $stmt = $pdo->prepare("
         SELECT 
             cp.order_number,
             cp.filter_label,
             cp.plan_date,
             SUM(cp.count) as plan_sum,
-            SUM(cp.fact_count) as fact_sum
+            COALESCE(SUM(mcp.count), 0) as fact_sum
         FROM corrugation_plan cp
+        LEFT JOIN manufactured_corrugated_packages mcp 
+            ON mcp.order_number = cp.order_number 
+            AND mcp.filter_label = cp.filter_label 
+            AND mcp.date_of_production = cp.plan_date
         WHERE cp.filter_label LIKE :filter_name
-          AND cp.order_number IN (
+          AND (cp.order_number IN (
               SELECT order_number 
               FROM orders 
               WHERE hide IS NULL OR hide != 1
-          )
+          ) OR cp.order_number IS NOT NULL)
         GROUP BY cp.order_number, cp.filter_label, cp.plan_date
         ORDER BY cp.plan_date DESC, cp.order_number, cp.filter_label
         LIMIT 50
