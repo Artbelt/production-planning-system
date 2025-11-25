@@ -44,7 +44,15 @@ function get_buffer(PDO $pdo, array $opts = []): array {
             c.order_number,
             c.filter_label,
             SUM(COALESCE(c.fact_count,0)) AS corrugated,
-            MAX(c.plan_date)              AS last_corr_date
+            MAX(c.plan_date)              AS last_corr_date,
+            COALESCE(
+                GROUP_CONCAT(
+                    CONCAT(c.plan_date, ':', c.fact_count) 
+                    ORDER BY c.plan_date DESC 
+                    SEPARATOR '|'
+                ),
+                ''
+            ) AS corr_details
         FROM corrugation_plan c
         $whereCorr
         GROUP BY c.order_number, c.filter_label
@@ -77,6 +85,7 @@ function get_buffer(PDO $pdo, array $opts = []): array {
             c.order_number,
             c.filter_label,
             c.corrugated,
+            c.corr_details,
             COALESCE(a.assembled, 0) AS assembled,
             (c.corrugated - COALESCE(a.assembled, 0)) AS buffer,
             c.last_corr_date,
@@ -403,6 +412,73 @@ try {
                 background:var(--accent);
                 border-color:var(--accent);
                 transform:scale(1.1);
+            }
+
+            /* Стили для tooltip при наведении на столбец "Сгофрировано" */
+            .col-corrugated{
+                position:relative;
+                cursor:help;
+            }
+            .corr-tooltip{
+                position:absolute;
+                bottom:100%;
+                left:50%;
+                transform:translateX(-50%);
+                margin-bottom:8px;
+                background:#1f2937;
+                color:#fff;
+                padding:10px 14px;
+                border-radius:8px;
+                font-size:12px;
+                z-index:10000;
+                box-shadow:0 4px 12px rgba(0,0,0,0.3);
+                opacity:0;
+                pointer-events:none;
+                transition:opacity 0.2s;
+                max-width:300px;
+                min-width:200px;
+                white-space:normal;
+            }
+            .corr-tooltip::after{
+                content:'';
+                position:absolute;
+                top:100%;
+                left:50%;
+                transform:translateX(-50%);
+                border:6px solid transparent;
+                border-top-color:#1f2937;
+            }
+            .col-corrugated:hover .corr-tooltip{
+                opacity:1;
+            }
+            .corr-tooltip-title{
+                font-weight:600;
+                margin-bottom:6px;
+                padding-bottom:6px;
+                border-bottom:1px solid rgba(255,255,255,0.2);
+            }
+            .corr-tooltip-item{
+                margin:4px 0;
+                display:flex;
+                justify-content:space-between;
+                gap:12px;
+            }
+            .corr-tooltip-date{
+                color:#d1d5db;
+            }
+            .corr-tooltip-count{
+                font-weight:600;
+                color:#fff;
+            }
+            
+            /* На мобильных устройствах tooltip показываем только при клике */
+            @media (max-width:768px){
+                .col-corrugated:hover .corr-tooltip{
+                    opacity:0;
+                }
+                .col-corrugated.active .corr-tooltip{
+                    opacity:1;
+                }
             }
 
             /* Модальное окно детальной информации */
@@ -773,6 +849,7 @@ try {
                         data-last-asm="<?=h($r['last_ass_date'] ?? 'Не указано')?>"
                         data-machines="<?=h($r['machines'] ?? 'Не назначено')?>"
                         data-order-count="<?=number_format((float)$r['order_count'], 0, '.', ' ')?>"
+                        data-corr-details="<?=htmlspecialchars($r['corr_details'] ?? '', ENT_QUOTES, 'UTF-8')?>"
                         data-ignored="<?=$isIgnored?'1':'0'?>">
                         <td class="col-details">
                             <button type="button" class="btn-details" onclick="showDetails(this)" title="Подробнее">
@@ -783,7 +860,10 @@ try {
                         <td class="col-filter"><strong><?=h($r['filter_label'])?></strong></td>
                         <td class="num col-height"><?= $r['height'] ? rtrim(rtrim(number_format((float)$r['height'], 1, '.', ' '), '0'), '.') : '-' ?></td>
                         <td class="col-machine"><?=h($r['machines'] ?? '-')?></td>
-                        <td class="num col-corrugated"><?=number_format((float)$r['corrugated'], 0, '.', ' ')?></td>
+                        <td class="num col-corrugated">
+                            <?=number_format((float)$r['corrugated'], 0, '.', ' ')?>
+                            <div class="corr-tooltip"></div>
+                        </td>
                         <td class="num col-assembled"><?=number_format((float)$r['assembled'],   0, '.', ' ')?></td>
                         <td class="num col-buffer"><strong><?=number_format((float)$r['buffer'], 0, '.', ' ')?></strong></td>
                         <td class="col-last-corr"><?=h($r['last_corr_date'] ?? '')?></td>
@@ -1098,6 +1178,147 @@ try {
                 toggleIgnore(order, filter, 'unignore_item');
             }
         });
+        
+        // === ФУНКЦИОНАЛ TOOLTIP ДЛЯ СТОЛБЦА "СГОФРИРОВАНО" ===
+        function formatCorrTooltip(corrDetails) {
+            if (!corrDetails || corrDetails === '' || corrDetails === 'null' || corrDetails === 'NULL') {
+                return '<div class="corr-tooltip-title">Нет данных о гофре</div>';
+            }
+            
+            const items = corrDetails.split('|').filter(item => item && item.trim() !== '');
+            if (items.length === 0) {
+                return '<div class="corr-tooltip-title">Нет данных о гофре</div>';
+            }
+            
+            let html = '<div class="corr-tooltip-title">Детализация по датам:</div>';
+            let hasValidItems = false;
+            
+            items.forEach(item => {
+                const parts = item.split(':');
+                if (parts.length >= 2) {
+                    const date = parts[0].trim();
+                    const count = parseInt(parts[1]) || 0;
+                    
+                    if (date && !isNaN(count) && count > 0) {
+                        hasValidItems = true;
+                        // Форматируем дату в читаемый вид
+                        try {
+                            const dateObj = new Date(date + 'T00:00:00');
+                            if (!isNaN(dateObj.getTime())) {
+                                const formattedDate = dateObj.toLocaleDateString('ru-RU', { 
+                                    year: 'numeric', 
+                                    month: '2-digit', 
+                                    day: '2-digit' 
+                                });
+                                html += `<div class="corr-tooltip-item">
+                                    <span class="corr-tooltip-date">${formattedDate}</span>
+                                    <span class="corr-tooltip-count">${count.toLocaleString('ru-RU')}</span>
+                                </div>`;
+                            }
+                        } catch (e) {
+                            // Если не удалось распарсить дату, пропускаем
+                        }
+                    }
+                }
+            });
+            
+            if (!hasValidItems) {
+                return '<div class="corr-tooltip-title">Нет данных о гофре</div>';
+            }
+            
+            return html;
+        }
+        
+        // Функция для получения данных о гофре из строки таблицы
+        function getCorrDetails(cell) {
+            try {
+                const row = cell.closest('tr');
+                if (!row) return '';
+                
+                // Пробуем получить данные разными способами
+                let corrDetails = row.getAttribute('data-corr-details');
+                if (!corrDetails && row.dataset) {
+                    corrDetails = row.dataset.corrDetails || '';
+                }
+                
+                return corrDetails || '';
+            } catch (e) {
+                console.error('Ошибка при получении данных о гофре:', e);
+                return '';
+            }
+        }
+        
+        // Инициализация tooltip для всех ячеек столбца "Сгофрировано"
+        function initCorrTooltips() {
+            try {
+                const cells = document.querySelectorAll('.col-corrugated');
+                if (!cells || cells.length === 0) return;
+                
+                cells.forEach(cell => {
+                    const corrDetails = getCorrDetails(cell);
+                    const tooltip = cell.querySelector('.corr-tooltip');
+                    
+                    if (tooltip) {
+                        // Заполняем tooltip данными
+                        tooltip.innerHTML = formatCorrTooltip(corrDetails);
+                    }
+                    
+                    // Для мобильных устройств: показываем tooltip при клике
+                    if (window.innerWidth <= 768) {
+                        cell.addEventListener('click', function(e) {
+                            e.stopPropagation();
+                            // Закрываем другие открытые tooltip
+                            document.querySelectorAll('.col-corrugated.active').forEach(activeCell => {
+                                if (activeCell !== cell) {
+                                    activeCell.classList.remove('active');
+                                }
+                            });
+                            // Переключаем текущий tooltip
+                            cell.classList.toggle('active');
+                        });
+                        
+                        // Закрываем tooltip при клике вне ячейки
+                        document.addEventListener('click', function(e) {
+                            if (!cell.contains(e.target)) {
+                                cell.classList.remove('active');
+                            }
+                        });
+                    }
+                });
+            } catch (e) {
+                console.error('Ошибка при инициализации tooltip:', e);
+            }
+        }
+        
+        // Инициализируем tooltip при загрузке страницы
+        (function() {
+            function tryInit() {
+                try {
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', function() {
+                            setTimeout(initCorrTooltips, 50);
+                        });
+                    } else {
+                        setTimeout(initCorrTooltips, 50);
+                    }
+                } catch (e) {
+                    // Игнорируем ошибки расширений браузера
+                    if (e.message && e.message.indexOf('runtime.lastError') === -1) {
+                        console.error('Ошибка при загрузке скрипта tooltip:', e);
+                    }
+                    // Пробуем инициализировать через небольшую задержку
+                    setTimeout(initCorrTooltips, 200);
+                }
+            }
+            
+            // Пробуем инициализировать сразу
+            tryInit();
+            
+            // Также пробуем после полной загрузки страницы
+            window.addEventListener('load', function() {
+                setTimeout(initCorrTooltips, 100);
+            });
+        })();
     </script>
 
 
