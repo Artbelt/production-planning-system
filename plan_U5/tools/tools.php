@@ -611,12 +611,12 @@ function show_weekly_corrugation(){
         $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));
         $production_date = reverse_date($production_date);
         
-        // Получаем данные о сгофрированных гофропакетах из corrugation_plan
+        // Получаем данные о сгофрированных гофропакетах из manufactured_corrugated_packages
         $sql = "SELECT 
-                    SUM(COALESCE(fact_count, 0)) as total_count
-                FROM corrugation_plan
-                WHERE plan_date = '$production_date'
-                AND COALESCE(fact_count, 0) > 0";
+                    SUM(COALESCE(count, 0)) as total_count
+                FROM manufactured_corrugated_packages
+                WHERE date_of_production = '$production_date'
+                AND COALESCE(count, 0) > 0";
         
         $result = $mysqli->query($sql);
         
