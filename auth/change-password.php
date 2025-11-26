@@ -40,6 +40,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             // Обновляем информацию о сессии
             $session = $auth->checkSession();
+            
+            // Обновляем флаг базового пароля в сессии
+            if (isset($_SESSION['has_default_password'])) {
+                unset($_SESSION['has_default_password']);
+            }
+            
+            // Очищаем флаг показа напоминания
+            if (isset($_SESSION['password_reminder_shown'])) {
+                unset($_SESSION['password_reminder_shown']);
+            }
         } else {
             $error = $result['error'];
         }
@@ -49,7 +59,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Получаем информацию о пользователе
 $db = Database::getInstance();
 $user = $db->selectOne("
-    SELECT phone, full_name, is_default_password, password_changed_at 
+    SELECT phone, full_name, is_default_password, password_changed_at,
+           DATEDIFF(NOW(), password_changed_at) as days_since_change,
+           password_reminder_count
     FROM auth_users 
     WHERE id = ?
 ", [$session['user_id']]);
@@ -172,9 +184,67 @@ $csrfToken = $_SESSION['csrf_token'];
                 </div>
                 
                 <?php if ($user['is_default_password']): ?>
-                    <p style="margin: 0; color: var(--warning);">
-                        ⚠️ Вы используете базовый пароль. Рекомендуем сменить его на персональный для повышения безопасности.
-                    </p>
+                    <?php 
+                    $days = (int)$user['days_since_change'];
+                    // Мягкие цвета для всех уровней
+                    $bgColor = '#f0f9ff';
+                    $borderColor = '#7dd3fc';
+                    $textColor = '#0369a1';
+                    $icon = '🔐';
+                    $title = 'Рекомендация по безопасности';
+                    if ($days >= 30) {
+                        $bgColor = '#f0f9ff';
+                        $borderColor = '#7dd3fc';
+                        $textColor = '#0369a1';
+                        $icon = '🔐';
+                    } elseif ($days >= 14) {
+                        $bgColor = '#fefce8';
+                        $borderColor = '#fde047';
+                        $textColor = '#854d0e';
+                        $icon = '💡';
+                    } else {
+                        $bgColor = '#f0fdf4';
+                        $borderColor = '#86efac';
+                        $textColor = '#166534';
+                        $icon = '✨';
+                    }
+                    ?>
+                    <div style="
+                        padding: 16px;
+                        background: <?= $bgColor ?>;
+                        border-left: 4px solid <?= $borderColor ?>;
+                        border-radius: 8px;
+                        margin-top: 12px;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+                    ">
+                        <div style="display: flex; align-items: flex-start; gap: 12px;">
+                            <div style="
+                                width: 36px;
+                                height: 36px;
+                                background: <?= $borderColor ?>;
+                                border-radius: 8px;
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                font-size: 18px;
+                                flex-shrink: 0;
+                            "><?= $icon ?></div>
+                            <div style="flex: 1;">
+                                <p style="margin: 0 0 6px 0; color: <?= $textColor ?>; font-weight: 500; font-size: 14px;">
+                                    <?= $title ?>
+                                </p>
+                                <p style="margin: 0; color: <?= $textColor ?>; font-size: 13px; line-height: 1.5;">
+                                    Вы используете базовый пароль уже <strong><?= $days ?></strong> <?= $days == 1 ? 'день' : ($days < 5 ? 'дня' : 'дней') ?>.
+                                    Рекомендуем сменить его на персональный для повышения безопасности вашего аккаунта.
+                                </p>
+                                <?php if ($user['password_reminder_count'] > 0): ?>
+                                    <p style="margin: 8px 0 0 0; font-size: 12px; color: <?= $textColor ?>; opacity: 0.7;">
+                                        Напоминаний отправлено: <?= $user['password_reminder_count'] ?>
+                                    </p>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
                 <?php else: ?>
                     <p style="margin: 0; color: var(--success);">
                         ✅ Вы используете персональный пароль. Последняя смена: <?= date('d.m.Y H:i', strtotime($user['password_changed_at'])) ?>

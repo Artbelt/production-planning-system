@@ -8,6 +8,8 @@
 define('AUTH_SYSTEM', true);
 require_once 'auth/includes/config.php';
 require_once 'auth/includes/auth-functions.php';
+require_once 'auth/includes/password-functions.php';
+require_once 'auth/includes/password-reminder-banner.php';
 
 // Инициализация системы
 initAuthSystem();
@@ -158,6 +160,12 @@ foreach ($userDepartments as $dept) {
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>Система планирования - <?= UI_CONFIG['company_name'] ?></title>
+	<?php
+	// Отображаем баннер напоминания о смене пароля
+	if (isset($session['user_id'])) {
+		echo renderPasswordReminderBanner($session['user_id']);
+	}
+	?>
 	<style>
 		* {
 			margin: 0;
@@ -171,6 +179,19 @@ foreach ($userDepartments as $dept) {
 			display: flex;
 			justify-content: center;
 			align-items: center;
+		}
+		
+		/* Отступ для баннера напоминания о пароле */
+		body {
+			padding-top: 0;
+		}
+		
+		#password-reminder-banner {
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			z-index: 10000;
 		}
 
 		.button-container {

@@ -552,22 +552,10 @@ echo "<!-- Аккуратная панель авторизации -->
 
                 <div class="section-title" style="margin-top:14px">Мониторинг</div>
                 <div class="stack">
-                    <form action='NP_full_build_plan.php' method='post' target="_blank" class="stack"><input type='submit' value='Полный план сборки'></form>
-
-                    <form action="NP_build_plan_week.php" method="get" target="_blank" style="display: flex; gap: 10px; align-items: end; width: 100%;">
-                        <div style="flex: 1;">
-                            <?php load_planned_orders(); ?>
-                        </div>
-                        <input type="submit" value="План по заявке" style="flex: 1; white-space: nowrap;">
+                    <form action="NP_build_plan_week.php" method="get" target="_blank" class="stack">
+                        <input type="submit" value="Общий план">
                     </form>
 
-                    <form action="NP_print_build_plan.php" method="get" target="_blank" class="stack">
-                        <input type="submit" value="Печать плана сборки (раздельно)">
-                    </form>
-
-                    <form action="NP_print_build_plan_combined.php" method="get" target="_blank" class="stack">
-                        <input type="submit" value="Печать плана сборки (общий)">
-                    </form>
 
                     <form action='NP_monitor.php' method='post' target="_blank" class="stack"><input type='submit' value='Мониторинг'></form>
                     <form action="worker_modules/tasks_corrugation.php" method="post" target="_blank" class="stack"><input type="submit" value="Модуль оператора ГМ"></form>

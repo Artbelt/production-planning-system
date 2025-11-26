@@ -188,11 +188,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $operator_name = $_POST['operator_name'] ?? ($user['username'] ?? 'unknown');
         $notes = $_POST['notes'] ?? '';
         
-        if ($shift_date === '' || $box_name === '' || $quantity <= 0) {
-            echo json_encode(['success' => false, 'error' => 'Заполните все обязательные поля']);
-            exit;
-        }
-        
         $mysqli = new mysqli($pressDbConfig['host'], $pressDbConfig['user'], $pressDbConfig['pass'], $pressDbConfig['name']);
         
         if ($mysqli->connect_errno) {
@@ -201,30 +196,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         }
         
         if ($action === 'add_die_cut') {
+            if ($shift_date === '' || $box_name === '' || $quantity <= 0) {
+                echo json_encode(['success' => false, 'error' => 'Заполните все обязательные поля']);
+                $mysqli->close();
+                exit;
+            }
             $stmt = $mysqli->prepare("
                 INSERT INTO press_die_cut_blanks (shift_date, brand_name, box_name, quantity, operator_name, notes, created_by)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ");
             $stmt->bind_param("sssisss", $shift_date, $brand_name, $box_name, $quantity, $operator_name, $notes, $operator_name);
+            if ($stmt->execute()) {
+                echo json_encode(['success' => true, 'id' => $mysqli->insert_id]);
+            } else {
+                echo json_encode(['success' => false, 'error' => $mysqli->error]);
+            }
+            $stmt->close();
         } elseif ($action === 'add_glued') {
+            if ($shift_date === '' || $box_name === '' || $quantity <= 0) {
+                echo json_encode(['success' => false, 'error' => 'Заполните все обязательные поля']);
+                $mysqli->close();
+                exit;
+            }
             $stmt = $mysqli->prepare("
                 INSERT INTO press_glued_boxes (shift_date, brand_name, box_name, quantity, operator_name, notes, created_by)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ");
             $stmt->bind_param("sssisss", $shift_date, $brand_name, $box_name, $quantity, $operator_name, $notes, $operator_name);
+            if ($stmt->execute()) {
+                echo json_encode(['success' => true, 'id' => $mysqli->insert_id]);
+            } else {
+                echo json_encode(['success' => false, 'error' => $mysqli->error]);
+            }
+            $stmt->close();
+        } elseif ($action === 'delete_die_cut') {
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id <= 0) {
+                echo json_encode(['success' => false, 'error' => 'Неверный ID']);
+                $mysqli->close();
+                exit;
+            }
+            $stmt = $mysqli->prepare("DELETE FROM press_die_cut_blanks WHERE id = ?");
+            $stmt->bind_param("i", $id);
+            if ($stmt->execute()) {
+                echo json_encode(['success' => true]);
+            } else {
+                echo json_encode(['success' => false, 'error' => $mysqli->error]);
+            }
+            $stmt->close();
+        } elseif ($action === 'delete_glued') {
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id <= 0) {
+                echo json_encode(['success' => false, 'error' => 'Неверный ID']);
+                $mysqli->close();
+                exit;
+            }
+            $stmt = $mysqli->prepare("DELETE FROM press_glued_boxes WHERE id = ?");
+            $stmt->bind_param("i", $id);
+            if ($stmt->execute()) {
+                echo json_encode(['success' => true]);
+            } else {
+                echo json_encode(['success' => false, 'error' => $mysqli->error]);
+            }
+            $stmt->close();
         } else {
             echo json_encode(['success' => false, 'error' => 'Неизвестное действие']);
             $mysqli->close();
             exit;
         }
-        
-        if ($stmt->execute()) {
-            echo json_encode(['success' => true, 'id' => $mysqli->insert_id]);
-        } else {
-            echo json_encode(['success' => false, 'error' => $mysqli->error]);
-        }
-        
-        $stmt->close();
         $mysqli->close();
         exit;
         
@@ -472,6 +511,39 @@ $shiftData = getShiftData($pressDbConfig, $currentDate);
         .detail-quantity {
             font-weight: 600;
             color: #2c3e50;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-delete {
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            font-size: 20px;
+            font-weight: 300;
+            line-height: 1;
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: background 0.2s, transform 0.1s, color 0.2s;
+            opacity: 0.6;
+            color: #7f8c8d;
+            width: 20px;
+            height: 20px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .btn-delete:hover {
+            background: rgba(231, 76, 60, 0.15);
+            opacity: 1;
+            color: #e74c3c;
+            transform: scale(1.15);
+        }
+        
+        .btn-delete:active {
+            transform: scale(0.9);
         }
         
         .form-group {
@@ -614,7 +686,12 @@ $shiftData = getShiftData($pressDbConfig, $currentDate);
                                 <span class="detail-name">
                                     <?= htmlspecialchars($item['box_name']) ?> <?= htmlspecialchars($item['brand_name'] ?? '') ?>
                                 </span>
-                                <span class="detail-quantity"><?= $item['quantity'] ?> шт</span>
+                                <span class="detail-quantity">
+                                    <?= $item['quantity'] ?> шт
+                                    <button class="btn-delete" onclick="deleteDieCut(<?= $item['id'] ?>)" title="Удалить позицию">
+                                        ×
+                                    </button>
+                                </span>
                             </div>
                         <?php endforeach; ?>
                     </div>
@@ -648,7 +725,12 @@ $shiftData = getShiftData($pressDbConfig, $currentDate);
                                 <span class="detail-name">
                                     <?= htmlspecialchars($item['box_name']) ?> <?= htmlspecialchars($item['brand_name'] ?? '') ?>
                                 </span>
-                                <span class="detail-quantity"><?= $item['quantity'] ?> шт</span>
+                                <span class="detail-quantity">
+                                    <?= $item['quantity'] ?> шт
+                                    <button class="btn-delete" onclick="deleteGlued(<?= $item['id'] ?>)" title="Удалить позицию">
+                                        ×
+                                    </button>
+                                </span>
                             </div>
                         <?php endforeach; ?>
                     </div>
@@ -831,6 +913,62 @@ $shiftData = getShiftData($pressDbConfig, $currentDate);
             }
             
             return false;
+        }
+        
+        async function deleteDieCut(id) {
+            if (!confirm('Вы уверены, что хотите удалить эту позицию?')) {
+                return;
+            }
+            
+            try {
+                const formData = new FormData();
+                formData.append('action', 'delete_die_cut');
+                formData.append('id', id);
+                
+                const response = await fetch(window.location.pathname, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Ошибка при удалении позиции');
+            }
+        }
+        
+        async function deleteGlued(id) {
+            if (!confirm('Вы уверены, что хотите удалить эту позицию?')) {
+                return;
+            }
+            
+            try {
+                const formData = new FormData();
+                formData.append('action', 'delete_glued');
+                formData.append('id', id);
+                
+                const response = await fetch(window.location.pathname, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Ошибка при удалении позиции');
+            }
         }
     </script>
 </body>

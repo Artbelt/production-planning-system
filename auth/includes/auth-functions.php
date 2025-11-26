@@ -118,7 +118,7 @@ class AuthManager {
         }
         
         // Проверка сессии в БД
-        $sql = "SELECT s.*, u.phone, u.full_name, u.is_active 
+        $sql = "SELECT s.*, u.phone, u.full_name, u.is_active, u.is_default_password 
                 FROM auth_sessions s 
                 JOIN auth_users u ON s.user_id = u.id 
                 WHERE s.id = ? AND s.expires_at > NOW()";
@@ -128,6 +128,11 @@ class AuthManager {
         if (!$session || !$session['is_active']) {
             $this->destroySession();
             return false;
+        }
+        
+        // Обновляем флаг базового пароля в сессии
+        if (isset($session['is_default_password'])) {
+            $_SESSION['has_default_password'] = (bool)$session['is_default_password'];
         }
         
         // Обновление активности

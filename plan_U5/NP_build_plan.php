@@ -129,7 +129,7 @@ if (isset($_GET['action']) && in_array($_GET['action'], ['save','load','busy','m
 
             $ph = implode(',', array_fill(0, count($days), '?'));
             $q  = $pdo->prepare("
-                SELECT bp.plan_date, bp.brigade, bp.count,
+                SELECT bp.plan_date, bp.brigade, bp.count, bp.order_number,
                        NULLIF(COALESCE(sfs.build_complexity,0),0) AS rate_per_shift,
                        pps.p_p_height AS paper_height
                 FROM build_plan bp
@@ -143,6 +143,7 @@ if (isset($_GET['action']) && in_array($_GET['action'], ['save','load','busy','m
 
             $outHrs = []; // [$day][1|2] => hours
             $outHei = []; // [$day][1|2] => [heights...]
+            $outOrders = []; // [$day][1|2] => [order_numbers...]
             while ($r = $q->fetch()){
                 $d = $r['plan_date']; $b = (int)($r['brigade'] ?: 1);
                 $cnt = (int)$r['count']; $rate = (int)$r['rate_per_shift'];
@@ -154,10 +155,16 @@ if (isset($_GET['action']) && in_array($_GET['action'], ['save','load','busy','m
                 if ($r['paper_height'] !== null) {
                     $outHei[$d][$b][] = (float)$r['paper_height']; // dedupe на клиенте
                 }
+
+                if (!isset($outOrders[$d])) $outOrders[$d] = [1=>[],2=>[]];
+                $orderNum = trim($r['order_number'] ?? '');
+                if ($orderNum && !in_array($orderNum, $outOrders[$d][$b])) {
+                    $outOrders[$d][$b][] = $orderNum;
+                }
             }
             foreach ($outHrs as $d=>$bb){ $outHrs[$d][1] = round($bb[1],1); $outHrs[$d][2] = round($bb[2],1); }
 
-            echo json_encode(['ok'=>true,'data'=>$outHrs, 'heights'=>$outHei]); exit;
+            echo json_encode(['ok'=>true,'data'=>$outHrs, 'heights'=>$outHei, 'orders'=>$outOrders]); exit;
         }
 
         /* -------- meta -------- */

@@ -6,6 +6,7 @@
 define('AUTH_SYSTEM', true);
 require_once 'includes/config.php';
 require_once 'includes/auth-functions.php';
+require_once 'includes/password-functions.php';
 
 // Инициализация системы
 initAuthSystem();
@@ -44,6 +45,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($sessionId) {
                 // Устанавливаем отдел в сессию (уже должно быть установлено в createSession)
                 $_SESSION['auth_department'] = $firstDepartment;
+                
+                // Проверяем базовый пароль и устанавливаем флаг в сессии
+                if ($result['user']['is_default_password']) {
+                    $_SESSION['has_default_password'] = true;
+                    
+                    // Проверяем, нужно ли отправить напоминание
+                    if (shouldRemindPasswordChange($result['user']['id'])) {
+                        // Отмечаем отправку напоминания
+                        markPasswordReminderSent($result['user']['id']);
+                        $_SESSION['password_reminder_shown'] = true;
+                    }
+                } else {
+                    $_SESSION['has_default_password'] = false;
+                }
                 
                 // Всегда перенаправляем на главную страницу
                 header('Location: ../index.php');

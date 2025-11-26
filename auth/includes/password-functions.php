@@ -103,13 +103,16 @@ function changeUserPassword($userId, $newPassword, $currentPassword = null) {
         $passwordHash = password_hash($newPassword, PASSWORD_DEFAULT);
         
         // Обновляем пароль в БД
+        $isDefault = isDefaultPassword($newPassword, $user['phone']);
+        
+        // Если пароль был изменен на не-базовый, сбрасываем счетчик напоминаний
+        $resetReminders = !$isDefault ? ', password_reminder_count = 0, password_reminder_sent_at = NULL' : '';
+        
         $sql = "UPDATE auth_users 
                 SET password_hash = ?, 
                     password_changed_at = NOW(), 
-                    is_default_password = ?
+                    is_default_password = ?" . $resetReminders . "
                 WHERE id = ?";
-        
-        $isDefault = isDefaultPassword($newPassword, $user['phone']);
         
         $result = $db->update($sql, [$passwordHash, $isDefault, $userId]);
         
@@ -119,8 +122,14 @@ function changeUserPassword($userId, $newPassword, $currentPassword = null) {
                 $userId,
                 $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
                 $_SERVER['HTTP_USER_AGENT'] ?? 'System',
-                json_encode(['is_default_password' => $isDefault])
+                json_encode(['is_default_password' => $isDefault, 'reminders_reset' => !$isDefault])
             ]);
+            
+            // Обновляем флаг в сессии если пользователь сменил пароль
+            if (session_status() === PHP_SESSION_NONE) {
+                session_start();
+            }
+            $_SESSION['has_default_password'] = $isDefault;
             
             return ['success' => true, 'message' => 'Пароль успешно изменен'];
         } else {

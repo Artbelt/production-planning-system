@@ -9,8 +9,6 @@ $SHIFT_HOURS = 11.5; // фактическая смена для расчёто�
 
 
 
-$order = $_GET['order_number'] ?? '';
-if ($order==='') { http_response_code(400); exit('Укажите ?order=...'); }
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8'); }
 // Подсказки по заявкам из corrugation_plan (только тут, без API)
 $orderSuggestions = [];
@@ -23,11 +21,42 @@ try{
     $st = $pdoSug->query("
         SELECT cp.order_number, MAX(cp.plan_date) AS last_date
         FROM corrugation_plan cp
+        LEFT JOIN orders o ON o.order_number = cp.order_number
+        WHERE (o.hide IS NULL OR o.hide != 1)
         GROUP BY cp.order_number
         ORDER BY last_date DESC
         LIMIT 100
     ");
     $orderSuggestions = $st->fetchAll();
+    
+    // Если order_number не указан, используем самую свежую заявку
+    $order = $_GET['order_number'] ?? '';
+    if ($order === '' && !empty($orderSuggestions)) {
+        $order = $orderSuggestions[0]['order_number'];
+    }
+    if ($order === '') { 
+        http_response_code(400); 
+        exit('Нет активных заявок. Укажите ?order_number=...'); 
+    }
+    
+    // Убеждаемся, что текущая заявка есть в списке (даже если она неактивна)
+    $currentOrderInList = false;
+    foreach($orderSuggestions as $sug) {
+        if($sug['order_number'] === $order) {
+            $currentOrderInList = true;
+            break;
+        }
+    }
+    if(!$currentOrderInList && $order) {
+        // Проверяем, активна ли текущая заявка
+        $stCheck = $pdoSug->prepare("SELECT hide FROM orders WHERE order_number = ?");
+        $stCheck->execute([$order]);
+        $orderStatus = $stCheck->fetch();
+        // Добавляем только если заявка активна или не существует в orders
+        if(!$orderStatus || $orderStatus['hide'] != 1) {
+            array_unshift($orderSuggestions, ['order_number' => $order, 'last_date' => null]);
+        }
+    }
     
     // Получаем распланированные гофропакеты для текущей заявки
     $stCorr = $pdoSug->prepare("
@@ -90,6 +119,10 @@ try{
     body{margin:0;font:13px system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;background:var(--bg);padding-top:60px}
     header{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--line);background:#fff;position:fixed;top:0;left:0;right:0;z-index:100;box-shadow:0 2px 4px rgba(0,0,0,0.1)}
     .controls{display:flex;gap:8px;align-items:center}
+    .header-center{flex:1;display:flex;justify-content:center;align-items:center;margin:0 20px}
+    .order-select{padding:6px 12px;border:1px solid #cbd5e1;background:#fff;border-radius:8px;font-size:14px;font-weight:600;min-width:200px;cursor:pointer}
+    .order-select:hover{border-color:#94a3b8}
+    .order-select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,0.1)}
     .btn{border:1px solid #cbd5e1;background:#fff;border-radius:8px;padding:6px 10px;cursor:pointer;position:relative;z-index:1000}
     .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
     .muted{color:var(--muted)}
@@ -153,9 +186,20 @@ try{
     /* busy/shift маркеры внутри дорожек */
     .lane .busyBar{
         position:absolute; left:0; right:0; top:0;
-        background:rgba(148,163,184,.25);   /* slate-400 ~ 25% */
-        border-bottom:1px solid rgba(148,163,184,.5);
+        background:rgba(71,85,105,.6);   /* slate-600 ~ 60% - темнее для лучшей видимости текста */
+        border-bottom:1px solid rgba(71,85,105,.8);
         z-index:0;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        color:#fff;
+        font-size:11px;
+        font-weight:600;
+        text-shadow:0 1px 2px rgba(0,0,0,0.5);
+        padding:2px 4px;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        white-space:nowrap;
     }
     .lane .shiftLine{
         position:absolute; left:0; right:0; height:0;
@@ -323,13 +367,15 @@ try{
         <div id="weekTitle" style="font-weight:600"></div>
         <button class="btn" id="nextWeek">›</button>
         <button class="btn" id="todayBtn">Сегодня</button>
-        <button class="btn" id="allOrderBtn">Вся заявка</button>
     </div>
-    <div class="legend">
-        <span class="muted">Сложность:</span>
-        <span class="cx-dot" title="низкая" style="margin-left:4px"><span class="dot" style="background:#22c55e"></span></span>
-        <span class="cx-dot" title="средняя" style="margin-left:6px"><span class="dot" style="background:#f59e0b"></span></span>
-        <span class="cx-dot" title="высокая" style="margin-left:6px"><span class="dot" style="background:#ef4444"></span></span>
+    <div class="header-center">
+        <select id="orderSelect" class="order-select">
+            <?php foreach($orderSuggestions as $sug): ?>
+                <option value="<?=h($sug['order_number'])?>" <?=($sug['order_number']===$order)?'selected':''?>>
+                    Заявка <?=h($sug['order_number'])?>
+                </option>
+            <?php endforeach; ?>
+        </select>
     </div>
     <div class="controls">
         <button class="btn" id="loadBtn">Загрузить</button>
@@ -396,7 +442,7 @@ try{
         }
 
         // === ключевые константы
-        const ORDER = <?= json_encode($order) ?>;
+        let ORDER = <?= json_encode($order) ?>; // Изменено на let для возможности изменения
         const SHIFT_H = <?= json_encode($SHIFT_HOURS) ?>; // расчёты (занятость/перегруз)
         const VIEW_H  = 13;                               // высота дорожки и шкалы (без скролла)
         // уменьшаем вертикальный масштаб ~на 20%: 40 -> 32 px
@@ -422,6 +468,7 @@ try{
         // row: {source_date, filter, count, rate, height, baseH, _fallback}
         const plan = new Map();          // Map(day -> { '1':[], '2':[] })
         const busyHours = new Map();     // Map(day -> {'1':hrs,'2':hrs})
+        const busyOrders = new Map();    // Map(day -> {'1':[orders...],'2':[orders...]})
         let buffer = [];                 // массив для хранения позиций в буфере
         
         // === система отката разделений
@@ -432,7 +479,6 @@ try{
         const weekGrid = document.getElementById('weekGrid');
         const hourCol  = document.getElementById('hourCol');
         const toggleSpanBtn = document.getElementById('toggleSpan');
-        const allOrderBtn = document.getElementById('allOrderBtn');
         const heatmapBtn = document.getElementById('heatmapBtn');
         const saveBtn = document.getElementById('saveBtn');
 
@@ -476,6 +522,20 @@ try{
 
         // === рендер
         renderWeek(false);
+        
+        // Обработчик изменения заявки
+        document.getElementById('orderSelect').addEventListener('change', async function() {
+            const newOrder = this.value;
+            if (newOrder && newOrder !== ORDER) {
+                ORDER = newOrder; // Обновляем переменную ORDER
+                // Обновляем URL без перезагрузки страницы
+                const newUrl = window.location.pathname + '?order_number=' + encodeURIComponent(newOrder);
+                window.history.pushState({order: newOrder}, '', newUrl);
+                // Автоматически загружаем план новой заявки
+                await loadPlan();
+            }
+        });
+        
         document.getElementById('prevWeek').onclick = ()=>{ weekStart = addDays(weekStart,-spanDays); renderWeek(false); };
         document.getElementById('nextWeek').onclick = ()=>{ weekStart = addDays(weekStart,+spanDays); renderWeek(false); };
         document.getElementById('todayBtn').onclick = ()=>{ weekStart = startOfWeek(new Date()); renderWeek(false); };
@@ -529,10 +589,8 @@ try{
 
         if (toggleSpanBtn){
             toggleSpanBtn.onclick = ()=>{
-                allOrderMode = false;
                 spanDays = (spanDays===14 ? 7 : 14);
                 updateSpanBtnLabel();
-                updateAllOrderBtnLabel();
                 renderWeek(false);
             };
             updateSpanBtnLabel();
@@ -937,40 +995,10 @@ try{
             });
         }
 
-        if (allOrderBtn){
-            allOrderBtn.onclick = async ()=>{
-                allOrderMode = !allOrderMode;
-                if (allOrderMode) {
-                    // Перезагружаем все данные из базы при включении режима "Вся заявка"
-                    await loadPlan();
-                    // После загрузки рассчитываем период отображения
-                    calculateAllOrderDays();
-                } else {
-                    spanDays = 14;
-                }
-                updateSpanBtnLabel();
-                updateAllOrderBtnLabel();
-                renderWeek(false);
-            };
-            updateAllOrderBtnLabel();
-        }
-
         function updateSpanBtnLabel(){
             if (!toggleSpanBtn) return;
-            if (allOrderMode) {
-                toggleSpanBtn.textContent = '2 недели';
-                toggleSpanBtn.disabled = true;
-            } else {
-                toggleSpanBtn.textContent = (spanDays===14 ? '1 неделя' : '2 недели');
-                toggleSpanBtn.disabled = false;
-            }
-        }
-
-        function updateAllOrderBtnLabel(){
-            if (!allOrderBtn) return;
-            allOrderBtn.textContent = allOrderMode ? '1 неделя' : 'Вся заявка';
-            allOrderBtn.style.background = allOrderMode ? '#2563eb' : '';
-            allOrderBtn.style.color = allOrderMode ? '#fff' : '';
+            toggleSpanBtn.textContent = (spanDays===14 ? '1 неделя' : '2 недели');
+            toggleSpanBtn.disabled = false;
         }
 
         function calculateAllOrderDays(){
@@ -1177,9 +1205,6 @@ try{
 
             const d0 = fmtDate(weekStart), dN = fmtDate(addDays(weekStart, spanDays-1));
             let titleText = d0+' — '+dN;
-            if (allOrderMode) {
-                titleText += ' (Вся заявка)';
-            }
             document.getElementById('weekTitle').textContent = titleText;
 
             // очистка
@@ -1341,7 +1366,20 @@ try{
                     const busy = (busyHours.get(day) || {})[team] || 0;
                     const busyPx = Math.min(VIEW_H, busy) * PX_PER_HOUR;
                     const bar = lane.querySelector('.busyBar');
-                    if (bar) bar.style.height = busyPx + 'px';
+                    if (bar) {
+                        bar.style.height = busyPx + 'px';
+                        // Получаем номера заявок для этого дня и бригады
+                        const orders = (busyOrders.get(day) || {})[team] || [];
+                        if (orders.length > 0 && busyPx > 0) {
+                            // Отображаем номера заявок на темном фоне
+                            const ordersText = orders.join(', ');
+                            bar.textContent = ordersText;
+                            bar.style.display = 'flex';
+                        } else {
+                            bar.textContent = '';
+                            bar.style.display = busyPx > 0 ? 'flex' : 'none';
+                        }
+                    }
                     const sline = lane.querySelector('.shiftLine');
                     if (sline) sline.style.top = (Math.min(VIEW_H, cap(team)) * PX_PER_HOUR) + 'px';
                 });
@@ -1695,17 +1733,10 @@ try{
                     });
                 });
 
-                // Если включен режим "Вся заявка", пересчитываем количество дней
-                if (allOrderMode) {
-                    calculateAllOrderDays();
-                }
-                
                 renderWeek(false);
                 
                 // После загрузки плана обновляем состояние кнопки сохранения
                 updateSaveButtonState();
-                
-                alert('Загружено.');
             }catch(e){
                 alert('Ошибка загрузки: '+e.message);
             }
@@ -1746,9 +1777,12 @@ try{
                 const data = await res.json();
                 if (!data.ok) return;
                 busyHours.clear();
+                busyOrders.clear();
                 (days||[]).forEach(d=>{
                     const v = (data.data||{})[d] || {1:0,2:0};
                     busyHours.set(d, {'1': +v[1]||0, '2': +v[2]||0});
+                    const orders = (data.orders||{})[d] || {1:[],2:[]};
+                    busyOrders.set(d, {'1': Array.isArray(orders[1]) ? orders[1] : [], '2': Array.isArray(orders[2]) ? orders[2] : []});
                 });
             }catch(e){ /* ignore */ }
         }

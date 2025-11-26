@@ -774,7 +774,7 @@ $stmt->close();
                                 <option value="Фланец">Фланец</option>
                                 <option value="Вставка">Вставка</option>
                                 <option value="Язычек">Язычек</option>
-                                <option value="Язычек">Рамка</option>
+                                <option value="Рамка">Рамка</option>
                                 <option value="Коробка">Коробка</option>
                                 <option value="Ящик">Ящик</option>
                                 <option value="Поролон">Поролон</option>
