@@ -146,6 +146,140 @@ if ($result) {
     $result->close();
 }
 
+$capStockMap = [];
+foreach ($stock_data as $row) {
+    $capStockMap[$row['cap_name']] = (int)$row['current_quantity'];
+}
+
+$ordersForTooltip = [];
+$filtersForTooltip = [];
+$ordersSql = "
+    SELECT order_number, `filter`, `count`
+    FROM orders
+    WHERE (hide IS NULL OR hide = 0)
+      AND `filter` IS NOT NULL AND `filter` <> ''
+      AND `count` IS NOT NULL AND `count` > 0
+    ORDER BY order_number DESC
+    LIMIT 30
+";
+
+if ($ordersResult = $mysqli->query($ordersSql)) {
+    while ($orderRow = $ordersResult->fetch_assoc()) {
+        $orderRow['filter'] = trim($orderRow['filter']);
+        if ($orderRow['filter'] === '') {
+            continue;
+        }
+        $ordersForTooltip[] = $orderRow;
+        $filtersForTooltip[] = $orderRow['filter'];
+    }
+    $ordersResult->close();
+}
+
+$filterCapsMap = [];
+if (!empty($filtersForTooltip)) {
+    $uniqueFilters = array_values(array_unique($filtersForTooltip));
+    $placeholders = implode(',', array_fill(0, count($uniqueFilters), '?'));
+    $types = str_repeat('s', count($uniqueFilters));
+    $stmt = $mysqli->prepare("SELECT filter, up_cap, down_cap FROM round_filter_structure WHERE filter IN ($placeholders)");
+    if ($stmt) {
+        $bindParams = [$types];
+        foreach ($uniqueFilters as $idx => $value) {
+            $bindParams[] = &$uniqueFilters[$idx];
+        }
+        call_user_func_array([$stmt, 'bind_param'], $bindParams);
+        
+        if ($stmt->execute()) {
+            $capsResult = $stmt->get_result();
+            while ($capRow = $capsResult->fetch_assoc()) {
+                $filterCapsMap[$capRow['filter']] = [
+                    'up_cap' => $capRow['up_cap'],
+                    'down_cap' => $capRow['down_cap']
+                ];
+            }
+            $capsResult->close();
+        }
+        $stmt->close();
+    }
+}
+
+$capHintLines = [];
+if (!empty($stock_data)) {
+    $topCaps = $stock_data;
+    usort($topCaps, function ($a, $b) {
+        return (int)$b['current_quantity'] <=> (int)$a['current_quantity'];
+    });
+    $topCaps = array_slice($topCaps, 0, 5);
+    
+    $capSummaries = [];
+    foreach ($topCaps as $capRow) {
+        $capSummaries[] = $capRow['cap_name'] . ' — ' . number_format((int)$capRow['current_quantity'], 0, ',', ' ') . ' шт';
+    }
+    
+    if (!empty($capSummaries)) {
+        $capHintLines[] = 'На складе: ' . implode('; ', $capSummaries);
+    }
+}
+
+$entriesAdded = 0;
+$maxEntries = 5;
+foreach ($ordersForTooltip as $orderData) {
+    $filterName = $orderData['filter'];
+    if (!$filterName || !isset($filterCapsMap[$filterName])) {
+        continue;
+    }
+    
+    $capsMeta = $filterCapsMap[$filterName];
+    $capsInfoParts = [];
+    $possibleQty = (int)$orderData['count'];
+    $minAvailable = PHP_INT_MAX;
+    
+    foreach (['up_cap', 'down_cap'] as $capKey) {
+        $capName = trim($capsMeta[$capKey] ?? '');
+        if ($capName === '') {
+            continue;
+        }
+        $available = $capStockMap[$capName] ?? 0;
+        $capsInfoParts[] = $capName . ' — ' . number_format($available, 0, ',', ' ') . ' шт';
+        $possibleQty = min($possibleQty, $available);
+        $minAvailable = min($minAvailable, $available);
+    }
+    
+    if (empty($capsInfoParts)) {
+        continue;
+    }
+    
+    if ($possibleQty > 0) {
+        $capHintLines[] = sprintf(
+            'Заявка %s: %s — можно собрать %s шт (крышки: %s)',
+            $orderData['order_number'],
+            $filterName,
+            number_format($possibleQty, 0, ',', ' '),
+            implode('; ', $capsInfoParts)
+        );
+    } else {
+        $availableText = $minAvailable === PHP_INT_MAX ? '0' : number_format(max(0, $minAvailable), 0, ',', ' ');
+        $capHintLines[] = sprintf(
+            'Заявка %s: %s — пока не хватает крышек (нужно %s шт, доступно %s шт; %s)',
+            $orderData['order_number'],
+            $filterName,
+            number_format((int)$orderData['count'], 0, ',', ' '),
+            $availableText,
+            implode('; ', $capsInfoParts)
+        );
+    }
+    
+    $entriesAdded++;
+    if ($entriesAdded >= $maxEntries) {
+        break;
+    }
+}
+
+if (empty($capHintLines)) {
+    $capHintLines[] = 'Нет активных заявок, для которых хватает обоих типов крышек.';
+}
+
+$capHintText = implode("\n", $capHintLines);
+
 $mysqli->close();
 
 ?>
@@ -182,6 +316,28 @@ $mysqli->close();
             border-radius: 4px;
             margin-bottom: 12px;
             font-size: 13px;
+        }
+        .stock-hint {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-left: 8px;
+            font-size: 12px;
+            color: #4169e1;
+            cursor: help;
+            font-weight: 600;
+        }
+        .stock-hint .icon-circle {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #4169e1;
+            color: white;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            line-height: 1;
         }
         table {
             width: 100%;
@@ -285,6 +441,10 @@ $mysqli->close();
         <div class="summary">
             <strong>Всего позиций:</strong> <span id="total_positions"><?php echo count($stock_data); ?></span> | 
             <strong>Общее количество:</strong> <span id="total_quantity"><?php echo number_format($total_caps, 0, ',', ' '); ?></span> шт
+            <span class="stock-hint" title="<?php echo htmlspecialchars($capHintText, ENT_QUOTES, 'UTF-8'); ?>">
+                <span class="icon-circle">i</span>
+                Подсказка по сборке
+            </span>
         </div>
         
         <?php if (empty($stock_data)): ?>
