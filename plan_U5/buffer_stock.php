@@ -792,10 +792,46 @@ try {
 
         <div class="panel filters-panel">
             <div class="section-title">Фильтры</div>
+            <?php
+            // Получаем список заявок для выпадающего списка
+            // Только те заявки, у которых есть положительные остатки в буфере
+            $ordersList = [];
+            try {
+                $ordersStmt = $pdo->query("
+                    SELECT DISTINCT c.order_number
+                    FROM (
+                        SELECT 
+                            mcp.order_number,
+                            mcp.filter_label,
+                            SUM(COALESCE(mcp.count, 0)) AS corrugated
+                        FROM manufactured_corrugated_packages mcp
+                        GROUP BY mcp.order_number, mcp.filter_label
+                    ) AS c
+                    LEFT JOIN (
+                        SELECT 
+                            m.name_of_order AS order_number,
+                            m.name_of_filter AS filter_label,
+                            SUM(COALESCE(m.count_of_filters, 0)) AS assembled
+                        FROM manufactured_production m
+                        GROUP BY m.name_of_order, m.name_of_filter
+                    ) AS a ON a.order_number = c.order_number AND a.filter_label = c.filter_label
+                    WHERE (c.corrugated - COALESCE(a.assembled, 0)) > 0
+                    ORDER BY c.order_number ASC
+                ");
+                $ordersList = $ordersStmt->fetchAll(PDO::FETCH_COLUMN);
+            } catch (Throwable $e) {
+                // Если ошибка, оставляем пустой список
+            }
+            ?>
             <form class="filters" method="get">
                 <input type="date" name="date_from" value="<?=h($date_from)?>" placeholder="От даты">
                 <input type="date" name="date_to"   value="<?=h($date_to)?>" placeholder="До даты">
-                <input type="text" name="order"     value="<?=h($order)?>"   placeholder="Заявка (order_number)">
+                <select name="order">
+                    <option value="">Все заявки</option>
+                    <?php foreach ($ordersList as $orderItem): ?>
+                        <option value="<?=h($orderItem)?>" <?= $order === $orderItem ? 'selected' : '' ?>><?=h($orderItem)?></option>
+                    <?php endforeach; ?>
+                </select>
                 <input type="text" name="filter"    value="<?=h($filter)?>"  placeholder="Фильтр (filter_label)">
                 <label class="tag"><input type="checkbox" name="include_zero" value="1" <?= $includeZero?'checked':''; ?>> показывать нули/минусы</label>
                 <label class="tag"><input type="checkbox" name="show_ignored" value="1" <?= $showIgnored?'checked':''; ?>> показать игнорируемые</label>

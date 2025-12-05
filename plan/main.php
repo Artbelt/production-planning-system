@@ -361,101 +361,6 @@ $advertisement = 'Информация';
             font-weight: 600;
             font-size: 16px;
         }
-        /* ===== Modern Modal (ads) ===== */
-        .modal-backdrop{
-            position:fixed; 
-            inset:0; 
-            background: rgba(0,0,0,0.6);
-            backdrop-filter: blur(4px);
-            opacity:0; 
-            pointer-events:none; 
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index:60;
-        }
-        .modal{
-            position:fixed; 
-            inset:0; 
-            display:flex; 
-            align-items:center; 
-            justify-content:center;
-            pointer-events:none; 
-            z-index:61;
-            padding: 20px;
-        }
-        .modal__panel{
-            width:min(600px, calc(100% - 40px)); 
-            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-            border:1px solid var(--border);
-            border-radius:var(--radius); 
-            box-shadow: 0 25px 50px rgba(0,0,0,0.25), 0 10px 20px rgba(0,0,0,0.1);
-            transform: translateY(20px) scale(0.95);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
-            opacity:0;
-            overflow: hidden;
-        }
-        .modal--open .modal__panel{ 
-            transform: translateY(0) scale(1); 
-            opacity:1; 
-        }
-        .modal--open, .modal--open + .modal-backdrop{ 
-            pointer-events:auto; 
-            opacity:1; 
-        }
-
-        .modal__head{ 
-            display:flex; 
-            align-items:center; 
-            justify-content:space-between;
-            padding:24px 24px 16px; 
-            border-bottom:2px solid var(--border);
-            background: var(--gradient-primary);
-            color: white;
-        }
-        .modal__title{ 
-            font-size:20px; 
-            font-weight:600; 
-            color: white; 
-            margin:0; 
-        }
-        .modal__body{ 
-            padding:24px; 
-        }
-        .modal__foot{ 
-            display:flex; 
-            gap:12px; 
-            justify-content:flex-end; 
-            padding:20px 24px;
-            border-top:1px solid var(--border); 
-            background: #f8fafc; 
-        }
-
-        .modal__close{
-            appearance:none; 
-            background: rgba(255,255,255,0.2); 
-            border:1px solid rgba(255,255,255,0.3);
-            color: white; 
-            border-radius:var(--radius-sm); 
-            padding:8px 12px; 
-            cursor:pointer;
-            font-weight: 500;
-            transition: all 0.3s ease;
-        }
-        .modal__close:hover{ 
-            background: rgba(255,255,255,0.3); 
-            transform: translateY(-1px);
-        }
-
-        .modal .field{ 
-            display:flex; 
-            flex-direction:column; 
-            gap:8px; 
-            margin-bottom:20px; 
-        }
-        .modal label{ 
-            font-weight:500; 
-            color:var(--ink);
-            font-size: 14px;
-        }
 
 
         /* адаптив */
@@ -622,26 +527,10 @@ $advertisement = 'Информация';
                         <input type="hidden" name="workshop" value="<?php echo htmlspecialchars($currentDepartment); ?>">
                         <input type="submit" value="Буфер гофропакетов">
                     </form>
-                    <div class="search-card">
-                        <h4 style="margin:0 0 8px;">Объявления</h4>
-                        <div class="stack" >
-                            <button type="button" id="openAdModal">Создать объявление</button>
-
-                            <noscript>
-                                <!-- Носкрипт-фолбэк: обычная форма, если JS выключен -->
-                                <form class="stack" action="create_ad.php" method="post">
-                                    <input type="text" name="title" placeholder="Название объявления" required>
-                                    <textarea name="content" placeholder="Введите текст" required></textarea>
-                                    <input type="date" name="expires_at" required>
-                                    <button type="submit">Создать объявление</button>
-                                </form>
-                            </noscript>
-                        </div>
-                    </div>
                 </div>
             </td>
 
-            <!-- Центральная панель: Объявления + Поиск по фильтру -->
+            <!-- Центральная панель: Поиск по фильтру -->
             <td class="panel panel--main">
                 <?php
                 // Виджет задач для мастеров
@@ -767,9 +656,6 @@ $advertisement = 'Информация';
                 }
                 ?>
                 
-                <div class="section-title">Объявления</div>
-                <div class="stack-lg">
-                    <?php if (function_exists('show_ads')) { show_ads(); } ?>
 
 
 
@@ -820,6 +706,14 @@ $advertisement = 'Информация';
                         const sel = getSelectEl(); if(sel){ sel.id='filterSelect'; sel.addEventListener('change', runSearch); }
                     })();
                 </script>
+                
+                <div class="stack-lg" style="margin-top: 20px;">
+                    <?php 
+                    if (function_exists('show_weekly_production')) { 
+                        show_weekly_production(); 
+                    } 
+                    ?>
+                </div>
             </td>
 
             <!-- Правая панель: Заявки/архив/планирование/загрузка -->
@@ -917,82 +811,6 @@ $advertisement = 'Информация';
         </tr>
     </table>
 </div>
-<!-- Ads Modal -->
-<div id="adModal" class="modal" aria-hidden="true" aria-labelledby="adModalTitle" role="dialog">
-    <div class="modal__panel" role="document">
-        <div class="modal__head">
-            <h3 class="modal__title" id="adModalTitle">Создать объявление</h3>
-            <button type="button" class="modal__close" id="adModalCloseTop" aria-label="Закрыть">Закрыть</button>
-        </div>
-        <form id="adForm" action="create_ad.php" method="post">
-            <div class="modal__body">
-                <div class="field">
-                    <label for="ad_title">Название</label>
-                    <input id="ad_title" name="title" type="text" placeholder="Название объявления" required>
-                </div>
-                <div class="field">
-                    <label for="ad_content">Текст</label>
-                    <textarea id="ad_content" name="content" placeholder="Введите текст" required></textarea>
-                </div>
-                <div class="field">
-                    <label for="ad_expires">Действительно до</label>
-                    <input id="ad_expires" name="expires_at" type="date" required>
-                </div>
-            </div>
-            <div class="modal__foot">
-                <button type="button" class="modal__close" id="adModalCancel">Отмена</button>
-                <button type="submit">Создать объявление</button>
-            </div>
-        </form>
-    </div>
-</div>
-<div id="adModalBackdrop" class="modal-backdrop"></div>
-<script>
-    (function(){
-        const modal = document.getElementById('adModal');
-        const backdrop = document.getElementById('adModalBackdrop');
-        const openBtn = document.getElementById('openAdModal');
-        const closeTop = document.getElementById('adModalCloseTop');
-        const cancelBtn = document.getElementById('adModalCancel');
-        const form = document.getElementById('adForm');
-        const firstInput = document.getElementById('ad_title');
-
-        function open(){
-            modal.classList.add('modal--open');
-            backdrop.classList.add('modal--open');
-            modal.setAttribute('aria-hidden','false');
-            // небольшая задержка, чтобы браузер вставил в поток
-            setTimeout(()=> firstInput && firstInput.focus(), 30);
-            document.addEventListener('keydown', onKey);
-        }
-        function close(){
-            modal.classList.remove('modal--open');
-            backdrop.classList.remove('modal--open');
-            modal.setAttribute('aria-hidden','true');
-            document.removeEventListener('keydown', onKey);
-            openBtn && openBtn.focus();
-        }
-        function onKey(e){
-            if (e.key === 'Escape') close();
-        }
-        function onBackdropClick(e){
-            if (e.target === backdrop) close();
-        }
-
-        openBtn && openBtn.addEventListener('click', open);
-        closeTop && closeTop.addEventListener('click', close);
-        cancelBtn && cancelBtn.addEventListener('click', close);
-        backdrop && backdrop.addEventListener('click', onBackdropClick);
-
-        // опционально: дизейбл кнопки на время отправки
-        form && form.addEventListener('submit', function(){
-            const submitBtn = form.querySelector('button[type="submit"]');
-            if (submitBtn){
-                submitBtn.disabled = true; submitBtn.textContent = 'Отправка...';
-            }
-        });
-    })();
-</script>
 
 
 </body>

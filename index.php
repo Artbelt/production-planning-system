@@ -504,6 +504,9 @@ foreach ($userDepartments as $dept) {
 	<?php if ($userRole === 'director'): ?>
 	<button class="btn admin" onclick="window.open('auth/admin/', '_blank')">Админ</button>
 	<?php endif; ?>
+	
+	<!-- Мониторинг (доступен всем авторизованным) -->
+	<button class="btn" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);" onclick="window.open('monitoring.php', '_blank')">Мониторинг</button>
 		</div>
 	</div>
 

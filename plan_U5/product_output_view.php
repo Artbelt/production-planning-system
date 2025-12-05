@@ -227,7 +227,7 @@
             width: 100% !important;
             border-collapse: collapse !important;
             background: #fff !important;
-            margin: 16px 0 !important;
+            margin: 12px 0 !important;
             border: 2px solid #6b7280 !important;
             border-radius: 8px !important;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
@@ -239,9 +239,11 @@
         #show_filters_place table td,
         table th,
         table td {
-            padding: 10px !important;
-            vertical-align: top !important;
+            padding: 5px 7px !important;
+            vertical-align: middle !important;
             border: 1px solid #e5e7eb !important;
+            font-size: 12px !important;
+            line-height: 1.3 !important;
         }
         
         body div table th,
@@ -251,6 +253,19 @@
             text-align: left !important;
             font-weight: 600 !important;
             color: var(--ink) !important;
+            padding: 6px 7px !important;
+            font-size: 12px !important;
+        }
+
+        /* Убираем стрелки у input type="number" */
+        #show_filters_place input[type="number"]::-webkit-inner-spin-button,
+        #show_filters_place input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none !important;
+            margin: 0 !important;
+            display: none !important;
+        }
+        #show_filters_place input[type="number"] {
+            -moz-appearance: textfield !important;
         }
 
         /* календарь */
@@ -561,6 +576,49 @@
         // дополнительная инициализация через небольшую задержку
         setTimeout(setupCalendarInputs, 100);
 
+        // функция для фиксации стилей столбца "Часы"
+        function fixHoursColumnStyles() {
+            const tables = document.querySelectorAll('table');
+            tables.forEach((table) => {
+                const rows = table.querySelectorAll('tr');
+                rows.forEach((row) => {
+                    const cells = row.querySelectorAll('td');
+                    if (cells.length > 0) {
+                        const lastCell = cells[cells.length - 1];
+                        // Проверяем, является ли это столбцом "Часы" (содержит input)
+                        if (lastCell.querySelector('input[type="number"]')) {
+                            lastCell.style.cssText += `
+                                min-width: 65px !important;
+                                max-width: 70px !important;
+                                width: 65px !important;
+                                overflow: hidden !important;
+                                white-space: nowrap !important;
+                                padding: 4px 6px !important;
+                            `;
+                            const input = lastCell.querySelector('input[type="number"]');
+                            if (input) {
+                                input.style.cssText += `
+                                    width: 55px !important;
+                                    max-width: 55px !important;
+                                    min-width: 55px !important;
+                                    box-sizing: border-box !important;
+                                    padding: 2px 4px !important;
+                                    overflow: hidden !important;
+                                    -moz-appearance: textfield !important;
+                                    border-radius: 0 !important;
+                                `;
+                                // Убираем стрелки для WebKit браузеров
+                                input.style.setProperty('-webkit-appearance', 'none', 'important');
+                                if (!input.hasAttribute('maxlength')) {
+                                    input.setAttribute('maxlength', '6');
+                                }
+                            }
+                        }
+                    }
+                });
+            });
+        }
+
         // функция для стилизации таблиц
         function applyTableStyles() {
             const tables = document.querySelectorAll('table');
@@ -583,9 +641,11 @@
                 cells.forEach(cell => {
                     cell.removeAttribute('style');
                     cell.style.cssText = `
-                        padding: 10px !important;
-                        vertical-align: top !important;
+                        padding: 5px 7px !important;
+                        vertical-align: middle !important;
                         border: 1px solid #e5e7eb !important;
+                        font-size: 12px !important;
+                        line-height: 1.3 !important;
                     `;
                 });
                 
@@ -597,6 +657,8 @@
                         text-align: left !important;
                         font-weight: 600 !important;
                         color: var(--ink) !important;
+                        padding: 6px 7px !important;
+                        font-size: 12px !important;
                     `;
                 });
             });
@@ -638,6 +700,8 @@
                     document.getElementById("show_filters_place").innerHTML = this.responseText;
                     // принудительно применяем стили к новым таблицам
                     setTimeout(applyTableStyles, 100);
+                    // фиксируем стили для столбца "Часы" после применения общих стилей
+                    setTimeout(fixHoursColumnStyles, 150);
                 } else {
                     alert("❌ Ошибка загрузки данных. Попробуйте еще раз.");
                 }
@@ -692,6 +756,8 @@
                     document.getElementById("show_filters_place").innerHTML = this.responseText;
                     // принудительно применяем стили к новым таблицам
                     setTimeout(applyTableStyles, 100);
+                    // фиксируем стили для столбца "Часы" после применения общих стилей
+                    setTimeout(fixHoursColumnStyles, 150);
                 } else {
                     alert("❌ Ошибка загрузки данных. Попробуйте еще раз.");
                 }

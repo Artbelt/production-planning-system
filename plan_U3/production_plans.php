@@ -12,11 +12,13 @@ try {
     die("Ошибка подключения: " . $e->getMessage());
 }
 
-// Получаем список планов (группируем по номеру заявки, если нужно)
+// Получаем список активных планов (только те, которые связаны с активными заявками)
 $stmt = $pdo->query("
-    SELECT DISTINCT order_number
-    FROM build_plans
-    ORDER BY day_date DESC
+    SELECT DISTINCT bp.order_number
+    FROM build_plans bp
+    INNER JOIN orders o ON bp.order_number = o.order_number
+    WHERE (o.hide IS NULL OR o.hide != 1)
+    ORDER BY bp.day_date DESC
 ");
 $plans = $stmt->fetchAll(PDO::FETCH_COLUMN);
 ?>

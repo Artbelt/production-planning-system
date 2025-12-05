@@ -235,6 +235,56 @@ echo "<style>
     border-radius: 8px;
     border-left: 3px solid #fbbf24;
 }
+/* Стили для таблицы с выпуском продукции */
+.table-wrapper {
+    overflow-x: auto;
+    width: 100%;
+    max-width: 100%;
+    margin: 12px 0;
+}
+.produced-filters-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    table-layout: auto;
+    line-height: 1.3;
+}
+.produced-filters-table td {
+    padding: 4px 6px;
+    border: 1px solid #e5e7eb;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+.produced-filters-table td:last-child {
+    min-width: 65px !important;
+    max-width: 70px !important;
+    width: 65px !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    padding: 4px 6px !important;
+    position: relative !important;
+}
+.produced-filters-table td:last-child input {
+    width: 55px !important;
+    max-width: 55px !important;
+    min-width: 55px !important;
+    box-sizing: border-box !important;
+    padding: 2px 4px !important;
+    font-size: 13px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    border-radius: 0 !important;
+}
+/* Убираем стрелки у input number */
+.produced-filters-table td:last-child input[type='number']::-webkit-inner-spin-button,
+.produced-filters-table td:last-child input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none !important;
+    margin: 0 !important;
+    display: none !important;
+}
+.produced-filters-table td:last-child input[type='number'] {
+    -moz-appearance: textfield !important;
+}
 </style>";
 
 foreach ($teams as $team => $rows) {
@@ -295,22 +345,23 @@ foreach ($teams as $team => $rows) {
             </div>
         </span>
     </h3>";
-    echo "<table style='border: 1px solid black; border-collapse: collapse; font-size: 14px;'>
+    echo "<div class='table-wrapper'>";
+    echo "<table class='produced-filters-table' style='border: 1px solid black; border-collapse: collapse; width: 100%; table-layout: auto;'>
         <tr>
-            <td>Фильтр</td>
-            <td>Количество</td>
-            <td>Заявка</td>
-            <td>Вставка</td>
-            <td>Поролон</td>
-            <td>Форма</td>
-            <td>Хвосты</td>
-            <td>Надрезы</td>
-            <td>Доплаты</td>
-            <td>Материал</td>
-            <td>Бригада</td>
-            <td>Название тарифа</td>
-            <td>Тариф (грн)</td>
-            <td>Сумма (грн)</td>
+            <td style='white-space: nowrap;'>Фильтр</td>
+            <td style='white-space: nowrap;'>Количество</td>
+            <td style='white-space: nowrap;'>Заявка</td>
+            <td style='white-space: nowrap;'>Вставка</td>
+            <td style='white-space: nowrap;'>Поролон</td>
+            <td style='white-space: nowrap;'>Форма</td>
+            <td style='white-space: nowrap;'>Хвосты</td>
+            <td style='white-space: nowrap;'>Надрезы</td>
+            <td style='white-space: nowrap;'>Доплаты</td>
+            <td style='white-space: nowrap;'>Материал</td>
+            <td style='white-space: nowrap;'>Бригада</td>
+            <td style='white-space: nowrap;'>Название тарифа</td>
+            <td style='white-space: nowrap;'>Тариф (грн)</td>
+            <td style='white-space: nowrap;'>Сумма (грн)</td>
             <td>Часы</td>
         </tr>";
 
@@ -320,7 +371,7 @@ foreach ($teams as $team => $rows) {
         $edge_cuts = !empty($variant['has_edge_cuts']) ? 'Да' : '';
         $adds = $variant['addition_description'] ?? '';
         $input_name = "hours[{$variant['name_of_filter']}_{$variant['name_of_order']}]";
-        $input_hours = $variant['is_hourly'] ? "<input type='number' step='0.1' min='0' name='{$input_name}' value='{$variant['hours']}' style='width:60px'>" : '';
+        $input_hours = $variant['is_hourly'] ? "<input type='number' step='0.1' min='0' max='999999' name='{$input_name}' value='{$variant['hours']}' maxlength='6' size='6' style='width:55px !important; max-width:55px !important; min-width:55px !important; box-sizing:border-box !important; padding:2px 4px !important; overflow:hidden !important; border-radius:0 !important;'>" : '';
 
         echo "<tr>
             <td>{$variant['name_of_filter']}</td>
@@ -341,6 +392,7 @@ foreach ($teams as $team => $rows) {
         </tr>";
     }
     echo "</table>";
+    echo "</div>";
     echo "<p>Сумма выпущенной продукции бригады $team: {$sums[$team]} штук</p>";
 
     $bonus_total = 0;

@@ -567,10 +567,9 @@ echo "<!-- Аккуратная панель авторизации -->
 
                 <div class="section-title" style="margin-top:14px">Табель</div>
                 <div class="stack">
-                    <form action="http://localhost/timekeeping/U5/index.php" method="post" target="_blank" class="stack">
-                        <input type="submit" value="Табель У5" disabled>
-                    </form>
+                    <a href="timesheet.php" target="_blank" rel="noopener" class="stack"><button type="button">Табель У5</button></a>
                     <a href="salary_report_monthly.php" target="_blank" rel="noopener" class="stack"><button>Отчет по ЗП за месяц</button></a>
+                    
                 </div>
 
                 <div class="section-title" style="margin-top:14px">Управление данными</div>

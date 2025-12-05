@@ -171,21 +171,199 @@ function is_edit_access_granted(){
 
 /** Отображение выпуска продукции за последнюю неделю */
 function show_weekly_production(){
-    for ($a = 1; $a < 11; $a++) {
-
-        $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));;
-        $production_date = reverse_date($production_date);
-        $sql = "SELECT * FROM manufactured_production WHERE date_of_production = '$production_date';";
-        $result = mysql_execute($sql);
-        /** @var $x $variant counter */
-        $x = 0;
-        foreach ($result as $variant) {
-            $x += $variant['count_of_filters'];
-        }
-        /** Выводим сумму фильтров */
-        echo $production_date . " " . $x . " шт <br>";
-
+    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
+    
+    $count = 0;
+    
+    // Начинаем плашку (карточку)
+    echo '<div class="production-card">';
+    echo '<div class="production-card-header">';
+    echo '<h3 class="production-card-title">Изготовленная продукция за последние 10 дней</h3>';
+    echo '</div>';
+    echo '<div class="production-card-body">';
+    
+    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+    if ($mysqli->connect_errno) {
+        echo "Ошибка подключения к БД";
+        return;
     }
+    
+    // Собираем данные за все дни
+    $all_days_data = [];
+    
+    for ($a = 1; $a < 11; $a++) {
+        $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));
+        $production_date = reverse_date($production_date);
+        
+        // Получаем общее количество за день
+        $sql = "SELECT SUM(count_of_filters) as total_count
+                FROM manufactured_production
+                WHERE date_of_production = '$production_date'";
+        
+        $result = $mysqli->query($sql);
+        
+        if (!$result) {
+            continue;
+        }
+        
+        $row = $result->fetch_assoc();
+        $total_count = (int)($row['total_count'] ?? 0);
+        
+        // Сохраняем данные для этого дня
+        $all_days_data[] = [
+            'date' => $production_date,
+            'total_count' => $total_count
+        ];
+        
+        $count = $count + $total_count;
+        
+        if ($result) {
+            $result->free();
+        }
+    }
+    
+    $mysqli->close();
+    
+    // Выводим таблицу
+    echo '<style>
+        .production-card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(2, 8, 20, 0.06);
+            margin: 12px 0;
+            overflow: hidden;
+        }
+        .production-card-header {
+            padding: 10px 12px;
+            border-bottom: 1px solid #e5e7eb;
+            background-color: #ffffff;
+        }
+        .production-card-title {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 600;
+            color: #111827;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .production-card-body {
+            padding: 10px 12px;
+            background-color: #ffffff;
+        }
+        .production-card-footer {
+            padding: 10px 12px;
+            background-color: #ffffff;
+            border-top: 1px solid #e5e7eb;
+        }
+        .production-table {
+            border-collapse: separate;
+            border-spacing: 0;
+            width: 100%;
+            max-width: 1000px;
+            margin: 8px 0;
+            font-size: 12px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+        .production-table th {
+            background-color: #f8f9fa;
+            padding: 6px 10px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+            font-weight: normal;
+            color: #495057;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .production-table th:first-child {
+            border-top-left-radius: 8px;
+        }
+        .production-table th:last-child {
+            border-top-right-radius: 8px;
+        }
+        .production-table td {
+            padding: 6px 10px;
+            border-bottom: 1px solid #f1f3f5;
+            color: #6c757d;
+        }
+        .production-table tbody tr {
+            background-color: #ffffff;
+            transition: background-color 0.2s ease;
+        }
+        .production-table tbody tr:nth-child(even) {
+            background-color: #fafbfc;
+        }
+        .production-table tbody tr:hover {
+            background-color: #f0f4f8;
+        }
+        .production-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        .production-table .date-col {
+            font-weight: normal;
+            color: #495057;
+        }
+        .production-table .total-col {
+            font-weight: normal;
+            text-align: right;
+            color: #495057;
+        }
+        .production-stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+        }
+        .production-stat-label {
+            color: #6c757d;
+            font-weight: 500;
+        }
+        .production-stat-value {
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .highlight_green {
+            color: #10b981;
+        }
+        .highlight_red {
+            color: #ef4444;
+        }
+    </style>';
+    
+    echo '<table class="production-table">';
+    echo '<thead><tr>';
+    echo '<th class="date-col">Дата</th>';
+    echo '<th class="total-col">Всего</th>';
+    echo '</tr></thead>';
+    echo '<tbody>';
+    
+    // Выводим данные по дням в обратном порядке (от новых к старым)
+    // Цикл заполняет массив от вчера к 10 дням назад, переворачиваем для отображения от новых к старым
+    $all_days_data = array_reverse($all_days_data);
+    foreach ($all_days_data as $day_data) {
+        echo '<tr>';
+        echo '<td class="date-col">' . htmlspecialchars($day_data['date']) . '</td>';
+        echo '<td class="total-col">' . $day_data['total_count'] . '</td>';
+        echo '</tr>';
+    }
+    
+    echo '</tbody></table>';
+    echo '</div>'; // закрываем production-card-body
+    
+    // Футер карточки со статистикой
+    echo '<div class="production-card-footer">';
+    $count_per_day = $count / 10;
+    if ($count_per_day > 1000){
+        echo "<div class='production-stat'><span class='production-stat-label'>Среднее количество в смену:</span> <span class='production-stat-value highlight_green' title='Это количество обеспечит 30 000 фильтров в месяц'>".round($count_per_day, 0)."</span></div>";
+    } else {
+        echo "<div class='production-stat'><span class='production-stat-label'>Среднее количество в смену:</span> <span class='production-stat-value highlight_red' title='Это количество НЕ обеспечит 30 000 фильтров в месяц'>".round($count_per_day, 0)."</span></div>";
+    }
+    echo '</div>'; // закрываем production-card-footer
+    echo '</div>'; // закрываем production-card
 }
 
 /** Создание списка с перечнем заявок
