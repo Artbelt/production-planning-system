@@ -40,15 +40,24 @@ try {
     $placeholders = str_repeat('?,', count($teams) - 1) . '?';
     
     // Получаем детальную информацию по каждой позиции
+    // Группируем по фильтру и заявке, суммируя количество
+    // Используем подзапрос для salon_filter_structure, чтобы избежать дублирования при JOIN
     $sql = "SELECT 
                 mp.name_of_filter,
                 mp.name_of_order,
-                mp.count_of_filters,
-                COALESCE(sfs.build_complexity, 0) AS build_complexity
+                SUM(mp.count_of_filters) AS count_of_filters,
+                COALESCE(MAX(sfs.build_complexity), 0) AS build_complexity
             FROM manufactured_production mp
-            LEFT JOIN salon_filter_structure sfs ON sfs.filter = mp.name_of_filter
+            LEFT JOIN (
+                SELECT 
+                    filter,
+                    MAX(build_complexity) AS build_complexity
+                FROM salon_filter_structure
+                GROUP BY filter
+            ) sfs ON sfs.filter = mp.name_of_filter
             WHERE mp.date_of_production = ?
               AND mp.team IN ($placeholders)
+            GROUP BY mp.name_of_filter, mp.name_of_order
             ORDER BY mp.name_of_filter, mp.name_of_order";
     
     $stmt = $mysqli->prepare($sql);

@@ -138,13 +138,22 @@ function show_weekly_production(){
         $production_date = reverse_date($production_date);
         
         // Получаем данные с build_complexity для расчета процентов
+        // Группируем по фильтру, заявке и бригаде, суммируя количество
+        // Используем подзапрос для salon_filter_structure, чтобы избежать дублирования при JOIN
         $sql = "SELECT 
                     mp.team,
-                    mp.count_of_filters,
-                    COALESCE(sfs.build_complexity, 0) AS build_complexity
+                    SUM(mp.count_of_filters) AS count_of_filters,
+                    COALESCE(MAX(sfs.build_complexity), 0) AS build_complexity
                 FROM manufactured_production mp
-                LEFT JOIN salon_filter_structure sfs ON sfs.filter = mp.name_of_filter
+                LEFT JOIN (
+                    SELECT 
+                        filter,
+                        MAX(build_complexity) AS build_complexity
+                    FROM salon_filter_structure
+                    GROUP BY filter
+                ) sfs ON sfs.filter = mp.name_of_filter
                 WHERE mp.date_of_production = '$production_date'
+                GROUP BY mp.team, mp.name_of_filter, mp.name_of_order
                 ORDER BY mp.team";
         
         $result = $mysqli->query($sql);

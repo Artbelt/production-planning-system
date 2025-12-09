@@ -73,7 +73,15 @@ function get_buffer(PDO $pdo, array $opts = []): array {
             m.name_of_order  AS order_number,
             m.name_of_filter AS filter_label,
             SUM(COALESCE(m.count_of_filters,0)) AS assembled,
-            MAX(m.date_of_production)           AS last_ass_date
+            MAX(m.date_of_production)           AS last_ass_date,
+            COALESCE(
+                GROUP_CONCAT(
+                    CONCAT(m.date_of_production, ':', m.count_of_filters) 
+                    ORDER BY m.date_of_production DESC 
+                    SEPARATOR '|'
+                ),
+                ''
+            ) AS asm_details
         FROM manufactured_production m
         $whereAsm
         GROUP BY m.name_of_order, m.name_of_filter
@@ -88,6 +96,7 @@ function get_buffer(PDO $pdo, array $opts = []): array {
             c.corrugated,
             c.corr_details,
             COALESCE(a.assembled, 0) AS assembled,
+            COALESCE(a.asm_details, '') AS asm_details,
             (c.corrugated - COALESCE(a.assembled, 0)) AS buffer,
             c.last_corr_date,
             a.last_ass_date,
@@ -472,12 +481,75 @@ try {
                 color:#fff;
             }
             
+            /* Стили для tooltip при наведении на столбец "Собрано" */
+            .col-assembled{
+                position:relative;
+                cursor:help;
+            }
+            .asm-tooltip{
+                position:absolute;
+                bottom:100%;
+                left:50%;
+                transform:translateX(-50%);
+                margin-bottom:8px;
+                background:#1f2937;
+                color:#fff;
+                padding:10px 14px;
+                border-radius:8px;
+                font-size:12px;
+                z-index:10000;
+                box-shadow:0 4px 12px rgba(0,0,0,0.3);
+                opacity:0;
+                pointer-events:none;
+                transition:opacity 0.2s;
+                max-width:300px;
+                min-width:200px;
+                white-space:normal;
+            }
+            .asm-tooltip::after{
+                content:'';
+                position:absolute;
+                top:100%;
+                left:50%;
+                transform:translateX(-50%);
+                border:6px solid transparent;
+                border-top-color:#1f2937;
+            }
+            .col-assembled:hover .asm-tooltip{
+                opacity:1;
+            }
+            .asm-tooltip-title{
+                font-weight:600;
+                margin-bottom:6px;
+                padding-bottom:6px;
+                border-bottom:1px solid rgba(255,255,255,0.2);
+            }
+            .asm-tooltip-item{
+                margin:4px 0;
+                display:flex;
+                justify-content:space-between;
+                gap:12px;
+            }
+            .asm-tooltip-date{
+                color:#d1d5db;
+            }
+            .asm-tooltip-count{
+                font-weight:600;
+                color:#fff;
+            }
+            
             /* На мобильных устройствах tooltip показываем только при клике */
             @media (max-width:768px){
                 .col-corrugated:hover .corr-tooltip{
                     opacity:0;
                 }
                 .col-corrugated.active .corr-tooltip{
+                    opacity:1;
+                }
+                .col-assembled:hover .asm-tooltip{
+                    opacity:0;
+                }
+                .col-assembled.active .asm-tooltip{
                     opacity:1;
                 }
             }
@@ -887,6 +959,7 @@ try {
                         data-machines="<?=h($r['machines'] ?? 'Не назначено')?>"
                         data-order-count="<?=number_format((float)$r['order_count'], 0, '.', ' ')?>"
                         data-corr-details="<?=htmlspecialchars($r['corr_details'] ?? '', ENT_QUOTES, 'UTF-8')?>"
+                        data-asm-details="<?=htmlspecialchars($r['asm_details'] ?? '', ENT_QUOTES, 'UTF-8')?>"
                         data-ignored="<?=$isIgnored?'1':'0'?>">
                         <td class="col-details">
                             <button type="button" class="btn-details" onclick="showDetails(this)" title="Подробнее">
@@ -901,7 +974,10 @@ try {
                             <?=number_format((float)$r['corrugated'], 0, '.', ' ')?>
                             <div class="corr-tooltip"></div>
                         </td>
-                        <td class="num col-assembled"><?=number_format((float)$r['assembled'],   0, '.', ' ')?></td>
+                        <td class="num col-assembled">
+                            <?=number_format((float)$r['assembled'],   0, '.', ' ')?>
+                            <div class="asm-tooltip"></div>
+                        </td>
                         <td class="num col-buffer"><strong><?=number_format((float)$r['buffer'], 0, '.', ' ')?></strong></td>
                         <td class="col-last-corr"><?=h($r['last_corr_date'] ?? '')?></td>
                         <td class="col-last-asm"><?=h($r['last_ass_date']  ?? '')?></td>
@@ -1334,9 +1410,11 @@ try {
                     if (document.readyState === 'loading') {
                         document.addEventListener('DOMContentLoaded', function() {
                             setTimeout(initCorrTooltips, 50);
+                            setTimeout(initAsmTooltips, 50);
                         });
                     } else {
                         setTimeout(initCorrTooltips, 50);
+                        setTimeout(initAsmTooltips, 50);
                     }
                 } catch (e) {
                     // Игнорируем ошибки расширений браузера
@@ -1345,6 +1423,7 @@ try {
                     }
                     // Пробуем инициализировать через небольшую задержку
                     setTimeout(initCorrTooltips, 200);
+                    setTimeout(initAsmTooltips, 200);
                 }
             }
             
@@ -1354,8 +1433,120 @@ try {
             // Также пробуем после полной загрузки страницы
             window.addEventListener('load', function() {
                 setTimeout(initCorrTooltips, 100);
+                setTimeout(initAsmTooltips, 100);
             });
         })();
+        
+        // === ФУНКЦИОНАЛ TOOLTIP ДЛЯ СТОЛБЦА "СОБРАНО" ===
+        function formatAsmTooltip(asmDetails) {
+            if (!asmDetails || asmDetails === '' || asmDetails === 'null' || asmDetails === 'NULL') {
+                return '<div class="asm-tooltip-title">Нет данных о сборке</div>';
+            }
+            
+            const items = asmDetails.split('|').filter(item => item && item.trim() !== '');
+            if (items.length === 0) {
+                return '<div class="asm-tooltip-title">Нет данных о сборке</div>';
+            }
+            
+            let html = '<div class="asm-tooltip-title">Детализация по датам:</div>';
+            let hasValidItems = false;
+            
+            items.forEach(item => {
+                const parts = item.split(':');
+                if (parts.length >= 2) {
+                    const date = parts[0].trim();
+                    const count = parseInt(parts[1]) || 0;
+                    
+                    if (date && !isNaN(count) && count > 0) {
+                        hasValidItems = true;
+                        // Форматируем дату в читаемый вид
+                        try {
+                            const dateObj = new Date(date + 'T00:00:00');
+                            if (!isNaN(dateObj.getTime())) {
+                                const formattedDate = dateObj.toLocaleDateString('ru-RU', { 
+                                    year: 'numeric', 
+                                    month: '2-digit', 
+                                    day: '2-digit' 
+                                });
+                                html += `<div class="asm-tooltip-item">
+                                    <span class="asm-tooltip-date">${formattedDate}</span>
+                                    <span class="asm-tooltip-count">${count.toLocaleString('ru-RU')}</span>
+                                </div>`;
+                            }
+                        } catch (e) {
+                            // Если не удалось распарсить дату, пропускаем
+                        }
+                    }
+                }
+            });
+            
+            if (!hasValidItems) {
+                return '<div class="asm-tooltip-title">Нет данных о сборке</div>';
+            }
+            
+            return html;
+        }
+        
+        // Функция для получения данных о сборке из строки таблицы
+        function getAsmDetails(cell) {
+            try {
+                const row = cell.closest('tr');
+                if (!row) return '';
+                
+                // Пробуем получить данные разными способами
+                let asmDetails = row.getAttribute('data-asm-details');
+                if (!asmDetails && row.dataset) {
+                    asmDetails = row.dataset.asmDetails || '';
+                }
+                
+                return asmDetails || '';
+            } catch (e) {
+                console.error('Ошибка при получении данных о сборке:', e);
+                return '';
+            }
+        }
+        
+        // Инициализация tooltip для всех ячеек столбца "Собрано"
+        function initAsmTooltips() {
+            try {
+                const cells = document.querySelectorAll('.col-assembled');
+                if (!cells || cells.length === 0) return;
+                
+                cells.forEach(cell => {
+                    const asmDetails = getAsmDetails(cell);
+                    const tooltip = cell.querySelector('.asm-tooltip');
+                    
+                    if (tooltip) {
+                        // Заполняем tooltip данными
+                        tooltip.innerHTML = formatAsmTooltip(asmDetails);
+                    }
+                    
+                    // Для мобильных устройств: показываем tooltip при клике
+                    if (window.innerWidth <= 768) {
+                        cell.addEventListener('click', function(e) {
+                            e.stopPropagation();
+                            // Закрываем другие открытые tooltip
+                            document.querySelectorAll('.col-assembled.active').forEach(activeCell => {
+                                if (activeCell !== cell) {
+                                    activeCell.classList.remove('active');
+                                }
+                            });
+                            // Переключаем текущий tooltip
+                            cell.classList.toggle('active');
+                        });
+                        
+                        // Закрываем tooltip при клике вне ячейки
+                        document.addEventListener('click', function(e) {
+                            if (!cell.contains(e.target)) {
+                                cell.classList.remove('active');
+                            }
+                        });
+                    }
+                });
+            } catch (e) {
+                console.error('Ошибка при инициализации tooltip для сборки:', e);
+            }
+        }
     </script>
 
 
