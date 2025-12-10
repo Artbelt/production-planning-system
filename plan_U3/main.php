@@ -798,15 +798,6 @@ foreach ($orders_list as $order_num => $orders_data){
                     ."</form>";
                 echo '</div>';
 
-                echo '<div class="section-title" style="margin-top:14px">Мониторинг выполнения плана</div>';
-                echo '<div class="stack">';
-                echo "<form action='plan_monitoring.php' method='post' target='_blank' class='stack'>"
-                    ."<input type='submit' value='Просмотр плана'>";
-                load_plans();
-                echo "</form>";
-                echo "<button onclick=\"window.open('http://localhost/plan_U3/json_editor.html', '_blank');\">Редактор плана</button>";
-                echo '</div>';
-
                 echo '<div class="section-title" style="margin-top:14px">Загрузка заявок</div>';
                 echo '<div class="stack">';
                 echo '<form enctype="multipart/form-data" action="load_file.php" method="POST" target="_blank" class="stack">'

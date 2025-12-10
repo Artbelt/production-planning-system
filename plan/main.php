@@ -95,74 +95,35 @@ $advertisement = 'Информация';
     <title>U2</title>
 
     <style>
-        /* ===== Modern Pro UI Design ===== */
+        /* ===== Pro UI (neutral + single accent) ===== */
         :root{
-            --bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            --bg-solid: #f8fafc;
-            --panel: #ffffff;
-            --ink: #1e293b;
-            --muted: #64748b;
-            --border: #e2e8f0;
-            --accent: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            --accent-solid: #667eea;
-            --accent-ink: #ffffff;
-            --radius: 16px;
-            --radius-sm: 12px;
-            --shadow: 0 10px 25px rgba(0,0,0,0.1), 0 4px 6px rgba(0,0,0,0.05);
-            --shadow-soft: 0 4px 6px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.1);
-            --shadow-hover: 0 20px 40px rgba(0,0,0,0.15), 0 8px 16px rgba(0,0,0,0.1);
-            --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            --gradient-secondary: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            --gradient-success: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-            --gradient-warning: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+            --bg:#f6f7f9;
+            --panel:#ffffff;
+            --ink:#1f2937;
+            --muted:#6b7280;
+            --border:#e5e7eb;
+            --accent:#2457e6;
+            --accent-ink:#ffffff;
+            --danger:#dc2626;
+            --radius:12px;
+            --shadow:0 2px 12px rgba(2,8,20,.06);
+            --shadow-soft:0 1px 8px rgba(2,8,20,.05);
         }
         html,body{height:100%}
         body{
-            margin:0; background:var(--bg-solid); color:var(--ink);
-            font: 16px/1.6 "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin:0; background:var(--bg); color:var(--ink);
+            font:14px/1.45 "Segoe UI", Roboto, Arial, sans-serif;
             -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
-            font-weight: 400;
         }
-        
-        /* Import modern font */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
         a{color:var(--accent); text-decoration:none}
         a:hover{text-decoration:underline}
 
         /* контейнер и сетка */
-        .container{ 
-            max-width:1400px; 
-            margin:0 auto; 
-            padding:24px; 
-            min-height: 100vh;
-        }
-        .layout{ 
-            width:100%; 
-            border-spacing:20px; 
-            border:0; 
-            background:transparent; 
-        }
-        .header-row .header-cell{ 
-            padding:0; 
-            border:0; 
-            background:transparent; 
-        }
-        .headerbar{ 
-            display:flex; 
-            align-items:center; 
-            gap:16px; 
-            padding:20px 24px; 
-            background: var(--panel);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow-soft);
-            color: var(--ink);
-            font-weight: 500;
-        }
+        .container{ max-width:1280px; margin:0 auto; padding:16px; }
+        .layout{ width:100%; border-spacing:16px; border:0; background:transparent; }
+        .header-row .header-cell{ padding:0; border:0; background:transparent; }
+        .headerbar{ display:flex; align-items:center; gap:12px; padding:10px 4px; color:#374151; }
         .headerbar .spacer{ flex:1; }
-        /* Отступ для кнопки доступа под шапкой */
-        .edit-access-wrap{ 
-            margin-top: 12px; 
-        }
 
         /* панели-колонки */
         .content-row > td{ vertical-align:top; }
@@ -171,40 +132,15 @@ $advertisement = 'Информация';
             border:1px solid var(--border);
             border-radius:var(--radius);
             box-shadow:var(--shadow);
-            padding:24px;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
+            padding:14px;
         }
-        .panel:hover{
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-hover);
-        }
-        .panel--main{ 
-            box-shadow:var(--shadow-soft); 
-            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-        }
+        .panel--main{ box-shadow:var(--shadow-soft); }
         .section-title{
-            font-size:18px; 
-            font-weight:600; 
-            color:var(--ink);
-            margin:0 0 20px; 
-            padding-bottom:12px; 
-            border-bottom:2px solid var(--border);
-            position: relative;
-        }
-        .section-title::after{
-            content: '';
-            position: absolute;
-            bottom: -2px;
-            left: 0;
-            width: 40px;
-            height: 2px;
-            background: var(--gradient-primary);
-            border-radius: 1px;
+            font-size:15px; font-weight:600; color:#111827;
+            margin:0 0 10px; padding-bottom:6px; border-bottom:1px solid var(--border);
         }
 
-        /* таблицы/карточки внутри панелей */
+        /* таблицы внутри панелей как карточки */
         .panel table{
             width:100%;
             border-collapse:collapse;
@@ -217,226 +153,130 @@ $advertisement = 'Информация';
         .panel td,.panel th{padding:10px;border-bottom:1px solid var(--border);vertical-align:top}
         .panel tr:last-child td{border-bottom:0}
 
-        /* вертикальные стеки */
+        /* вертикальные стеки вместо <p> */
         .stack{ display:flex; flex-direction:column; gap:8px; }
         .stack-lg{ gap:12px; }
 
-        /* кнопки (современный стиль) */
+        /* кнопки (единый стиль) */
         button, input[type="submit"]{
             appearance:none;
             border:1px solid transparent;
             cursor:pointer;
-            background: var(--gradient-primary);
+            background:var(--accent);
             color:var(--accent-ink);
-            padding:12px 20px;
-            border-radius:var(--radius-sm);
-            font-weight:500;
-            font-size:14px;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: var(--shadow-soft);
-            position: relative;
-            overflow: hidden;
+            padding:7px 14px;
+            border-radius:9px;
+            font-weight:600;
+            transition:background .2s, box-shadow .2s, transform .04s, border-color .2s;
+
+            /* новая тень */
+            box-shadow: 0 3px 6px rgba(0,0,0,0.12), 0 2px 4px rgba(0,0,0,0.08);
         }
-        button::before, input[type="submit"]::before{
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
-            transition: left 0.5s;
-        }
-        button:hover::before, input[type="submit"]:hover::before{
-            left: 100%;
-        }
-        button:hover, input[type="submit"]:hover{ 
-            transform: translateY(-2px); 
-            box-shadow: var(--shadow-hover);
-            filter: brightness(1.1);
-        }
-        button:active, input[type="submit"]:active{ 
-            transform: translateY(0); 
-            transition: transform 0.1s;
-        }
+        button:hover, input[type="submit"]:hover{ background:#1e47c5; box-shadow:0 2px 8px rgba(2,8,20,.10); transform:translateY(-1px); }
+        button:active, input[type="submit"]:active{ transform:translateY(0); }
         button:disabled, input[type="submit"]:disabled{
-            background: #e2e8f0; 
-            color: #94a3b8; 
-            border-color: #e2e8f0; 
-            box-shadow: none; 
-            cursor: not-allowed;
-            transform: none;
+            background:#e5e7eb; color:#9ca3af; border-color:#e5e7eb; box-shadow:none; cursor:not-allowed;
         }
+        /* если где-то остались инлайновые background — приглушим */
         input[type="submit"][style*="background"], button[style*="background"]{
-            background: var(--gradient-primary)!important; 
-            color: #fff!important;
+            background:var(--accent)!important; color:#fff!important;
         }
 
         /* поля ввода/селекты */
         input[type="text"], input[type="date"], input[type="number"], input[type="password"],
         textarea, select{
-            min-width:180px; 
-            padding:12px 16px;
-            border:2px solid var(--border); 
-            border-radius:var(--radius-sm);
-            background:#fff; 
-            color:var(--ink); 
-            outline:none;
-            font-size:14px;
-            transition: all 0.3s ease;
-            box-shadow: var(--shadow-soft);
+            min-width:180px; padding:7px 10px;
+            border:1px solid var(--border); border-radius:9px;
+            background:#fff; color:var(--ink); outline:none;
+            transition:border-color .2s, box-shadow .2s;
         }
         input:focus, textarea:focus, select:focus{
-            border-color: var(--accent-solid); 
-            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
-            transform: translateY(-1px);
+            border-color:#c7d2fe; box-shadow:0 0 0 3px #e0e7ff;
         }
-        textarea{
-            min-height:100px; 
-            resize:vertical;
-            font-family: inherit;
-        }
+        textarea{min-height:92px; resize:vertical}
 
-        /* инфо-блоки */
+        /* инфоблоки */
         .alert{
-            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-            border:1px solid #f59e0b; 
-            color:#92400e;
-            padding:16px; 
-            border-radius:var(--radius-sm); 
-            margin:16px 0; 
-            font-weight:500;
-            box-shadow: var(--shadow-soft);
-            position: relative;
-            display: flex;
-            align-items: center;
+            background:#fffbe6; border:1px solid #f4e4a4; color:#634100;
+            padding:10px; border-radius:9px; margin:12px 0; font-weight:600;
         }
-        .alert::before{
-            content: '⚠️';
-            margin-right: 8px;
-            font-size: 16px;
-        }
-        .muted{
-            color:var(--muted);
-            font-weight: 400;
-        }
+        .muted{color:var(--muted)}
 
         /* чипы заявок справа */
         .saved-orders input[type="submit"]{
-            display:inline-block; 
-            margin:6px 8px 0 0;
-            border-radius:999px!important; 
-            padding:8px 16px!important;
-            background: var(--gradient-primary)!important; 
-            color:#fff!important;
-            border:none!important; 
-            box-shadow: var(--shadow-soft);
-            font-size:12px;
-            font-weight:500;
-            transition: all 0.3s ease;
-        }
-        .saved-orders input[type="submit"]:hover{
-            transform: translateY(-1px);
-            box-shadow: var(--shadow);
-            filter: brightness(1.1);
+            display:inline-block; margin:4px 6px 0 0;
+            border-radius:999px!important; padding:6px 10px!important;
+            background:var(--accent)!important; color:#fff!important;
+            border:none!important; box-shadow:0 1px 4px rgba(2,8,20,.06);
         }
 
         /* карточка поиска */
         .search-card{
             border:1px solid var(--border);
-            border-radius:var(--radius-sm); 
-            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-            box-shadow:var(--shadow-soft); 
-            padding:20px; 
-            margin-top:16px;
-            transition: all 0.3s ease;
+            border-radius:10px; background:#fff;
+            box-shadow:var(--shadow-soft); padding:12px; margin-top:8px;
         }
-        .search-card:hover{
-            transform: translateY(-1px);
-            box-shadow: var(--shadow);
-        }
-        .search-card h4{
-            margin:0 0 16px;
-            color: var(--ink);
-            font-weight: 600;
-            font-size: 16px;
-        }
-
 
         /* адаптив */
         @media (max-width:1100px){
-            /* убираем горизонтальные промежутки, оставляем только вертикальные */
-            .layout{ border-spacing:0 16px; }
-            .content-row > td{ display:block; width:auto!important; margin-bottom:16px; }
-            /* равные внутренние отступы контейнера на мобильных */
-            .container{ padding:16px 32px 16px 16px; }
-            /* симметричные отступы панелей от краев экрана */
-            .panel{ margin-left:12px; margin-right:24px; }
+            .layout{ border-spacing:10px; }
+            .content-row > td{ display:block; width:auto!important; }
         }
-
+        .topbar{
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            padding:10px 18px;
+            background:var(--panel);
+            border-bottom:1px solid var(--border);
+            box-shadow:var(--shadow-soft);
+            border-radius:var(--radius);
+            margin-bottom:16px;
+        }
+        .topbar-left, .topbar-right, .topbar-center{
+            display:flex;
+            align-items:center;
+            gap:10px;
+        }
+        .topbar-center{
+            font-weight:600;
+            font-size:15px;
+            color:var(--ink);
+        }
+        .logo{
+            font-size:18px;
+            font-weight:700;
+            color:var(--accent);
+        }
+        .system-name{
+            font-size:14px;
+            font-weight:500;
+            color:var(--muted);
+        }
+        .logout-btn{
+            background:var(--accent);
+            color:var(--accent-ink);
+            padding:6px 12px;
+            border-radius:8px;
+            font-weight:600;
+            box-shadow:0 2px 6px rgba(0,0,0,0.08);
+        }
+        .logout-btn:hover{
+            background:#1e47c5;
+            text-decoration:none;
+        }
+        
         /* футер */
         .footer{
             margin-top:20px; 
             padding:20px 24px; 
-            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            background: var(--panel);
             border:1px solid var(--border);
             border-radius:var(--radius); 
             box-shadow:var(--shadow-soft); 
             color:var(--muted);
             text-align: center;
             font-weight: 500;
-        }
-        
-        /* Дополнительные улучшения */
-        .stack{
-            display:flex; 
-            flex-direction:column; 
-            gap:12px; 
-        }
-        .stack-lg{ 
-            gap:16px; 
-        }
-        
-        /* Анимация загрузки */
-        @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-        
-        .panel {
-            animation: fadeInUp 0.6s ease-out;
-        }
-        
-        .panel:nth-child(1) { animation-delay: 0.1s; }
-        .panel:nth-child(2) { animation-delay: 0.2s; }
-        .panel:nth-child(3) { animation-delay: 0.3s; }
-        
-        /* Стили для состояния загрузки */
-        .loading {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            color: var(--muted);
-            font-style: italic;
-        }
-        .loading::before {
-            content: '';
-            width: 16px;
-            height: 16px;
-            border: 2px solid var(--border);
-            border-top: 2px solid var(--accent-solid);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
@@ -463,10 +303,17 @@ $advertisement = 'Информация';
                     </div>
                 </div>
 
-                <div class="headerbar">
-                    <div>Подразделение: <?php echo htmlspecialchars($currentDepartment); ?></div>
-                    <div class="spacer"></div>
-                    <div><!-- Панель авторизации перенесена вверх --></div>
+                <div class="topbar">
+                    <div class="topbar-left">
+                        <span class="logo">U2</span>
+                        <span class="system-name">Система управления</span>
+                    </div>
+                    <div class="topbar-center">
+                       
+                    </div>
+                    <div class="topbar-right">
+                        <!-- Панель авторизации перенесена вверх -->
+                    </div>
                 </div>
                 <?php if (function_exists('edit_access_button_draw')) { edit_access_button_draw(); } ?>
             </td>
@@ -666,8 +513,7 @@ $advertisement = 'Информация';
                             <label for="filterSelect">Фильтр:</label>
                             <?php
                             if (function_exists('load_filters_into_select')) {
-                                // тот же селект, что и в образце
-                                load_filters_into_select('Выберите фильтр'); // <select name="analog_filter">
+                                load_filters_into_select('Выберите фильтр');
                             }
                             ?>
                         </div>
@@ -684,7 +530,7 @@ $advertisement = 'Информация';
                             if(!sel){ resultBox.innerHTML = '<div class="alert">Не найден выпадающий список.</div>'; return; }
                             const val = sel.value.trim();
                             if(!val){ resultBox.innerHTML = '<div class="muted">Выберите фильтр…</div>'; return; }
-                            resultBox.innerHTML = '<div class="loading">Загрузка…</div>';
+                            resultBox.textContent = 'Загрузка…';
                             try{
                                 const formData = new FormData(); formData.append('filter', val);
                                 const resp = await fetch('search_filter_in_the_orders.php', { method:'POST', body:formData });

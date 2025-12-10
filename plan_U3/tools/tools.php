@@ -410,30 +410,6 @@ function load_orders($list, $selection, $form){
     $mysqli->close();
 }
 
-/** СОздание списка с сохраненными планами */
-function load_plans(){
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
-    /** Создаем подключение к БД */
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-    /** Выполняем запрос SQL для загрузки заявок*/
-    $sql = "SELECT name FROM work_plan;";
-
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-
-    echo "<select name='selected_plan'>";
-    while ($plan_data = $result->fetch_assoc()) {
-        echo "<option>" . $plan_data['name'] . "</option>";
-    }
-    echo "</select>";
-    $result->close();
-    $mysqli->close();
-}
-
 /** Создание <SELECT> списка с перечнем PP вставок */
 function load_insertions(){
 
