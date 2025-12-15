@@ -249,6 +249,9 @@ foreach ($rows as $r) {
 
         /* ВЫДЕЛЕНИЕ названия запланированных бухт */
         .bale-name.bale-picked{background:#fff7cc !important;color:#e65100 !important;padding:2px 6px;border-radius:4px;border:1px solid #f59e0b}
+        
+        /* Подсветка при поиске (красный цвет) */
+        .bale-name.bale-search-highlight{background:#fee2e2 !important;color:#991b1b !important;padding:2px 6px;border-radius:4px;border:1px solid #dc2626;box-shadow:0 0 8px rgba(220,38,38,0.4)}
 
         @media (max-width:768px){
             form{ flex-direction:column; align-items:flex-start; }
@@ -925,15 +928,15 @@ foreach ($rows as $r) {
         const baleElement = document.querySelector(`.bale-name[data-bale-id="${baleId}"]`);
         
         if (baleElement) {
-            // Подсвечиваем бухту
-            baleElement.classList.add('bale-picked');
+            // Подсвечиваем бухту красным цветом (для поиска)
+            baleElement.classList.add('bale-search-highlight');
             
             // Скроллим к элементу
             baleElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
             
             // Убираем подсветку через 3 секунды
             setTimeout(() => {
-                baleElement.classList.remove('bale-picked');
+                baleElement.classList.remove('bale-search-highlight');
             }, 3000);
         }
     }
