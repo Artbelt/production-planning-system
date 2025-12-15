@@ -19,6 +19,13 @@ $debug_info[] = "=== НАЧАЛО ОТЛАДКИ ===";
 $debug_info[] = "GET параметры: " . json_encode($_GET);
 $debug_info[] = "Номер заявки (order): '$order'";
 
+// Базовые материалы, для которых работает текущий автраскрой
+$base_materials_allowed = array_map(
+    'normalizeMaterialValue',
+    ['Бумага гладкая', 'Бумага фильтровальная гладкая']
+);
+$debug_info[] = "Базовые материалы для автраскроя: " . implode(', ', $base_materials_allowed);
+
 // Проверяем все фильтры в заявке на наличие в БД
 $stmt = $pdo1->prepare("SELECT filter, count FROM orders WHERE order_number = ? AND (hide IS NULL OR hide != 1)");
 $stmt->execute([$order]);
@@ -81,6 +88,12 @@ if (empty($missing_filters)) {
         // Получаем информацию о бумаге
         $paper_info = getPaperInfo($pdo2, $filter_name);
         if (!$paper_info) continue;
+        
+        $material = $paper_info['p_p_material'] ?? '';
+        if (!isBaseMaterialAllowed($material, $base_materials_allowed)) {
+            $debug_info[] = "Пропуск формата 199 для $filter_name: материал '" . ($material ?: 'не указан') . "' не базовый";
+            continue;
+        }
         
         $width = (float)$paper_info['p_p_width'];
         
@@ -208,6 +221,9 @@ if (isset($_SESSION['format_199_assigned'])) {
 
 $rolls_1000 = [];
 $rolls_500 = [];
+$separate_rolls_1000 = [];
+$separate_rolls_500 = [];
+$separate_bales = [];
 
 // Загружаем ручные бухты из сессии
 $manual_bales = $_SESSION['manual_bales'] ?? [];
@@ -219,6 +235,29 @@ foreach ($manual_bales as $bale) {
         $key = $roll['filter'] . '_' . $roll['width'] . '_' . $roll['height'] . '_' . $roll['length'];
         $manual_rolls_used[$key] = ($manual_rolls_used[$key] ?? 0) + 1;
     }
+}
+
+function normalizeMaterialValue($value) {
+    $trimmed = trim((string)$value);
+    if (function_exists('mb_strtolower')) {
+        return mb_strtolower($trimmed, 'UTF-8');
+    }
+    return strtolower($trimmed);
+}
+
+function isBaseMaterialAllowed($material, array $allowedList): bool {
+    if ($material === null || $material === '') {
+        return false;
+    }
+    return in_array(normalizeMaterialValue($material), $allowedList, true);
+}
+
+function countRollsInBales(array $bales): int {
+    $count = 0;
+    foreach ($bales as $bale) {
+        $count += count($bale);
+    }
+    return $count;
 }
 
 function getPaperInfo($pdo, $filter) {
@@ -819,6 +858,10 @@ else:
             continue;
         }
 
+        $material = $paper['p_p_material'] ?? '';
+        $is_base_material = isBaseMaterialAllowed($material, $base_materials_allowed);
+        $debug_info[] = "  Материал г/п: " . ($material ?: 'не указан') . ($is_base_material ? " — входит в автраскрой" : " — исключён из автраскроя");
+
         $pleats = (int)$paper['p_p_pleats_count'];
         $height = (float)$paper['p_p_height'];
         $width = (float)$paper['p_p_width'];
@@ -845,27 +888,42 @@ else:
         $rolls_to_add_500 = max(0, $half - $manual_used_500);
         $debug_info[] = "  Будет добавлено: 1000м = $rolls_to_add_1000, 500м = $rolls_to_add_500";
         
+        $target_rolls_1000 = $is_base_material ? $rolls_1000 : $separate_rolls_1000;
+        $target_rolls_500 = $is_base_material ? $rolls_500 : $separate_rolls_500;
+        $target_label = $is_base_material ? 'основной раскрой' : 'отдельные бухты по материалу';
+
         for ($i = 0; $i < $rolls_to_add_1000; $i++) {
-            $rolls_1000[] = [
+            $target_rolls_1000[] = [
                 'filter' => $filter,
                 'paper' => $paper['p_p_name'],
                 'width' => $width,
                 'height' => $height,
                 'length' => 1000,
-                'len_per_filter' => $length_per_filter
+                'len_per_filter' => $length_per_filter,
+                'material' => $material
             ];
         }
 
         if ($rolls_to_add_500 > 0) {
-            $rolls_500[] = [
+            $target_rolls_500[] = [
                 'filter' => $filter,
                 'paper' => $paper['p_p_name'],
                 'width' => $width,
                 'height' => $height,
                 'length' => 500,
-                'len_per_filter' => $length_per_filter
+                'len_per_filter' => $length_per_filter,
+                'material' => $material
             ];
         }
+
+        if ($is_base_material) {
+            $rolls_1000 = $target_rolls_1000;
+            $rolls_500 = $target_rolls_500;
+        } else {
+            $separate_rolls_1000 = $target_rolls_1000;
+            $separate_rolls_500 = $target_rolls_500;
+        }
+        $debug_info[] = "  Добавлено в {$target_label}: 1000м=" . ($rolls_to_add_1000) . ", 500м=" . ($rolls_to_add_500);
 
         echo "<tr>
         <td>" . htmlspecialchars($filter) . "</td>
@@ -922,6 +980,17 @@ else:
 
     // Объединяем результаты
     $bales = array_merge($bales_1000, $bales_500);
+
+    // Бухты для материалов вне автраскроя: каждая позиция в отдельной бухте
+    foreach ($separate_rolls_1000 as $roll) {
+        $separate_bales[] = [$roll];
+    }
+    foreach ($separate_rolls_500 as $roll) {
+        $separate_bales[] = [$roll];
+    }
+
+    // Общий список бухт с учётом отделённых материалов
+    $all_bales = array_merge($bales, $separate_bales);
     
     // Добавляем финальную информацию в отладку
     $debug_info[] = "=== ИТОГИ РАСКРОЯ ===";
@@ -929,7 +998,9 @@ else:
     $debug_info[] = "Рулонов 500м создано: " . count($rolls_500);
     $debug_info[] = "Бухт 1000м после раскроя: " . count($bales_1000);
     $debug_info[] = "Бухт 500м после раскроя: " . count($bales_500);
-    $debug_info[] = "Всего бухт: " . count($bales);
+    $debug_info[] = "Всего бухт в автраскрое: " . count($bales);
+    $debug_info[] = "Отдельных бухт по материалу: " . count($separate_bales);
+    $debug_info[] = "Всего бухт (с учётом отдельного материала): " . count($all_bales);
     $debug_info[] = "Осталось неиспользованных 1000м: " . count($left_1000);
     $debug_info[] = "Осталось неиспользованных 500м: " . count($left_500);
 
@@ -1013,8 +1084,8 @@ else:
     // Сохраняем раскроенные рулоны в базу данных -
     $bale_id_counter = 1;
 
-    // Сохраняем основные бухты
-    foreach ($bales as $bale) {
+    // Сохраняем основные бухты (включая отдельные по материалу)
+    foreach ($all_bales as $bale) {
         foreach ($bale as $roll) {
             $stmt = $pdo1->prepare("INSERT INTO cut_plans (order_number, manual, filter, paper, width, height, length, format, waste, bale_id)
             VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?, ?)");
@@ -1071,12 +1142,12 @@ else:
 
     // Проверка количества полос
     $total_initial = count($rolls_1000) + count($rolls_500);
+    $total_separate_initial = count($separate_rolls_1000) + count($separate_rolls_500);
     $total_format199_initial = count($rolls_1000_format199) + count($rolls_500_format199);
     
-    $total_used = 0;
-    foreach ($bales as $bale) {
-        $total_used += count($bale);
-    }
+    $total_used = countRollsInBales($bales);
+    $total_used_separate = countRollsInBales($separate_bales);
+    $total_used_all = countRollsInBales($all_bales);
     
     $total_format199_used = 0;
     foreach ($bales_format199 as $bale) {
@@ -1085,6 +1156,7 @@ else:
     
     $total_left = count($remaining_rolls);
     $check = ($total_used + $total_left === $total_initial);
+    $check_all = ($total_used_all + $total_left === ($total_initial + $total_separate_initial));
     $check_format199 = ($total_format199_used === $total_format199_initial);
     
 ?>
@@ -1107,11 +1179,20 @@ else:
                 
                 <div>Осталось неиспользованных:</div>
                 <div><b><?= $total_left ?></b></div>
+
+                <div>Исключено по материалу (отдельно):</div>
+                <div><b><?= $total_separate_initial ?></b></div>
                 
                 <div style="padding-top: 8px; border-top: 1px solid #eee;">Сумма совпадает:</div>
                 <div style="padding-top: 8px; border-top: 1px solid #eee;">
                     <b style="color: <?= $check ? 'green' : 'red' ?>; font-size: 14px;">
                         <?= $check ? 'ДА ✅' : 'НЕТ ❌' ?>
+                    </b>
+                </div>
+                <div style="padding-top: 8px; border-top: 1px solid #eee;">С учётом исключённых:</div>
+                <div style="padding-top: 8px; border-top: 1px solid #eee;">
+                    <b style="color: <?= $check_all ? 'green' : 'red' ?>; font-size: 14px;">
+                        <?= $check_all ? 'ДА ✅' : 'НЕТ ❌' ?>
                     </b>
                 </div>
             </div>
@@ -1220,6 +1301,32 @@ else:
 </table>
 <?php endif; ?>
 
+<?php if (!empty($separate_bales)): ?>
+<h3 style="color: #d84315; border-left: 4px solid #d84315; padding-left: 10px;">📦 Бухты по другим материалам (каждая позиция отдельно)</h3>
+<table style="border: 2px solid #d84315;">
+    <tr style="background-color: #ffece4;">
+        <th>Бухта №</th>
+        <th>Фильтр</th>
+        <th>Материал</th>
+        <th>Ширина</th>
+        <th>Высота</th>
+        <th>Длина</th>
+    </tr>
+    <?php foreach ($separate_bales as $i => $bale): ?>
+        <?php foreach ($bale as $roll): ?>
+            <tr>
+                <td><?= $i + 1 ?></td>
+                <td><?= htmlspecialchars($roll['filter']) ?></td>
+                <td><?= htmlspecialchars($roll['material'] ?? '') ?></td>
+                <td><?= $roll['width'] ?></td>
+                <td><?= $roll['height'] ?></td>
+                <td><?= $roll['length'] ?></td>
+            </tr>
+        <?php endforeach; ?>
+    <?php endforeach; ?>
+</table>
+<?php endif; ?>
+
 <h3>Упакованные бухты</h3>
 <table>
     <tr>
@@ -1230,7 +1337,7 @@ else:
         <th>Длина</th>
         <th>Отход</th>
     </tr>
-    <?php foreach ($bales as $i => $bale): ?>
+    <?php foreach ($all_bales as $i => $bale): ?>
         <?php foreach ($bale as $roll): ?>
             <tr>
                 <td><?= $i + 1 ?></td>
@@ -1335,8 +1442,12 @@ console.group('🔍 Отладка раскроя NP_cut_plan.php');
 <?php endif; ?>
 console.log('Массив rolls_1000 (количество: <?= count($rolls_1000 ?? []) ?>):', <?= json_encode($rolls_1000 ?? []) ?>);
 console.log('Массив rolls_500 (количество: <?= count($rolls_500 ?? []) ?>):', <?= json_encode($rolls_500 ?? []) ?>);
+console.log('Массив separate_rolls_1000 (количество: <?= count($separate_rolls_1000 ?? []) ?>):', <?= json_encode($separate_rolls_1000 ?? []) ?>);
+console.log('Массив separate_rolls_500 (количество: <?= count($separate_rolls_500 ?? []) ?>):', <?= json_encode($separate_rolls_500 ?? []) ?>);
 console.log('Массив bales_1000 (количество: <?= count($bales_1000 ?? []) ?>):', <?= json_encode($bales_1000 ?? []) ?>);
 console.log('Массив bales_500 (количество: <?= count($bales_500 ?? []) ?>):', <?= json_encode($bales_500 ?? []) ?>);
+console.log('Массив separate_bales (количество: <?= count($separate_bales ?? []) ?>):', <?= json_encode($separate_bales ?? []) ?>);
+console.log('Массив all_bales (количество: <?= count($all_bales ?? []) ?>):', <?= json_encode($all_bales ?? []) ?>);
 console.log('Массив left_1000 (осталось):', <?= json_encode($left_1000 ?? []) ?>);
 console.log('Массив left_500 (осталось):', <?= json_encode($left_500 ?? []) ?>);
 console.groupEnd();
@@ -1504,16 +1615,16 @@ console.groupEnd();
     }
 
     function saveAllManualBales() {
-        if (savedManualBales.length === 0 && bales.length === 0) return;
-
         const order = <?= json_encode($order) ?>;
         
         // Добавляем ручные бухты из сессии к автоматическим
         const sessionManualBales = <?= json_encode($manual_bales) ?>;
         const allBales = [
-            ...<?= json_encode(array_merge($bales, $bales_format199)) ?>,
+            ...<?= json_encode(array_merge($all_bales, $bales_format199)) ?>,
             ...sessionManualBales
         ];
+
+        if (savedManualBales.length === 0 && allBales.length === 0) return;
         
         const payload = {
             order: order,
