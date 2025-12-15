@@ -466,8 +466,25 @@ foreach ($rows as $r) {
             const chip = document.createElement('span');
             chip.className='hchip';
             chip.dataset.h = h;
-            chip.innerHTML = `[${h}] <span class="hpct" id="hpct-${id}">0%</span>
-                               <span class="hbar"><span class="hfill" id="hfill-${id}"></span></span>`;
+            // Создаем элементы правильно для прогресс-бара
+            const hpct = document.createElement('span');
+            hpct.className = 'hpct';
+            hpct.id = `hpct-${id}`;
+            hpct.textContent = '0%';
+            
+            const hbar = document.createElement('span');
+            hbar.className = 'hbar';
+            
+            const hfill = document.createElement('span');
+            hfill.className = 'hfill';
+            hfill.id = `hfill-${id}`;
+            hfill.style.width = '0%';
+            
+            hbar.appendChild(hfill);
+            chip.appendChild(document.createTextNode(`[${h}] `));
+            chip.appendChild(hpct);
+            chip.appendChild(hbar);
+            
             chip.onclick=()=>{
                 const val = Number(chip.dataset.h);
                 if(selectedHeights.has(val)){ selectedHeights.delete(val); chip.classList.remove('active'); }
@@ -483,6 +500,45 @@ foreach ($rows as $r) {
         document.querySelectorAll('.hval').forEach(span=>{
             const h = Number(span.dataset.h);
             if(selectedHeights.has(h)) span.classList.add('active'); else span.classList.remove('active');
+        });
+        // Применяем фильтрацию строк после обновления подсветки
+        filterRowsByHeights();
+    }
+
+    // Фильтрация строк таблицы по выбранным высотам
+    function filterRowsByHeights(){
+        // Проверяем, что таблица уже построена
+        const tbody = document.querySelector('tbody');
+        if(!tbody) return;
+
+        // Если ничего не выбрано - показываем все строки
+        if(selectedHeights.size === 0){
+            tbody.querySelectorAll('tr').forEach(tr => {
+                tr.style.display = '';
+            });
+            return;
+        }
+
+        // Проходим по всем строкам таблицы
+        tbody.querySelectorAll('tr').forEach(tr => {
+            const baleId = tr.querySelector('td[data-bale-id]')?.dataset.baleId;
+            if(!baleId) return;
+
+            // Находим бухту в данных
+            const bale = BALES.find(b => String(b.bale_id) === String(baleId));
+            if(!bale) {
+                tr.style.display = 'none';
+                return;
+            }
+
+            // Проверяем, есть ли у бухты хотя бы одна высота из выбранных
+            const hasSelectedHeight = bale.strips.some(strip => {
+                const h = Number(strip.height);
+                return selectedHeights.has(h);
+            });
+
+            // Показываем или скрываем строку
+            tr.style.display = hasSelectedHeight ? '' : 'none';
         });
     }
 
@@ -505,7 +561,8 @@ foreach ($rows as $r) {
         const planned = new Map(); // Map<height, count>
         Object.values(selected).forEach(arr=>{
             (arr||[]).forEach(bid=>{
-                const b = BALES.find(x=>x.bale_id===bid);
+                // Приводим к строке для сравнения, так как bale_id может быть числом
+                const b = BALES.find(x=>String(x.bale_id)===String(bid));
                 if(!b) return;
                 b.strips.forEach(s=>{
                     const h = Number(s.height);
@@ -520,13 +577,26 @@ foreach ($rows as $r) {
             const done  = planned.get(h) || 0;
             const pct   = total ? Math.round(done*100/total) : 0;
 
+            // Обновляем проценты и прогресс-бар
             const pctEl  = document.getElementById(`hpct-${id}`);
             const fillEl = document.getElementById(`hfill-${id}`);
-            if (pctEl)  pctEl.textContent = `${pct}%`;
-            if (fillEl) fillEl.style.width = `${pct}%`;
+            
+            if (pctEl) {
+                pctEl.textContent = `${pct}%`;
+            }
+            
+            if (fillEl) {
+                // Устанавливаем ширину прогресс-бара в процентах
+                fillEl.style.width = `${pct}%`;
+                // Убеждаемся, что элемент видим
+                fillEl.style.display = 'block';
+            }
 
+            // Обновляем подсказку на чіпе
             const chip = document.querySelector(`.hchip[data-h="${h}"]`);
-            if (chip) chip.title = `Розплановано: ${done} з ${total} (${pct}%)`;
+            if (chip) {
+                chip.title = `Розплановано: ${done} з ${total} (${pct}%)`;
+            }
         });
     }
 
@@ -654,6 +724,7 @@ foreach ($rows as $r) {
         updateHeightHighlights();
         updateHeightProgress();
         updateLeftMarkers();
+        filterRowsByHeights(); // Применяем фильтрацию после построения таблицы
 
         // Автоподгрузка сохранённого плана для текущих параметров
         try{
