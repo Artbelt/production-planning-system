@@ -91,6 +91,15 @@ function canAccessLaserRequests($userDepartments, $currentDepartment) {
 // Для main.php всегда проверяем доступ к цеху U3
 $canAccessLaser = canAccessLaserRequests($userDepartments, 'U3');
 
+// Проверяем, является ли пользователь оператором гофромашины для цеха U3
+$isCorrugatorOperator = false;
+foreach ($userDepartments as $dept) {
+    if ($dept['department_code'] === 'U3' && $dept['role_name'] === 'corr_operator') {
+        $isCorrugatorOperator = true;
+        break;
+    }
+}
+
 // Устанавливаем переменные для совместимости со старым кодом
 $workshop = $currentDepartment;
 $advertisement = 'Информация';
@@ -450,12 +459,6 @@ echo "<!-- Аккуратная панель авторизации -->
                     <div class="topbar-left">
                         <span class="logo">U3</span>
                         <span class="system-name">Система управления</span>
-                        <?php edit_access_button_draw(); ?>
-                        <?php if (is_edit_access_granted()): ?>
-                            <div id="alert_div_1" style="width: 10px; height: 10px; background-color: lightgreen; border-radius: 50%; display: inline-block;"></div>
-                        <?php else: ?>
-                            <div id="alert_div_2" style="width: 10px; height: 10px; background-color: gray; border-radius: 50%; display: inline-block;"></div>
-                        <?php endif; ?>
                     </div>
                     <div class="topbar-center">
                         <?php echo htmlspecialchars($application_name); ?>
@@ -476,8 +479,12 @@ echo "<!-- Аккуратная панель авторизации -->
                 <div class="section-title">Операции</div>
                 <div class="stack">
                     <a href="product_output.php" target="_blank" rel="noopener" class="stack"><button>Выпуск продукции</button></a>
+                    <a href="gofro_packages_input.php" target="_blank" rel="noopener" class="stack"><button>Ввод изготовленных гофропакетов</button></a>
+                    <button type="button" onclick="openDataEditor()">Редактор данных</button>
                     <button type="button" onclick="openCapManagementModal()">Операции с крышками</button>
+                    <?php if ($isCorrugatorOperator): ?>
                     <form action="parts_output_for_workers.php" method="post" target="_blank" class="stack"><input type="submit" value="Выпуск гофропакетов"></form>
+                    <?php endif; ?>
                     <?php if ($canAccessLaser): ?>
                     <a href="laser_request.php" target="_blank" rel="noopener" class="stack"><button type="button">Заявка на лазер</button></a>
                     <?php endif; ?>
@@ -504,14 +511,6 @@ echo "<!-- Аккуратная панель авторизации -->
                         <input type="hidden" name="workshop" value="<?= htmlspecialchars($workshop) ?>">
                         <input type="submit" value="Изменить параметры фильтра">
                     </form>
-                    <form action="manufactured_production_editor.php" method="post" target="_blank" class="stack">
-                        <input type="hidden" name="workshop" value="U3">
-                        <input type="submit" value="Редактор выпуска продукции">
-                    </form>
-                    <form action="manufactured_parts_editor.php" method="post" target="_blank" class="stack">
-                        <input type="hidden" name="workshop" value="U3">
-                        <input type="submit" value="Редактор выпуска комплектующих">
-                    </form>
                 </div>
 
                 <div class="section-title" style="margin-top:14px">Объявление</div>
@@ -530,8 +529,9 @@ echo "<!-- Аккуратная панель авторизации -->
     $myTasks = [];
     
     try {
+        // Все задачи централизованно лежат в БД plan_u5, фильтруем по цеху
         $pdo_tasks = new PDO(
-            "mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4",
+            "mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4",
             "root",
             "",
             [
@@ -539,6 +539,10 @@ echo "<!-- Аккуратная панель авторизации -->
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             ]
         );
+        
+        // Для страницы main.php всегда используем цех U3
+        $taskDepartment = 'U3';
+        $taskUserId = $session['user_id'];
         
         $stmt_tasks = $pdo_tasks->prepare("
             SELECT id, title, description, priority, due_date, status
@@ -556,12 +560,13 @@ echo "<!-- Аккуратная панель авторизации -->
                 due_date ASC
             LIMIT 5
         ");
-                        $stmt_tasks->execute([$session['user_id'], $currentDepartment]);
+                        $stmt_tasks->execute([$taskUserId, $taskDepartment]);
                         $myTasks = $stmt_tasks->fetchAll();
                         
                         $taskCount = count($myTasks);
                         
-                        if ($taskCount > 0):
+                        // Показываем виджет даже если задач нет, чтобы пользователь видел, что система работает
+                        if (true): // Всегда показываем виджет
                             $today = new DateTime();
                             $today->setTime(0, 0, 0);
                 ?>
@@ -577,54 +582,61 @@ echo "<!-- Аккуратная панель авторизации -->
                     </div>
                     
                     <div style="display: flex; flex-direction: column; gap: 10px;">
-                        <?php foreach ($myTasks as $task):
-                            $dueDate = new DateTime($task['due_date']);
-                            $dueDate->setTime(0, 0, 0);
-                            $isOverdue = $dueDate < $today;
-                            
-                            $priorityColors = [
-                                'urgent' => ['bg' => '#fee2e2', 'text' => '#991b1b'],
-                                'high' => ['bg' => '#fef3c7', 'text' => '#92400e'],
-                                'normal' => ['bg' => 'rgba(255, 255, 255, 0.3)', 'text' => 'white'],
-                                'low' => ['bg' => 'rgba(255, 255, 255, 0.2)', 'text' => 'rgba(255, 255, 255, 0.8)']
-                            ];
-                            $priorityLabels = ['urgent' => 'Срочно', 'high' => 'Высокий', 'normal' => 'Обычный', 'low' => 'Низкий'];
-                            $priority = $task['priority'];
-                        ?>
-                        <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #e5e7eb;">
-                            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 6px;">
-                                <div style="font-weight: 600; font-size: 14px; color: #1f2937; flex: 1;"><?php echo htmlspecialchars($task['title']); ?></div>
-                                <span style="background: <?php echo $priorityColors[$priority]['bg']; ?>; color: <?php echo $priorityColors[$priority]['text']; ?>; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600;">
-                                    <?php echo $priorityLabels[$priority]; ?>
-                                </span>
-                            </div>
-                            <?php if ($task['description']): ?>
-                            <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px; line-height: 1.4;">
-                                <?php echo nl2br(htmlspecialchars(mb_substr($task['description'], 0, 80) . (mb_strlen($task['description']) > 80 ? '...' : ''))); ?>
-                            </div>
-                            <?php endif; ?>
-                            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
-                                <span style="color: #9ca3af;">До: <strong style="<?php echo $isOverdue ? 'color: #ef4444;' : 'color: #374151;'; ?>"><?php echo $dueDate->format('d.m.Y'); ?></strong></span>
-                                <div style="display: flex; gap: 5px;">
-                                    <?php if ($task['status'] === 'pending'): ?>
-                                    <button onclick="updateTaskStatus(<?php echo $task['id']; ?>, 'in_progress')" style="padding: 3px 10px; border: 1px solid #d1d5db; background: white; color: #374151; border-radius: 4px; cursor: pointer; font-size: 11px;">
-                                        Начать
-                                    </button>
-                                    <?php endif; ?>
-                                    <button onclick="updateTaskStatus(<?php echo $task['id']; ?>, 'completed')" style="padding: 3px 10px; background: #10b981; border: none; color: white; border-radius: 4px; cursor: pointer; font-size: 11px;">
-                                        Завершить
-                                    </button>
+                        <?php if ($taskCount > 0): ?>
+                            <?php foreach ($myTasks as $task):
+                                $dueDate = new DateTime($task['due_date']);
+                                $dueDate->setTime(0, 0, 0);
+                                $isOverdue = $dueDate < $today;
+                                
+                                $priorityColors = [
+                                    'urgent' => ['bg' => '#fee2e2', 'text' => '#991b1b'],
+                                    'high' => ['bg' => '#fef3c7', 'text' => '#92400e'],
+                                    'normal' => ['bg' => 'rgba(255, 255, 255, 0.3)', 'text' => 'white'],
+                                    'low' => ['bg' => 'rgba(255, 255, 255, 0.2)', 'text' => 'rgba(255, 255, 255, 0.8)']
+                                ];
+                                $priorityLabels = ['urgent' => 'Срочно', 'high' => 'Высокий', 'normal' => 'Обычный', 'low' => 'Низкий'];
+                                $priority = $task['priority'];
+                            ?>
+                            <div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #e5e7eb;">
+                                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 6px;">
+                                    <div style="font-weight: 600; font-size: 14px; color: #1f2937; flex: 1;"><?php echo htmlspecialchars($task['title']); ?></div>
+                                    <span style="background: <?php echo $priorityColors[$priority]['bg']; ?>; color: <?php echo $priorityColors[$priority]['text']; ?>; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600;">
+                                        <?php echo $priorityLabels[$priority]; ?>
+                                    </span>
+                                </div>
+                                <?php if ($task['description']): ?>
+                                <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px; line-height: 1.4;">
+                                    <?php echo nl2br(htmlspecialchars(mb_substr($task['description'], 0, 80) . (mb_strlen($task['description']) > 80 ? '...' : ''))); ?>
+                                </div>
+                                <?php endif; ?>
+                                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+                                    <span style="color: #9ca3af;">До: <strong style="<?php echo $isOverdue ? 'color: #ef4444;' : 'color: #374151;'; ?>"><?php echo $dueDate->format('d.m.Y'); ?></strong></span>
+                                    <div style="display: flex; gap: 5px;">
+                                        <?php if ($task['status'] === 'pending'): ?>
+                                        <button onclick="updateTaskStatus(<?php echo $task['id']; ?>, 'in_progress')" style="padding: 3px 10px; border: 1px solid #d1d5db; background: white; color: #374151; border-radius: 4px; cursor: pointer; font-size: 11px;">
+                                            Начать
+                                        </button>
+                                        <?php endif; ?>
+                                        <button onclick="updateTaskStatus(<?php echo $task['id']; ?>, 'completed')" style="padding: 3px 10px; background: #10b981; border: none; color: white; border-radius: 4px; cursor: pointer; font-size: 11px;">
+                                            Завершить
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        <?php endforeach; ?>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <div style="background: white; padding: 16px; border-radius: 6px; border: 1px solid #e5e7eb; text-align: center; color: #6b7280;">
+                                <p style="margin: 0;">📋 Нет активных задач</p>
+                                <p style="margin: 8px 0 0 0; font-size: 12px;">Все задачи выполнены или еще не назначены</p>
+                            </div>
+                        <?php endif; ?>
                     </div>
                 </div>
                 
                 <script>
                 async function updateTaskStatus(taskId, status) {
                     try {
-                        const response = await fetch('/tasks_manager/tasks_api.php?action=update_status', {
+                        const response = await fetch('tasks_api_u3.php?action=update_status', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ task_id: taskId, status: status })
@@ -648,9 +660,14 @@ echo "<!-- Аккуратная панель авторизации -->
                 }
                 </script>
                 <?php 
-                        endif; // if ($taskCount > 0)
+                        endif; // Всегда показываем виджет
                     } catch (Exception $e) {
-                        // Тихо игнорируем ошибки
+                        // Показываем ошибку для отладки (можно убрать в продакшене)
+                        if (isset($_GET['debug'])) {
+                            echo "<div style='background: #fee2e2; border: 1px solid #dc2626; padding: 10px; border-radius: 6px; margin-bottom: 16px; color: #991b1b;'>";
+                            echo "<strong>Ошибка загрузки задач:</strong> " . htmlspecialchars($e->getMessage());
+                            echo "</div>";
+                        }
                     }
                 }
                 ?>
@@ -893,6 +910,11 @@ document.addEventListener('keydown', function(event) {
     if (event.key === 'Escape') {
         document.getElementById('capManagementModal').style.display = 'none';
         document.getElementById('createAdModal').style.display = 'none';
+        document.getElementById('dataEditorModal').style.display = 'none';
+        document.getElementById('productEditorModal').style.display = 'none';
+        document.getElementById('partsEditorModal').style.display = 'none';
+        document.getElementById('addPositionModal').style.display = 'none';
+        document.getElementById('addPartPositionModal').style.display = 'none';
     }
 });
 
@@ -902,6 +924,898 @@ function openCreateAdModal() {
 
 function closeCreateAdModal() {
     document.getElementById('createAdModal').style.display = 'none';
+}
+
+// Функции для модальных окон редактора данных
+function openDataEditor() {
+    document.getElementById('dataEditorModal').style.display = 'block';
+}
+
+function closeDataEditor() {
+    document.getElementById('dataEditorModal').style.display = 'none';
+}
+
+function openProductEditor() {
+    document.getElementById('productEditorModal').style.display = 'block';
+    loadProductEditor();
+}
+
+function closeProductEditor() {
+    document.getElementById('productEditorModal').style.display = 'none';
+}
+
+function openAuditLogs() {
+    // Закрываем модальное окно редактора данных
+    closeDataEditor();
+    // Открываем страницу логов аудита в новой вкладке
+    window.open('audit_viewer.php', '_blank');
+}
+
+function closeAddPositionModal() {
+    document.getElementById('addPositionModal').style.display = 'none';
+}
+
+function openPartsEditor() {
+    document.getElementById('partsEditorModal').style.display = 'block';
+    loadPartsEditor();
+}
+
+function closePartsEditor() {
+    document.getElementById('partsEditorModal').style.display = 'none';
+}
+
+function closeAddPartPositionModal() {
+    document.getElementById('addPartPositionModal').style.display = 'none';
+}
+
+// Закрытие модальных окон при клике вне их
+window.onclick = function(event) {
+    const capModal = document.getElementById('capManagementModal');
+    const createAdModal = document.getElementById('createAdModal');
+    const dataModal = document.getElementById('dataEditorModal');
+    const productModal = document.getElementById('productEditorModal');
+    const partsModal = document.getElementById('partsEditorModal');
+    const addPositionModal = document.getElementById('addPositionModal');
+    const addPartPositionModal = document.getElementById('addPartPositionModal');
+    
+    if (event.target == capModal) {
+        closeCapManagementModal();
+    }
+    if (event.target == createAdModal) {
+        closeCreateAdModal();
+    }
+    if (event.target === dataModal) {
+        closeDataEditor();
+    }
+    if (event.target === productModal) {
+        closeProductEditor();
+    }
+    if (event.target === partsModal) {
+        closePartsEditor();
+    }
+    if (event.target === addPositionModal) {
+        closeAddPositionModal();
+    }
+    if (event.target === addPartPositionModal) {
+        closeAddPartPositionModal();
+    }
+}
+
+// Функция загрузки редактора продукции
+function loadProductEditor() {
+    // Устанавливаем сегодняшнюю дату по умолчанию
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('editDate').value = today;
+    
+    // Скрываем таблицу данных
+    document.getElementById('dataTableContainer').style.display = 'none';
+}
+
+// Функция загрузки данных по выбранной дате
+function loadDataForDate() {
+    const selectedDate = document.getElementById('editDate').value;
+    
+    if (!selectedDate) {
+        alert('Пожалуйста, выберите дату');
+        return;
+    }
+    
+    const container = document.getElementById('dataTableContainer');
+    container.innerHTML = '<p>Загрузка данных...</p>';
+    container.style.display = 'block';
+    
+    // AJAX запрос для загрузки данных по дате
+    const formData = new FormData();
+    formData.append('action', 'load_data_by_date');
+    formData.append('date', selectedDate);
+    
+    fetch('product_editor_api.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.text();
+    })
+    .then(text => {
+        try {
+            const data = JSON.parse(text);
+            if (data.success) {
+                renderProductEditor(data.data, selectedDate);
+            } else {
+                container.innerHTML = `<p style="color: red;">Ошибка: ${data.error}</p>`;
+            }
+        } catch (e) {
+            container.innerHTML = `
+                <div style="color: red;">
+                    <p><strong>Ошибка парсинга JSON:</strong></p>
+                    <p>${e.message}</p>
+                    <p><strong>Ответ сервера:</strong></p>
+                    <pre style="background: #f5f5f5; padding: 10px; border-radius: 4px; overflow: auto;">${text}</pre>
+                </div>
+            `;
+        }
+    })
+    .catch(error => {
+        container.innerHTML = `<p style="color: red;">Ошибка загрузки: ${error.message}</p>`;
+    });
+}
+
+// Функция отображения редактора продукции
+function renderProductEditor(data, selectedDate) {
+    const container = document.getElementById('dataTableContainer');
+    
+    if (data.length === 0) {
+        container.innerHTML = `
+            <div style="text-align: center; padding: 40px; color: #6b7280;">
+                <h3>📅 ${selectedDate}</h3>
+                <p>Нет данных за выбранную дату</p>
+                <button onclick="addNewPosition('${selectedDate}')" style="background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; margin-top: 16px;">
+                    ➕ Добавить позицию
+                </button>
+            </div>
+        `;
+        return;
+    }
+    
+    // Группируем данные по бригаде (дата уже известна)
+    const groupedData = {};
+    data.forEach(item => {
+        const brigade = item.brigade || 'Не указана';
+        const key = brigade;
+        
+        if (!groupedData[key]) {
+            groupedData[key] = {
+                brigade: brigade,
+                items: []
+            };
+        }
+        groupedData[key].items.push(item);
+    });
+    
+    let html = `
+        <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="margin: 0; color: #374151;">📅 ${selectedDate}</h3>
+            <button onclick="addNewPosition('${selectedDate}')" style="background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">
+                ➕ Добавить позицию
+            </button>
+        </div>
+    `;
+    
+    // Отображаем данные по группам
+    Object.values(groupedData).forEach(group => {
+        html += `
+            <div style="margin-bottom: 30px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
+                <h4 style="margin: 0 0 16px 0; color: #374151;">
+                    👥 Бригада ${group.brigade}
+                </h4>
+                <div style="overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                        <thead>
+                            <tr style="background: #f8fafc;">
+                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: left;">Фильтр</th>
+                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">Кол-во</th>
+                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">Заявка</th>
+                                <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+        `;
+        
+        group.items.forEach(item => {
+            const filterName = item.filter_name || 'Не указан';
+            const quantity = item.quantity || 0;
+            const orderNumber = item.order_number || 'Не указан';
+            const itemId = item.virtual_id || '';
+            
+            html += `
+                <tr>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb;">${filterName}</td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">
+                        <input type="number" value="${quantity}" min="0" 
+                               onchange="updateQuantity('${itemId}', this.value)" 
+                               style="width: 60px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px;">
+                    </td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">
+                        <select onchange="moveToOrder('${itemId}', this.value)" 
+                                class="order-select" data-item-id="${itemId}"
+                                style="padding: 4px; border: 1px solid #d1d5db; border-radius: 4px; min-width: 100px;">
+                            <option value="${orderNumber}">${orderNumber}</option>
+                        </select>
+                    </td>
+                    <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">
+                        <button onclick="removePosition('${itemId}')" 
+                                data-item-id="${itemId}"
+                                style="background: #ef4444; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                            🗑️ Удалить
+                        </button>
+                    </td>
+                </tr>
+            `;
+        });
+        
+        html += `
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    });
+    
+    container.innerHTML = html;
+    
+    // Загружаем заявки для всех выпадающих списков в таблице
+    loadOrdersForTableDropdowns();
+}
+
+// Функция загрузки заявок для выпадающих списков в таблице
+function loadOrdersForTableDropdowns() {
+    const orderFormData = new FormData();
+    orderFormData.append('action', 'load_orders_for_dropdown');
+    
+    fetch('product_editor_api.php', {
+        method: 'POST',
+        body: orderFormData
+    })
+    .then(response => response.text())
+    .then(text => {
+        try {
+            const data = JSON.parse(text);
+            if (data.success) {
+                const orderSelects = document.querySelectorAll('.order-select');
+                
+                orderSelects.forEach((select) => {
+                    const currentValue = select.querySelector('option').value;
+                    
+                    select.innerHTML = '';
+                    
+                    const currentOption = document.createElement('option');
+                    currentOption.value = currentValue;
+                    currentOption.textContent = currentValue;
+                    currentOption.selected = true;
+                    select.appendChild(currentOption);
+                    
+                    data.orders.forEach(order => {
+                        if (order !== currentValue) {
+                            const option = document.createElement('option');
+                            option.value = order;
+                            option.textContent = order;
+                            select.appendChild(option);
+                        }
+                    });
+                });
+            }
+        } catch (e) {
+            console.error('Ошибка парсинга заявок для таблицы:', e, text);
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка загрузки заявок для таблицы:', error);
+    });
+}
+
+// Функции для работы с данными
+function updateQuantity(id, quantity) {
+    const formData = new FormData();
+    formData.append('action', 'update_quantity');
+    formData.append('id', id);
+    formData.append('quantity', quantity);
+    
+    fetch('product_editor_api.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            console.log('Количество обновлено для ID:', id);
+        } else {
+            alert('Ошибка: ' + data.error);
+        }
+    })
+    .catch(error => {
+        alert('Ошибка обновления: ' + error.message);
+    });
+}
+
+function moveToOrder(id, newOrderId) {
+    const formData = new FormData();
+    formData.append('action', 'move_to_order');
+    formData.append('id', id);
+    formData.append('new_order_id', newOrderId);
+    
+    fetch('product_editor_api.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Позиция успешно перенесена');
+        } else {
+            alert('Ошибка: ' + data.error);
+        }
+    })
+    .catch(error => {
+        alert('Ошибка переноса: ' + error.message);
+    });
+}
+
+function removePosition(id) {
+    if (!confirm('Вы уверены, что хотите удалить эту позицию?')) {
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('action', 'remove_position');
+    formData.append('id', id);
+    
+    fetch('product_editor_api.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const rowToRemove = document.querySelector(`button[data-item-id="${id}"]`).closest('tr');
+            if (rowToRemove) {
+                rowToRemove.remove();
+            }
+        } else {
+            alert('Ошибка: ' + data.error);
+        }
+    })
+    .catch(error => {
+        alert('Ошибка удаления: ' + error.message);
+    });
+}
+
+function addNewPosition(selectedDate) {
+    if (!selectedDate) {
+        selectedDate = document.getElementById('editDate').value;
+    }
+    
+    if (!selectedDate) {
+        alert('Пожалуйста, выберите дату');
+        return;
+    }
+    
+    document.getElementById('addPositionDate').value = selectedDate;
+    document.getElementById('addPositionFilter').value = '';
+    document.getElementById('addPositionQuantity').value = '';
+    document.getElementById('addPositionOrder').value = '';
+    document.getElementById('addPositionTeam').value = '';
+    
+    loadFiltersAndOrders();
+    document.getElementById('addPositionModal').style.display = 'block';
+}
+
+// Функция загрузки фильтров и заявок
+function loadFiltersAndOrders() {
+    const filterFormData = new FormData();
+    filterFormData.append('action', 'load_filters');
+    
+    fetch('product_editor_api.php', {
+        method: 'POST',
+        body: filterFormData
+    })
+    .then(response => response.text())
+    .then(text => {
+        try {
+            const data = JSON.parse(text);
+            if (data.success) {
+                const filterSelect = document.getElementById('addPositionFilter');
+                filterSelect.innerHTML = '<option value="">Выберите фильтр</option>';
+                data.filters.forEach(filter => {
+                    const option = document.createElement('option');
+                    option.value = filter;
+                    option.textContent = filter;
+                    filterSelect.appendChild(option);
+                });
+            }
+        } catch (e) {
+            console.error('Ошибка парсинга фильтров:', e, text);
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка загрузки фильтров:', error);
+    });
+    
+    const orderFormData = new FormData();
+    orderFormData.append('action', 'load_orders');
+    
+    fetch('product_editor_api.php', {
+        method: 'POST',
+        body: orderFormData
+    })
+    .then(response => response.text())
+    .then(text => {
+        try {
+            const data = JSON.parse(text);
+            if (data.success) {
+                const orderSelect = document.getElementById('addPositionOrder');
+                orderSelect.innerHTML = '<option value="">Выберите заявку</option>';
+                data.orders.forEach(order => {
+                    const option = document.createElement('option');
+                    option.value = order;
+                    option.textContent = order;
+                    orderSelect.appendChild(option);
+                });
+            }
+        } catch (e) {
+            console.error('Ошибка парсинга заявок:', e, text);
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка загрузки заявок:', error);
+    });
+}
+
+// Обработчик формы добавления позиции
+document.addEventListener('DOMContentLoaded', function() {
+    const addPositionForm = document.getElementById('addPositionForm');
+    if (addPositionForm) {
+        addPositionForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            submitAddPosition();
+        });
+    }
+});
+
+function submitAddPosition() {
+    const date = document.getElementById('addPositionDate').value;
+    const filter = document.getElementById('addPositionFilter').value;
+    const quantity = document.getElementById('addPositionQuantity').value;
+    const order = document.getElementById('addPositionOrder').value;
+    const team = document.getElementById('addPositionTeam').value;
+    
+    if (!date || !filter || !quantity || !order || !team) {
+        alert('Пожалуйста, заполните все поля');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('action', 'add_position');
+    formData.append('production_date', date);
+    formData.append('filter_name', filter);
+    formData.append('quantity', quantity);
+    formData.append('order_name', order);
+    formData.append('team', team);
+    
+    fetch('product_editor_api.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Позиция успешно добавлена!');
+            closeAddPositionModal();
+            loadDataForDate();
+        } else {
+            alert('Ошибка: ' + data.error);
+        }
+    })
+    .catch(error => {
+        alert('Ошибка добавления: ' + error.message);
+    });
+}
+
+// ========== ФУНКЦИИ ДЛЯ РЕДАКТОРА ГОФРОПАКЕТОВ ==========
+
+// Функция загрузки редактора гофропакетов
+function loadPartsEditor() {
+    // Устанавливаем сегодняшнюю дату по умолчанию
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('editPartsDate').value = today;
+    
+    // Скрываем таблицу данных
+    document.getElementById('partsTableContainer').style.display = 'none';
+}
+
+// Функция загрузки данных по выбранной дате для гофропакетов
+function loadPartsDataForDate() {
+    const selectedDate = document.getElementById('editPartsDate').value;
+    
+    if (!selectedDate) {
+        alert('Пожалуйста, выберите дату');
+        return;
+    }
+    
+    const container = document.getElementById('partsTableContainer');
+    container.innerHTML = '<p>Загрузка данных...</p>';
+    container.style.display = 'block';
+    
+    // AJAX запрос для загрузки данных по дате
+    const formData = new FormData();
+    formData.append('action', 'load_data_by_date');
+    formData.append('date', selectedDate);
+    
+    fetch('parts_editor_api.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.text();
+    })
+    .then(text => {
+        try {
+            const data = JSON.parse(text);
+            if (data.success) {
+                renderPartsEditor(data.data, selectedDate);
+            } else {
+                container.innerHTML = `<p style="color: red;">Ошибка: ${data.error}</p>`;
+            }
+        } catch (e) {
+            container.innerHTML = `
+                <div style="color: red;">
+                    <p><strong>Ошибка парсинга JSON:</strong></p>
+                    <p>${e.message}</p>
+                    <p><strong>Ответ сервера:</strong></p>
+                    <pre style="background: #f5f5f5; padding: 10px; border-radius: 4px; overflow: auto;">${text}</pre>
+                </div>
+            `;
+        }
+    })
+    .catch(error => {
+        container.innerHTML = `<p style="color: red;">Ошибка загрузки: ${error.message}</p>`;
+    });
+}
+
+// Функция отображения редактора гофропакетов
+function renderPartsEditor(data, selectedDate) {
+    const container = document.getElementById('partsTableContainer');
+    
+    if (data.length === 0) {
+        container.innerHTML = `
+            <div style="text-align: center; padding: 40px; color: #6b7280;">
+                <h3>📅 ${selectedDate}</h3>
+                <p>Нет данных за выбранную дату</p>
+                <button onclick="addNewPartPosition('${selectedDate}')" style="background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; margin-top: 16px;">
+                    ➕ Добавить позицию
+                </button>
+            </div>
+        `;
+        return;
+    }
+    
+    let html = `
+        <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="margin: 0; color: #374151;">📅 ${selectedDate}</h3>
+            <button onclick="addNewPartPosition('${selectedDate}')" style="background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">
+                ➕ Добавить позицию
+            </button>
+        </div>
+        <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                <thead>
+                    <tr style="background: #f8fafc;">
+                        <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: left;">Гофропакет</th>
+                        <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">Кол-во</th>
+                        <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">Заявка</th>
+                        <th style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    data.forEach(item => {
+        const partName = item.part_name || 'Не указан';
+        const quantity = item.quantity || 0;
+        const orderNumber = item.order_number || 'Не указан';
+        const itemId = item.virtual_id || '';
+        
+        html += `
+            <tr>
+                <td style="padding: 8px; border: 1px solid #e5e7eb;">${partName}</td>
+                <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">
+                    <input type="number" value="${quantity}" min="0" 
+                           onchange="updatePartQuantity('${itemId}', this.value)" 
+                           style="width: 60px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px;">
+                </td>
+                <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">
+                    <select onchange="movePartToOrder('${itemId}', this.value)" 
+                            class="part-order-select" data-item-id="${itemId}"
+                            style="padding: 4px; border: 1px solid #d1d5db; border-radius: 4px; min-width: 100px;">
+                        <option value="${orderNumber}">${orderNumber}</option>
+                    </select>
+                </td>
+                <td style="padding: 8px; border: 1px solid #e5e7eb; text-align: center;">
+                    <button onclick="removePartPosition('${itemId}')" 
+                            data-item-id="${itemId}"
+                            style="background: #ef4444; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                        🗑️ Удалить
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+    
+    html += `
+                </tbody>
+            </table>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+    
+    // Загружаем заявки для всех выпадающих списков в таблице
+    loadOrdersForPartsTableDropdowns();
+}
+
+// Функция загрузки заявок для выпадающих списков в таблице гофропакетов
+function loadOrdersForPartsTableDropdowns() {
+    const orderFormData = new FormData();
+    orderFormData.append('action', 'load_orders_for_dropdown');
+    
+    fetch('parts_editor_api.php', {
+        method: 'POST',
+        body: orderFormData
+    })
+    .then(response => response.text())
+    .then(text => {
+        try {
+            const data = JSON.parse(text);
+            if (data.success) {
+                const orderSelects = document.querySelectorAll('.part-order-select');
+                
+                orderSelects.forEach((select) => {
+                    const currentValue = select.querySelector('option').value;
+                    
+                    select.innerHTML = '';
+                    
+                    const currentOption = document.createElement('option');
+                    currentOption.value = currentValue;
+                    currentOption.textContent = currentValue;
+                    currentOption.selected = true;
+                    select.appendChild(currentOption);
+                    
+                    data.orders.forEach(order => {
+                        if (order !== currentValue) {
+                            const option = document.createElement('option');
+                            option.value = order;
+                            option.textContent = order;
+                            select.appendChild(option);
+                        }
+                    });
+                });
+            }
+        } catch (e) {
+            console.error('Ошибка парсинга заявок для таблицы:', e, text);
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка загрузки заявок для таблицы:', error);
+    });
+}
+
+// Функции для работы с данными гофропакетов
+function updatePartQuantity(id, quantity) {
+    const formData = new FormData();
+    formData.append('action', 'update_quantity');
+    formData.append('id', id);
+    formData.append('quantity', quantity);
+    
+    fetch('parts_editor_api.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            console.log('Количество обновлено для ID:', id);
+        } else {
+            alert('Ошибка: ' + data.error);
+        }
+    })
+    .catch(error => {
+        alert('Ошибка обновления: ' + error.message);
+    });
+}
+
+function movePartToOrder(id, newOrderId) {
+    const formData = new FormData();
+    formData.append('action', 'move_to_order');
+    formData.append('id', id);
+    formData.append('new_order_id', newOrderId);
+    
+    fetch('parts_editor_api.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Позиция успешно перенесена');
+        } else {
+            alert('Ошибка: ' + data.error);
+        }
+    })
+    .catch(error => {
+        alert('Ошибка переноса: ' + error.message);
+    });
+}
+
+function removePartPosition(id) {
+    if (!confirm('Вы уверены, что хотите удалить эту позицию?')) {
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('action', 'remove_position');
+    formData.append('id', id);
+    
+    fetch('parts_editor_api.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const rowToRemove = document.querySelector(`button[data-item-id="${id}"]`).closest('tr');
+            if (rowToRemove) {
+                rowToRemove.remove();
+            }
+        } else {
+            alert('Ошибка: ' + data.error);
+        }
+    })
+    .catch(error => {
+        alert('Ошибка удаления: ' + error.message);
+    });
+}
+
+function addNewPartPosition(selectedDate) {
+    if (!selectedDate) {
+        selectedDate = document.getElementById('editPartsDate').value;
+    }
+    
+    if (!selectedDate) {
+        alert('Пожалуйста, выберите дату');
+        return;
+    }
+    
+    document.getElementById('addPartPositionDate').value = selectedDate;
+    document.getElementById('addPartPositionPart').value = '';
+    document.getElementById('addPartPositionQuantity').value = '';
+    document.getElementById('addPartPositionOrder').value = '';
+    
+    loadPartsAndOrders();
+    document.getElementById('addPartPositionModal').style.display = 'block';
+}
+
+// Функция загрузки гофропакетов и заявок
+function loadPartsAndOrders() {
+    const partFormData = new FormData();
+    partFormData.append('action', 'load_parts');
+    
+    fetch('parts_editor_api.php', {
+        method: 'POST',
+        body: partFormData
+    })
+    .then(response => response.text())
+    .then(text => {
+        try {
+            const data = JSON.parse(text);
+            if (data.success) {
+                const partSelect = document.getElementById('addPartPositionPart');
+                partSelect.innerHTML = '<option value="">Выберите гофропакет</option>';
+                data.parts.forEach(part => {
+                    const option = document.createElement('option');
+                    option.value = part;
+                    option.textContent = part;
+                    partSelect.appendChild(option);
+                });
+            }
+        } catch (e) {
+            console.error('Ошибка парсинга гофропакетов:', e, text);
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка загрузки гофропакетов:', error);
+    });
+    
+    const orderFormData = new FormData();
+    orderFormData.append('action', 'load_orders');
+    
+    fetch('parts_editor_api.php', {
+        method: 'POST',
+        body: orderFormData
+    })
+    .then(response => response.text())
+    .then(text => {
+        try {
+            const data = JSON.parse(text);
+            if (data.success) {
+                const orderSelect = document.getElementById('addPartPositionOrder');
+                orderSelect.innerHTML = '<option value="">Выберите заявку</option>';
+                data.orders.forEach(order => {
+                    const option = document.createElement('option');
+                    option.value = order;
+                    option.textContent = order;
+                    orderSelect.appendChild(option);
+                });
+            }
+        } catch (e) {
+            console.error('Ошибка парсинга заявок:', e, text);
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка загрузки заявок:', error);
+    });
+}
+
+// Обработчик формы добавления позиции гофропакета
+document.addEventListener('DOMContentLoaded', function() {
+    const addPartPositionForm = document.getElementById('addPartPositionForm');
+    if (addPartPositionForm) {
+        addPartPositionForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            submitAddPartPosition();
+        });
+    }
+});
+
+function submitAddPartPosition() {
+    const date = document.getElementById('addPartPositionDate').value;
+    const part = document.getElementById('addPartPositionPart').value;
+    const quantity = document.getElementById('addPartPositionQuantity').value;
+    const order = document.getElementById('addPartPositionOrder').value;
+    
+    if (!date || !part || !quantity || !order) {
+        alert('Пожалуйста, заполните все поля');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('action', 'add_position');
+    formData.append('production_date', date);
+    formData.append('part_name', part);
+    formData.append('quantity', quantity);
+    formData.append('order_name', order);
+    
+    fetch('parts_editor_api.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Позиция успешно добавлена!');
+            closeAddPartPositionModal();
+            loadPartsDataForDate();
+        } else {
+            alert('Ошибка: ' + data.error);
+        }
+    })
+    .catch(error => {
+        alert('Ошибка добавления: ' + error.message);
+    });
 }
 
 </script>
@@ -931,6 +1845,183 @@ function closeCreateAdModal() {
                 <button type="button" onclick="closeCreateAdModal()" style="background: var(--muted);">Отмена</button>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- Модальное окно редактора данных -->
+<div id="dataEditorModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 class="modal-title">Редактор данных</h2>
+            <span class="close" onclick="closeDataEditor()">&times;</span>
+        </div>
+        <div class="modal-buttons" style="display: flex; flex-direction: column; gap: 10px;">
+            <button onclick="openProductEditor()">📊 Редактор выпущенной продукции</button>
+            <button onclick="openPartsEditor()">📦 Редактор изготовленных гофропакетов</button>
+            <button onclick="openAuditLogs()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">📋 Логи аудита</button>
+            <button onclick="closeDataEditor()">❌ Закрыть</button>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно редактора продукции -->
+<div id="productEditorModal" class="modal">
+    <div class="modal-content" style="max-width: 1200px;">
+        <div class="modal-header">
+            <h2 class="modal-title">Редактор выпущенной продукции</h2>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <button onclick="openAuditLogs()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                    📋 Логи аудита
+                </button>
+                <span class="close" onclick="closeProductEditor()">&times;</span>
+            </div>
+        </div>
+        <div id="productEditorContent">
+            <div style="margin-bottom: 20px; padding: 16px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;">
+                <h4 style="margin: 0 0 12px 0; color: #495057;">📅 Выберите дату для редактирования</h4>
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <input type="date" id="editDate" style="padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                    <button onclick="loadDataForDate()" style="background: #3b82f6; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                        🔍 Загрузить данные
+                    </button>
+                </div>
+            </div>
+            <div id="dataTableContainer" style="display: none;">
+                <!-- Здесь будет таблица с данными -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно редактора гофропакетов -->
+<div id="partsEditorModal" class="modal">
+    <div class="modal-content" style="max-width: 1200px;">
+        <div class="modal-header">
+            <h2 class="modal-title">Редактор изготовленных гофропакетов</h2>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <button onclick="openAuditLogs()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                    📋 Логи аудита
+                </button>
+                <span class="close" onclick="closePartsEditor()">&times;</span>
+            </div>
+        </div>
+        <div id="partsEditorContent">
+            <div style="margin-bottom: 20px; padding: 16px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;">
+                <h4 style="margin: 0 0 12px 0; color: #495057;">📅 Выберите дату для редактирования</h4>
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <input type="date" id="editPartsDate" style="padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                    <button onclick="loadPartsDataForDate()" style="background: #3b82f6; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                        🔍 Загрузить данные
+                    </button>
+                </div>
+            </div>
+            <div id="partsTableContainer" style="display: none;">
+                <!-- Здесь будет таблица с данными -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно добавления позиции гофропакета -->
+<div id="addPartPositionModal" class="modal">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h2 class="modal-title">➕ Добавить позицию гофропакета</h2>
+            <span class="close" onclick="closeAddPartPositionModal()">&times;</span>
+        </div>
+        <div id="addPartPositionContent">
+            <form id="addPartPositionForm">
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 4px; font-weight: 500; color: #374151;">Дата производства:</label>
+                    <input type="date" id="addPartPositionDate" required style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                </div>
+                
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 4px; font-weight: 500; color: #374151;">Название гофропакета:</label>
+                    <select id="addPartPositionPart" required style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                        <option value="">Выберите гофропакет</option>
+                    </select>
+                </div>
+                
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 4px; font-weight: 500; color: #374151;">Количество:</label>
+                    <input type="number" id="addPartPositionQuantity" required min="1" placeholder="Введите количество" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                </div>
+                
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 4px; font-weight: 500; color: #374151;">Название заявки:</label>
+                    <select id="addPartPositionOrder" required style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                        <option value="">Выберите заявку</option>
+                    </select>
+                </div>
+                
+                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                    <button type="button" onclick="closeAddPartPositionModal()" style="padding: 8px 16px; border: 1px solid #d1d5db; background: white; color: #374151; border-radius: 6px; cursor: pointer;">
+                        Отмена
+                    </button>
+                    <button type="submit" style="padding: 8px 16px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        ➕ Добавить
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно добавления позиции -->
+<div id="addPositionModal" class="modal">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h2 class="modal-title">➕ Добавить позицию</h2>
+            <span class="close" onclick="closeAddPositionModal()">&times;</span>
+        </div>
+        <div id="addPositionContent">
+            <form id="addPositionForm">
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 4px; font-weight: 500; color: #374151;">Дата производства:</label>
+                    <input type="date" id="addPositionDate" required style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                </div>
+                
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 4px; font-weight: 500; color: #374151;">Название фильтра:</label>
+                    <select id="addPositionFilter" required style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                        <option value="">Выберите фильтр</option>
+                    </select>
+                </div>
+                
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 4px; font-weight: 500; color: #374151;">Количество:</label>
+                    <input type="number" id="addPositionQuantity" required min="1" placeholder="Введите количество" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                </div>
+                
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 4px; font-weight: 500; color: #374151;">Название заявки:</label>
+                    <select id="addPositionOrder" required style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                        <option value="">Выберите заявку</option>
+                    </select>
+                </div>
+                
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 4px; font-weight: 500; color: #374151;">Бригада:</label>
+                    <select id="addPositionTeam" required style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                        <option value="">Выберите бригаду</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                    </select>
+                </div>
+                
+                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                    <button type="button" onclick="closeAddPositionModal()" style="padding: 8px 16px; border: 1px solid #d1d5db; background: white; color: #374151; border-radius: 6px; cursor: pointer;">
+                        Отмена
+                    </button>
+                    <button type="submit" style="padding: 8px 16px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer;">
+                        ➕ Добавить
+                    </button>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 

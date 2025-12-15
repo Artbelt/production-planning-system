@@ -57,6 +57,11 @@ function shuffle_cut_array_with_fixed_height($cut_array){
 /** Функция раскроя */
 function cut_execute($cut_array, $width_of_main_roll, $max_gap, $min_gap){
 
+    // Проверка на пустой массив
+    if (empty($cut_array) || !is_array($cut_array)) {
+        return array(array(), array());
+    }
+
     $not_cutted_rolls = array(); // массив не вошедших в раскрой позиций
 
     /** @var  $count_of_completed_rolls - количество успешно собраных рулонов */
@@ -116,17 +121,31 @@ function cut_execute($cut_array, $width_of_main_roll, $max_gap, $min_gap){
         }
         /** процедура сборки одного рулона */
         for($x = $start_cycle; $x < count($cut_array); $x++){
+                // Проверяем, что элемент существует и имеет нужные поля
+                if (!isset($cut_array[$x]) || !isset($cut_array[$x]['width'])) {
+                    continue;
+                }
+                
                 /** находим минимальной ширины рулон */
                 $min_roll_size = min_roll_search($cut_array);
+                
+                // Проверяем, не переполнится ли рулон
+                $new_total_width = $total_width + $cut_array[$x]['width'];
+                if ($new_total_width > $max_width_of_roll) {
+                    // Рулон переполнится, пропускаем этот элемент
+                    continue;
+                }
+                
                 /** находим остаток рулона после добавления текущего рулона */
-                $ostatok = $max_width_of_roll - $total_width - $cut_array[$x]['width'];
+                $ostatok = $max_width_of_roll - $new_total_width;
+                
                 /** если остаток рулона после добавления этой позиции будет больше чем минимальный ролик в массиве cut_array
                 * или остаток равен минимальному размеру рулона или попадает в диапазон требуемого остатка */
-                if (($ostatok > $min_roll_size) || ($ostatok == ($min_roll_size)) || (($ostatok > 5) and ($ostatok < 30))) {
+                if (($ostatok > $min_roll_size) || ($ostatok == ($min_roll_size)) || (($ostatok >= 5) and ($ostatok < 30))) {
                     /** добавляем в temp_roll cut_array[$x][width] */
                     array_push($temp_roll, $cut_array[$x]);
                     /** увеличиваем суммарную ширину собираемой бухты */
-                    $total_width = $total_width + $cut_array[$x]['width'];
+                    $total_width = $new_total_width;
                 }else{
                 /** если остаток рулона после добавления этой позиции будет меньше чем минимальный ролик в массиве -> не трогаем его и переходим дальше*/
                     continue;
@@ -137,22 +156,35 @@ function cut_execute($cut_array, $width_of_main_roll, $max_gap, $min_gap){
                     for($y=0; $y < count($temp_roll);$y++){
                         $deleted = false;
                         for ($c = 0; $c < count($cut_array);$c++){
-                            if(($temp_roll[$y] == $cut_array[$c])&(!$deleted)){
+                            // Сравниваем по ключевым полям, а не весь массив
+                            if((!$deleted) && 
+                               ($temp_roll[$y]['filter'] == $cut_array[$c]['filter']) &&
+                               ($temp_roll[$y]['width'] == $cut_array[$c]['width']) &&
+                               ($temp_roll[$y]['height'] == $cut_array[$c]['height']) &&
+                               ($temp_roll[$y]['length'] == $cut_array[$c]['length'])){
                                 /** удаляем из cut_array запись, существующую в temp_array */
                                 array_splice($cut_array,$c,1);
                                 $deleted = true;
+                                $c--; // Уменьшаем индекс, так как массив сдвинулся
                             }
                         }
                     }
                     /** добавляем собранный рулон в completed_rolls */
 
                     /** добавляем в массив собранных рулонов */
-
-                    array_push($completed_rolls, $temp_roll);
+                    // Создаем копию массива, чтобы избежать ссылок
+                    array_push($completed_rolls, array_map(function($item) { return $item; }, $temp_roll));
 
                     /** увеличиваем счетчик успешно собранных рулонов */
                     $count_of_completed_rolls++;
                     $round_complete = true;
+                    
+                    /** КРИТИЧНО: очищаем temp_roll и сбрасываем total_width для следующего рулона */
+                    $temp_roll = array();
+                    $total_width = 0;
+                    
+                    /** Прерываем внутренний цикл и начинаем новый проход */
+                    break;
 
                 }
                 //  $x++;

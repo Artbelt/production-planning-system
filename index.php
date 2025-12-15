@@ -422,6 +422,23 @@ foreach ($userDepartments as $dept) {
 		
 	<?php endif; ?>
 	
+	<!-- Выпуск гофропакетов (только для операторов гофромашины У3) -->
+	<?php if ($hasCorrOperatorRole && in_array('U3', $availableDepartments)): ?>
+		<?php
+		// Проверяем, есть ли у пользователя роль оператора гофромашины для У3
+		$isCorrugatorOperatorU3 = false;
+		foreach ($userDepartments as $dept) {
+			if ($dept['department_code'] === 'U3' && $dept['role_name'] === 'corr_operator') {
+				$isCorrugatorOperatorU3 = true;
+				break;
+			}
+		}
+		?>
+		<?php if ($isCorrugatorOperatorU3): ?>
+		<button class="btn corr-tasks" onclick="window.open('/plan_U3/gofro_packages_input.php', '_blank')">Выпуск гофропакетов</button>
+		<?php endif; ?>
+	<?php endif; ?>
+	
 	
 	<!-- Внесение продукции (только для сборщиц) -->
 	<?php if ($userRole === 'assembler'): ?>

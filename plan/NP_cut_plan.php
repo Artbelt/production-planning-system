@@ -8,12 +8,39 @@ $pdo1 = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
 $pdo2 = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
 
 
-$order = $_GET['order'] ?? '';
+// Получаем номер заявки из GET параметров (может быть 'order' или 'order_number')
+$order = $_GET['order'] ?? $_GET['order_number'] ?? '';
+
+// Инициализируем массив для отладочной информации
+$debug_info = [];
+
+// Добавляем отладочную информацию
+$debug_info[] = "=== НАЧАЛО ОТЛАДКИ ===";
+$debug_info[] = "GET параметры: " . json_encode($_GET);
+$debug_info[] = "Номер заявки (order): '$order'";
 
 // Проверяем все фильтры в заявке на наличие в БД
 $stmt = $pdo1->prepare("SELECT filter, count FROM orders WHERE order_number = ? AND (hide IS NULL OR hide != 1)");
 $stmt->execute([$order]);
 $filters = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$debug_info[] = "Найдено фильтров в БД: " . count($filters);
+if (count($filters) > 0) {
+    $debug_info[] = "Первые 3 фильтра: " . json_encode(array_slice($filters, 0, 3));
+} else {
+    $debug_info[] = "ВНИМАНИЕ: Фильтры не найдены! Проверьте запрос к БД.";
+    // Проверяем, есть ли вообще записи с таким номером заявки
+    $check_stmt = $pdo1->prepare("SELECT COUNT(*) FROM orders WHERE order_number = ?");
+    $check_stmt->execute([$order]);
+    $total_records = $check_stmt->fetchColumn();
+    $debug_info[] = "Всего записей в orders с order_number='$order': $total_records";
+    
+    // Проверяем записи с hide=1
+    $check_hidden = $pdo1->prepare("SELECT COUNT(*) FROM orders WHERE order_number = ? AND hide = 1");
+    $check_hidden->execute([$order]);
+    $hidden_records = $check_hidden->fetchColumn();
+    $debug_info[] = "Скрытых записей (hide=1): $hidden_records";
+}
 
 // Проверка наличия фильтров в БД при загрузке страницы
 $missing_filters = [];
@@ -75,6 +102,16 @@ if (empty($missing_filters)) {
 if (isset($_GET['reset_format_199'])) {
     unset($_SESSION['format_199_assigned']);
     unset($_SESSION['format_199_stock']);
+    unset($_SESSION['format_199_processed']); // сбрасываем признак обработанного модального окна
+    header("Location: ?order=" . urlencode($order));
+    exit;
+}
+
+// Повторно включить модальное окно формата 199 (после "Пропустить")
+if (isset($_GET['enable_format_199'])) {
+    unset($_SESSION['format_199_assigned']);
+    unset($_SESSION['format_199_stock']);
+    unset($_SESSION['format_199_processed']);
     header("Location: ?order=" . urlencode($order));
     exit;
 }
@@ -111,6 +148,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Обработка POST запроса от модального окна формата 199
 if (isset($_POST['format_199_submit'])) {
+    // Получаем номер заявки из POST или GET (на случай если POST пришел без GET)
+    $order = $_POST['order'] ?? $_GET['order'] ?? $_GET['order_number'] ?? '';
+    
     $format_199_stock = (int)($_POST['format_199_stock'] ?? 0);
     $assigned_filters_raw = $_POST['assigned_filters'] ?? [];
     
@@ -144,16 +184,21 @@ if (isset($_POST['format_199_submit'])) {
     // Сохраняем назначенные фильтры в сессии
     $_SESSION['format_199_assigned'] = $assigned_filters;
     $_SESSION['format_199_stock'] = $format_199_stock;
+    // Отмечаем, что модальное окно уже обработано (даже если назначений нет)
+    $_SESSION['format_199_processed'] = true;
     
     error_log("Format 199 POST: Saved to session: " . json_encode($assigned_filters));
     error_log("Format 199 POST: Stock: $format_199_stock");
     
     // Перезагружаем страницу для продолжения расчета
-    header("Location: " . $_SERVER['REQUEST_URI']);
+    // Используем правильный редирект с параметром order
+    $redirect_url = "NP_cut_plan.php?order=" . urlencode($order);
+    header("Location: " . $redirect_url);
     exit;
 }
 
 // Загружаем назначенные фильтры из сессии, если они есть
+$format_199_assigned = [];
 if (isset($_SESSION['format_199_assigned'])) {
     $format_199_assigned = $_SESSION['format_199_assigned'];
     error_log("Format 199: Loaded from session: " . json_encode($format_199_assigned));
@@ -434,8 +479,8 @@ function getCombinations($elements, $length) {
 // Показываем модальное окно только если:
 // 1. Нет missing_filters
 // 2. Есть фильтры для формата 199
-// 3. Еще не назначены фильтры (нет данных в сессии)
-if (empty($missing_filters) && !empty($format_199_filters) && empty($format_199_assigned)):
+// 3. Еще не назначены фильтры и окно не было обработано (пропущено)
+if (empty($missing_filters) && !empty($format_199_filters) && empty($format_199_assigned) && empty($_SESSION['format_199_processed'])):
 ?>
 <div id="format199Modal" style="display: block; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5);">
     <div style="background-color: #fff; margin: 5% auto; padding: 0; border: 1px solid #999; width: 95%; max-width: 1000px;">
@@ -444,7 +489,9 @@ if (empty($missing_filters) && !empty($format_199_filters) && empty($format_199_
             <p style="margin: 5px 0 0 0; font-size: 12px; text-align: center; color: #666;">Укажите количество форматов 199 на складе и выберите позиции для них</p>
         </div>
         
-        <form method="POST" id="format199Form">
+        <form method="POST" id="format199Form" onsubmit="console.log('🔵 Форма формата 199 отправляется'); console.log('Order:', '<?= htmlspecialchars($order) ?>'); return true;">
+            <input type="hidden" name="order" value="<?= htmlspecialchars($order) ?>">
+            <input type="hidden" name="format_199_submit" value="1">
             <div style="padding: 20px;">
                 <!-- Количество форматов на складе -->
                 <div style="margin-bottom: 20px; padding: 10px; background-color: #f9f9f9; border: 1px solid #999;">
@@ -604,6 +651,7 @@ function updateFormat199Calc() {
 }
 
 function skipFormat199() {
+    console.log('skipFormat199: Начало обработки');
     // Пропускаем распределение - просто отправляем пустую форму
     document.getElementById('format_199_stock').value = 0;
     document.querySelectorAll('.filter-checkbox').forEach(cb => cb.checked = false);
@@ -611,6 +659,7 @@ function skipFormat199() {
         input.value = 0;
         input.disabled = true;
     });
+    console.log('skipFormat199: Отправка формы');
     document.getElementById('format199Form').submit();
 }
 
@@ -623,6 +672,17 @@ document.addEventListener('DOMContentLoaded', function() {
 <?php 
 endif; // Конец модального окна формата 199
 ?>
+
+<?php 
+// Кнопка включения формата 199, если модалка была пропущена
+if (empty($missing_filters) && !empty($format_199_filters) && empty($format_199_assigned) && !empty($_SESSION['format_199_processed'])): ?>
+    <div style="margin: 10px auto 0; text-align: center;">
+        <a href="?order=<?= urlencode($order) ?>&enable_format_199=1"
+           style="display: inline-block; padding: 8px 14px; background: #0066cc; color: #fff; border-radius: 6px; text-decoration: none; font-weight: 600;">
+            Использовать формат 199
+        </a>
+    </div>
+<?php endif; ?>
 
 <?php 
 // Если есть отсутствующие фильтры, останавливаем выполнение основного кода
@@ -733,23 +793,31 @@ else:
         <th>Рулонов (1000/500)</th>
     </tr>
     <?php
+    $debug_info[] = "Начало обработки фильтров. Всего фильтров: " . count($filters);
+    
     foreach ($filters as $f) {
         $filter = $f['filter'];
         $count = (int)$f['count'];
+        $debug_info[] = "Обработка фильтра: $filter, количество: $count";
         
         // Вычитаем назначенные на формат 199 фильтры
         if (!empty($format_199_assigned) && isset($format_199_assigned[$filter])) {
             $assigned_count = (int)$format_199_assigned[$filter];
             $count = max(0, $count - $assigned_count);
+            $debug_info[] = "  После вычитания формата 199: $count";
             
             // Если все количество назначено на формат 199, пропускаем этот фильтр
             if ($count == 0) {
+                $debug_info[] = "  Пропуск фильтра $filter (все назначено на формат 199)";
                 continue;
             }
         }
         
         $paper = getPaperInfo($pdo2, $filter);
-        if (!$paper) continue;
+        if (!$paper) {
+            $debug_info[] = "  ОШИБКА: Нет информации о бумаге для фильтра $filter";
+            continue;
+        }
 
         $pleats = (int)$paper['p_p_pleats_count'];
         $height = (float)$paper['p_p_height'];
@@ -757,19 +825,26 @@ else:
         $length_per_filter = $pleats * 2 * $height;
         $total_length_m = ($length_per_filter * $count) / 1000;
         $reels = ceilToHalf($total_length_m / 1000);
+        $debug_info[] = "  Параметры: рёбер=$pleats, высота=$height, ширина=$width";
+        $debug_info[] = "  Длина на фильтр: $length_per_filter мм, Итого: $total_length_m м, Рулонов: $reels";
 
         // Распределяем по рулонам
         $full = floor($reels);
         $half = ($reels - $full) >= 0.49 ? 1 : 0;
+        $debug_info[] = "  Распределение: полных рулонов 1000м = $full, половинок 500м = $half";
 
         // Подсчитываем, сколько рулонов уже использовано вручную
         $key_1000 = $filter . '_' . $width . '_' . $height . '_1000';
         $key_500 = $filter . '_' . $width . '_' . $height . '_500';
         $manual_used_1000 = $manual_rolls_used[$key_1000] ?? 0;
         $manual_used_500 = $manual_rolls_used[$key_500] ?? 0;
+        $debug_info[] = "  Использовано вручную: 1000м = $manual_used_1000, 500м = $manual_used_500";
 
         // Добавляем только те рулоны, которые не были использованы вручную
         $rolls_to_add_1000 = max(0, $full - $manual_used_1000);
+        $rolls_to_add_500 = max(0, $half - $manual_used_500);
+        $debug_info[] = "  Будет добавлено: 1000м = $rolls_to_add_1000, 500м = $rolls_to_add_500";
+        
         for ($i = 0; $i < $rolls_to_add_1000; $i++) {
             $rolls_1000[] = [
                 'filter' => $filter,
@@ -781,7 +856,6 @@ else:
             ];
         }
 
-        $rolls_to_add_500 = max(0, $half - $manual_used_500);
         if ($rolls_to_add_500 > 0) {
             $rolls_500[] = [
                 'filter' => $filter,
@@ -848,6 +922,16 @@ else:
 
     // Объединяем результаты
     $bales = array_merge($bales_1000, $bales_500);
+    
+    // Добавляем финальную информацию в отладку
+    $debug_info[] = "=== ИТОГИ РАСКРОЯ ===";
+    $debug_info[] = "Рулонов 1000м создано: " . count($rolls_1000);
+    $debug_info[] = "Рулонов 500м создано: " . count($rolls_500);
+    $debug_info[] = "Бухт 1000м после раскроя: " . count($bales_1000);
+    $debug_info[] = "Бухт 500м после раскроя: " . count($bales_500);
+    $debug_info[] = "Всего бухт: " . count($bales);
+    $debug_info[] = "Осталось неиспользованных 1000м: " . count($left_1000);
+    $debug_info[] = "Осталось неиспользованных 500м: " . count($left_500);
 
     // ===== ОТДЕЛЬНАЯ ОБРАБОТКА РУЛОНОВ ФОРМАТА 199 =====
     $rolls_1000_format199 = [];
@@ -1240,6 +1324,22 @@ else:
 <?php endif; // Конец условия проверки отсутствующих фильтров ?>
 
 <script>
+// Вывод отладочной информации в консоль браузера
+console.group('🔍 Отладка раскроя NP_cut_plan.php');
+<?php if (!empty($debug_info)): ?>
+    <?php foreach ($debug_info as $line): ?>
+    console.log('<?= addslashes($line) ?>');
+    <?php endforeach; ?>
+<?php else: ?>
+    console.log('Отладочная информация недоступна');
+<?php endif; ?>
+console.log('Массив rolls_1000 (количество: <?= count($rolls_1000 ?? []) ?>):', <?= json_encode($rolls_1000 ?? []) ?>);
+console.log('Массив rolls_500 (количество: <?= count($rolls_500 ?? []) ?>):', <?= json_encode($rolls_500 ?? []) ?>);
+console.log('Массив bales_1000 (количество: <?= count($bales_1000 ?? []) ?>):', <?= json_encode($bales_1000 ?? []) ?>);
+console.log('Массив bales_500 (количество: <?= count($bales_500 ?? []) ?>):', <?= json_encode($bales_500 ?? []) ?>);
+console.log('Массив left_1000 (осталось):', <?= json_encode($left_1000 ?? []) ?>);
+console.log('Массив left_500 (осталось):', <?= json_encode($left_500 ?? []) ?>);
+console.groupEnd();
     const remainingRolls = <?= json_encode($remaining_rolls) ?>;
     let allFilters = []; // загрузим через fetch ниже
     let bale = [];

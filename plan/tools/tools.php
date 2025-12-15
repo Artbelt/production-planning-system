@@ -1033,6 +1033,7 @@ function get_filter_data($target_filter){
         $result_array['paper_package_pleats_count'] = null;
         $result_array['paper_package_amplifier'] = null;
         $result_array['paper_package_supplier'] = null;
+        $result_array['paper_package_material'] = null;
         $result_array['paper_package_remark'] = null;
     } else {
         $result_array['paper_package_length'] = $paper_package_data['p_p_length'];
@@ -1041,6 +1042,7 @@ function get_filter_data($target_filter){
         $result_array['paper_package_pleats_count'] = $paper_package_data['p_p_pleats_count'];
         $result_array['paper_package_amplifier'] = $paper_package_data['p_p_amplifier'];
         $result_array['paper_package_supplier'] = $paper_package_data['supplier'];
+        $result_array['paper_package_material'] = $paper_package_data['p_p_material'] ?? null;
         $result_array['paper_package_remark'] = $paper_package_data['p_p_remark'];
     }
 

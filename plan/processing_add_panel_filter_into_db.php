@@ -11,6 +11,7 @@ $p_p_height        = $_POST['p_p_height'];
 $p_p_pleats_count  = $_POST['p_p_pleats_count'];
 $p_p_amplifier     = $_POST['p_p_amplifier'];
 $p_p_supplier      = $_POST['p_p_supplier'];
+$p_p_material      = $_POST['p_p_material'] ?? '';
 $p_p_remark        = $_POST['p_p_remark'];
 
 /** КАРКАС */
@@ -72,9 +73,9 @@ mysql_execute($sql);
 
 /** === paper_package_panel === */
 $sql = "INSERT INTO paper_package_panel 
-        (p_p_name, p_p_length, p_p_height, p_p_width, p_p_pleats_count, p_p_amplifier, supplier, p_p_remark)
+        (p_p_name, p_p_length, p_p_height, p_p_width, p_p_pleats_count, p_p_amplifier, supplier, p_p_material, p_p_remark)
         VALUES 
-        ('$p_p_name','$p_p_length','$p_p_height','$p_p_width','$p_p_pleats_count','$p_p_amplifier','$p_p_supplier','$p_p_remark')
+        ('$p_p_name','$p_p_length','$p_p_height','$p_p_width','$p_p_pleats_count','$p_p_amplifier','$p_p_supplier','$p_p_material','$p_p_remark')
         ON DUPLICATE KEY UPDATE
             p_p_length = VALUES(p_p_length),
             p_p_height = VALUES(p_p_height),
@@ -82,6 +83,7 @@ $sql = "INSERT INTO paper_package_panel
             p_p_pleats_count = VALUES(p_p_pleats_count),
             p_p_amplifier = VALUES(p_p_amplifier),
             supplier = VALUES(supplier),
+            p_p_material = VALUES(p_p_material),
             p_p_remark = VALUES(p_p_remark);";
 mysql_execute($sql);
 

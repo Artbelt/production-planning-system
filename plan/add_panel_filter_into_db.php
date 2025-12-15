@@ -229,6 +229,7 @@ if (isset($_POST['analog_filter']) AND ($_POST['analog_filter'] != '')){
         'paper_package_pleats_count' => '',
         'paper_package_amplifier' => '',
         'paper_package_supplier' => '',
+        'paper_package_material' => '',
         'paper_package_name' => '',
         'g_box' => '',
         'box' => '',
@@ -245,6 +246,7 @@ if (isset($_POST['analog_filter']) AND ($_POST['analog_filter'] != '')){
         'paper_package_amplifier' => '',
         'paper_package_remark' => '',
         'paper_package_supplier' => '',
+        'paper_package_material' => '',
         'wireframe_length' => '',
         'wireframe_width' => '',
         'wireframe_material' => '',
@@ -291,6 +293,16 @@ if (isset($_POST['analog_filter']) AND ($_POST['analog_filter'] != '')){
             <select name="p_p_supplier">
                 <option></option>
                 <option <?php if ($analog_data['paper_package_supplier'] == 'У2'){echo 'selected';} ?> >У2</option>
+            </select>
+        </label>
+        <label>Материал г/п:
+            <select name="p_p_material">
+                <option></option>
+                <option <?php if ($analog_data['paper_package_material'] == 'Бумага гладкая'){echo 'selected';} ?>>Бумага гладкая</option>
+                <option <?php if ($analog_data['paper_package_material'] == 'Бумага рифленая'){echo 'selected';} ?>>Бумага рифленая</option>
+                <option <?php if ($analog_data['paper_package_material'] == 'Нетканое полотно 0,6мм'){echo 'selected';} ?>>Нетканое полотно 0,6мм</option>
+                <option <?php if ($analog_data['paper_package_material'] == 'Нетканое полотно Toyota'){echo 'selected';} ?>>Нетканое полотно Toyota</option>
+                <option <?php if ($analog_data['paper_package_material'] == 'Нетканое полотно PP'){echo 'selected';} ?>>Нетканое полотно PP</option>
             </select>
         </label>
     </div>

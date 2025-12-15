@@ -377,7 +377,8 @@
         }
 
         function getFirstDayOfMonth(year, month) {
-            return new Date(year, month, 1).getDay();
+            // Приводим воскресенье (0) к концу недели, чтобы календарь начинался с понедельника
+            return (new Date(year, month, 1).getDay() + 6) % 7;
         }
 
         function createCalendar(year, month, targetInput) {

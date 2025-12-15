@@ -302,13 +302,13 @@ function show_prepared_caps($filter){
         /** если металлические крышки в фильтре присутствуют, то находим их колическтво на остатке */
        // if ($up_cap != ''){
         if (isset($up_cap)){
-            $sql="SELECT cap_count FROM list_of_caps WHERE name_of_cap = '$up_cap'";
+            $sql="SELECT current_quantity FROM cap_stock WHERE cap_name = '$up_cap'";
             /** Если запрос не удачный -> exit */
             if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
                 exit;
             }
             $up_cap_data = $result->fetch_assoc();
-            $up_cap_not_filled_count = $up_cap_data['cap_count']??'';
+            $up_cap_not_filled_count = $up_cap_data['current_quantity']??'';
 
             /** Получаем информацию по залитому уплотнителю */
             $sql="SELECT cap_count FROM list_of_filled_caps WHERE name_of_cap = '$up_cap'";
@@ -325,13 +325,13 @@ function show_prepared_caps($filter){
 
     //if ($down_cap != ''){
         if (isset($down_cap)){
-            $sql="SELECT cap_count FROM list_of_caps WHERE name_of_cap = '$down_cap'";
+            $sql="SELECT current_quantity FROM cap_stock WHERE cap_name = '$down_cap'";
             /** Если запрос не удачный -> exit */
             if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
                 exit;
             }
             $down_cap_data = $result->fetch_assoc();
-            $down_cap_count = $down_cap_data['cap_count']??'';
+            $down_cap_count = $down_cap_data['current_quantity']??'';
         } else {
             $down_cap_count = '(H)';
         }
@@ -449,7 +449,7 @@ function load_caps($name_of_list){
         $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
 
         /** Выполняем запрос SQL для загрузки заявок*/
-        $sql = "SELECT DISTINCT * FROM list_of_caps order by name_of_cap;";
+        $sql = "SELECT DISTINCT * FROM cap_stock order by cap_name;";
 
         /** Если запрос не удачный -> exit */
         if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
@@ -460,7 +460,7 @@ function load_caps($name_of_list){
         echo "<select id='name_of_cap' name = 'name_of_cap'>";
         echo "<option></option>";
         while ($caps_data = $result->fetch_assoc()){
-            echo "<option name='name_of_cap' value=".$caps_data['name_of_cap'].">".$caps_data['name_of_cap']."</option>";
+            echo "<option name='name_of_cap' value=".$caps_data['cap_name'].">".$caps_data['cap_name']."</option>";
         }
         echo "</select>";
 
@@ -472,7 +472,7 @@ function load_caps($name_of_list){
         echo "<select id=".$name_of_list." name = ".$name_of_list.">";
         echo "<option></option>";
         while ($caps_data = $result->fetch_assoc()){
-            echo "<option name='name_of_cap' value=".$caps_data['name_of_cap'].">".$caps_data['name_of_cap']."</option>";
+            echo "<option name='name_of_cap' value=".$caps_data['cap_name'].">".$caps_data['cap_name']."</option>";
         }
         echo "</select>";
 
