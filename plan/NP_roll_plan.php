@@ -586,23 +586,37 @@ foreach ($rows as $r) {
                     const sid = td.dataset.date;
                     const bid = td.dataset.baleId;
 
-                    // снимаем выделение со всех ячеек этой бухты (в строке)
-                    document.querySelectorAll(`td[data-bale-id="${cssEsc(bid)}"]`).forEach(c=>{
-                        c.classList.remove('highlight');
-                        const d0 = c.dataset.date;
-                        if (selected[d0]) {
-                            const idx = selected[d0].indexOf(bid);
-                            if (idx>=0) selected[d0].splice(idx,1);
-                            if (selected[d0].length===0) delete selected[d0];
-                        }
-                    });
+                    // Проверяем, выделена ли уже эта ячейка
+                    const isAlreadySelected = td.classList.contains('highlight');
 
-                    // выделяем текущую
-                    if (!selected[sid]) selected[sid] = [];
-                    if (!selected[sid].includes(bid)) {
-                        selected[sid].push(bid);
-                        td.classList.add('highlight');
+                    if (isAlreadySelected) {
+                        // Повторный клик - отменяем выбор
+                        td.classList.remove('highlight');
+                        if (selected[sid]) {
+                            const idx = selected[sid].indexOf(bid);
+                            if (idx>=0) selected[sid].splice(idx,1);
+                            if (selected[sid].length===0) delete selected[sid];
+                        }
+                    } else {
+                        // Снимаем выделение со всех ячеек этой бухты (в строке)
+                        document.querySelectorAll(`td[data-bale-id="${cssEsc(bid)}"]`).forEach(c=>{
+                            c.classList.remove('highlight');
+                            const d0 = c.dataset.date;
+                            if (selected[d0]) {
+                                const idx = selected[d0].indexOf(bid);
+                                if (idx>=0) selected[d0].splice(idx,1);
+                                if (selected[d0].length===0) delete selected[d0];
+                            }
+                        });
+
+                        // Выделяем текущую
+                        if (!selected[sid]) selected[sid] = [];
+                        if (!selected[sid].includes(bid)) {
+                            selected[sid].push(bid);
+                            td.classList.add('highlight');
+                        }
                     }
+                    
                     updateTotals();
                     updateHeightProgress();
                     updateLeftMarkers();
