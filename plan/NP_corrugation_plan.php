@@ -26,9 +26,9 @@ if (empty($order)) {
 try {
     // Сначала получаем основные данные из cut_plans и roll_plan
     $stmt1 = $pdo->prepare("
-        SELECT c.filter, c.height, c.width, c.length, rp.plan_date
+        SELECT c.filter, c.height, c.width, c.length, rp.plan_date, rp.bale_id
     FROM cut_plans c
-        INNER JOIN roll_plan rp ON c.bale_id = rp.bale_id AND rp.order_number = c.order_number
+        LEFT JOIN roll_plan rp ON c.bale_id = rp.bale_id AND rp.order_number = c.order_number
     WHERE c.order_number = ?
         ORDER BY rp.plan_date, c.filter
         LIMIT 500
@@ -182,7 +182,7 @@ foreach ($positions as $p) {
 
     $height = floatval($p['height'] ?? 0);
     $width = floatval($p['width'] ?? 0);
-    $label = htmlspecialchars($p['filter']) . " [{$height}] {$width}{$icons}";
+    $label = htmlspecialchars($p['filter']) . " [h{$height}] {$width}{$icons}";
     
     $pleats = intval($p['p_p_pleats_count'] ?? 0);
     $pleat_height = floatval($p['p_p_height'] ?? 0);
@@ -198,15 +198,28 @@ foreach ($positions as $p) {
         error_log("- final pleats: " . $pleats . ", pleat_height: " . $pleat_height);
     }
     
-    $by_date[$p['plan_date']][] = [
+    $by_date[$p['plan_date'] ?? ''][] = [
         'label' => $label,
-        'cut_date' => $p['plan_date'],
+        'cut_date' => $p['plan_date'] ?? '',
         'filter' => $p['filter'],
         'length' => floatval($p['length'] ?? 0),
         'pleats' => $pleats,
-        'pleat_height' => $pleat_height
+        'pleat_height' => $pleat_height,
+        'bale_id' => isset($p['bale_id']) ? intval($p['bale_id']) : 0
     ];
 }
+
+// Собираем уникальные высоты для фильтрации
+$heights = [];
+foreach ($by_date as $date_items) {
+    foreach ($date_items as $item) {
+        if (preg_match('/\[h(\d+)\]/', $item['label'], $m)) {
+            $heights[] = (int)$m[1];
+        }
+    }
+}
+$heights = array_unique($heights);
+sort($heights);
 
 // Загрузка существующего плана гофрирования
 $existing_plan = [];
@@ -245,8 +258,34 @@ try {
         
         /* Подсветка одинаковых позиций при наведении */
         .position-cell.highlighted {
-            border: 2px solid #f44336 !important;
-            box-shadow: 0 0 5px rgba(244, 67, 54, 0.8) !important;
+            background: #fef3c7 !important;
+            border-color: #f59e0b !important;
+            box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
+        }
+        .assigned-item.highlighted {
+            background: #fef3c7 !important;
+            border-color: #f59e0b !important;
+            box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
+        }
+        .height-btn {
+            background: #fff;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            color: #374151;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 4px 8px;
+            min-width: 40px;
+            transition: all 0.2s ease;
+        }
+        .height-btn:hover {
+            background: #f3f4f6;
+            border-color: #9ca3af;
+        }
+        .height-btn.active {
+            background: #dbeafe;
+            border-color: #3b82f6;
+            color: #1e40af;
         }
         .position-cell {
             cursor: pointer;
@@ -466,6 +505,14 @@ try {
             </div>
         </div>
         
+        <span style="font-size:13px;color:#6b7280;font-weight:500">Высоты:</span>
+        <div class="height-buttons" id="heightButtons" style="display:flex;gap:4px;flex-wrap:wrap">
+            <?php foreach($heights as $h): ?>
+                <button class="height-btn" data-height="h<?=$h?>" style="font-size:12px;padding:4px 8px;min-width:40px">h<?=$h?></button>
+            <?php endforeach; ?>
+        </div>
+        <button class="btn" id="btnClearFilter" title="Очистить фильтр" style="padding:8px 12px;font-size:13px">✕</button>
+        
         <div style="margin-top: 15px; text-align: center;">
             <strong style="color: #ff9800; font-size: 12px;">План гофрирования</strong>
         </div>
@@ -521,7 +568,8 @@ try {
                          data-cut-date="<?= $item['cut_date'] ?>"
                          data-length="<?= $item['length'] ?>"
                          data-pleats="<?= $item['pleats'] ?>"
-                         data-pleat-height="<?= $item['pleat_height'] ?>">
+                         data-pleat-height="<?= $item['pleat_height'] ?>"
+                         data-bale-id="<?= $item['bale_id'] ?>">
                         <?= $item['label'] ?>
                     </div>
                 <?php endforeach; ?>
@@ -549,7 +597,99 @@ try {
 <script>
     let selectedData = {};
     let activeDay = null; // Активный день - день последнего добавления
-    
+    let selectedHeights = new Set();
+    const baleColors = ['#1e90ff', '#00ff00', '#808080', '#ffff00', '#ff00ff', '#00ffff', '#ff8000', '#8000ff', '#cd5c5c', '#ff0080'];
+
+    function applyHeightFilter() {
+        // Убираем подсветку со всех позиций
+        document.querySelectorAll('.position-cell.highlighted, .assigned-item.highlighted, .position-cell[data-bale-color], .assigned-item[data-bale-color]').forEach(el => {
+            el.classList.remove('highlighted');
+            el.style.backgroundColor = '';
+            el.style.boxShadow = '';
+            el.removeAttribute('data-bale-color');
+        });
+
+        if (selectedHeights.size === 0) {
+            return; // Если ничего не выбрано, просто убираем подсветку
+        }
+
+        // Подсвечиваем позиции в верхней таблице
+        document.querySelectorAll('.position-cell').forEach(cell => {
+            const cellText = cell.textContent.toLowerCase();
+            const hasSelectedHeight = Array.from(selectedHeights).some(height => 
+                cellText.includes(height.toLowerCase())
+            );
+            
+            if (hasSelectedHeight) {
+                const filterName = cell.dataset.filter || '';
+                const heightMatch = filterName.match(/\[h(\d+)\]/);
+                const height = heightMatch ? parseInt(heightMatch[1]) : 0;
+                let colorIndex = height % baleColors.length;
+                if (height === 60) colorIndex = 6; // оранжевый
+                if (height === 40) colorIndex = 1; // зеленый
+                const color = baleColors[colorIndex];
+                cell.style.backgroundColor = color;
+                cell.style.boxShadow = '0 0 8px rgba(0,0,0,0.15)';
+                cell.setAttribute('data-bale-color', color);
+            }
+        });
+
+        // Подсвечиваем строки в нижней таблице
+        document.querySelectorAll('.assigned-item').forEach(item => {
+            const itemText = item.textContent.toLowerCase();
+            const hasSelectedHeight = Array.from(selectedHeights).some(height => 
+                itemText.includes(height.toLowerCase())
+            );
+            
+            if (hasSelectedHeight) {
+                const filterName = item.dataset.label || '';
+                const heightMatch = filterName.match(/\[h(\d+)\]/);
+                const height = heightMatch ? parseInt(heightMatch[1]) : 0;
+                let colorIndex = height % baleColors.length;
+                if (height === 60) colorIndex = 6; // оранжевый
+                if (height === 40) colorIndex = 1; // зеленый
+                const color = baleColors[colorIndex];
+                item.style.backgroundColor = color;
+                item.style.boxShadow = '0 0 8px rgba(0,0,0,0.15)';
+                item.setAttribute('data-bale-color', color);
+            }
+        });
+    }
+
+    function toggleHeightFilter(height) {
+        if (selectedHeights.has(height)) {
+            selectedHeights.delete(height);
+        } else {
+            selectedHeights.add(height);
+        }
+        
+        const button = document.querySelector(`[data-height="${height}"]`);
+        button.classList.toggle('active', selectedHeights.has(height));
+        
+        applyHeightFilter();
+    }
+
+    function clearHeightFilter() {
+        selectedHeights.clear();
+        document.querySelectorAll('.height-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.position-cell.highlighted, .assigned-item.highlighted, .position-cell[data-bale-color], .assigned-item[data-bale-color]').forEach(el => {
+            el.classList.remove('highlighted');
+            el.style.backgroundColor = '';
+            el.style.boxShadow = '';
+            el.removeAttribute('data-bale-color');
+        });
+    }
+
+    // Обработчики событий для кнопок высот
+    document.querySelectorAll('.height-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const height = btn.dataset.height;
+            toggleHeightFilter(height);
+        });
+    });
+
+    document.getElementById('btnClearFilter').addEventListener('click', clearHeightFilter);
+
     // Данные существующего плана
     const existingPlanData = <?= json_encode($existing_plan) ?>;
 
@@ -709,11 +849,14 @@ try {
         div.setAttribute("data-qty", qty);
         div.setAttribute("data-label", selectedData.label);
         div.setAttribute("data-id", selectedData.id);
+        div.setAttribute("data-bale-id", selectedData.baleId);
         td.appendChild(div);
 
         cell.classList.add('used');
         updateSummary(targetDate);
         attachRemoveHandlers();
+        
+        applyHeightFilter(); // Применяем фильтр после добавления
         
         // Обновляем активный день при добавлении через Shift+клик
         activeDay = targetDate;
@@ -753,24 +896,54 @@ try {
                 div.remove();
                 updateSummary(parentDate);
                 updateActiveDayInfo(); // Обновляем плашку после удаления
+                applyHeightFilter(); // Применяем фильтр после удаления
             };
         });
     }
 
     // Используем делегирование событий для лучшей производительности
     document.addEventListener('DOMContentLoaded', function() {
-        // Функция для подсветки одинаковых позиций
-        function highlightSimilarPositions(filterName) {
+        // Функция для подсветки одинаковых позиций с цветом по высоте
+        function highlightSimilarPositions(cell) {
             // Убираем предыдущую подсветку
-            document.querySelectorAll('.position-cell.highlighted').forEach(cell => {
-                cell.classList.remove('highlighted');
+            document.querySelectorAll('.position-cell[data-bale-color], .assigned-item[data-bale-color]').forEach(el => {
+                el.style.backgroundColor = '';
+                el.style.boxShadow = '';
+                el.removeAttribute('data-bale-color');
             });
             
-            // Подсвечиваем все позиции с таким же названием
-    document.querySelectorAll('.position-cell').forEach(cell => {
-                const cellFilter = cell.dataset.filter || '';
-                if (cellFilter === filterName) {
-                    cell.classList.add('highlighted');
+            const filterName = cell.dataset.filter || '';
+            
+            console.log('Наведение на фильтр:', filterName);
+            
+            if (!filterName) return;
+            
+            const heightMatch = filterName.match(/\[h(\d+)\]/);
+            const height = heightMatch ? parseInt(heightMatch[1]) : 0;
+            let colorIndex = height % baleColors.length;
+            if (height === 60) colorIndex = 6; // оранжевый
+            if (height === 40) colorIndex = 1; // зеленый
+            const color = baleColors[colorIndex];
+            
+            console.log('Высота:', height, 'Цвет:', color, 'индекс:', colorIndex);
+            
+            // Подсвечиваем все позиции с таким же фильтром
+            document.querySelectorAll('.position-cell').forEach(c => {
+                const cFilter = c.dataset.filter || '';
+                if (cFilter === filterName) {
+                    c.style.backgroundColor = color;
+                    c.style.boxShadow = '0 0 8px rgba(0,0,0,0.15)';
+                    c.setAttribute('data-bale-color', color);
+                }
+            });
+            
+            // Подсвечиваем assigned-item с таким же фильтром
+            document.querySelectorAll('.assigned-item').forEach(item => {
+                const itemFilter = item.dataset.label || '';
+                if (itemFilter === filterName) {
+                    item.style.backgroundColor = color;
+                    item.style.boxShadow = '0 0 8px rgba(0,0,0,0.15)';
+                    item.setAttribute('data-bale-color', color);
                 }
             });
         }
@@ -796,11 +969,12 @@ try {
 
             selectedData = {
                 id: cell.dataset.id,
-                label: cell.dataset.filter,
+                label: cell.textContent.trim(),
                 cutDate: cell.dataset.cutDate,
                 length: parseFloat(cell.dataset.length) || 0,
                 pleats: parseInt(cell.dataset.pleats) || 0,
-                height: parseFloat(cell.dataset.pleatHeight) || 0
+                height: parseFloat(cell.dataset.pleatHeight) || 0,
+                baleId: parseInt(cell.dataset.baleId) || 0
             };
             
 
@@ -885,11 +1059,14 @@ try {
                         div.setAttribute("data-qty", qty);
                         div.setAttribute("data-label", selectedData.label);
                         div.setAttribute("data-id", selectedData.id);
+                        div.setAttribute("data-bale-id", selectedData.baleId);
                         td.appendChild(div);
 
                         cell.classList.add('used');
                         updateSummary(date);
                         attachRemoveHandlers();
+                        
+                        applyHeightFilter(); // Применяем фильтр после добавления
                         
                         // Устанавливаем активный день при добавлении через модальное окно
                         activeDay = date;
@@ -902,12 +1079,11 @@ try {
             }
         });
 
-        // Обработчики наведения мыши для подсветки одинаковых позиций
+        // Обработчики наведения мыши для подсветки одинаковых позиций с цветом вала
         document.getElementById('top-table').addEventListener('mouseover', function(e) {
             const cell = e.target.closest('.position-cell');
             if (cell) {
-                const filterName = cell.dataset.filter || '';
-                highlightSimilarPositions(filterName);
+                highlightSimilarPositions(cell);
             }
         });
 
@@ -918,8 +1094,10 @@ try {
                 setTimeout(() => {
                     const hoveredCell = document.querySelector('.position-cell:hover');
                     if (!hoveredCell) {
-                        document.querySelectorAll('.position-cell.highlighted').forEach(cell => {
-                            cell.classList.remove('highlighted');
+                        document.querySelectorAll('.position-cell[data-bale-color], .assigned-item[data-bale-color]').forEach(el => {
+                            el.style.backgroundColor = '';
+                            el.style.boxShadow = '';
+                            el.removeAttribute('data-bale-color');
                         });
                     }
                 }, 100);
@@ -1160,6 +1338,7 @@ try {
                     div.setAttribute("data-qty", count);
                     div.setAttribute("data-label", item.filter_label);
                     div.setAttribute("data-id", positionCell.dataset.id);
+                    div.setAttribute("data-bale-id", positionCell.dataset.baleId);
                     targetTd.appendChild(div);
                     
                     // Отмечаем позицию как использованную
@@ -1168,6 +1347,8 @@ try {
                     // Обновляем счетчик
                     updateSummary(item.plan_date);
                     attachRemoveHandlers();
+                    
+                    applyHeightFilter(); // Применяем фильтр после загрузки
                     
                     // Устанавливаем активный день
                     activeDay = item.plan_date;
