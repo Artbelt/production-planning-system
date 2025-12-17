@@ -187,6 +187,10 @@ foreach ($positions as $p) {
     $pleats = intval($p['p_p_pleats_count'] ?? 0);
     $pleat_height = floatval($p['p_p_height'] ?? 0);
     
+    if ($pleats == 0 || $pleat_height == 0) {
+        error_log("Position with zero pleats or height: filter=" . $p['filter'] . ", pleats=$pleats, pleat_height=$pleat_height");
+    }
+    
     // Отладка для MRA-076 и AF1601s
     if (strpos($p['filter'], 'MRA-076') !== false || strpos($p['filter'], 'AF1601s') !== false) {
         error_log("=== DEBUG for " . $p['filter'] . " ===");
@@ -356,14 +360,31 @@ try {
             z-index: 10;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            min-height: 150px; /* Увеличиваем высоту панели */
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            gap: 15px;
         }
         
-        .info-item {
+        .controls-row {
             display: flex;
-            justify-content: center;
-            align-items: center;
-            margin-bottom: 8px;
+            gap: 20px;
+            align-items: flex-start;
+        }
+        
+        .height-section {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 5px;
+        }
+        
+        .height-buttons {
+            display: grid;
+            grid-template-columns: repeat(2, auto);
+            gap: 4px;
+        }
             padding: 8px 10px;
             background: rgba(255, 255, 255, 0.7);
             border-radius: 6px;
@@ -485,33 +506,37 @@ try {
             <span class="info-value" id="active-day-count">0 шт</span>
         </div>
         
-        <div class="legend-section">
-            <div class="legend-title">Легенда:</div>
-            <div class="legend-item">
-                <span class="legend-icon">●</span>
-                <span>Проливка</span>
+        <div class="controls-row">
+            <div class="legend-section">
+                <div class="legend-title">Легенда:</div>
+                <div class="legend-item">
+                    <span class="legend-icon">●</span>
+                    <span>Проливка</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon">◩</span>
+                    <span>Предфильтр</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon">⏃</span>
+                    <span>Трапеция</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-icon">⏃◯</span>
+                    <span>Трапеция с обечайкой</span>
+                </div>
             </div>
-            <div class="legend-item">
-                <span class="legend-icon">◩</span>
-                <span>Предфильтр</span>
-            </div>
-            <div class="legend-item">
-                <span class="legend-icon">⏃</span>
-                <span>Трапеция</span>
-            </div>
-            <div class="legend-item">
-                <span class="legend-icon">⏃◯</span>
-                <span>Трапеция с обечайкой</span>
+            
+            <div class="height-section">
+                <span style="font-size:13px;color:#6b7280;font-weight:500">Высоты:</span>
+                <div class="height-buttons" id="heightButtons">
+                    <?php foreach($heights as $h): ?>
+                        <button class="height-btn" data-height="h<?=$h?>">h<?=$h?></button>
+                    <?php endforeach; ?>
+                    <button class="height-btn" id="btnClearFilter" title="Очистить фильтр">✕</button>
+                </div>
             </div>
         </div>
-        
-        <span style="font-size:13px;color:#6b7280;font-weight:500">Высоты:</span>
-        <div class="height-buttons" id="heightButtons" style="display:flex;gap:4px;flex-wrap:wrap">
-            <?php foreach($heights as $h): ?>
-                <button class="height-btn" data-height="h<?=$h?>" style="font-size:12px;padding:4px 8px;min-width:40px">h<?=$h?></button>
-            <?php endforeach; ?>
-        </div>
-        <button class="btn" id="btnClearFilter" title="Очистить фильтр" style="padding:8px 12px;font-size:13px">✕</button>
         
         <div style="margin-top: 15px; text-align: center;">
             <strong style="color: #ff9800; font-size: 12px;">План гофрирования</strong>
@@ -722,7 +747,7 @@ try {
                     if (isFinite(qty) && !isNaN(qty)) {
                         totalCount += qty;
                     } else {
-                        console.warn('Некорректное количество в плашке активного дня:', qty);
+
                     }
                 }
                 countDiv.textContent = totalCount + ' шт';
@@ -743,31 +768,31 @@ try {
     function scrollToActiveDay() {
         if (!activeDay) return;
         
-        console.log('=== SCROLL DEBUG ===');
-        console.log('activeDay:', activeDay);
+
+
         
         // Пробуем прокручивать основной контейнер плавающей панели
         const activeDayInfo = document.getElementById('active-day-info');
         const activeDayElement = document.querySelector('.planning-day[data-date="' + activeDay + '"]');
         
-        console.log('activeDayInfo:', activeDayInfo);
-        console.log('activeDayElement:', activeDayElement);
+
+
         
         if (activeDayInfo && activeDayElement) {
-            console.log('Found both elements, scrolling...');
+
             
             // Вычисляем позицию элемента относительно прокручиваемого контейнера
             const containerRect = activeDayInfo.getBoundingClientRect();
             const elementRect = activeDayElement.getBoundingClientRect();
             
-            console.log('containerRect:', containerRect);
-            console.log('elementRect:', elementRect);
+
+
             
             // Вычисляем смещение элемента внутри контейнера
             const elementTop = elementRect.top - containerRect.top + activeDayInfo.scrollTop;
             
-            console.log('elementTop:', elementTop);
-            console.log('current scrollTop:', activeDayInfo.scrollTop);
+
+
             
             // Прокручиваем к элементу с учетом отступа от заголовка
             activeDayInfo.scrollTo({
@@ -783,9 +808,9 @@ try {
                 });
             }, 100);
             
-            console.log('Scroll command executed');
+
         } else {
-            console.log('Elements not found!');
+
         }
     }
 
@@ -827,8 +852,8 @@ try {
         if (blankLength > 0) {
             qty = Math.floor(rollLengthMm / blankLength);
         } else {
-            console.warn('Неверные данные для расчета количества:', selectedData);
-            console.warn('rollLengthMm:', rollLengthMm, 'blankLength:', blankLength);
+
+
             
             // Специальное сообщение для MRA-076
             if (selectedData.label && selectedData.label.includes('MRA-076')) {
@@ -839,7 +864,7 @@ try {
 
         // Проверяем что qty корректное число
         if (!isFinite(qty) || isNaN(qty) || qty <= 0) {
-            console.warn('Некорректное количество для добавления:', qty);
+
             return;
         }
 
@@ -875,7 +900,7 @@ try {
             if (isFinite(qty) && !isNaN(qty)) {
             total += qty;
             } else {
-                console.warn('Некорректное количество при подсчете:', qty);
+
             }
         }
         const summary = document.getElementById("summary-" + date);
@@ -907,14 +932,13 @@ try {
         function highlightSimilarPositions(cell) {
             // Убираем предыдущую подсветку
             document.querySelectorAll('.position-cell[data-bale-color], .assigned-item[data-bale-color]').forEach(el => {
-                el.style.backgroundColor = '';
-                el.style.boxShadow = '';
+                el.style.outline = '';
                 el.removeAttribute('data-bale-color');
             });
             
             const filterName = cell.dataset.filter || '';
             
-            console.log('Наведение на фильтр:', filterName);
+
             
             if (!filterName) return;
             
@@ -925,14 +949,13 @@ try {
             if (height === 40) colorIndex = 1; // зеленый
             const color = baleColors[colorIndex];
             
-            console.log('Высота:', height, 'Цвет:', color, 'индекс:', colorIndex);
+
             
             // Подсвечиваем все позиции с таким же фильтром
             document.querySelectorAll('.position-cell').forEach(c => {
                 const cFilter = c.dataset.filter || '';
                 if (cFilter === filterName) {
-                    c.style.backgroundColor = color;
-                    c.style.boxShadow = '0 0 8px rgba(0,0,0,0.15)';
+                    c.style.outline = '2px solid ' + color;
                     c.setAttribute('data-bale-color', color);
                 }
             });
@@ -941,8 +964,7 @@ try {
             document.querySelectorAll('.assigned-item').forEach(item => {
                 const itemFilter = item.dataset.label || '';
                 if (itemFilter === filterName) {
-                    item.style.backgroundColor = color;
-                    item.style.boxShadow = '0 0 8px rgba(0,0,0,0.15)';
+                    item.style.outline = '2px solid ' + color;
                     item.setAttribute('data-bale-color', color);
                 }
             });
@@ -1019,12 +1041,12 @@ try {
                         
                         // Отладка для AF1601s
                         if (selectedData.label && selectedData.label.includes('AF1601s')) {
-                            console.log('=== AF1601s DEBUG ===');
-                            console.log('selectedData:', selectedData);
-                            console.log('rollLengthMm:', rollLengthMm);
-                            console.log('blankLength:', blankLength);
-                            console.log('pleats:', selectedData.pleats);
-                            console.log('height:', selectedData.height);
+
+
+
+
+
+
                         }
                         
                         // Проверяем деление на ноль
@@ -1032,24 +1054,24 @@ try {
                         if (blankLength > 0) {
                             qty = Math.floor(rollLengthMm / blankLength);
                         } else {
-                            console.warn('Неверные данные для расчета количества:', selectedData);
-                            console.warn('rollLengthMm:', rollLengthMm, 'blankLength:', blankLength);
+
+
                             alert('Ошибка: невозможно рассчитать количество для позиции ' + selectedData.label + '. Проверьте данные о количестве складок и высоте. Pleats: ' + selectedData.pleats + ', Height: ' + selectedData.height);
                             return;
                         }
 
                         // Отладка для AF1601s
                         if (selectedData.label && selectedData.label.includes('AF1601s')) {
-                            console.log('=== AF1601s MODAL DEBUG ===');
-                            console.log('qty before check:', qty);
-                            console.log('isFinite(qty):', isFinite(qty));
-                            console.log('isNaN(qty):', isNaN(qty));
-                            console.log('qty <= 0:', qty <= 0);
+
+
+
+
+
                         }
                         
                         // Проверяем что qty корректное число
                         if (!isFinite(qty) || isNaN(qty) || qty <= 0) {
-                            console.warn('Некорректное количество для добавления (модалка):', qty);
+
                             return;
                         }
 
@@ -1095,8 +1117,7 @@ try {
                     const hoveredCell = document.querySelector('.position-cell:hover');
                     if (!hoveredCell) {
                         document.querySelectorAll('.position-cell[data-bale-color], .assigned-item[data-bale-color]').forEach(el => {
-                            el.style.backgroundColor = '';
-                            el.style.boxShadow = '';
+                            el.style.outline = '';
                             el.removeAttribute('data-bale-color');
                         });
                     }
@@ -1243,22 +1264,38 @@ try {
             return;
         }
         
+        // Кэшируем селекторы для производительности
+        const dropTargets = document.querySelectorAll('.drop-target');
+        const positionCells = Array.from(document.querySelectorAll('.position-cell'));
+        
+        // Создаем Map для быстрого поиска позиций по фильтру
+        const positionMap = new Map();
+        positionCells.forEach(cell => {
+            const filter = cell.dataset.filter || '';
+            if (!positionMap.has(filter)) {
+                positionMap.set(filter, []);
+            }
+            positionMap.get(filter).push(cell);
+        });
+        
         // Очищаем текущий план
-        document.querySelectorAll('.drop-target').forEach(td => {
+        dropTargets.forEach(td => {
             td.innerHTML = '';
         });
         
         // Сбрасываем все использованные позиции
-        document.querySelectorAll('.position-cell.used').forEach(cell => {
+        positionCells.forEach(cell => {
             cell.classList.remove('used');
         });
         
         // Загружаем существующий план
+        let loadedCount = 0;
         existingPlanData.forEach(item => {
-            const targetTd = document.querySelector('.drop-target[data-date="' + item.plan_date + '"]');
+
+            const targetTd = Array.from(dropTargets).find(td => td.getAttribute('data-date') === item.plan_date);
             if (targetTd) {
                 // Находим соответствующую позицию в верхней таблице
-                const positionCell = Array.from(document.querySelectorAll('.position-cell')).find(cell => {
+                const positionCell = positionCells.find(cell => {
                     // Проверяем точное совпадение
                     const cellFilter = cell.dataset.filter || '';
                     const savedFilter = item.filter_label || '';
@@ -1273,32 +1310,29 @@ try {
                     const savedBaseName = savedFilter.replace(/ \[.*?\].*/, '');
                     
                     // Проверяем, что базовые имена совпадают точно (не частично)
-                    if (cellBaseName === savedBaseName) {
+                    if (cellBaseName.trim().toLowerCase() === savedBaseName.trim().toLowerCase()) {
                         return !cell.classList.contains('used');
                     }
                     
                     return false;
                 });
                 
-                console.log('Loading plan item:', {
-                    filter_label: item.filter_label,
-                    found_cell: positionCell ? positionCell.dataset.filter : 'NOT_FOUND'
-                });
+
                 
                 // Отладка для AF1601s
                 if (item.filter_label && item.filter_label.includes('AF1601s')) {
-                    console.log('=== AF1601s LOAD DEBUG ===');
-                    console.log('savedFilter:', item.filter_label);
+
+
                     
                     // Подсчитаем точное количество ячеек
                     const allCells = document.querySelectorAll('.position-cell');
                     const af1601Cells = Array.from(allCells).filter(cell => cell.dataset.filter === 'AF1601 [48] 199');
                     const af1601sCells = Array.from(allCells).filter(cell => cell.dataset.filter === 'AF1601s [48] 199');
                     
-                    console.log('=== COUNTING DEBUG ===');
-                    console.log('Total position cells:', allCells.length);
-                    console.log('AF1601 [48] 199 cells:', af1601Cells.length);
-                    console.log('AF1601s [48] 199 cells:', af1601sCells.length);
+
+
+
+
                     
                     // Подсчитаем used/unused
                     const af1601Used = af1601Cells.filter(cell => cell.classList.contains('used')).length;
@@ -1306,8 +1340,8 @@ try {
                     const af1601sUsed = af1601sCells.filter(cell => cell.classList.contains('used')).length;
                     const af1601sUnused = af1601sCells.filter(cell => !cell.classList.contains('used')).length;
                     
-                    console.log('AF1601 used:', af1601Used, 'unused:', af1601Unused);
-                    console.log('AF1601s used:', af1601sUsed, 'unused:', af1601sUnused);
+
+
                     
                     // Проверим логику сопоставления
                     const testCell = Array.from(document.querySelectorAll('.position-cell')).find(cell => {
@@ -1320,14 +1354,14 @@ try {
                                && !cell.classList.contains('used');
                     });
                     
-                    console.log('Found cell for AF1601s:', testCell);
+
                 }
                 
                 if (positionCell) {
                     // Проверяем корректность количества
                     const count = parseInt(item.count) || 0;
                     if (count <= 0 || !isFinite(count)) {
-                        console.warn('Некорректное количество для позиции:', item.filter_label, item.count);
+
                         return; // Пропускаем эту позицию
                     }
                     
@@ -1352,9 +1386,17 @@ try {
                     
                     // Устанавливаем активный день
                     activeDay = item.plan_date;
+                    loadedCount++;
+                } else {
+                    const availableBases = Array.from(document.querySelectorAll('.position-cell')).map(c => c.dataset.filter.replace(/ \[.*?\].*/, '').trim().toLowerCase());
+
                 }
+            } else {
+
             }
         });
+        
+
         
         updateActiveDayVisual();
         
@@ -1368,12 +1410,17 @@ try {
         document.querySelectorAll('.drop-target').forEach(td => {
             const date = td.getAttribute('data-date');
             const items = Array.from(td.querySelectorAll('div')).map(d => d.innerText);
+
             if (items.length > 0) data[date] = items;
         });
+
+
+
 
         if (shouldRedirect) {
             // Для кнопки "Завершить" - используем обычную отправку формы
         document.getElementById('plan_data').value = JSON.stringify(data);
+            document.querySelector('form').submit();
             return;
         }
 
@@ -1391,6 +1438,7 @@ try {
         .then(result => {
             if (result.success) {
                 alert(result.message);
+                location.reload(); // Перезагружаем страницу, чтобы загрузить обновленный план
             } else {
                 alert('Ошибка: ' + result.message);
             }

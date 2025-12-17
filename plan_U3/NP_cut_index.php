@@ -748,7 +748,7 @@ try{
 
                         <div class="stage-section">
                             <h4 class="stage-title">План гофрирования</h4>
-                            <?php if (!$o['plan_ready']): ?>
+                            <?php if (true): ?>
                                 <span class="badge badge-muted">Нет плана раскроя</span>
                             <?php elseif ($o['corr_ready']): ?>
                                 <span class="badge badge-success">Готово</span>

@@ -42,7 +42,7 @@ try {
                 
                 // Обрабатываем различные случаи количества
                 if (strtolower($count_str) === 'infinity' || !is_numeric($count_str)) {
-                    error_log("Skipping item with invalid count: '$item'");
+                    error_log("Skipping item with invalid count: '$item' (count_str: '$count_str')");
                     continue; // Пропускаем элементы с некорректным количеством
                 }
                 
@@ -50,7 +50,7 @@ try {
                 
                 // Пропускаем если количество <= 0
                 if ($count <= 0) {
-                    error_log("Skipping item with zero/negative count: '$item'");
+                    error_log("Skipping item with zero/negative count: '$item' (count: $count)");
                     continue;
                 }
                 
@@ -58,7 +58,7 @@ try {
                 $stmt->execute([$order, $date, $label, $count]);
                 $savedItems++;
             } else {
-                error_log("Failed to parse item format: '$item'");
+                error_log("Failed to parse item format: '$item' (trimmed: '" . trim($item) . "')");
             }
         }
     }

@@ -360,3 +360,8 @@ if ($action === 'delete_task' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 http_response_code(400);
 echo json_encode(['ok' => false, 'error' => 'Неверный запрос']);
 
+
+
+
+
+

@@ -30,11 +30,12 @@ foreach ($addition_rows as $a) {
     $additions[$a['code']] = (float)$a['amount'];
 }
 
-// Загружаем ранее сохраненные часы
-$hours_raw = mysql_execute("SELECT filter, order_number, hours FROM hourly_work_log");
+// Загружаем ранее сохраненные часы с фильтром по дате
+$hours_raw = mysql_execute("SELECT filter, order_number, date_of_work, hours FROM hourly_work_log WHERE date_of_work BETWEEN '$first_day' AND '$last_day'");
 $hours_map = [];
 foreach ($hours_raw as $h) {
-    $key = $h['filter'] . '_' . $h['order_number'];
+    // Используем составной ключ: фильтр_заказ_дата
+    $key = $h['filter'] . '_' . $h['order_number'] . '_' . $h['date_of_work'];
     $hours_map[$key] = $h['hours'];
 }
 
@@ -140,9 +141,11 @@ foreach ($result as $row) {
     $count = (int)$row['count_of_filters'];
     
     // Для почасовых работ используем часы, для остальных - количество фильтров
-    $key = $row['name_of_filter'] . '_' . $row['name_of_order'];
+    // Используем составной ключ с датой для правильного сопоставления часов
+    $key = $row['name_of_filter'] . '_' . $row['name_of_order'] . '_' . $date;
     $hours = $is_hourly ? ($hours_map[$key] ?? 0) : 0;
     $display_count = $is_hourly ? $hours : $count;
+    
     
     if (!isset($brigade_data[$brigade][$tariff_key])) {
         $brigade_data[$brigade][$tariff_key] = [];

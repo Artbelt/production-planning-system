@@ -21,7 +21,9 @@ foreach ($addition_rows as $a) {
 }
 
 // === Загружаем ранее сохраненные часы ===
-$hours_raw = mysql_execute("SELECT filter, order_number, hours FROM hourly_work_log");
+//$hours_raw = mysql_execute("SELECT filter, order_number, hours FROM hourly_work_log");
+$hours_raw = mysql_execute("SELECT filter, order_number, hours FROM hourly_work_log WHERE date_of_work = '$production_date'");
+
 $hours_map = [];
 foreach ($hours_raw as $h) {
     $key = $h['filter'] . '_' . $h['order_number'];
