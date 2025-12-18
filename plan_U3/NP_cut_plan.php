@@ -6,6 +6,71 @@ const FULL_BALE_LEN = 1200;  // м (1 бухта)
 
 $action = $_GET['action'] ?? '';
 
+    /* ===== AJAX: сохранить/загрузить остатки на участке ===== */
+if ($action==='save_stocks' || $action==='load_stocks') {
+    header('Content-Type: application/json; charset=utf-8');
+    try{
+        $pdo = new PDO($dsn,$user,$pass,[
+            PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,
+        ]);
+        
+        // Создаем таблицу если её нет
+        $pdo->exec("CREATE TABLE IF NOT EXISTS workshop_stocks (
+            order_number VARCHAR(50) NOT NULL,
+            filter VARCHAR(255) NOT NULL,
+            stock_qty INT DEFAULT 0,
+            PRIMARY KEY (order_number, filter),
+            INDEX idx_order_filter (order_number, filter)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        if ($action==='save_stocks'){
+            $raw = file_get_contents('php://input');
+            $payload = json_decode($raw, true);
+            if (!$payload || empty($payload['order']) || !isset($payload['stocks']) || !is_array($payload['stocks'])) {
+                http_response_code(400); echo json_encode(['ok'=>false,'error'=>'bad payload']); exit;
+            }
+            $order = (string)$payload['order'];
+            
+            $pdo->beginTransaction();
+            $ins = $pdo->prepare("
+                INSERT INTO workshop_stocks (order_number, filter, stock_qty)
+                VALUES (?, ?, ?)
+                ON DUPLICATE KEY UPDATE stock_qty = VALUES(stock_qty)
+            ");
+            
+            foreach ($payload['stocks'] as $stock) {
+                $filter = (string)($stock['filter'] ?? '');
+                $qty = max(0, (int)($stock['qty'] ?? 0));
+                if ($filter !== '') {
+                    $ins->execute([$order, $filter, $qty]);
+                }
+            }
+            $pdo->commit();
+            echo json_encode(['ok'=>true]); exit;
+        }
+        
+        if ($action==='load_stocks'){
+            $ord = $_GET['order'] ?? '';
+            if ($ord==='') {
+                $raw = file_get_contents('php://input');
+                if ($raw) { $tmp = json_decode($raw, true); if (!empty($tmp['order'])) $ord = (string)$tmp['order']; }
+            }
+            if ($ord===''){ http_response_code(400); echo json_encode(['ok'=>false,'error'=>'no order']); exit; }
+            
+            $st = $pdo->prepare("SELECT filter, stock_qty FROM workshop_stocks WHERE order_number=?");
+            $st->execute([$ord]);
+            $stocks = [];
+            foreach ($st->fetchAll() as $r) {
+                $stocks[$r['filter']] = (int)$r['stock_qty'];
+            }
+            echo json_encode(['ok'=>true,'stocks'=>$stocks]); exit;
+        }
+    } catch(Throwable $e){
+        http_response_code(500); echo json_encode(['ok'=>false,'error'=>$e->getMessage()]); exit;
+    }
+}
+
 /* ===== AJAX: сохранить/загрузить раскрой ===== */
 if ($action==='save_cut' || $action==='load_cut') {
     header('Content-Type: application/json; charset=utf-8');
@@ -144,11 +209,32 @@ try{
     GROUP BY o.order_number,o.filter,ppr.p_p_material,ppr.p_p_height,ppr.p_p_fold_height,ppr.p_p_fold_count";
     $st=$pdo->prepare($sql); $st->execute([':order_number'=>$orderNumber]); $rows=$st->fetchAll();
 
+    // Загружаем остатки на участке
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS workshop_stocks (
+            order_number VARCHAR(50) NOT NULL,
+            filter VARCHAR(255) NOT NULL,
+            stock_qty INT DEFAULT 0,
+            PRIMARY KEY (order_number, filter),
+            INDEX idx_order_filter (order_number, filter)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch (Exception $e) {
+        // Таблица уже существует или ошибка - игнорируем
+    }
+    
+    $stStocks = $pdo->prepare("SELECT filter, stock_qty FROM workshop_stocks WHERE order_number=?");
+    $stStocks->execute([$orderNumber]);
+    $stocksMap = [];
+    foreach ($stStocks->fetchAll() as $s) {
+        $stocksMap[$s['filter']] = (int)$s['stock_qty'];
+    }
+
     $rowsAll=[]; $totalMeters=0.0;
     foreach($rows as $r){
         if (strtoupper((string)$r['material'])==='CARBON') continue;
         $tm=(float)$r['total_length_m'];
         $r['need_units'] = (int)ceil($tm / HALF_BALE_LEN); // «шт» = полубухты
+        $r['workshop_stock'] = $stocksMap[$r['filter']] ?? 0; // остатки на участке
         $rowsAll[]=$r;
         $totalMeters += $tm;
     }
@@ -210,13 +296,13 @@ try{
 <!doctype html><meta charset="utf-8">
 <title>Раскрой по заявке #<?=htmlspecialchars($orderNumber)?></title>
 <style>
-    :root{ --gap:12px; --left:520px; --mid:560px; --right:380px; }
+    :root{ --gap:12px; --left:700px; --mid:560px; --right:380px; }
     *{box-sizing:border-box}
-    body{font:12px/1.25 Arial;margin:10px;height:100vh;overflow:hidden}
+    body{font:12px/1.25 Arial;margin:10px;height:100vh;overflow:hidden;display:flex;flex-direction:column;align-items:center}
     h2{margin:0 0 8px;font:600 16px/1.2 Arial}
-    .wrap{display:grid;grid-template-columns:var(--left) var(--mid) var(--right);gap:var(--gap);height:calc(100vh - 38px)}
+    .wrap{display:grid;grid-template-columns:var(--left) var(--mid) var(--right);gap:var(--gap);height:calc(100vh - 38px);max-width:calc(var(--left) + var(--mid) + var(--right) + var(--gap)*2);width:100%}
 
-    .left{overflow-y:auto;overflow-x:hidden;border:1px solid #ddd;border-radius:8px;padding:8px;font-size:11px;background:#fff}
+    .left{overflow-y:auto;overflow-x:auto;border:1px solid #ddd;border-radius:8px;padding:8px;font-size:11px;background:#fff}
     .section{margin-bottom:10px}
     .section h3{margin:0 0 6px;font:600 13px/1.2 Arial}
 
@@ -224,17 +310,34 @@ try{
     .panel h3{margin:0 0 6px;font:600 14px/1.2 Arial}
     .meta{margin:6px 0 8px}
     .meta span{display:inline-block;margin-right:10px}
+    
+    /* правый блок: фиксированные кнопки, прокручиваемый список */
+    #balesPanel{display:flex !important;flex-direction:column !important;height:100% !important;overflow:hidden !important}
+    #balesPanel .panelHead{flex-shrink:0;padding-bottom:10px}
+    #balesPanel #bales{flex:1;overflow-y:auto !important;overflow-x:hidden;min-height:0;padding-top:0}
 
     #currentBalePanel{max-height:600px;overflow-y:auto}
+    
+    /* блок ассортимента: фиксированный заголовок, прокручиваемая таблица */
+    #assortPanel{display:flex !important;flex-direction:column !important;overflow:hidden !important}
+    #assortPanel h3{flex-shrink:0;margin:0 0 6px}
+    #assortPanel > div{flex:1;overflow-y:auto !important;overflow-x:hidden;min-height:0}
+    #assortPanel #assortTable thead{position:sticky;top:0;z-index:5;background:#f6f6f6}
 
-    table{border-collapse:collapse;table-layout:fixed;width:100%}
-    th,td{border:1px solid #ccc;padding:3px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    table{border-collapse:collapse;table-layout:fixed;width:100%;min-width:100%}
+    th,td{border:1px solid #ccc;padding:3px 5px;white-space:nowrap}
+    th{overflow:visible;text-overflow:clip}
+    td{overflow:hidden;text-overflow:ellipsis}
     th{background:#f6f6f6}
     .right{text-align:right}
 
     /* компактные ширины колонок */
     .col-filter{width:150px}.col-w{width:55px}.col-h{width:42px}
-    .col-need{width:80px}.col-cut{width:80px}.col-rest{width:80px}
+    .col-need{width:80px}.col-stock{width:80px}.col-cut{width:80px}.col-rest{width:80px}
+    
+    /* стили для input остатков */
+    .stock-input{width:100%;padding:2px 4px;border:1px solid #ccc;border-radius:4px;text-align:right;font-size:11px}
+    .stock-input:focus{outline:none;border-color:#2563eb;background:#f0f9ff}
 
     /* без hover/selection */
     .posTable tr:hover td{background:transparent}
@@ -245,6 +348,10 @@ try{
     /* подсветка кандидатов по ширине */
     .posTable tr.width-cand td{ position:relative; }
     .posTable tr.width-cand td::after{ content:""; position:absolute; inset:0; background: var(--wbg, transparent); pointer-events:none; }
+
+    /* подсветка кандидатов по ширине в таблице ассортимента */
+    #assortTable tr.width-cand-assort td{ position:relative; }
+    #assortTable tr.width-cand-assort td::after{ content:""; position:absolute; inset:0; background: var(--wbg-assort, transparent); pointer-events:none; }
 
     .baleTbl{table-layout:fixed;margin-top:6px}
     .bcol-pos{width:220px}.bcol-w{width:80px}.bcol-h{width:70px}.bcol-l{width:150px}
@@ -383,26 +490,39 @@ try{
             <table id="tblAll" class="posTable">
                 <colgroup>
                     <col class="col-filter"><col class="col-w"><col class="col-h">
-                    <col class="col-need"><col class="col-cut"><col class="col-rest">
+                    <col class="col-need"><col class="col-stock"><col class="col-cut"><col class="col-rest">
                 </colgroup>
                 <tr>
                     <th>Фильтр</th><th>Шир, мм</th><th>H, мм</th>
-                    <th class="right">Нужно, шт</th><th class="right">В раскр., шт</th><th class="right">Ост., шт</th>
+                    <th class="right">Нужно, шт</th><th class="right" title="Остаток на участке">Ост. уч., шт</th><th class="right">В раскр., шт</th><th class="right">Ост., шт</th>
                 </tr>
                 <?php foreach($rowsAll as $i=>$r): ?>
-                    <?php $need=(int)$r['need_units']; ?>
+                    <?php 
+                    $need=(int)$r['need_units']; 
+                    $stock=(int)($r['workshop_stock'] ?? 0);
+                    $rest = max(0, $need - $stock);
+                    ?>
                     <tr data-i="a<?=$i?>"
                         data-filter="<?=htmlspecialchars($r['filter'])?>"
                         data-w="<?=$r['strip_width_mm']?>"
                         data-h="<?=$r['pleat_height_mm']?>"
                         data-need="<?=$need?>"
+                        data-stock="<?=$stock?>"
                         data-cutn="0">
                         <td><?=htmlspecialchars($r['filter'])?></td>
                         <td><?=$r['strip_width_mm']?></td>
                         <td><?=$r['pleat_height_mm']?></td>
                         <td class="right needn"><?=number_format($need,0,'.',' ')?></td>
+                        <td class="right">
+                            <input type="number" class="stock-input" 
+                                   data-filter="<?=htmlspecialchars($r['filter'])?>"
+                                   value="<?=$stock?>" 
+                                   min="0" 
+                                   step="1"
+                                   title="Остатки на участке">
+                        </td>
                         <td class="right cutn">0</td>
-                        <td class="right restn"><?=number_format($need,0,'.',' ')?></td>
+                        <td class="right restn"><?=number_format($rest,0,'.',' ')?></td>
                     </tr>
                 <?php endforeach; ?>
             </table>
@@ -434,11 +554,15 @@ try{
 
         <div class="panel" id="assortPanel">
             <h3>Ассортимент (добавить не из заявки)</h3>
-            <table id="assortTable">
-                <colgroup>
-                    <col class="acol-mat"><col class="acol-filter"><col class="acol-w"><col class="acol-h"><col class="acol-act">
-                </colgroup>
-                <tr><th>Материал</th><th>Фильтр</th><th>Ширина</th><th>H</th><th>Действия</th></tr>
+            <div style="flex:1;overflow-y:auto;overflow-x:hidden;min-height:0">
+                <table id="assortTable">
+                    <colgroup>
+                        <col class="acol-mat"><col class="acol-filter"><col class="acol-w"><col class="acol-h"><col class="acol-act">
+                    </colgroup>
+                    <thead>
+                        <tr><th>Материал</th><th>Фильтр</th><th>Ширина</th><th>H</th><th>Действия</th></tr>
+                    </thead>
+                    <tbody>
                 <?php foreach($assort as $i=>$a): ?>
                     <tr data-filter="<?=htmlspecialchars($a['filter'])?>"
                         data-w="<?=$a['strip_width_mm']?>"
@@ -453,7 +577,9 @@ try{
                         </td>
                     </tr>
                 <?php endforeach; ?>
-            </table>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
@@ -528,10 +654,12 @@ try{
         highlightWidthMatches();
     });
 
-    /* подсветка подходящих ширин: (free - w) ∈ [6 .. 35] мм, ближе к 6 — насыщеннее */
+    /* подсветка подходящих ширин: (free - w) ∈ [5 .. 35] мм, ближе к 5 — насыщеннее */
     function highlightWidthMatches(){
-        const RANGE_MIN = 6, RANGE_MAX = 35;
+        const RANGE_MIN = 5, RANGE_MAX = 35;
         const free = Math.max(0, BALE_WIDTH - baleWidth);
+        
+        // Подсветка для левой таблицы (позиции из заявки)
         document.querySelectorAll('#tblAll tr[data-i]').forEach(tr=>{
             tr.classList.remove('width-cand'); tr.style.removeProperty('--wbg');
             const w = parseFloat(tr.dataset.w || '0');
@@ -545,6 +673,22 @@ try{
             tr.classList.add('width-cand');
             tr.style.setProperty('--wbg', `rgba(${r},${g},${b},0.40)`);
         });
+        
+        // Подсветка для таблицы ассортимента
+        document.querySelectorAll('#assortTable tr[data-filter]').forEach(tr=>{
+            tr.classList.remove('width-cand-assort'); tr.style.removeProperty('--wbg-assort');
+            const w = parseFloat(tr.dataset.w || '0');
+            if (w <= 0) return; // пропускаем строки без ширины
+            const delta = free - w;
+            if (delta + eps < RANGE_MIN || delta - eps > RANGE_MAX) return;
+            const t = (RANGE_MAX - delta) / (RANGE_MAX - RANGE_MIN);
+            const light=[210,235,255], dark=[0,102,204];
+            const r=Math.round(light[0] + (dark[0]-light[0])*t);
+            const g=Math.round(light[1] + (dark[1]-light[1])*t);
+            const b=Math.round(light[2] + (dark[2]-light[2])*t);
+            tr.classList.add('width-cand-assort');
+            tr.style.setProperty('--wbg-assort', `rgba(${r},${g},${b},0.40)`);
+        });
     }
 
     let curRow=null, baleStrips=[], baleWidth=0.0, bales=[];
@@ -553,21 +697,43 @@ try{
 
     function restUnitsOf(tr){
         const need = parseInt(tr.dataset.need||'0',10);
+        const stock = parseInt(tr.dataset.stock||'0',10);
         const cut  = parseInt(tr.dataset.cutn||'0',10);
-        return need - cut;
+        return Math.max(0, need - stock - cut);
     }
 
     function updateRowUnits(tr, deltaUnits){
         const need = parseInt(tr.dataset.need||'0',10);
+        const stock = parseInt(tr.dataset.stock||'0',10);
         const prev = parseInt(tr.dataset.cutn||'0',10);
         let now = prev + deltaUnits;
-        if (now < 0) now = 0; if (now > need) now = need;
+        if (now < 0) now = 0; 
+        // Максимум - это то, что нужно за вычетом остатков на участке
+        const maxCut = Math.max(0, need - stock);
+        if (now > maxCut) now = maxCut;
         tr.dataset.cutn = String(now);
-        const rest = need - now;
+        const rest = Math.max(0, need - stock - now);
         tr.querySelector('.cutn').textContent  = String(now);
         tr.querySelector('.restn').textContent = String(rest);
         tr.classList.toggle('done', rest===0); // зелёный, если закрыто
         return now - prev;
+    }
+    
+    function updateStock(tr, newStock){
+        const stock = Math.max(0, parseInt(newStock, 10) || 0);
+        tr.dataset.stock = String(stock);
+        const need = parseInt(tr.dataset.need||'0',10);
+        const cut = parseInt(tr.dataset.cutn||'0',10);
+        const rest = Math.max(0, need - stock - cut);
+        tr.querySelector('.restn').textContent = String(rest);
+        tr.classList.toggle('done', rest===0);
+        
+        // Предупреждаем, если в раскрое больше чем нужно с учетом остатков
+        const maxCut = Math.max(0, need - stock);
+        if (cut > maxCut) {
+            const excess = cut - maxCut;
+            console.warn(`Внимание: для ${tr.dataset.filter} в раскрое ${excess} шт больше, чем нужно (с учетом остатков на участке)`);
+        }
     }
 
     function setSelection(tr){
@@ -576,11 +742,29 @@ try{
         if(!tr){ el('selName').classList.add('quiet'); } else { el('selName').classList.remove('quiet'); }
     }
 
-    // клик по строке — добавить 1 шт
+    // клик по строке — добавить 1 шт (но не на input остатков)
     document.getElementById('tblAll').addEventListener('click', e=>{
+        if (e.target.classList.contains('stock-input')) return; // не обрабатываем клик по input
         const tr=e.target.closest('tr[data-i]'); if(!tr) return;
         setSelection(tr); addFromRow(tr, 1);
     });
+    
+    // обработчик изменения остатков на участке
+    document.getElementById('tblAll').addEventListener('change', e=>{
+        if (!e.target.classList.contains('stock-input')) return;
+        const tr = e.target.closest('tr[data-i]');
+        if (!tr) return;
+        const newStock = parseInt(e.target.value, 10) || 0;
+        updateStock(tr, newStock);
+        saveStocksToDB(); // автосохранение
+    });
+    
+    // обработчик blur для остатков (сохранение при потере фокуса)
+    document.getElementById('tblAll').addEventListener('blur', e=>{
+        if (e.target.classList.contains('stock-input')) {
+            saveStocksToDB();
+        }
+    }, true);
 
     function addFromRow(tr, take){
         if(!tr) return;
@@ -751,13 +935,74 @@ try{
         document.querySelectorAll('#tblAll tr[data-i]').forEach(tr=>{
             tr.dataset.cutn='0';
             tr.querySelector('.cutn').textContent='0';
-            tr.querySelector('.restn').textContent=tr.dataset.need||'0';
+            const need = parseInt(tr.dataset.need||'0',10);
+            const stock = parseInt(tr.dataset.stock||'0',10);
+            const rest = Math.max(0, need - stock);
+            tr.querySelector('.restn').textContent=String(rest);
             tr.classList.remove('done');
         });
+    }
+    
+    // Сохранение остатков на участке в БД
+    async function saveStocksToDB(){
+        try{
+            const stocks = [];
+            document.querySelectorAll('#tblAll tr[data-i]').forEach(tr=>{
+                const filter = tr.dataset.filter;
+                const stock = parseInt(tr.dataset.stock||'0',10);
+                stocks.push({filter, qty: stock});
+            });
+            const body = JSON.stringify({ order: ORDER, stocks });
+            const res = await fetch(location.pathname+'?action=save_stocks', { 
+                method:'POST', 
+                headers:{'Content-Type':'application/json'}, 
+                body 
+            });
+            const data = await res.json();
+            if(!data.ok) throw new Error(data.error||'Ошибка сохранения остатков');
+        }catch(e){ 
+            console.error('Не удалось сохранить остатки:', e.message); 
+        }
+    }
+    
+    // Загрузка остатков на участке из БД
+    async function loadStocksFromDB(){
+        try{
+            const res = await fetch(location.pathname + '?action=load_stocks', {
+                method:'POST', 
+                headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({order: ORDER})
+            });
+            const text = await res.text();
+            let data; 
+            try { data = JSON.parse(text); } 
+            catch { throw new Error('Backend вернул не JSON: ' + text.slice(0,200)); }
+            if(!data.ok) throw new Error(data.error||'Ошибка загрузки остатков');
+            
+            const stocks = data.stocks || {};
+            document.querySelectorAll('#tblAll tr[data-i]').forEach(tr=>{
+                const filter = tr.dataset.filter;
+                const stock = stocks[filter] || 0;
+                tr.dataset.stock = String(stock);
+                const input = tr.querySelector('.stock-input');
+                if (input) input.value = stock;
+                // Пересчитываем остатки с учетом остатков на участке
+                const need = parseInt(tr.dataset.need||'0',10);
+                const cut = parseInt(tr.dataset.cutn||'0',10);
+                const rest = Math.max(0, need - stock - cut);
+                tr.querySelector('.restn').textContent = String(rest);
+                tr.classList.toggle('done', rest===0);
+            });
+        }catch(e){ 
+            console.error('Не удалось загрузить остатки:', e.message); 
+        }
     }
 
     async function loadFromDB(){
         try{
+            // Сначала загружаем остатки на участке
+            await loadStocksFromDB();
+            
             const res = await fetch(location.pathname + '?action=load_cut', {
                 method:'POST', headers:{'Content-Type':'application/json'},
                 body: JSON.stringify({order: ORDER})
@@ -911,6 +1156,9 @@ try{
     // init
     el('btnSave').disabled=true; el('btnClear').disabled=true;
     highlightWidthMatches();
+    
+    // Загружаем остатки на участке при загрузке страницы
+    loadStocksFromDB();
 
     // показываем модалку, если есть новые позиции
     if (Array.isArray(MISSING) && MISSING.length){ renderMissingModal(); }

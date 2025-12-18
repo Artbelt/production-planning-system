@@ -42,11 +42,10 @@ foreach ($data as $date => $items) {
     }
 }
 
-// Устанавливаем статус готовности corrugation плана только если сохранены позиции
-if ($savedItems > 0) {
-    $stmt = $pdo->prepare("UPDATE orders SET corr_ready = 1 WHERE order_number = ?");
-    $stmt->execute([$order]);
-}
+// Устанавливаем статус готовности corrugation плана при завершении
+// (кнопка "Завершить" всегда должна отмечать corr_ready = 1)
+$stmt = $pdo->prepare("UPDATE orders SET corr_ready = 1 WHERE order_number = ?");
+$stmt->execute([$order]);
 
 // Перенаправление обратно на страницу планирования
 header("Location: ../NP_cut_index.php");
