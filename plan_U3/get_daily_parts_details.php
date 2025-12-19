@@ -83,3 +83,4 @@ try {
 } catch (Exception $e) {
     echo json_encode(['error' => 'Ошибка: ' . $e->getMessage()]);
 }
+
