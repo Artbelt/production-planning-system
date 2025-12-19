@@ -1932,6 +1932,17 @@ function get_filter_data($target_filter){
         }else{
             $result_array['comment'] = '';
         }
+        // Читаем аналог из поля analog (новый способ)
+        if (isset($filter_data['analog']) && !empty($filter_data['analog'])){
+            $result_array['analog'] = $filter_data['analog'];
+        } else {
+            // Для обратной совместимости: если в comment есть ANALOG_FILTER=..., извлекаем оттуда
+            if (isset($filter_data['comment']) && preg_match('/ANALOG_FILTER=([^\s]+)/i', $filter_data['comment'], $matches)) {
+                $result_array['analog'] = trim($matches[1]);
+            } else {
+                $result_array['analog'] = '';
+            }
+        }
         if (isset($filter_data['Diametr_outer'])){
             $result_array['Diametr_outer'] = $filter_data['Diametr_outer'];
         }else{
@@ -1952,13 +1963,26 @@ function get_filter_data($target_filter){
         }else{
             $result_array['Height'] = '';
         }
+        if (array_key_exists('productivity', $filter_data) && $filter_data['productivity'] !== null){
+            $result_array['productivity'] = $filter_data['productivity'];
+        }else{
+            $result_array['productivity'] = '';
+        }
+        if (array_key_exists('press', $filter_data) && $filter_data['press'] !== null){
+            $result_array['press'] = $filter_data['press'];
+        }else{
+            $result_array['press'] = '';
+        }
     } else {
         // Если данных нет, заполняем пустыми значениями
         $result_array['comment'] = '';
+        $result_array['analog'] = '';
         $result_array['Diametr_outer'] = '';
         $result_array['Diametr_inner_1'] = '';
         $result_array['Diametr_inner_2'] = '';
         $result_array['Height'] = '';
+        $result_array['productivity'] = '';
+        $result_array['press'] = '';
     }
 
     //крышка нижняя

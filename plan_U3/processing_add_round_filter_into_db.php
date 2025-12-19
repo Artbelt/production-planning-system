@@ -119,21 +119,124 @@ if ($pckg_presence != '') {
     $pckg_name = "";
 }
 
+/** Проверяем режим работы */
+$mode = isset($_POST['mode']) ? $_POST['mode'] : 'insert';
+
+$remark =  $_POST['remark'];
+// Извлекаем аналог из remark, если он там есть (для обратной совместимости)
+$analog = isset($_POST['analog']) ? trim($_POST['analog']) : '';
+if (empty($analog) && !empty($remark) && preg_match('/ANALOG_FILTER=([^\s]+)/i', $remark, $matches)) {
+    $analog = trim($matches[1]);
+    // Удаляем ANALOG_FILTER=... из remark
+    $remark = preg_replace('/\s*ANALOG_FILTER=[^\s]+/i', '', $remark);
+    $remark = trim($remark);
+}
+
 /** @var $a ПРоверка наличия фильтра в БД  */
 $a = check_filter($_POST['filter_name']);
 
-/** Если фильтр уже есть в БД -> выход */
-if ($a > 0){
-    echo "Фильтр {$filter_name} уже есть в БД";
+/** Если режим update - обновляем существующий фильтр */
+if ($mode == 'update') {
+    if ($a == 0) {
+        echo "Фильтр {$filter_name} не найден в БД для обновления";
+        exit();
+    }
+    
+    // Обновляем информацию о фильтре в БД
+    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
+    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
+    
+    // Экранируем значения для безопасности
+    $filter_name_escaped = $mysqli->real_escape_string($filter_name);
+    $category_escaped = $mysqli->real_escape_string($category);
+    $p_p_name_escaped = $mysqli->real_escape_string($p_p_name);
+    $up_cup_escaped = $mysqli->real_escape_string($up_cup);
+    $down_cup_escaped = $mysqli->real_escape_string($down_cup);
+    $pf_name_escaped = $mysqli->real_escape_string($pf_name);
+    $pi_name_escaped = $mysqli->real_escape_string($pi_name);
+    $pckg_name_escaped = $mysqli->real_escape_string($pckg_name);
+    $remark_escaped = $mysqli->real_escape_string($remark);
+    $analog_escaped = $mysqli->real_escape_string($analog);
+    $diametr_outer_escaped = $mysqli->real_escape_string($diametr_outer);
+    $diametr_inner_1_escaped = $mysqli->real_escape_string($diametr_inner_1);
+    $diametr_inner_2_escaped = $mysqli->real_escape_string($diametr_inner_2);
+    $height_escaped = $mysqli->real_escape_string($height);
+    $up_cap_PU_escaped = $mysqli->real_escape_string($up_cap_PU);
+    $down_cap_PU_escaped = $mysqli->real_escape_string($down_cap_PU);
+    $productivity_escaped = $mysqli->real_escape_string($productivity);
+    // Для press: если значение '1', сохраняем '1', иначе NULL
+    $press_sql = ($press === '1') ? "'1'" : 'NULL';
+    // Для analog: если значение пустое, сохраняем NULL, иначе значение
+    $analog_sql = empty($analog) ? 'NULL' : "'$analog_escaped'";
+    
+    $sql = "UPDATE round_filter_structure SET 
+            category = '$category_escaped',
+            filter_package = '$p_p_name_escaped',
+            up_cap = '$up_cup_escaped',
+            down_cap = '$down_cup_escaped',
+            prefilter = '$pf_name_escaped',
+            plastic_insertion = '$pi_name_escaped',
+            packing = '$pckg_name_escaped',
+            comment = '$remark_escaped',
+            analog = $analog_sql,
+            Diametr_outer = '$diametr_outer_escaped',
+            Diametr_inner_1 = '$diametr_inner_1_escaped',
+            Diametr_inner_2 = '$diametr_inner_2_escaped',
+            Height = '$height_escaped',
+            PU_up_cap = '$up_cap_PU_escaped',
+            PU_down_cap = '$down_cap_PU_escaped',
+            productivity = '$productivity_escaped',
+            press = $press_sql
+            WHERE filter = '$filter_name_escaped'";
+    $result = $mysqli->query($sql);
+    
+    if (!$result) {
+        echo "Ошибка обновления фильтра: " . $mysqli->error;
+        $mysqli->close();
+        exit();
+    }
+    
+    // Обновляем информацию о гофропакете
+    $p_p_paper_width_escaped = $mysqli->real_escape_string($p_p_paper_width);
+    $p_p_fold_height_escaped = $mysqli->real_escape_string($p_p_fold_height);
+    $p_p_fold_count_escaped = $mysqli->real_escape_string($p_p_fold_count);
+    $p_p_remark_escaped = $mysqli->real_escape_string($p_p_remark);
+    $ext_wf_name_escaped = isset($ext_wf_name) ? $mysqli->real_escape_string($ext_wf_name) : '';
+    $int_wf_name_escaped = isset($int_wf_name) ? $mysqli->real_escape_string($int_wf_name) : '';
+    
+    $sql = "UPDATE paper_package_round SET 
+            p_p_height = '$p_p_paper_width_escaped',
+            p_p_ext_wireframe = '$ext_wf_name_escaped',
+            p_p_int_wireframe = '$int_wf_name_escaped',
+            p_p_paper_width = '$p_p_paper_width_escaped',
+            p_p_fold_height = '$p_p_fold_height_escaped',
+            p_p_fold_count = '$p_p_fold_count_escaped',
+            comment = '$p_p_remark_escaped'
+            WHERE p_p_name = '$p_p_name_escaped'";
+    $result = $mysqli->query($sql);
+    
+    $mysqli->close();
+    
+    echo "Фильтр {$filter_name} успешно обновлен в БД";
+    ?>
+    <button onclick="window.close();">Закрыть окно</button>
+    <?php
     exit();
 }
 
-$remark =  $_POST['remark'];
+/** Если режим insert и фильтр уже есть в БД -> выход */
+if ($mode == 'insert' && $a > 0){
+    echo "Фильтр {$filter_name} уже есть в БД. Используйте режим редактирования для изменения параметров.";
+    exit();
+}
 
 $diametr_outer = $_POST['Diametr_outer'];
 $diametr_inner_1 = $_POST['Diametr_inner_1'];
 $diametr_inner_2 = $_POST['Diametr_inner_2'];
 $height = $_POST['Height'];
+$productivity = isset($_POST['productivity']) ? $_POST['productivity'] : '';
+// В БД: 1 или NULL (пусто). Если не выбрано или пусто - сохраняем как NULL
+$press = (isset($_POST['press']) && $_POST['press'] === '1') ? '1' : '';
 // $up_cap_PU и $down_cap_PU уже определены выше
 
 
@@ -142,8 +245,12 @@ $height = $_POST['Height'];
 /** Если фильтра в БД такого нет -> начинаем запись */
 
 /** Запись информации о фильтре в БД */
-$sql = "INSERT INTO round_filter_structure(filter, category, filter_package, up_cap, down_cap, prefilter, plastic_insertion, packing, comment, Diametr_outer, Diametr_inner_1, Diametr_inner_2, Height, PU_up_cap, PU_down_cap) 
-        VALUES ('$filter_name','$category','$p_p_name','$up_cup','$down_cup','$pf_name','$pi_name','$pckg_name','$remark', '$diametr_outer', '$diametr_inner_1', '$diametr_inner_2', '$height', '$up_cap_PU','$down_cap_PU');";
+// Для press: если значение '1', сохраняем '1', иначе NULL
+$press_for_insert = ($press === '1') ? "'1'" : 'NULL';
+// Для analog: если значение пустое, сохраняем NULL, иначе значение
+$analog_escaped = empty($analog) ? 'NULL' : "'".addslashes($analog)."'";
+$sql = "INSERT INTO round_filter_structure(filter, category, filter_package, up_cap, down_cap, prefilter, plastic_insertion, packing, comment, analog, Diametr_outer, Diametr_inner_1, Diametr_inner_2, Height, PU_up_cap, PU_down_cap, productivity, press) 
+        VALUES ('$filter_name','$category','$p_p_name','$up_cup','$down_cup','$pf_name','$pi_name','$pckg_name','$remark', $analog_escaped, '$diametr_outer', '$diametr_inner_1', '$diametr_inner_2', '$height', '$up_cap_PU','$down_cap_PU', '$productivity', $press_for_insert);";
 $result = mysql_execute($sql);
 
 /** Запись информации о гофропакете в БД */

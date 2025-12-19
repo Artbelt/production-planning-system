@@ -2,9 +2,16 @@
 require_once('tools/tools.php');
 require_once('settings.php');
 
-// Если нажали "Загрузить", берём текущий filter_name как analog_filter
+// Определяем режим работы: 'edit' (редактирование) или 'add' (добавление)
+$work_mode = isset($_POST['work_mode']) ? $_POST['work_mode'] : (isset($_GET['mode']) ? $_GET['mode'] : 'add');
+if ($work_mode !== 'edit' && $work_mode !== 'add') {
+    $work_mode = 'add';
+}
+
+// Если нажали "Загрузить", берём текущий filter_name как analog_filter и переключаемся в режим редактирования
 if (isset($_POST['load_from_db']) && !empty($_POST['filter_name'])) {
     $_POST['analog_filter'] = $_POST['filter_name'];
+    $work_mode = 'edit';
 }
 
 // Текущее имя фильтра
@@ -45,11 +52,14 @@ if ($analog_filter !== '') {
     $analog_data['down_cap'] ='';
     $analog_data['pp_insertion'] ='';
     $analog_data['comment'] ='';
+    $analog_data['analog'] ='';
     $analog_data['Diametr_outer']='';
     $analog_data['Diametr_inner_1']='';
     $analog_data['Diametr_inner_2']='';
     $analog_data['Height']='';
     $analog_data['packing']='';
+    $analog_data['productivity']='';
+    $analog_data['press']='';
 }
 ?>
 <!DOCTYPE html>
@@ -142,6 +152,15 @@ if ($analog_filter !== '') {
         .filter-image img{max-width:120px; height:auto; border-radius:var(--radius); border:1px solid var(--border); object-fit:contain}
         .load-form{display:flex; gap:8px; align-items:flex-end}
         .load-form input{flex:1}
+        input[type="radio"]{
+            width:auto; margin-right:4px; cursor:pointer;
+        }
+        label[style*="cursor:pointer"]{
+            padding:8px 12px; border-radius:8px; transition:background .15s;
+        }
+        label[style*="cursor:pointer"]:hover{
+            background:#f3f4f6;
+        }
         @media(max-width:900px){
             .row-2,.row-4{grid-template-columns:1fr}
             .grid.cols-2{grid-template-columns:1fr}
@@ -241,56 +260,78 @@ if ($analog_filter !== '') {
         </div>
     </header>
 
-    <?php if ($analog_filter !== ''): ?>
-        <p class='muted' style='margin:8px 2px 18px'>Загружен фильтр: <b><?= htmlspecialchars($analog_filter) ?></b></p>
+    <!-- Переключатель режимов -->
+    <section class="card" style="margin-bottom:16px">
+        <h3>Режим работы</h3>
+        <form action="" method="post" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer">
+                <input type="radio" name="work_mode" value="add" <?= $work_mode === 'add' ? 'checked' : '' ?> onchange="this.form.submit()">
+                <span>Добавить новый фильтр в БД</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer">
+                <input type="radio" name="work_mode" value="edit" <?= $work_mode === 'edit' ? 'checked' : '' ?> onchange="this.form.submit()">
+                <span>Редактировать существующий фильтр</span>
+            </label>
+        </form>
+    </section>
+
+    <?php if ($work_mode === 'edit'): ?>
+        <!-- Режим редактирования -->
+        <?php if ($analog_filter !== ''): ?>
+            <p class='muted' style='margin:8px 2px 18px'>Загружен фильтр: <b><?= htmlspecialchars($analog_filter) ?></b></p>
+        <?php else: ?>
+            <p class='muted' style='margin:8px 2px 18px'>Выберите фильтр из списка и нажмите "Загрузить" для редактирования его параметров.</p>
+        <?php endif; ?>
+
+        <!-- Загрузка фильтра для редактирования -->
+        <section class="card">
+            <h3>Загрузка фильтра для редактирования</h3>
+            <form action="" method="post" class="load-form">
+                <input type="hidden" name="work_mode" value="edit">
+                <div style="flex:1">
+                    <label>Наименование фильтра</label>
+                    <select name="filter_name">
+                        <option value="">— Выберите фильтр —</option>
+                        <?php foreach ($all_filters as $row):
+                            $f = $row['filter'];
+                            $sel = ($f === $filter_name) ? 'selected' : '';
+                            ?>
+                            <option value="<?= htmlspecialchars($f) ?>" <?= $sel ?>><?= htmlspecialchars($f) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <button type="submit" name="load_from_db" class="btn load">Загрузить</button>
+            </form>
+            <div class="help">Выберите фильтр из списка и нажмите "Загрузить" для редактирования его параметров.</div>
+        </section>
     <?php else: ?>
-        <p class='muted' style='margin:8px 2px 18px'>Введите имя фильтра и нажмите "Загрузить" для редактирования</p>
+        <!-- Режим добавления -->
+        <!-- Прототип -->
+        <section class="card">
+            <h3>Прототип</h3>
+            <form action="" method="post" class="proto-form">
+                <input type="hidden" name="work_mode" value="add">
+                <div style="flex:1; min-width:280px">
+                    <label>Выберите существующий фильтр</label>
+                    <select name="analog_filter" onchange="this.form.submit()">
+                        <option value="">— без прототипа —</option>
+                        <?php foreach ($all_filters as $row):
+                            $f = $row['filter'];
+                            $sel = ($f === $analog_filter) ? 'selected' : '';
+                            ?>
+                            <option value="<?= htmlspecialchars($f) ?>" <?= $sel ?>><?= htmlspecialchars($f) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="help">При выборе прототипа параметры ниже заполнятся автоматически — вы сможете их подправить.</div>
+                </div>
+                <input type="hidden" name="filter_name" value="<?= htmlspecialchars($filter_name) ?>">
+            </form>
+        </section>
     <?php endif; ?>
 
-    <!-- Загрузка фильтра -->
-    <section class="card">
-        <h3>Загрузка фильтра для редактирования</h3>
-        <form action="" method="post" class="load-form">
-            <div style="flex:1">
-                <label>Наименование фильтра</label>
-                <select name="filter_name">
-                    <option value="">— Выберите фильтр —</option>
-                    <?php foreach ($all_filters as $row):
-                        $f = $row['filter'];
-                        $sel = ($f === $filter_name) ? 'selected' : '';
-                        ?>
-                        <option value="<?= htmlspecialchars($f) ?>" <?= $sel ?>><?= htmlspecialchars($f) ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <button type="submit" name="load_from_db" class="btn load">Загрузить</button>
-        </form>
-        <div class="help">Выберите фильтр из списка и нажмите "Загрузить" для редактирования его параметров.</div>
-    </section>
-
-    <!-- Прототип -->
-    <section class="card">
-        <h3>Прототип</h3>
-        <form action="" method="post" class="proto-form">
-            <div style="flex:1; min-width:280px">
-                <label>Выберите существующий фильтр</label>
-                <select name="analog_filter" onchange="this.form.submit()">
-                    <option value="">— без прототипа —</option>
-                    <?php foreach ($all_filters as $row):
-                        $f = $row['filter'];
-                        $sel = ($f === $analog_filter) ? 'selected' : '';
-                        ?>
-                        <option value="<?= htmlspecialchars($f) ?>" <?= $sel ?>><?= htmlspecialchars($f) ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <div class="help">При выборе прототипа параметры ниже заполнятся автоматически — вы сможете их подправить.</div>
-            </div>
-            <input type="hidden" name="filter_name" value="<?= htmlspecialchars($filter_name) ?>">
-        </form>
-    </section>
-
     <form id="saveForm" action="processing_add_round_filter_into_db.php" method="post">
-        <input type="hidden" name="mode" value="update">
+        <input type="hidden" name="mode" value="<?= $work_mode === 'edit' ? 'update' : 'insert' ?>">
+        <input type="hidden" name="work_mode" value="<?= htmlspecialchars($work_mode) ?>">
         
         <div class="grid cols-2" style="margin-top:16px">
             
@@ -300,7 +341,11 @@ if ($analog_filter !== '') {
                 <div class="row-2">
                     <div>
                         <label><b>Наименование фильтра</b></label>
-                        <input type="text" name="filter_name" value="<?= htmlspecialchars($filter_name) ?>" placeholder="Например, AF1600">
+                        <?php if ($work_mode === 'edit'): ?>
+                            <input type="text" name="filter_name" value="<?= htmlspecialchars($filter_name) ?>" placeholder="Например, AF1600" readonly>
+                        <?php else: ?>
+                            <input type="text" name="filter_name" value="<?= htmlspecialchars($filter_name) ?>" placeholder="Например, AF1600">
+                        <?php endif; ?>
                     </div>
                     <div>
                         <label>Категория</label>
@@ -519,11 +564,51 @@ if ($analog_filter !== '') {
                 </div>
             </section>
 
+            <!-- Технологические параметры -->
+            <section class="card">
+                <h3>Технологические параметры</h3>
+                <div class="row-2">
+                    <div>
+                        <label>Производительность в смену</label>
+                        <input type="text" name="productivity" value="<?= htmlspecialchars($analog_data['productivity'] ?? '') ?>" placeholder="шт/смену">
+                    </div>
+                    <div>
+                        <label>Прижимать прессом</label>
+                        <select name="press">
+                            <?php 
+                            // Получаем значение press из данных
+                            $press_value = '';
+                            if (array_key_exists('press', $analog_data)) {
+                                $press_value = $analog_data['press'];
+                            }
+                            // В БД: 1 или ничего (NULL/пусто)
+                            // Если значение равно 1 (число или строка) - выбираем "Да"
+                            $is_press_yes = ($press_value === 1 || $press_value === '1');
+                            ?>
+                            <option value="" <?= !$is_press_yes ? 'selected' : '' ?>>Нет</option>
+                            <option value="1" <?= $is_press_yes ? 'selected' : '' ?>>Да</option>
+                        </select>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Аналог -->
+            <section class="card">
+                <h3>Аналог</h3>
+                <div>
+                    <label>Аналог фильтра</label>
+                    <input type="text" name="analog" 
+                           value="<?= htmlspecialchars($analog_data['analog'] ?? '') ?>"
+                           placeholder="Название аналога (если есть)" />
+                    <div class="help">Укажите аналог фильтра, если он есть</div>
+                </div>
+            </section>
+
             <!-- Примечание -->
             <section class="card" style="grid-column:1/-1">
                 <h3>Примечание</h3>
                 <input type="text" name="remark" 
-                       value="<?= htmlspecialchars($analog_data['comment'] ?? '') . ($analog_filter !== '' ? ' ANALOG_FILTER='.htmlspecialchars($analog_filter) : '') ?>"
+                       value="<?= htmlspecialchars($analog_data['comment'] ?? '') ?>"
                        placeholder="Произвольный комментарий" />
             </section>
         </div>
@@ -533,7 +618,9 @@ if ($analog_filter !== '') {
     <div class="actions">
         <div class="muted">Проверьте корректность параметров перед сохранением.</div>
         <div style="display:flex; gap:10px">
-            <button type="submit" form="saveForm" class="btn">Сохранить изменения</button>
+            <button type="submit" form="saveForm" class="btn">
+                <?= $work_mode === 'edit' ? 'Сохранить изменения' : 'Добавить фильтр в БД' ?>
+            </button>
             <button type="button" class="btn secondary" onclick="history.back()">Отмена</button>
         </div>
     </div>

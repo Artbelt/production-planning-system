@@ -503,13 +503,9 @@ echo "<!-- Аккуратная панель авторизации -->
 
                 <div class="section-title" style="margin-top:14px">Управление данными</div>
                 <div class="stack">
-                    <form action="add_round_filter_into_db.php" method="post" target="_blank" class="stack">
-                        <input type="hidden" name="workshop" value="<?= htmlspecialchars($workshop) ?>">
-                        <input type="submit" value="Добавить фильтр в БД(full)">
-                    </form>
                     <form action="edit_filter_properties.php" method="post" target="_blank" class="stack">
                         <input type="hidden" name="workshop" value="<?= htmlspecialchars($workshop) ?>">
-                        <input type="submit" value="Изменить параметры фильтра">
+                        <input type="submit" value="Добавить/изменить фильтр в БД">
                     </form>
                 </div>
 
