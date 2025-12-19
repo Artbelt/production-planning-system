@@ -459,6 +459,119 @@ $currentDepartment = $selectedDepartment;
             background: #e5e7eb;
         }
 
+        /* Модальное окно */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(4px);
+            animation: fadeIn 0.2s;
+        }
+
+        .modal.show {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            animation: slideUp 0.3s;
+            position: relative;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(30px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid #f3f4f6;
+        }
+
+        .modal-header h2 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1f2937;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #6b7280;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .modal-close:hover {
+            background: #f3f4f6;
+            color: #1f2937;
+        }
+
+        .modal-footer {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            margin-top: 20px;
+            padding-top: 16px;
+            border-top: 2px solid #f3f4f6;
+        }
+
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #374151;
+            padding: 8px 18px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-secondary:hover {
+            background: #e5e7eb;
+        }
+
         @media (max-width: 768px) {
             .form-grid {
                 grid-template-columns: 1fr;
@@ -475,6 +588,11 @@ $currentDepartment = $selectedDepartment;
             .user-panel {
                 position: static;
                 margin-bottom: 16px;
+            }
+
+            .modal-content {
+                width: 95%;
+                padding: 20px;
             }
         }
     </style>
@@ -530,11 +648,66 @@ $currentDepartment = $selectedDepartment;
             </div>
         </div>
 
-        <!-- Форма создания задачи -->
+        <!-- Кнопка добавления задачи -->
+        <div class="section" style="text-align: center; padding: 20px;">
+            <button type="button" class="btn btn-primary" onclick="openTaskModal()" style="font-size: 14px; padding: 10px 24px;">
+                <span>➕</span>
+                <span>Добавить задачу</span>
+            </button>
+        </div>
+
+        <!-- Список задач -->
         <div class="section">
             <div class="section-header">
-                <div class="section-header-icon">➕</div>
-                <h2>Новая задача</h2>
+                <div class="section-header-icon">📊</div>
+                <h2>Список задач <span id="taskCount">(0)</span></h2>
+            </div>
+
+            <div class="filters">
+                <input type="text" id="searchInput" placeholder="Поиск по названию или исполнителю..." onkeyup="filterTasks()">
+                <select id="departmentFilter" onchange="filterTasks()">
+                    <option value="">Все цеха</option>
+                    <?php foreach ($directorDepartments as $dept): ?>
+                    <option value="<?php echo htmlspecialchars($dept); ?>"><?php echo htmlspecialchars($dept); ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <select id="statusFilter" onchange="filterTasks()">
+                    <option value="">Все статусы</option>
+                    <option value="pending">Ожидает</option>
+                    <option value="in_progress">В работе</option>
+                    <option value="completed">Завершено</option>
+                </select>
+                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; color: #374151;">
+                    <input type="checkbox" id="hideCompleted" onchange="filterTasks()" checked>
+                    <span>Скрыть выполненные</span>
+                </label>
+                <select id="priorityFilter" onchange="filterTasks()">
+                    <option value="">Все приоритеты</option>
+                    <option value="low">Низкий</option>
+                    <option value="normal">Средний</option>
+                    <option value="high">Высокий</option>
+                    <option value="urgent">Срочный</option>
+                </select>
+            </div>
+
+            <div class="tasks-list" id="tasksList">
+                <div class="empty-state">
+                    <div class="empty-icon">📋</div>
+                    <div class="empty-text">Нет задач. Создайте первую задачу!</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно создания задачи -->
+    <div id="taskModal" class="modal" onclick="closeModalOnBackdrop(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h2>
+                    <span>➕</span>
+                    <span>Новая задача</span>
+                </h2>
+                <button type="button" class="modal-close" onclick="closeTaskModal()">&times;</button>
             </div>
 
             <form id="taskForm" onsubmit="createTask(event)">
@@ -572,49 +745,14 @@ $currentDepartment = $selectedDepartment;
                     </div>
                 </div>
 
-                <button type="submit" class="btn btn-primary">
-                    <span>➕</span>
-                    <span>Создать задачу</span>
-                </button>
-            </form>
-        </div>
-
-        <!-- Список задач -->
-        <div class="section">
-            <div class="section-header">
-                <div class="section-header-icon">📊</div>
-                <h2>Список задач <span id="taskCount">(0)</span></h2>
-            </div>
-
-            <div class="filters">
-                <input type="text" id="searchInput" placeholder="Поиск по названию или исполнителю..." onkeyup="filterTasks()">
-                <select id="departmentFilter" onchange="filterTasks()">
-                    <option value="">Все цеха</option>
-                    <?php foreach ($directorDepartments as $dept): ?>
-                    <option value="<?php echo htmlspecialchars($dept); ?>"><?php echo htmlspecialchars($dept); ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <select id="statusFilter" onchange="filterTasks()">
-                    <option value="">Все статусы</option>
-                    <option value="pending">Ожидает</option>
-                    <option value="in_progress">В работе</option>
-                    <option value="completed">Завершено</option>
-                </select>
-                <select id="priorityFilter" onchange="filterTasks()">
-                    <option value="">Все приоритеты</option>
-                    <option value="low">Низкий</option>
-                    <option value="normal">Средний</option>
-                    <option value="high">Высокий</option>
-                    <option value="urgent">Срочный</option>
-                </select>
-            </div>
-
-            <div class="tasks-list" id="tasksList">
-                <div class="empty-state">
-                    <div class="empty-icon">📋</div>
-                    <div class="empty-text">Нет задач. Создайте первую задачу!</div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeTaskModal()">Отмена</button>
+                    <button type="submit" class="btn btn-primary">
+                        <span>➕</span>
+                        <span>Создать задачу</span>
+                    </button>
                 </div>
-            </div>
+            </form>
         </div>
     </div>
 
@@ -749,6 +887,7 @@ $currentDepartment = $selectedDepartment;
             const departmentFilter = document.getElementById('departmentFilter').value;
             const statusFilter = document.getElementById('statusFilter').value;
             const priorityFilter = document.getElementById('priorityFilter').value;
+            const hideCompleted = document.getElementById('hideCompleted').checked;
 
             let filtered = allTasks.filter(task => {
                 const matchSearch = !searchText || 
@@ -757,8 +896,9 @@ $currentDepartment = $selectedDepartment;
                 const matchDepartment = !departmentFilter || task.department === departmentFilter;
                 const matchStatus = !statusFilter || task.status === statusFilter;
                 const matchPriority = !priorityFilter || task.priority === priorityFilter;
+                const matchHideCompleted = !hideCompleted || task.status !== 'completed';
 
-                return matchSearch && matchDepartment && matchStatus && matchPriority;
+                return matchSearch && matchDepartment && matchStatus && matchPriority && matchHideCompleted;
             });
 
             renderTasks(filtered);
@@ -851,6 +991,7 @@ $currentDepartment = $selectedDepartment;
                 if (result.ok) {
                     alert('✅ Задача успешно создана!');
                     document.getElementById('taskForm').reset();
+                    closeTaskModal();
                     loadAllTasks();
                     loadAllUsers();
                     
@@ -895,6 +1036,32 @@ $currentDepartment = $selectedDepartment;
             div.textContent = text || '';
             return div.innerHTML;
         }
+
+        // Управление модальным окном
+        function openTaskModal() {
+            const modal = document.getElementById('taskModal');
+            modal.classList.add('show');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeTaskModal() {
+            const modal = document.getElementById('taskModal');
+            modal.classList.remove('show');
+            document.body.style.overflow = '';
+        }
+
+        function closeModalOnBackdrop(event) {
+            if (event.target.id === 'taskModal') {
+                closeTaskModal();
+            }
+        }
+
+        // Закрытие модального окна по Escape
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeTaskModal();
+            }
+        });
     </script>
 </body>
 </html>

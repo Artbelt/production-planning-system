@@ -128,16 +128,45 @@ $filter_count_in_order = 0;
 /** Переменная для подсчета количества сделанных фильтров */
 $filter_count_produced = 0;
 
+/** Переменная для подсчета количества изготовленных гофропакетов */
+$gofro_packages_produced = 0;
+
 /** strings counter */
 $count =0;
 
 //echo '<form action="filter_parameters.php" method="post">';
+
+/** Подключение к БД для получения гофропакетов */
+global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
+$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+if ($mysqli->connect_errno) {
+    echo 'Возникла проблема на сайте'
+        . "Номер ошибки: " . $mysqli->connect_errno . "\n"
+        . "Ошибка: " . $mysqli->connect_error . "\n";
+    exit;
+}
 
 /** Разбор массива значений по подключению */
 while ($row = $result->fetch_assoc()){
     $difference = (int)$row['count']-(int)select_produced_filters_by_order($row['filter'],$order_number)[1];
     $filter_count_in_order = $filter_count_in_order + (int)$row['count'] ;
     $filter_count_produced = $filter_count_produced + (int)select_produced_filters_by_order($row['filter'],$order_number)[1];
+
+    // Получаем гофропакет для фильтра из round_filter_structure
+    $gofro_package = '';
+    $gofro_package_count = 0;
+    $sql_gofro = "SELECT filter_package FROM round_filter_structure WHERE filter = '".$mysqli->real_escape_string($row['filter'])."'";
+    if ($result_gofro = $mysqli->query($sql_gofro)) {
+        if ($row_gofro = $result_gofro->fetch_assoc()) {
+            if (!empty($row_gofro['filter_package'])) {
+                $gofro_package = $row_gofro['filter_package'];
+                // Подсчитываем количество изготовленных гофропакетов
+                $gofro_package_count = (int)manufactured_part_count($gofro_package, $order_number);
+                $gofro_packages_produced += $gofro_package_count;
+            }
+        }
+        $result_gofro->free();
+    }
 
     $count += 1;
     echo "<tr style='hov'>"
@@ -162,10 +191,17 @@ while ($row = $result->fetch_assoc()){
     }
     // Убраны ссылки на старые таблицы list_of_caps, list_of_filled_caps
     echo "<td>-</td>";
-    // Убраны ссылки на старую таблицу manufactured_parts
-    echo "<td>-</td></tr>";
+    // Выводим количество изготовленных гофропакетов
+    if ($gofro_package_count > 0) {
+        echo "<td>".$gofro_package_count."</td></tr>";
+    } else {
+        echo "<td>-</td></tr>";
+    }
 
 }
+
+/** Закрываем соединение с БД */
+$mysqli->close();
 
 /** @var расчет оставшегося количества продукции для производства $summ_difference */
 $summ_difference = $filter_count_in_order - $filter_count_produced;
@@ -182,6 +218,8 @@ echo "<tr style='hov'>"
     ."<td></td>"
     ."<td>".$filter_count_produced."</td>"
     ."<td>".$summ_difference.'*'."</td>"
+    ."<td></td>"
+    ."<td>".$gofro_packages_produced."</td>"
     ."</tr>";
 
 echo "</table>";

@@ -665,7 +665,13 @@ function show_weekly_corrugation(){
     foreach ($all_days_data as $day_data) {
         echo '<tr>';
         echo '<td class="date-col">' . htmlspecialchars($day_data['date']) . '</td>';
-        echo '<td class="total-col">' . $day_data['total_count'] . '</td>';
+        echo '<td class="total-col">';
+        if ($day_data['total_count'] > 0) {
+            echo '<span class="corrugation-link" data-date="' . htmlspecialchars($day_data['date']) . '" style="cursor: pointer; color: #0066cc; text-decoration: underline;">' . $day_data['total_count'] . '</span>';
+        } else {
+            echo '-';
+        }
+        echo '</td>';
         echo '</tr>';
     }
     
@@ -678,6 +684,154 @@ function show_weekly_corrugation(){
     echo "<div class='production-stat'><span class='production-stat-label'>Среднее количество в день:</span> <span class='production-stat-value'>".round($count_per_day, 0)."</span></div>";
     echo '</div>'; // закрываем production-card-footer
     echo '</div>'; // закрываем production-card
+    
+    // Модальное окно для детальной информации по гофропакетам
+    ?>
+    <div id="corrugationDetailModal" style="display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); justify-content: center; align-items: center;">
+        <div style="background-color: white; padding: 20px; border-radius: 8px; max-width: 900px; max-height: 90vh; overflow-y: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1); position: relative;">
+            <span id="closeCorrugationModal" style="position: absolute; right: 15px; top: 15px; font-size: 28px; font-weight: bold; color: #999; cursor: pointer; line-height: 1;">&times;</span>
+            <h3 id="corrugationModalTitle" style="margin-top: 0; margin-bottom: 15px;">Детальная информация по гофропакетам</h3>
+            <div id="corrugationModalContent" style="min-height: 200px;">
+                <div style="text-align: center; padding: 40px;">Загрузка данных...</div>
+            </div>
+        </div>
+    </div>
+    
+    <style>
+        .corrugation-link:hover {
+            color: #004499 !important;
+        }
+        #corrugationDetailModal table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        #corrugationDetailModal th {
+            background-color: #f3f4f6;
+            padding: 8px;
+            text-align: left;
+            border: 1px solid #ddd;
+            font-weight: bold;
+        }
+        #corrugationDetailModal td {
+            padding: 8px;
+            border: 1px solid #ddd;
+        }
+        #corrugationDetailModal tr:nth-child(even) {
+            background-color: #f9fafb;
+        }
+        .corrugation-summary {
+            background-color: #eff6ff;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+    </style>
+    
+    <script>
+    (function() {
+        // Проверяем, не инициализированы ли уже обработчики
+        if (window.corrugationModalInitialized) {
+            return;
+        }
+        window.corrugationModalInitialized = true;
+        
+        // Обработчик клика на цифры (делегирование событий)
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('corrugation-link')) {
+                e.preventDefault();
+                const date = e.target.getAttribute('data-date');
+                showCorrugationDetails(date);
+            }
+        });
+        
+        // Закрытие модального окна
+        const closeBtn = document.getElementById('closeCorrugationModal');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function() {
+                document.getElementById('corrugationDetailModal').style.display = 'none';
+            });
+        }
+        
+        // Закрытие при клике вне модального окна
+        const modal = document.getElementById('corrugationDetailModal');
+        if (modal) {
+            modal.addEventListener('click', function(e) {
+                if (e.target.id === 'corrugationDetailModal') {
+                    this.style.display = 'none';
+                }
+            });
+        }
+        
+        // Закрытие по клавише Escape
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && modal && modal.style.display === 'flex') {
+                modal.style.display = 'none';
+            }
+        });
+        
+        // Функция показа детальной информации
+        function showCorrugationDetails(date) {
+            const modal = document.getElementById('corrugationDetailModal');
+            const title = document.getElementById('corrugationModalTitle');
+            const content = document.getElementById('corrugationModalContent');
+            
+            title.textContent = 'Детальная информация по гофропакетам (' + date + ')';
+            content.innerHTML = '<div style="text-align: center; padding: 40px;">Загрузка данных...</div>';
+            modal.style.display = 'flex';
+            
+            // Загружаем данные через AJAX
+            fetch('get_corrugation_details.php?date=' + encodeURIComponent(date))
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('HTTP error! status: ' + response.status);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка: ' + escapeHtml(data.error) + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.items || data.items.length === 0) {
+                        content.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">Нет данных для отображения</div>';
+                        return;
+                    }
+                    
+                    let html = '<div class="corrugation-summary">';
+                    html += '<strong>Итого гофропакетов за день:</strong> <strong>' + data.total_count + ' шт</strong>';
+                    html += '</div>';
+                    
+                    html += '<table>';
+                    html += '<thead><tr><th>Заявка</th><th>Фильтр</th><th>Количество</th></tr></thead>';
+                    html += '<tbody>';
+                    
+                    data.items.forEach(function(item) {
+                        html += '<tr>';
+                        html += '<td>' + escapeHtml(item.order_number || '-') + '</td>';
+                        html += '<td>' + escapeHtml(item.filter_label || '-') + '</td>';
+                        html += '<td>' + item.count + ' шт</td>';
+                        html += '</tr>';
+                    });
+                    
+                    html += '</tbody></table>';
+                    content.innerHTML = html;
+                })
+                .catch(error => {
+                    content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка загрузки данных: ' + escapeHtml(error.message) + '</div>';
+                });
+        }
+        
+        // Функция экранирования HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    })();
+    </script>
+    <?php
 }
 
 

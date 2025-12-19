@@ -223,47 +223,552 @@ function print_r_my ($a){
 
 /** Отображение выпуска продукции за последнюю неделю */
 function show_weekly_production(){
-    $average_value = 0;
-    for ($a = 1; $a < 11; $a++) {
-
-        $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));;
-        $production_date = reverse_date($production_date);
-        $sql = "SELECT * FROM manufactured_production WHERE date_of_production = '$production_date';";
-        $result = mysql_execute($sql);
-        /** @var $x $variant counter */
-        $x = 0;
-        foreach ($result as $variant) {
-            $x += $variant['count_of_filters'];
-
-        }
-        $average_value += $x;
-        /** Выводим сумму фильтров */
-        echo $production_date . " " . $x . " шт <br>";
-
+    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
+    
+    $count = 0;
+    
+    // Начинаем плашку (карточку)
+    echo '<div class="production-card">';
+    echo '<div class="production-card-header">';
+    echo '<h3 class="production-card-title">Изготовленная продукция за последние 10 дней</h3>';
+    echo '</div>';
+    echo '<div class="production-card-body">';
+    
+    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+    if ($mysqli->connect_errno) {
+        echo "Ошибка подключения к БД";
+        return;
     }
-    echo "<br>Суммарно:".$average_value."шт <br> Среднесменное количество = ".($average_value/10)." шт/смену ";
+    
+    // Собираем данные за все дни
+    $all_days_data = [];
+    
+    for ($a = 1; $a < 11; $a++) {
+        $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));
+        $production_date = reverse_date($production_date);
+        
+        $sql = "SELECT SUM(count_of_filters) AS total_count FROM manufactured_production WHERE date_of_production = '$production_date'";
+        $result = $mysqli->query($sql);
+        
+        if (!$result) {
+            continue;
+        }
+        
+        $row = $result->fetch_assoc();
+        $total_count = (int)($row['total_count'] ?? 0);
+        
+        // Сохраняем данные для этого дня
+        $all_days_data[] = [
+            'date' => $production_date,
+            'total_count' => $total_count
+        ];
+        
+        $count = $count + $total_count;
+        
+        if ($result) {
+            $result->free();
+        }
+    }
+    
+    $mysqli->close();
+    
+    // Выводим таблицу
+    echo '<style>
+        .production-card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(2, 8, 20, 0.06);
+            margin: 12px 0;
+            overflow: hidden;
+        }
+        .production-card-header {
+            padding: 10px 12px;
+            border-bottom: 1px solid #e5e7eb;
+            background-color: #ffffff;
+        }
+        .production-card-title {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 600;
+            color: #111827;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .production-card-body {
+            padding: 10px 12px;
+            background-color: #ffffff;
+        }
+        .production-card-footer {
+            padding: 10px 12px;
+            background-color: #ffffff;
+            border-top: 1px solid #e5e7eb;
+        }
+        .production-table {
+            border-collapse: separate;
+            border-spacing: 0;
+            width: 100%;
+            max-width: 1000px;
+            margin: 8px 0;
+            font-size: 12px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+        .production-table th {
+            background-color: #f8f9fa;
+            padding: 6px 10px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+            font-weight: normal;
+            color: #495057;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .production-table th:first-child {
+            border-top-left-radius: 8px;
+        }
+        .production-table th:last-child {
+            border-top-right-radius: 8px;
+        }
+        .production-table td {
+            padding: 6px 10px;
+            border-bottom: 1px solid #f1f3f5;
+            color: #6c757d;
+        }
+        .production-table tbody tr {
+            background-color: #ffffff;
+            transition: background-color 0.2s ease;
+        }
+        .production-table tbody tr:nth-child(even) {
+            background-color: #fafbfc;
+        }
+        .production-table tbody tr:hover {
+            background-color: #f0f4f8;
+        }
+        .production-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        .production-table .date-col {
+            font-weight: normal;
+            color: #495057;
+        }
+        .production-table .total-col {
+            font-weight: normal;
+            text-align: right;
+            color: #495057;
+        }
+        .production-table .total-col .count-link {
+            color: #4a90e2;
+            text-decoration: none;
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+        .production-table .total-col .count-link:hover {
+            color: #357abd;
+            text-decoration: underline;
+        }
+        .production-stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+        }
+        .production-stat-label {
+            color: #6c757d;
+            font-weight: 500;
+        }
+        .production-stat-value {
+            font-weight: 600;
+            font-size: 13px;
+        }
+    </style>';
+    
+    echo '<table class="production-table">';
+    echo '<thead><tr>';
+    echo '<th class="date-col">Дата</th>';
+    echo '<th class="total-col">Всего</th>';
+    echo '</tr></thead>';
+    echo '<tbody>';
+    
+    // Выводим данные по дням
+    foreach ($all_days_data as $day_data) {
+        echo '<tr>';
+        echo '<td class="date-col">' . htmlspecialchars($day_data['date']) . '</td>';
+        echo '<td class="total-col">';
+        if ($day_data['total_count'] > 0) {
+            echo '<span class="count-link" data-date="' . htmlspecialchars($day_data['date']) . '" data-type="production" style="cursor: pointer; color: #0066cc; text-decoration: underline;">' . $day_data['total_count'] . '</span>';
+        } else {
+            echo '-';
+        }
+        echo '</td>';
+        echo '</tr>';
+    }
+    
+    echo '</tbody></table>';
+    echo '</div>'; // закрываем production-card-body
+    
+    // Футер карточки со статистикой
+    echo '<div class="production-card-footer">';
+    $count_per_day = $count / 10;
+    if ($count_per_day > 1000){
+        echo "<div class='production-stat'><span class='production-stat-label'>Среднее количество в смену:</span> <span class='production-stat-value highlight_green' title='Это количество обеспечит 30 000 фильтров в месяц'>".round($count_per_day, 0)."</span></div>";
+    } else {
+        echo "<div class='production-stat'><span class='production-stat-label'>Среднее количество в смену:</span> <span class='production-stat-value highlight_red' title='Это количество НЕ обеспечит 30 000 фильтров в месяц'>".round($count_per_day, 0)."</span></div>";
+    }
+    echo '</div>'; // закрываем production-card-footer
+    echo '</div>'; // закрываем production-card
+    
+    // Модальное окно для детальной информации
+    ?>
+    <div id="productionDetailModal" style="display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); justify-content: center; align-items: center;">
+        <div style="background-color: white; padding: 20px; border-radius: 8px; max-width: 800px; max-height: 90vh; overflow-y: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1); position: relative;">
+            <span id="closeProductionModal" style="position: absolute; right: 15px; top: 15px; font-size: 28px; font-weight: bold; color: #999; cursor: pointer; line-height: 1;">&times;</span>
+            <h3 id="productionModalTitle" style="margin-top: 0; margin-bottom: 15px;">Детальная информация за день</h3>
+            <div id="productionModalContent" style="min-height: 200px;">
+                <div style="text-align: center; padding: 40px;">Загрузка данных...</div>
+            </div>
+        </div>
+    </div>
+    
+    <style>
+        .count-link:hover {
+            color: #004499 !important;
+        }
+        #productionDetailModal table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        #productionDetailModal th {
+            background-color: #f3f4f6;
+            padding: 8px;
+            text-align: left;
+            border: 1px solid #ddd;
+            font-weight: bold;
+        }
+        #productionDetailModal td {
+            padding: 8px;
+            border: 1px solid #ddd;
+        }
+        #productionDetailModal tr:nth-child(even) {
+            background-color: #f9fafb;
+        }
+        .production-summary {
+            background-color: #eff6ff;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+    </style>
+    
+    <script>
+    (function() {
+        // Проверяем, не инициализированы ли уже обработчики
+        if (window.productionModalInitialized) {
+            return;
+        }
+        window.productionModalInitialized = true;
+        
+        // Обработчик клика на цифры (делегирование событий)
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('count-link') && e.target.getAttribute('data-type') === 'production') {
+                e.preventDefault();
+                const date = e.target.getAttribute('data-date');
+                showProductionDetails(date);
+            }
+        });
+        
+        // Закрытие модального окна
+        const closeBtn = document.getElementById('closeProductionModal');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function() {
+                document.getElementById('productionDetailModal').style.display = 'none';
+            });
+        }
+        
+        // Закрытие при клике вне модального окна
+        const modal = document.getElementById('productionDetailModal');
+        if (modal) {
+            modal.addEventListener('click', function(e) {
+                if (e.target.id === 'productionDetailModal') {
+                    this.style.display = 'none';
+                }
+            });
+        }
+        
+        // Закрытие по клавише Escape
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && modal && modal.style.display === 'flex') {
+                modal.style.display = 'none';
+            }
+        });
+        
+        // Функция показа детальной информации
+        function showProductionDetails(date) {
+            const modal = document.getElementById('productionDetailModal');
+            const title = document.getElementById('productionModalTitle');
+            const content = document.getElementById('productionModalContent');
+            
+            title.textContent = 'Детальная информация - ' + date;
+            content.innerHTML = '<div style="text-align: center; padding: 40px;">Загрузка данных...</div>';
+            modal.style.display = 'flex';
+            
+            // Загружаем данные через AJAX
+            fetch('get_daily_production_details.php?date=' + encodeURIComponent(date))
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('HTTP error! status: ' + response.status);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка: ' + escapeHtml(data.error) + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.items || data.items.length === 0) {
+                        content.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">Нет данных для отображения</div>';
+                        return;
+                    }
+                    
+                    let html = '<div class="production-summary">';
+                    html += '<strong>Итого:</strong> <strong>' + data.total_count + ' шт</strong>';
+                    html += '</div>';
+                    
+                    html += '<table>';
+                    html += '<thead><tr><th>Фильтр</th><th>Заявка</th><th>Изготовлено</th></tr></thead>';
+                    html += '<tbody>';
+                    
+                    data.items.forEach(function(item) {
+                        html += '<tr>';
+                        html += '<td>' + escapeHtml(item.filter_name || '-') + '</td>';
+                        html += '<td>' + escapeHtml(item.order_number || '-') + '</td>';
+                        html += '<td>' + item.count + ' шт</td>';
+                        html += '</tr>';
+                    });
+                    
+                    html += '</tbody></table>';
+                    content.innerHTML = html;
+                })
+                .catch(error => {
+                    content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка загрузки данных: ' + escapeHtml(error.message) + '</div>';
+                });
+        }
+        
+        // Функция экранирования HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    })();
+    </script>
+    <?php
 }
 
 /** Отображение выпуска гофропакетов за последнюю неделю */
 function show_weekly_parts(){
-    $average_value = 0;
-    for ($a = 1; $a < 11; $a++) {
-
-        $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));;
-        $production_date = reverse_date($production_date);
-        $sql = "SELECT * FROM manufactured_parts WHERE date_of_production = '$production_date';";
-        $result = mysql_execute($sql);
-        /** @var $x $variant counter */
-        $x = 0;
-        foreach ($result as $variant) {
-            $x += $variant['count_of_parts'];
-        }
-        $average_value += $x;
-        /** Выводим сумму фильтров */
-        echo $production_date . " " . $x . " шт <br>";
-
+    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
+    
+    $count = 0;
+    
+    // Начинаем плашку (карточку)
+    echo '<div class="production-card">';
+    echo '<div class="production-card-header">';
+    echo '<h3 class="production-card-title">Изготовленные гофропакеты за последние 10 дней</h3>';
+    echo '</div>';
+    echo '<div class="production-card-body">';
+    
+    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+    if ($mysqli->connect_errno) {
+        echo "Ошибка подключения к БД";
+        return;
     }
-    echo "<br>Суммарно:".$average_value."шт <br> Среднесменное количество = ".($average_value/10)." шт/смену ";
+    
+    // Собираем данные за все дни
+    $all_days_data = [];
+    
+    for ($a = 1; $a < 11; $a++) {
+        $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));
+        $production_date = reverse_date($production_date);
+        
+        $sql = "SELECT SUM(count_of_parts) AS total_count FROM manufactured_parts WHERE date_of_production = '$production_date'";
+        $result = $mysqli->query($sql);
+        
+        if (!$result) {
+            continue;
+        }
+        
+        $row = $result->fetch_assoc();
+        $total_count = (int)($row['total_count'] ?? 0);
+        
+        // Сохраняем данные для этого дня
+        $all_days_data[] = [
+            'date' => $production_date,
+            'total_count' => $total_count
+        ];
+        
+        $count = $count + $total_count;
+        
+        if ($result) {
+            $result->free();
+        }
+    }
+    
+    $mysqli->close();
+    
+    // Выводим таблицу
+    echo '<table class="production-table">';
+    echo '<thead><tr>';
+    echo '<th class="date-col">Дата</th>';
+    echo '<th class="total-col">Всего</th>';
+    echo '</tr></thead>';
+    echo '<tbody>';
+    
+    // Выводим данные по дням
+    foreach ($all_days_data as $day_data) {
+        echo '<tr>';
+        echo '<td class="date-col">' . htmlspecialchars($day_data['date']) . '</td>';
+        echo '<td class="total-col">';
+        if ($day_data['total_count'] > 0) {
+            echo '<span class="count-link" data-date="' . htmlspecialchars($day_data['date']) . '" data-type="parts" style="cursor: pointer; color: #0066cc; text-decoration: underline;">' . $day_data['total_count'] . '</span>';
+        } else {
+            echo '-';
+        }
+        echo '</td>';
+        echo '</tr>';
+    }
+    
+    echo '</tbody></table>';
+    echo '</div>'; // закрываем production-card-body
+    
+    // Футер карточки со статистикой
+    echo '<div class="production-card-footer">';
+    $count_per_day = $count / 10;
+    echo "<div class='production-stat'><span class='production-stat-label'>Среднее количество в смену:</span> <span class='production-stat-value'>".round($count_per_day, 0)."</span></div>";
+    echo '</div>'; // закрываем production-card-footer
+    echo '</div>'; // закрываем production-card
+    
+    // Модальное окно для детальной информации
+    ?>
+    <div id="partsDetailModal" style="display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); justify-content: center; align-items: center;">
+        <div style="background-color: white; padding: 20px; border-radius: 8px; max-width: 800px; max-height: 90vh; overflow-y: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1); position: relative;">
+            <span id="closePartsModal" style="position: absolute; right: 15px; top: 15px; font-size: 28px; font-weight: bold; color: #999; cursor: pointer; line-height: 1;">&times;</span>
+            <h3 id="partsModalTitle" style="margin-top: 0; margin-bottom: 15px;">Детальная информация за день</h3>
+            <div id="partsModalContent" style="min-height: 200px;">
+                <div style="text-align: center; padding: 40px;">Загрузка данных...</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    (function() {
+        // Проверяем, не инициализированы ли уже обработчики для гофропакетов
+        if (window.partsModalInitialized) {
+            return;
+        }
+        window.partsModalInitialized = true;
+        
+        // Обработчик клика на цифры (делегирование событий)
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('count-link') && e.target.getAttribute('data-type') === 'parts') {
+                e.preventDefault();
+                const date = e.target.getAttribute('data-date');
+                showPartsDetails(date);
+            }
+        });
+        
+        // Закрытие модального окна
+        const closeBtn = document.getElementById('closePartsModal');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function() {
+                document.getElementById('partsDetailModal').style.display = 'none';
+            });
+        }
+        
+        // Закрытие при клике вне модального окна
+        const modal = document.getElementById('partsDetailModal');
+        if (modal) {
+            modal.addEventListener('click', function(e) {
+                if (e.target.id === 'partsDetailModal') {
+                    this.style.display = 'none';
+                }
+            });
+        }
+        
+        // Закрытие по клавише Escape
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && modal && modal.style.display === 'flex') {
+                modal.style.display = 'none';
+            }
+        });
+        
+        // Функция показа детальной информации
+        function showPartsDetails(date) {
+            const modal = document.getElementById('partsDetailModal');
+            const title = document.getElementById('partsModalTitle');
+            const content = document.getElementById('partsModalContent');
+            
+            title.textContent = 'Детальная информация - ' + date;
+            content.innerHTML = '<div style="text-align: center; padding: 40px;">Загрузка данных...</div>';
+            modal.style.display = 'flex';
+            
+            // Загружаем данные через AJAX
+            fetch('get_daily_parts_details.php?date=' + encodeURIComponent(date))
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('HTTP error! status: ' + response.status);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка: ' + escapeHtml(data.error) + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.items || data.items.length === 0) {
+                        content.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">Нет данных для отображения</div>';
+                        return;
+                    }
+                    
+                    let html = '<div class="production-summary">';
+                    html += '<strong>Итого:</strong> <strong>' + data.total_count + ' шт</strong>';
+                    html += '</div>';
+                    
+                    html += '<table>';
+                    html += '<thead><tr><th>Гофропакет</th><th>Заявка</th><th>Изготовлено</th></tr></thead>';
+                    html += '<tbody>';
+                    
+                    data.items.forEach(function(item) {
+                        html += '<tr>';
+                        html += '<td>' + escapeHtml(item.part_name || '-') + '</td>';
+                        html += '<td>' + escapeHtml(item.order_number || '-') + '</td>';
+                        html += '<td>' + item.count + ' шт</td>';
+                        html += '</tr>';
+                    });
+                    
+                    html += '</tbody></table>';
+                    content.innerHTML = html;
+                })
+                .catch(error => {
+                    content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка загрузки данных: ' + escapeHtml(error.message) + '</div>';
+                });
+        }
+        
+        // Функция экранирования HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    })();
+    </script>
+    <?php
 }
 
 /** Отображение остатка крышек по позиции */

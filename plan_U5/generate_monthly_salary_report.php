@@ -22,8 +22,7 @@ switch ($period) {
         $last_day = $last_day_of_month;
         break;
 }
-
-// Загружаем доплаты из БД
+    // Загружаем доплаты из БД
 $addition_rows = mysql_execute("SELECT code, amount FROM salary_additions");
 $additions = [];
 foreach ($addition_rows as $a) {
