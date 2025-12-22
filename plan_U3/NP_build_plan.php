@@ -338,19 +338,26 @@ try{
 
     table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;table-layout:fixed}
     th,td{border-right:1px solid var(--border);border-bottom:1px solid var(--border);padding:6px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#fff;font-weight:400}
-    thead th{background:#f8fafc;position:sticky;top:48px;z-index:3}
+    thead th{background:#f8fafc;position:sticky;top:48px;z-index:10}
     tbody tr:nth-child(even) td{background:#fcfcff}
-    .sticky{position:sticky;z-index:4;background:#fff}
+    thead th.sticky{position:sticky;top:48px;z-index:11;background:#f8fafc}
+    tbody td.sticky{position:sticky;z-index:4;background:#fff}
 
-    .col-filter{left:0;width:var(--wFilter)}
-    .col-ord{left:var(--wFilter);width:var(--wOrd);text-align:right;color:var(--muted)}
-    .col-plan{left:calc(var(--wFilter) + var(--wOrd));width:var(--wPlan);text-align:right}
+    /* Sticky колонки - убираем границы и добавляем визуальные разделители */
+    thead th.col-filter, tbody td.col-filter,
+    thead th.col-ord, tbody td.col-ord,
+    thead th.col-plan, tbody td.col-plan{border-right:none !important}
+    
+    .col-filter{left:0 !important;width:var(--wFilter) !important;min-width:var(--wFilter) !important;max-width:var(--wFilter) !important}
+    .col-ord{left:var(--wFilter) !important;width:var(--wOrd) !important;min-width:var(--wOrd) !important;max-width:var(--wOrd) !important;text-align:right;color:var(--muted);box-shadow:1px 0 0 0 var(--border)}
+    .col-plan{left:calc(var(--wFilter) + var(--wOrd)) !important;width:var(--wPlan) !important;min-width:var(--wPlan) !important;max-width:var(--wPlan) !important;text-align:right;box-shadow:1px 0 0 0 var(--border)}
 
     .dayHead{width:var(--wDay);min-width:var(--wDay);max-width:var(--wDay);text-align:center;border-top:1px solid var(--border)}
+    thead th.dayHead{position:sticky;top:48px;z-index:10;background:#f8fafc}
+    thead th.dayHead.weekend{background:var(--weekend-bg) !important}
     .dayHead .d{display:block;font-weight:400}
     .dayHead .sum{display:block;color:var(--muted);font-size:11px}
     .dayHead.over{background:#fff2f2}
-    thead th.dayHead.weekend{background:var(--weekend-bg) !important}
 
     .dayCell{width:var(--wDay);min-width:var(--wDay);max-width:var(--wDay);text-align:center;cursor:pointer;user-select:none}
     .dayCell.weekend{background:var(--weekend-bg) !important}
@@ -643,8 +650,13 @@ try{
 
 
         let wFilter=Math.ceil(ctx.measureText(maxFilter).width)+28; wFilter=Math.min(Math.max(wFilter,160),560);
-        let wOrd=Math.ceil(ctx.measureText('00000').width)+18; wOrd=Math.min(Math.max(wOrd,42),120);
-        let wPlan=Math.ceil(ctx.measureText('0000').width)+18; wPlan=Math.min(Math.max(wPlan,46),120);
+        // Учитываем заголовки "Заказано" и "В плане" для правильной ширины
+        let wOrdHeader=Math.ceil(ctx.measureText('Заказано').width)+18;
+        let wOrdNumber=Math.ceil(ctx.measureText('00000').width)+18;
+        let wOrd=Math.max(wOrdHeader, wOrdNumber); wOrd=Math.min(Math.max(wOrd,70),140);
+        let wPlanHeader=Math.ceil(ctx.measureText('В плане').width)+18;
+        let wPlanNumber=Math.ceil(ctx.measureText('0000').width)+18;
+        let wPlan=Math.max(wPlanHeader, wPlanNumber); wPlan=Math.min(Math.max(wPlan,70),140);
         let wDay=Math.ceil(ctx.measureText('00.00').width)+18; wDay=Math.min(Math.max(wDay,112),192);
 
         const rs=document.documentElement.style;
@@ -735,9 +747,14 @@ try{
         let q=plan.get(k)||0; const oldQ=q;
 
         if(delta>0){
-            const curSumExThis=getPlannedSum(filter)-oldQ;
-            let free=Math.max(0, ord-curSumExThis);
+            // Вычисляем сколько уже распределено по всем дням (включая текущую ячейку)
+            const curSumTotal=getPlannedSum(filter);
+            // Вычисляем сколько осталось до заказанного количества
+            let free=Math.max(0, ord-curSumTotal);
             if(free<=0){ flashOver(td); return; }
+            // Добавляем либо STEP (25), либо остаток, если остаток меньше STEP
+            // Это позволяет правильно обработать случаи, когда заказано не кратное 25
+            // Например: заказано 30, первый клик добавляет 25, второй клик добавляет оставшиеся 5
             const add=Math.min(STEP, free);
             q=oldQ+add;
         } else {
@@ -796,20 +813,20 @@ try{
             const fObj = FOREIGN.get(d) || {qty:0, orders:[]};
             const combined = ours + fObj.qty;
 
-            // число вверху (Σ наш+чужой)
+            // число вверху (только наша заявка)
             const main=th.querySelector('.dayTotalCombined');
-            if(main) main.textContent=String(combined);
+            if(main) main.textContent=String(ours);
 
-            // строка "[foreign]" под числом
+            // строка в скобках (суммарно по всем заявкам)
             const sub=th.querySelector('.subF');
-            if(sub) sub.innerHTML = fObj.qty>0 ? `[<span class="foreign">${fObj.qty}</span>]` : '';
+            if(sub) sub.innerHTML = combined>0 ? `[<span class="foreign">${combined}</span>]` : '';
 
             // тултип: список заявок; если на дату есть наши количества — добавим и текущую заявку
             const ordersList = fObj.orders ? [...fObj.orders] : [];
             if (ours > 0) ordersList.unshift(String(ORDER));
             th.title = ordersList.length ? `Заявки: ${ordersList.join(', ')}` : 'Заявки: —';
 
-            // подсветка превышения лимита
+            // подсветка превышения лимита (проверяем комбинированную сумму)
             th.classList.toggle('over', dayCap>0 && combined>dayCap);
         });
     }
