@@ -417,10 +417,11 @@ try{
         @page { size: A4 portrait; margin: 10mm; }
 
         /* общий режим печати */
-        html, body { height:auto !important; overflow:visible !important; background:#fff !important; }
+        html, body { height:auto !important; overflow:visible !important; overflow-y:hidden !important; background:#fff !important; }
         .left, .mid, .panelHead .btn { display:none !important; }
-        .wrap { display:block !important; height:auto !important; }
-        #balesPanel { border:none; box-shadow:none; background:#fff; height:auto !important; overflow:visible !important; }
+        .wrap { display:block !important; height:auto !important; overflow:visible !important; overflow-y:hidden !important; }
+        #balesPanel { border:none; box-shadow:none; background:#fff; height:auto !important; overflow:visible !important; overflow-y:hidden !important; }
+        #balesPanel #bales { overflow:visible !important; overflow-y:hidden !important; }
 
         /* ДВЕ карточки в строке, без вылазаний */
         #balesPanel .balesList{
@@ -629,8 +630,8 @@ try{
     console.log('ASSORT:', ASSORT);
     console.log('ASSORT length:', ASSORT ? ASSORT.length : 0);
 
-    // путь к странице добавления позиции
-    const ADD_FILTER_URL = 'add_round_filter_into_db.php';
+    // путь к странице добавления/редактирования позиции
+    const ADD_FILTER_URL = 'edit_filter_properties.php';
     const WORKSHOP_CODE = 'U3';
     const ASSORT_SELECT_POST_NAME = 'analog_filter';
 
@@ -877,7 +878,7 @@ try{
             const rows=b.strips.map(s=>`<tr><td>${s.filter}</td><td>${fmt1(s.w)} мм</td><td>${s.h} мм</td><td><?=HALF_BALE_LEN?> м </td></tr>`).join('');
             return `<div class="card">
           <div class="cardHead">
-            <div><b>Бухта #${idx+1}</b> · Остаток: <b>${leftover} мм</b> · Формат: <b>${fmt} мм</b> · Полос: <b>${b.half}</b> шт</div>
+            <div><b>Бухта #${idx+1}</b> · Остаток: <b>${leftover} мм</b> · Формат: <b>${fmt} мм</b></div>
             <div><button class="delBaleBtn" data-idx="${idx}" title="Удалить бухту">×</button></div>
           </div>
           <table class="baleTbl"><colgroup><col class="bcol-pos"><col class="bcol-w"><col class="bcol-h"><col class="bcol-l"></colgroup>
@@ -1104,7 +1105,14 @@ try{
             form.method = 'post';
             form.target = '_blank';
 
-            // hidden: цех
+            // hidden: режим работы - добавление нового фильтра
+            const inpWorkMode = document.createElement('input');
+            inpWorkMode.type = 'hidden';
+            inpWorkMode.name = 'work_mode';
+            inpWorkMode.value = 'add';
+            form.appendChild(inpWorkMode);
+
+            // hidden: цех (для совместимости)
             const inpWorkshop = document.createElement('input');
             inpWorkshop.type = 'hidden';
             inpWorkshop.name = 'workshop';
@@ -1118,7 +1126,7 @@ try{
             inpFilterName.value = m.filter;
             form.appendChild(inpFilterName);
 
-            // hidden: выбранный шаблон из выпадайки
+            // hidden: выбранный шаблон из выпадайки (прототип)
             const inpCopyFrom = document.createElement('input');
             inpCopyFrom.type = 'hidden';
             inpCopyFrom.name = ASSORT_SELECT_POST_NAME;

@@ -13,9 +13,12 @@ $p_p_fold_height = $_POST['p_p_fold_height'];
 $p_p_fold_count = $_POST['p_p_fold_count'];
 $p_p_remark = $_POST['p_p_remark'];
 /** КАРКАС НАРУЖНыЙ */
+$ext_wf_name = '';
 if ($p_p_ext_wireframe != ''){
     $ext_wf_name = $filter_name." наружный каркас";
-}/** КАРКАС внутренний */
+}
+/** КАРКАС внутренний */
+$int_wf_name = '';
 if ($p_p_int_wireframe != ''){
     $int_wf_name = $filter_name." внутренний каркас";
 }
@@ -123,8 +126,9 @@ if ($pckg_presence != '') {
 $mode = isset($_POST['mode']) ? $_POST['mode'] : 'insert';
 
 $remark =  $_POST['remark'];
-// Извлекаем аналог из remark, если он там есть (для обратной совместимости)
+// Аналог берем из поля analog (которое равно analog_filter - прототипу)
 $analog = isset($_POST['analog']) ? trim($_POST['analog']) : '';
+// Для обратной совместимости: если analog пустой, пытаемся извлечь из remark
 if (empty($analog) && !empty($remark) && preg_match('/ANALOG_FILTER=([^\s]+)/i', $remark, $matches)) {
     $analog = trim($matches[1]);
     // Удаляем ANALOG_FILTER=... из remark

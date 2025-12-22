@@ -28,6 +28,15 @@ try {
 $analog_filter = (isset($_POST['analog_filter']) && $_POST['analog_filter'] !== '') ? $_POST['analog_filter'] : '';
 
 // Получаем данные прототипа (если выбран)
+// Если в режиме редактирования и есть аналог в данных, используем его как прототип
+if ($work_mode === 'edit' && $filter_name !== '') {
+    $temp_data = get_filter_data($filter_name);
+    // Если у редактируемого фильтра есть аналог, используем его как прототип для загрузки данных
+    if (!empty($temp_data['analog'])) {
+        $analog_filter = $temp_data['analog'];
+    }
+}
+
 if ($analog_filter !== '') {
     $analog_data = get_filter_data($analog_filter);
     // Если загружаем по имени фильтра, используем его как filter_name
@@ -169,6 +178,18 @@ if ($analog_filter !== '') {
         }
     </style>
     <script>
+        // Базовое обозначение из аналога (прототипа)
+        window.analogFilterBase = <?= json_encode($analog_filter, JSON_UNESCAPED_UNICODE) ?>;
+        
+        function getBaseDesignation() {
+            // Используем аналог (прототип), если он есть, иначе используем filter_name
+            if (window.analogFilterBase && window.analogFilterBase !== '') {
+                return window.analogFilterBase;
+            }
+            const filterName = document.querySelector('input[name="filter_name"]');
+            return filterName ? filterName.value : '';
+        }
+        
         function toggleCapOptions(capPosition) {
             const metalRadio = document.getElementById('cap_type_' + capPosition + '_metal');
             const puRadio = document.getElementById('cap_type_' + capPosition + '_pu');
@@ -188,11 +209,11 @@ if ($analog_filter !== '') {
         }
         
         function updatePUName(capPosition) {
-            const filterName = document.querySelector('input[name="filter_name"]');
+            const baseDesignation = getBaseDesignation();
             const puNameField = document.getElementById('pu_name_' + capPosition);
             
-            if (filterName && filterName.value && puNameField) {
-                let number = filterName.value.replace(/^AF/i, '');
+            if (baseDesignation && puNameField) {
+                let number = baseDesignation.replace(/^AF/i, '');
                 puNameField.value = number + ' (скв/гл)';
             }
         }
@@ -212,19 +233,36 @@ if ($analog_filter !== '') {
         }
         
         function generateNewMetalCapName(capPosition) {
-            const filterName = document.querySelector('input[name="filter_name"]');
+            const baseDesignation = getBaseDesignation();
             const newCapInput = document.getElementById('new_metal_cap_input_' + capPosition);
             
-            if (filterName && filterName.value && newCapInput && !newCapInput.value) {
-                let number = filterName.value.replace(/^AF/i, '');
+            if (baseDesignation && newCapInput && !newCapInput.value) {
+                let number = baseDesignation.replace(/^AF/i, '');
                 newCapInput.value = 'AF' + number + ' (скв/гл)';
             }
         }
         
         document.addEventListener('DOMContentLoaded', function() {
             const filterNameInput = document.querySelector('input[name="filter_name"]');
+            // Отслеживаем изменения в выборе прототипа (аналога)
+            const analogSelect = document.querySelector('select[name="analog_filter"]');
+            
             if (filterNameInput) {
                 filterNameInput.addEventListener('input', function() {
+                    ['up', 'down'].forEach(function(pos) {
+                        const puRadio = document.getElementById('cap_type_' + pos + '_pu');
+                        if (puRadio && puRadio.checked) {
+                            updatePUName(pos);
+                        }
+                    });
+                });
+            }
+            
+            // Обновляем названия крышек при изменении прототипа
+            if (analogSelect) {
+                analogSelect.addEventListener('change', function() {
+                    // Обновляем глобальную переменную базового обозначения
+                    window.analogFilterBase = this.value || '';
                     ['up', 'down'].forEach(function(pos) {
                         const puRadio = document.getElementById('cap_type_' + pos + '_pu');
                         if (puRadio && puRadio.checked) {
@@ -332,6 +370,7 @@ if ($analog_filter !== '') {
     <form id="saveForm" action="processing_add_round_filter_into_db.php" method="post">
         <input type="hidden" name="mode" value="<?= $work_mode === 'edit' ? 'update' : 'insert' ?>">
         <input type="hidden" name="work_mode" value="<?= htmlspecialchars($work_mode) ?>">
+        <input type="hidden" name="analog" value="<?= htmlspecialchars($analog_filter) ?>">
         
         <div class="grid cols-2" style="margin-top:16px">
             
@@ -589,18 +628,6 @@ if ($analog_filter !== '') {
                             <option value="1" <?= $is_press_yes ? 'selected' : '' ?>>Да</option>
                         </select>
                     </div>
-                </div>
-            </section>
-
-            <!-- Аналог -->
-            <section class="card">
-                <h3>Аналог</h3>
-                <div>
-                    <label>Аналог фильтра</label>
-                    <input type="text" name="analog" 
-                           value="<?= htmlspecialchars($analog_data['analog'] ?? '') ?>"
-                           placeholder="Название аналога (если есть)" />
-                    <div class="help">Укажите аналог фильтра, если он есть</div>
                 </div>
             </section>
 
