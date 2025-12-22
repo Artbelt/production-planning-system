@@ -196,6 +196,7 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                     'paper_width_mm' => null,  // p_p_paper_width
                     'press'          => null,  // нужно ли ставить под пресс
                     'plastic_insertion' => null,  // пластиковая вставка
+                    'diametr_outer' => null,  // внешний диаметр фильтра
                     // опционально, если захочешь в будущем показывать размеры "шторы":
                     'height_mm' => null,
                     'width_mm'  => null,
@@ -209,7 +210,8 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
             ppr.p_p_fold_height                               AS val_height_mm,
             ppr.p_p_paper_width                               AS paper_width_mm,
             rfs.press                                         AS press,
-            rfs.plastic_insertion                             AS plastic_insertion
+            rfs.plastic_insertion                             AS plastic_insertion,
+            rfs.Diametr_outer                                 AS diametr_outer
         FROM round_filter_structure rfs
         LEFT JOIN paper_package_round ppr
                ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
@@ -229,6 +231,7 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                 $res[$f]['paper_width_mm'] = $row['paper_width_mm'] !== null ? (float)$row['paper_width_mm'] : null;
                 $res[$f]['press']          = isset($row['press']) && ($row['press'] == 1 || $row['press'] === '1' || $row['press'] === true) ? 1 : 0;
                 $res[$f]['plastic_insertion'] = isset($row['plastic_insertion']) && $row['plastic_insertion'] !== null && trim($row['plastic_insertion']) !== '' ? trim($row['plastic_insertion']) : null;
+                $res[$f]['diametr_outer']  = $row['diametr_outer'] !== null ? (float)$row['diametr_outer'] : null;
             }
 
             echo json_encode(['ok'=>true,'items'=>$res]); exit;
@@ -387,26 +390,33 @@ try{
     .col-ord{left:var(--wFilter) !important;width:var(--wOrd) !important;min-width:var(--wOrd) !important;max-width:var(--wOrd) !important;text-align:right;color:var(--muted);box-shadow:1px 0 0 0 var(--border)}
     .col-plan{left:calc(var(--wFilter) + var(--wOrd)) !important;width:var(--wPlan) !important;min-width:var(--wPlan) !important;max-width:var(--wPlan) !important;text-align:right;box-shadow:1px 0 0 0 var(--border)}
 
-    .dayHead{width:var(--wDay);min-width:var(--wDay);max-width:var(--wDay);text-align:center;border-top:1px solid var(--border)}
+    .dayHead{width:var(--wDay);min-width:var(--wDay);max-width:var(--wDay);text-align:center;border-top:1px solid var(--border);padding:10px 8px !important;min-height:120px}
     thead th.dayHead{position:sticky;top:48px;z-index:10;background:#f8fafc}
     thead th.dayHead.weekend{background:var(--weekend-bg) !important}
     .dayHead{position:relative}
     .dayHead .d{display:block;font-weight:400}
     .dayHead .sum{display:block;color:var(--muted);font-size:11px}
     .dayHead.over{background:#fff2f2}
-    .press-marker{position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:12px;font-weight:700;border:2px solid #9ca3af;background:transparent;color:#9ca3af;transition:border-color .2s ease, color .2s ease;z-index:12}
+    .press-marker{position:absolute;top:12px;right:4px;width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:12px;font-weight:700;border:2px solid #9ca3af;background:transparent;color:#9ca3af;transition:border-color .2s ease, color .2s ease;z-index:12}
     .press-marker.active{border-color:#ef4444;color:#ef4444}
     .press-marker.inline{position:relative;top:auto;right:auto;display:inline-block;margin-left:6px;vertical-align:middle;z-index:auto;border-color:#f59e0b;color:#f59e0b}
     .plastic-marker{position:absolute;top:4px;right:30px;width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:12px;font-weight:700;border:2px solid #34d399;background:transparent;color:#34d399;transition:border-color .2s ease, color .2s ease;z-index:12}
     .plastic-marker.active{border-color:#34d399;color:#34d399}
     .plastic-marker.inline{position:relative;top:auto;right:auto;display:inline-block;margin-left:6px;vertical-align:middle;z-index:auto}
+    .diameter-marker{display:inline-block;width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:12px;font-weight:700;border:2px solid #8b5cf6;background:transparent;color:#8b5cf6;margin-left:6px;vertical-align:middle}
     .width-marker{display:inline-block;width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:10px;font-weight:700;border:2px solid #3b82f6;background:transparent;color:#3b82f6;margin-left:6px;vertical-align:middle}
-    .width-marker-header-wrapper{position:absolute;top:32px;right:4px;width:32px;height:32px;z-index:12;display:flex;align-items:center;justify-content:center}
-    .width-marker-header{position:absolute;width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:10px;font-weight:700;border:2px solid #9ca3af;background:transparent;color:#9ca3af;transition:border-color .2s ease, color .2s ease;display:flex;align-items:center;justify-content:center;z-index:1}
+    .width-marker-header-wrapper{position:absolute;top:44px;right:0;width:32px;height:32px;z-index:12;display:flex;align-items:center;justify-content:center}
+    .width-marker-header{width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:10px;font-weight:700;border:2px solid #9ca3af;background:transparent;color:#9ca3af;transition:border-color .2s ease, color .2s ease;display:flex;align-items:center;justify-content:center;z-index:1}
     .width-marker-header.active{border-color:#3b82f6;color:#3b82f6}
     .width-marker-progress{position:absolute;top:0;left:0;width:32px;height:32px;transform:rotate(-90deg)}
     .width-marker-progress svg{width:100%;height:100%}
     .width-marker-progress-circle{fill:none;stroke:#ef4444;stroke-width:4;stroke-linecap:round;transition:stroke-dashoffset .3s ease}
+    .diameter-marker-header-wrapper{position:absolute;top:12px;left:4px;width:32px;height:32px;z-index:12;display:flex;align-items:center;justify-content:center}
+    .diameter-marker-header{width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:12px;font-weight:700;border:2px solid #9ca3af;background:transparent;color:#9ca3af;transition:border-color .2s ease, color .2s ease;display:flex;align-items:center;justify-content:center;z-index:1}
+    .diameter-marker-header.active{border-color:#8b5cf6;color:#8b5cf6}
+    .diameter-marker-progress{position:absolute;top:0;left:0;width:32px;height:32px;transform:rotate(-90deg)}
+    .diameter-marker-progress svg{width:100%;height:100%}
+    .diameter-marker-progress-circle{fill:none;stroke:#ef4444;stroke-width:4;stroke-linecap:round;transition:stroke-dashoffset .3s ease}
 
     .dayCell{width:var(--wDay);min-width:var(--wDay);max-width:var(--wDay);text-align:center;cursor:pointer;user-select:none}
     .dayCell.weekend{background:var(--weekend-bg) !important}
@@ -738,6 +748,14 @@ try{
     </div>
     <span class="width-marker-header" data-date="${d}" title="Позиции шириной 600">600</span>
   </div>
+  <div class="diameter-marker-header-wrapper" data-date="${d}">
+    <div class="diameter-marker-progress" data-date="${d}">
+      <svg viewBox="0 0 32 32">
+        <circle class="diameter-marker-progress-circle" cx="16" cy="16" r="13" data-date="${d}" stroke-dasharray="81.68" stroke-dashoffset="81.68"></circle>
+      </svg>
+    </div>
+    <span class="diameter-marker-header" data-date="${d}" title="Позиции с большим диаметром">D</span>
+  </div>
   <span class="d">${fmtDM(d)}</span>
   <span class="sum">
     <span class="dayTotalCombined" data-date="${d}">0</span>${capHtml}
@@ -763,12 +781,14 @@ try{
 
             const hasPress = (meta.press === 1);
             const hasPlastic = (meta.plastic_insertion != null && meta.plastic_insertion !== '');
+            const hasLargeDiameter = (meta.diametr_outer != null && meta.diametr_outer > 250);
             html += `<tr data-filter="${r.filter}">
             <td class="sticky col-filter">
               <span class="filterTitle">${r.filter}</span>
               ${vh != null ? `<span class="fTag">[${vh}]</span>` : ``}
               ${hasPress ? `<span class="press-marker inline">П</span>` : ``}
               ${hasPlastic ? `<span class="plastic-marker inline">В</span>` : ``}
+              ${hasLargeDiameter ? `<span class="diameter-marker">D</span>` : ``}
               ${showWidth ? `<span class="width-marker">600</span>` : ``}
               ${panelLine}
             </td>
@@ -796,7 +816,7 @@ try{
             td.addEventListener('contextmenu', e=>{ e.preventDefault(); changeCell(td, -STEP); });
         });
 
-        recalcPlannedSums(); recalcDayTotals(); recalcTotals(); recalcPressMarkers(); recalcWidth600Markers();
+        recalcPlannedSums(); recalcDayTotals(); recalcTotals(); recalcPressMarkers(); recalcWidth600Markers(); recalcDiameterMarkers();
         el('summary').innerHTML = `<span class="help">Всего строк: <b>${LEFT_ROWS.length}</b></span>`;
         el('chipFilters').textContent = `Фильтров: ${LEFT_ROWS.length}`;
         el('chipDays').textContent = `Дней: ${dates.length}`;
@@ -863,6 +883,7 @@ try{
         recalcTotalsDebounced();
         recalcPressMarkersDebounced();
         recalcWidth600MarkersDebounced();
+        recalcDiameterMarkersDebounced();
     }
 
     function getOrdered(filter){
@@ -1013,6 +1034,56 @@ try{
         });
     }
     const recalcWidth600MarkersDebounced = debounce(recalcWidth600Markers, 40);
+
+    // Проверка наличия позиций с большим диаметром в смене
+    function recalcDiameterMarkers(){
+        const MAX_DIAMETER = 100; // максимум для 100% заполнения
+        const CIRCLE_LENGTH = 81.68; // 2 * π * 13 (радиус окружности)
+        dates.forEach(d=>{
+            const marker = document.querySelector(`.diameter-marker-header[data-date="${d}"]`);
+            const progressCircle = document.querySelector(`.diameter-marker-progress-circle[data-date="${d}"]`);
+            if(!marker || !progressCircle) return;
+
+            let totalDiameter = 0;
+            let hasDiameter = false;
+            // Считаем общее количество фильтров с большим диаметром в смене (текущая заявка)
+            for(const [k, qty] of plan.entries()){
+                if(qty <= 0) continue;
+                const [filter, date] = k.split('|');
+                if(date !== d) continue;
+                
+                const meta = META[filter] || {};
+                if(meta.diametr_outer != null && meta.diametr_outer > 250){
+                    hasDiameter = true;
+                    totalDiameter += qty;
+                }
+            }
+            
+            // Добавляем фильтры из других заявок (FOREIGN)
+            const fObj = FOREIGN.get(d) || {filters:[]};
+            for(const filterItem of (fObj.filters || [])){
+                const meta = META[filterItem.filter] || {};
+                if(meta.diametr_outer != null && meta.diametr_outer > 250){
+                    hasDiameter = true;
+                    totalDiameter += (filterItem.qty || 0);
+                }
+            }
+
+            // Обновляем маркер
+            marker.textContent = 'D';
+            marker.classList.toggle('active', hasDiameter);
+            
+            // Обновляем радиальный прогресс-бар (максимум 100 = 100%)
+            const percent = Math.min(100, (totalDiameter / MAX_DIAMETER) * 100);
+            const offset = CIRCLE_LENGTH - (CIRCLE_LENGTH * percent / 100);
+            progressCircle.style.strokeDashoffset = offset;
+            
+            marker.title = hasDiameter 
+                ? `Позиции с большим диаметром: ${totalDiameter} шт (${Math.round(percent)}%)` 
+                : 'Нет позиций с большим диаметром';
+        });
+    }
+    const recalcDiameterMarkersDebounced = debounce(recalcDiameterMarkers, 40);
 
     function recalcTotals(){
         let totalAssigned=0;
