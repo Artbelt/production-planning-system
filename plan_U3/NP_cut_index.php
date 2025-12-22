@@ -619,6 +619,54 @@ try{
             box-shadow: 0 2px 4px 0 hsla(220, 15%, 15%, 0.08);
             border-color: var(--primary);
         }
+        
+        /* Стили для таблицы анализа позиций */
+        .analysis-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8125rem;
+            margin-top: 0.5rem;
+        }
+        
+        .analysis-table thead tr {
+            background: var(--muted);
+            border-bottom: 2px solid var(--border);
+        }
+        
+        .analysis-table th {
+            padding: 0.625rem;
+            text-align: left;
+            font-weight: 600;
+            color: var(--foreground);
+        }
+        
+        .analysis-table th:last-child,
+        .analysis-table td:last-child {
+            text-align: center;
+        }
+        
+        .analysis-table tbody tr {
+            border-bottom: 1px solid var(--border);
+            transition: background-color 0.15s;
+        }
+        
+        .analysis-table tbody tr:nth-child(even) {
+            background: var(--muted);
+        }
+        
+        .analysis-table tbody tr:hover {
+            background: hsl(220, 14%, 94%);
+        }
+        
+        .analysis-table td {
+            padding: 0.625rem;
+            color: var(--foreground);
+        }
+        
+        .shifts-warning {
+            color: var(--destructive);
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -879,6 +927,13 @@ try{
         }
     }
     
+    // Функция экранирования HTML
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
     // Анализ заявки
     async function showAnalysis(order){
         const modal = document.getElementById('analysisModal');
@@ -891,10 +946,18 @@ try{
         
         try {
             const response = await fetch('NP/get_order_analysis.php?order=' + encodeURIComponent(order));
+            
+            // Проверяем тип контента
+            const contentType = response.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                const text = await response.text();
+                throw new Error('Сервер вернул не JSON. Возможно, файл не найден или произошла ошибка PHP.');
+            }
+            
             const data = await response.json();
             
             if (!data.ok) {
-                body.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626;"><p>Ошибка загрузки данных</p></div>';
+                body.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626;"><p>Ошибка: ' + (data.error || 'Неизвестная ошибка') + '</p></div>';
                 return;
             }
             
@@ -920,118 +983,55 @@ try{
                 </div>
             `;
             
-            // Прогресс по этапам
-            if (data.progress) {
-                html += `
-                    <div class="info-card">
-                        <h4>Раскрой</h4>
-                        <div class="info-value">${data.progress.cut || 0}%</div>
-                        <div class="info-label">выполнено</div>
-                    </div>
-                    <div class="info-card">
-                        <h4>Гофрирование</h4>
-                        <div class="info-value">${data.progress.corr || 0}%</div>
-                        <div class="info-label">выполнено</div>
-                    </div>
-                    <div class="info-card">
-                        <h4>Сборка</h4>
-                        <div class="info-value">${data.progress.build || 0}%</div>
-                        <div class="info-label">выполнено</div>
-                    </div>
-                `;
-            }
-            
             html += '</div>';
             
-            // Распределение по высотам плиткой
-            if (data.heights && data.heights.length > 0) {
-                html += '<div class="section-block">';
-                html += '<div class="section-title">Распределение по высотам</div>';
-                html += '<div class="heights-grid">';
+            // Анализ позиций с расчетом смен
+            if (data.positions && data.positions.length > 0) {
+                html += '<div class="section-block" style="margin-top:1rem;">';
+                html += '<div class="section-title">Анализ позиций и расчет смен</div>';
+                html += '<div style="overflow-x:auto;">';
+                html += '<table class="analysis-table">';
+                html += '<thead>';
+                html += '<tr>';
+                html += '<th style="text-align:center;width:50px;">№</th>';
+                html += '<th>Фильтр</th>';
+                html += '<th style="text-align:center;">Количество</th>';
+                html += '<th style="text-align:center;">Продуктивность</th>';
+                html += '<th style="text-align:center;">Смен</th>';
+                html += '</tr>';
+                html += '</thead>';
+                html += '<tbody>';
                 
-                data.heights.forEach(h => {
-                    const complexCount = parseInt(h.complex_filters) || 0;
-                    const totalCount = parseInt(h.total_filters) || 0;
-                    const complexPercent = totalCount > 0 ? Math.round((complexCount / totalCount) * 100) : 0;
+                data.positions.forEach((pos, index) => {
+                    const productivity = pos.productivity !== null ? pos.productivity : '—';
+                    const shifts = pos.shifts !== null ? pos.shifts : '—';
+                    const shiftsClass = pos.shifts !== null && pos.shifts > 5 ? 'shifts-warning' : '';
                     
-                    html += `
-                        <div class="height-tile">
-                            <div style="text-align:center;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #e5e7eb;">
-                                <div style="font-size:20px;font-weight:700;color:#111827;line-height:1;">${h.height}</div>
-                                <div style="font-size:9px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;">высота</div>
-                            </div>
-                            <div style="text-align:center;margin-bottom:6px;">
-                                <div style="font-size:18px;font-weight:700;color:#111827;">${totalCount}</div>
-                                <div style="font-size:10px;color:#6b7280;">фильтров</div>
-                            </div>
-                            ${complexCount > 0 ? `
-                                <div style="text-align:center;padding:4px;background:#ffffff;border-radius:4px;border:1px solid #e5e7eb;margin-bottom:6px;">
-                                    <div style="font-size:11px;font-weight:600;color:#374151;">сложных: ${complexCount}</div>
-                                    <div style="font-size:9px;color:#9ca3af;">${complexPercent}%</div>
-                                </div>
-                            ` : ''}
-                            <div style="font-size:9px;color:#9ca3af;text-align:center;">
-                                ${h.strips_count} полос • ${h.unique_filters} типов
-                            </div>
-                        </div>
-                    `;
+                    html += '<tr>';
+                    html += `<td style="text-align:center;color:var(--muted-foreground);">${index + 1}</td>`;
+                    html += `<td>${escapeHtml(pos.filter)}</td>`;
+                    html += `<td style="text-align:center;font-weight:500;">${pos.count}</td>`;
+                    html += `<td style="text-align:center;color:var(--muted-foreground);">${productivity} ${pos.productivity !== null ? 'шт/смену' : ''}</td>`;
+                    html += `<td style="text-align:center;font-weight:600;" class="${shiftsClass}">${shifts} ${pos.shifts !== null ? 'смен' : ''}</td>`;
+                    html += '</tr>';
                 });
                 
-                html += '</div></div>';
-            }
-            
-            // Анализ сложности и период - в одной строке
-            html += '<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;">';
-            
-            // Анализ сложности
-            if (data.complexity && (data.complexity.simple_count > 0 || data.complexity.complex_count > 0)) {
-                const total = parseInt(data.complexity.simple_count) + parseInt(data.complexity.complex_count);
-                const simplePercent = total > 0 ? Math.round((data.complexity.simple_count / total) * 100) : 0;
-                const complexPercent = total > 0 ? Math.round((data.complexity.complex_count / total) * 100) : 0;
-                
-                html += '<div class="section-block" style="margin-top:0;">';
-                html += '<div class="section-title">Анализ сложности сборки</div>';
-                html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">';
-                html += `
-                    <div style="background:#fafafa;padding:10px;border-radius:4px;border:1px solid #e5e7eb;text-align:center;">
-                        <div style="font-size:9px;color:#9ca3af;text-transform:uppercase;margin-bottom:4px;letter-spacing:0.5px;">Простые (≥600)</div>
-                        <div style="font-size:20px;font-weight:700;color:#111827;line-height:1;">${data.complexity.simple_count}</div>
-                        <div style="font-size:10px;color:#9ca3af;margin-top:2px;">${simplePercent}%</div>
-                    </div>
-                    <div style="background:#fafafa;padding:10px;border-radius:4px;border:1px solid #e5e7eb;text-align:center;">
-                        <div style="font-size:9px;color:#9ca3af;text-transform:uppercase;margin-bottom:4px;letter-spacing:0.5px;">Сложные (<600)</div>
-                        <div style="font-size:20px;font-weight:700;color:#111827;line-height:1;">${data.complexity.complex_count}</div>
-                        <div style="font-size:10px;color:#9ca3af;margin-top:2px;">${complexPercent}%</div>
-                    </div>
-                `;
+                html += '</tbody>';
+                html += '</table>';
                 html += '</div>';
-                
-                if (data.complexity.avg_complexity) {
-                    html += '<div style="font-size:10px;color:#6b7280;padding:8px;background:#fafafa;border-radius:4px;border:1px solid #e5e7eb;text-align:center;">';
-                    html += `<strong style="color:#374151;">Средняя:</strong> ${parseFloat(data.complexity.avg_complexity).toFixed(1)} `;
-                    html += `<span style="color:#9ca3af;">(${data.complexity.min_complexity || 0}—${data.complexity.max_complexity || 0})</span>`;
-                    html += '</div>';
-                }
                 html += '</div>';
             }
-            
-            // Период планирования
-            if (data.dates && data.dates.start_date) {
-                html += '<div class="section-block" style="margin-top:0;">';
-                html += '<div class="section-title">Период планирования</div>';
-                const startDate = new Date(data.dates.start_date).toLocaleDateString('ru-RU');
-                const endDate = new Date(data.dates.end_date).toLocaleDateString('ru-RU');
-                html += `<div style="font-size:13px;color:#374151;font-weight:500;text-align:center;padding:20px 10px;">${startDate}<br>—<br>${endDate}</div>`;
-                html += '</div>';
-            }
-            
-            html += '</div>';
             
             body.innerHTML = html;
             
         } catch (error) {
             console.error('Ошибка загрузки анализа:', error);
-            body.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626;"><p>Ошибка: ' + error.message + '</p></div>';
+            let errorMsg = error.message || 'Неизвестная ошибка';
+            // Если ошибка парсинга JSON, показываем более понятное сообщение
+            if (errorMsg.includes('Unexpected token') || errorMsg.includes('JSON')) {
+                errorMsg = 'Сервер вернул некорректный ответ. Проверьте, что файл NP/get_order_analysis.php существует и работает корректно.';
+            }
+            body.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626;"><p><strong>Ошибка загрузки данных:</strong><br>' + errorMsg + '</p></div>';
         }
     }
     

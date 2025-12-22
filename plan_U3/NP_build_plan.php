@@ -197,6 +197,7 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                     'press'          => null,  // нужно ли ставить под пресс
                     'plastic_insertion' => null,  // пластиковая вставка
                     'diametr_outer' => null,  // внешний диаметр фильтра
+                    'productivity'  => null,  // максимальное количество в смену
                     // опционально, если захочешь в будущем показывать размеры "шторы":
                     'height_mm' => null,
                     'width_mm'  => null,
@@ -211,7 +212,8 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
             ppr.p_p_paper_width                               AS paper_width_mm,
             rfs.press                                         AS press,
             rfs.plastic_insertion                             AS plastic_insertion,
-            rfs.Diametr_outer                                 AS diametr_outer
+            rfs.Diametr_outer                                 AS diametr_outer,
+            rfs.productivity                                  AS productivity
         FROM round_filter_structure rfs
         LEFT JOIN paper_package_round ppr
                ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
@@ -232,6 +234,7 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                 $res[$f]['press']          = isset($row['press']) && ($row['press'] == 1 || $row['press'] === '1' || $row['press'] === true) ? 1 : 0;
                 $res[$f]['plastic_insertion'] = isset($row['plastic_insertion']) && $row['plastic_insertion'] !== null && trim($row['plastic_insertion']) !== '' ? trim($row['plastic_insertion']) : null;
                 $res[$f]['diametr_outer']  = $row['diametr_outer'] !== null ? (float)$row['diametr_outer'] : null;
+                $res[$f]['productivity']   = $row['productivity'] !== null ? (int)$row['productivity'] : null;
             }
 
             echo json_encode(['ok'=>true,'items'=>$res]); exit;
@@ -465,7 +468,7 @@ try{
         display:inline-block;
         margin-left:6px;
         font-size:12px;
-        color:#374151; /* серо-тёмный */
+        color:#9ca3af; /* светло-серый */
     }
     .dayHead .subF{display:block;color:var(--muted);font-size:11px;margin-top:2px}
     /* === Tips (правый блок) =============================================== */
@@ -622,13 +625,6 @@ try{
         <button class="btn" id="btnLoad" title="Загрузить ранее сохранённый план">Загрузить</button>
         <button class="btn" id="btnSave" title="Сохранить план"><span class="dot"></span>Сохранить</button>
         <button class="btn btn-ghost" id="btnClear" title="Очистить текущие значения">Очистить</button>
-        <p>
-            <button class="btn" id="btnPrint" title="Подготовить листы и открыть диалог печати">Печать</button>
-            Дней/лист (печать): <input type="number" id="printCols" min="3" max="20" value="8" style="width:64px">
-
-
-
-        <span class="help">ЛКМ: +50 (или остаток) · Ctrl+ЛКМ / ПКМ: −50</span>
     </div>
 </div>
 
@@ -752,9 +748,11 @@ try{
             const meta = META[r.filter] || {};
             const vh = (meta.val_height_mm != null) ? Math.round(meta.val_height_mm) : null;
             const pw = (meta.paper_width_mm != null) ? Math.round(meta.paper_width_mm) : null;
+            const productivity = (meta.productivity != null) ? parseInt(meta.productivity, 10) : null;
             const label =
                 r.filter +
                 (vh != null ? ` [${vh}]` : ``) +
+                (productivity != null ? ` max${productivity}` : ``) +
                 (pw != null && pw > 450 ? ` [${pw}]` : ``);
             if (String(label).length > maxFilter.length) maxFilter = String(label);
         }
@@ -825,6 +823,7 @@ try{
             const vh = (meta.val_height_mm != null) ? Math.round(meta.val_height_mm) : null;          // высота валов
             const pw = (meta.paper_width_mm != null) ? Math.round(meta.paper_width_mm) : null;        // ширина бумаги
             const showWidth = (pw != null && pw > 450);
+            const productivity = (meta.productivity != null) ? parseInt(meta.productivity, 10) : null;  // максимальное количество в смену
 
             // строка ниже — размеры шторы (если нужны, оставляем как было)
             const panelLine = (meta.height_mm != null || meta.width_mm != null)
@@ -838,6 +837,7 @@ try{
             <td class="sticky col-filter">
               <span class="filterTitle">${r.filter}</span>
               ${vh != null ? `<span class="fTag">[${vh}]</span>` : ``}
+              ${productivity != null ? `<span class="fTag">max${productivity}</span>` : ``}
               ${hasPress ? `<span class="press-marker inline">П</span>` : ``}
               ${hasPlastic ? `<span class="plastic-marker inline">В</span>` : ``}
               ${hasLargeDiameter ? `<span class="diameter-marker">D</span>` : ``}
@@ -1517,10 +1517,11 @@ try{
                 const vh = (meta.val_height_mm != null) ? Math.round(meta.val_height_mm) : null;
                 const pw = (meta.paper_width_mm != null) ? Math.round(meta.paper_width_mm) : null;
                 const showWidth = (pw != null && pw > 450);
+                const productivity = (meta.productivity != null) ? parseInt(meta.productivity, 10) : null;
 
                 const plannedTotal = getPlannedSum(r.filter);
                 html += `<tr>`;
-                html += `<td style="text-align:left">${escapeHtml(r.filter)}${vh!=null?` <span>[${vh}]</span>`:''}${showWidth?` <span>[600]</span>`:''}</td>`;
+                html += `<td style="text-align:left">${escapeHtml(r.filter)}${vh!=null?` <span>[${vh}]</span>`:''}${productivity!=null?` <span>max${productivity}</span>`:''}${showWidth?` <span>[600]</span>`:''}</td>`;
                 html += `<td style="text-align:right">${r.ord||0}</td>`;
                 html += `<td style="text-align:right">${plannedTotal||0}</td>`;
 
@@ -1560,7 +1561,4 @@ try{
         const area = document.getElementById('printArea');
         if (area) area.innerHTML = '';
     });
-
-    // Кнопка «Печать»
-    document.getElementById('btnPrint')?.addEventListener('click', openPrint);
 </script>
