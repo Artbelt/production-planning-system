@@ -165,6 +165,7 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                 $res[$f] = [
                     'val_height_mm'  => null,  // p_p_fold_height
                     'paper_width_mm' => null,  // p_p_paper_width
+                    'press'          => null,  // нужно ли ставить под пресс
                     // опционально, если захочешь в будущем показывать размеры "шторы":
                     'height_mm' => null,
                     'width_mm'  => null,
@@ -176,7 +177,8 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
         SELECT
             rfs.filter                                        AS filter,
             ppr.p_p_fold_height                               AS val_height_mm,
-            ppr.p_p_paper_width                               AS paper_width_mm
+            ppr.p_p_paper_width                               AS paper_width_mm,
+            rfs.press                                         AS press
         FROM round_filter_structure rfs
         LEFT JOIN paper_package_round ppr
                ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
@@ -194,6 +196,7 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                 if (!array_key_exists($f, $res)) continue;
                 $res[$f]['val_height_mm']  = $row['val_height_mm']  !== null ? (float)$row['val_height_mm']  : null;
                 $res[$f]['paper_width_mm'] = $row['paper_width_mm'] !== null ? (float)$row['paper_width_mm'] : null;
+                $res[$f]['press']          = isset($row['press']) && ($row['press'] == 1 || $row['press'] === '1' || $row['press'] === true) ? 1 : 0;
             }
 
             echo json_encode(['ok'=>true,'items'=>$res]); exit;
@@ -355,9 +358,13 @@ try{
     .dayHead{width:var(--wDay);min-width:var(--wDay);max-width:var(--wDay);text-align:center;border-top:1px solid var(--border)}
     thead th.dayHead{position:sticky;top:48px;z-index:10;background:#f8fafc}
     thead th.dayHead.weekend{background:var(--weekend-bg) !important}
+    .dayHead{position:relative}
     .dayHead .d{display:block;font-weight:400}
     .dayHead .sum{display:block;color:var(--muted);font-size:11px}
     .dayHead.over{background:#fff2f2}
+    .press-marker{position:absolute;top:4px;right:4px;width:18px;height:18px;border-radius:50%;line-height:16px;text-align:center;font-size:11px;font-weight:700;border:2px solid #9ca3af;background:transparent;color:#9ca3af;transition:border-color .2s ease, color .2s ease;z-index:12}
+    .press-marker.active{border-color:#ef4444;color:#ef4444}
+    .press-marker.inline{position:relative;top:auto;right:auto;display:inline-block;margin-left:6px;vertical-align:middle;z-index:auto}
 
     .dayCell{width:var(--wDay);min-width:var(--wDay);max-width:var(--wDay);text-align:center;cursor:pointer;user-select:none}
     .dayCell.weekend{background:var(--weekend-bg) !important}
@@ -680,6 +687,7 @@ try{
             const fObj = FOREIGN.get(d) || {qty:0, orders:[]};
             const capHtml = dayCap > 0 ? ` / <span class="capVal">${dayCap}</span>` : '';
             html += `<th class="dayHead${wk}" data-date="${d}" title="Заявки: ${fObj.orders.length?fObj.orders.join(', '):'—'}">
+  <span class="press-marker" data-date="${d}" title="Позиции под пресс">П</span>
   <span class="d">${fmtDM(d)}</span>
   <span class="sum">
     <span class="dayTotalCombined" data-date="${d}">0</span>${capHtml}
@@ -703,9 +711,11 @@ try{
                 ? `<div style="color:#6b7280;font-size:11px">${meta.height_mm ?? '-'}×${meta.width_mm ?? '-'} мм</div>`
                 : '';
 
+            const hasPress = (meta.press === 1);
             html += `<tr data-filter="${r.filter}">
             <td class="sticky col-filter">
               <span class="filterTitle">${r.filter}</span>
+              ${hasPress ? `<span class="press-marker inline">П</span>` : ``}
               ${vh != null ? `<span class="fTag">[${vh}]</span>` : ``}
               ${showWidth ? `<span class="fTag">[600]</span>` : ``}
               ${panelLine}
@@ -734,7 +744,7 @@ try{
             td.addEventListener('contextmenu', e=>{ e.preventDefault(); changeCell(td, -STEP); });
         });
 
-        recalcPlannedSums(); recalcDayTotals(); recalcTotals();
+        recalcPlannedSums(); recalcDayTotals(); recalcTotals(); recalcPressMarkers();
         el('summary').innerHTML = `<span class="help">Всего строк: <b>${LEFT_ROWS.length}</b></span>`;
         el('chipFilters').textContent = `Фильтров: ${LEFT_ROWS.length}`;
         el('chipDays').textContent = `Дней: ${dates.length}`;
@@ -747,6 +757,33 @@ try{
         let q=plan.get(k)||0; const oldQ=q;
 
         if(delta>0){
+            // Проверяем ограничение: в смену можно добавить только одну позицию с прессом
+            const meta = META[filter] || {};
+            const currentFilterHasPress = (meta.press === 1);
+            
+            if(currentFilterHasPress){
+                // Проверяем, есть ли уже в этой смене другая позиция с прессом
+                let hasOtherPressInShift = false;
+                for(const [k, qty] of plan.entries()){
+                    if(qty <= 0) continue;
+                    const [otherFilter, otherDate] = k.split('|');
+                    if(otherDate !== date) continue; // другая смена - пропускаем
+                    if(otherFilter === filter) continue; // та же позиция - пропускаем
+                    
+                    const otherMeta = META[otherFilter] || {};
+                    if(otherMeta.press === 1){
+                        hasOtherPressInShift = true;
+                        break;
+                    }
+                }
+                
+                if(hasOtherPressInShift){
+                    flashOver(td);
+                    toast('В смену можно добавить только одну позицию с прессом', 'err');
+                    return;
+                }
+            }
+            
             // Вычисляем сколько уже распределено по всем дням (включая текущую ячейку)
             const curSumTotal=getPlannedSum(filter);
             // Вычисляем сколько осталось до заказанного количества
@@ -772,6 +809,7 @@ try{
         recalcPlannedSumsDebounced();
         recalcDayTotalsDebounced();
         recalcTotalsDebounced();
+        recalcPressMarkersDebounced();
     }
 
     function getOrdered(filter){
@@ -832,6 +870,34 @@ try{
     }
 
     const recalcDayTotalsDebounced = debounce(recalcDayTotals, 40);
+
+    // Проверка наличия позиций под пресс в смене
+    function recalcPressMarkers(){
+        dates.forEach(d=>{
+            const marker = document.querySelector(`.press-marker[data-date="${d}"]`);
+            if(!marker) return;
+
+            let hasPress = false;
+            // Проверяем все фильтры в плане на эту дату
+            for(const [k, qty] of plan.entries()){
+                if(qty <= 0) continue;
+                const [filter, date] = k.split('|');
+                if(date !== d) continue;
+                
+                const meta = META[filter] || {};
+                if(meta.press === 1){
+                    hasPress = true;
+                    break;
+                }
+            }
+
+            // Обновляем маркер
+            marker.textContent = 'П';
+            marker.classList.toggle('active', hasPress);
+            marker.title = hasPress ? 'Есть позиции под пресс' : 'Нет позиций под пресс';
+        });
+    }
+    const recalcPressMarkersDebounced = debounce(recalcPressMarkers, 40);
 
     function recalcTotals(){
         let totalAssigned=0;
