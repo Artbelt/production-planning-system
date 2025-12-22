@@ -397,7 +397,7 @@ try{
     .dayHead .d{display:block;font-weight:400}
     .dayHead .sum{display:block;color:var(--muted);font-size:11px}
     .dayHead.over{background:#fff2f2}
-    .press-marker{position:absolute;top:12px;right:4px;width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:12px;font-weight:700;border:2px solid #9ca3af;background:transparent;color:#9ca3af;transition:border-color .2s ease, color .2s ease;z-index:12}
+    .press-marker{position:absolute;top:12px;right:4px;width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:12px;font-weight:700;border:2px solid #9ca3af;background:transparent;color:#9ca3af;transition:border-color .2s ease, color .2s ease;z-index:12;display:flex;align-items:center;justify-content:center}
     .press-marker.active{border-color:#ef4444;color:#ef4444}
     .press-marker.inline{position:relative;top:auto;right:auto;display:inline-block;margin-left:6px;vertical-align:middle;z-index:auto;border-color:#f59e0b;color:#f59e0b}
     .plastic-marker{position:absolute;top:4px;right:30px;width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:12px;font-weight:700;border:2px solid #34d399;background:transparent;color:#34d399;transition:border-color .2s ease, color .2s ease;z-index:12}
@@ -411,7 +411,7 @@ try{
     .width-marker-progress{position:absolute;top:0;left:0;width:32px;height:32px;transform:rotate(-90deg)}
     .width-marker-progress svg{width:100%;height:100%}
     .width-marker-progress-circle{fill:none;stroke:#ef4444;stroke-width:4;stroke-linecap:round;transition:stroke-dashoffset .3s ease}
-    .diameter-marker-header-wrapper{position:absolute;top:12px;left:4px;width:32px;height:32px;z-index:12;display:flex;align-items:center;justify-content:center}
+    .diameter-marker-header-wrapper{position:absolute;top:8px;left:4px;width:32px;height:32px;z-index:12;display:flex;align-items:center;justify-content:center}
     .diameter-marker-header{width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:12px;font-weight:700;border:2px solid #9ca3af;background:transparent;color:#9ca3af;transition:border-color .2s ease, color .2s ease;display:flex;align-items:center;justify-content:center;z-index:1}
     .diameter-marker-header.active{border-color:#8b5cf6;color:#8b5cf6}
     .diameter-marker-progress{position:absolute;top:0;left:0;width:32px;height:32px;transform:rotate(-90deg)}
@@ -473,11 +473,11 @@ try{
         position: fixed;
         right: 16px;
         top: 74px;              /* ниже липкой топ-панели */
-        width: 320px;
+        width: 240px;
         z-index: 25;
     }
     .tips__card{
-        background: var(--card);
+        background: #fef3c7;
         border:1px solid var(--border);
         border-radius: var(--radius);
         box-shadow: var(--shadow);
@@ -487,6 +487,40 @@ try{
         padding:10px 12px;
         border-bottom:1px solid var(--border);
         font-weight:700;
+        cursor:move;
+        user-select:none;
+    }
+    .tips__head:hover{
+        background:#f8fafc;
+    }
+    .tips__legend{
+        margin-top:12px;
+        padding-top:12px;
+        border-top:1px solid var(--border);
+    }
+    .tips__legend-title{
+        font-weight:700;
+        margin-bottom:8px;
+        font-size:13px;
+    }
+    .tips__legend-item{
+        display:flex;
+        align-items:center;
+        gap:8px;
+        margin:6px 0;
+        font-size:12px;
+    }
+    .tips__legend-marker{
+        width:20px;
+        height:20px;
+        border-radius:50%;
+        border:2px solid;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-size:10px;
+        font-weight:700;
+        flex-shrink:0;
     }
     .tips__body{
         padding:10px 12px;
@@ -569,7 +603,7 @@ try{
 
 <div class="topbar">
     <div class="topbar-inner">
-        <h1 class="title">План сборки (только дневные смены) — заявка #<span id="titleOrder"><?=htmlspecialchars($orderNumber)?></span></h1>
+        <h1 class="title">План сборки  — заявка #<span id="titleOrder"><?=htmlspecialchars($orderNumber)?></span></h1>
         <div class="chips">
             <span class="chip" id="chipFilters">Фильтров: 0</span>
             <span class="chip" id="chipDays">Дней: 0</span>
@@ -637,10 +671,28 @@ try{
         <div class="tips__head">Подсказки</div>
         <div class="tips__body">
             <ul>
-                <li>На 600 просечник ставим менее 150 фильтров в смену.</li>
-                <li>Планируем в смену 300 фильтров с ППУ.</li>
-                <li>Планируем в смену 150 фильтров с крышками.</li>
+                <li>300 фильтров с ППУ.</li>
+                <li>150 фильтров с крышками.</li>
             </ul>
+            <div class="tips__legend">
+                <div class="tips__legend-title">Легенда маркеров:</div>
+                <div class="tips__legend-item">
+                    <span class="tips__legend-marker" style="border-color:#f59e0b;color:#f59e0b">П</span>
+                    <span>Пресс</span>
+                </div>
+                <div class="tips__legend-item">
+                    <span class="tips__legend-marker" style="border-color:#34d399;color:#34d399">В</span>
+                    <span>Пластиковая вставка</span>
+                </div>
+                <div class="tips__legend-item">
+                    <span class="tips__legend-marker" style="border-color:#8b5cf6;color:#8b5cf6">D</span>
+                    <span>Большой диаметр >250 (до 100 шт)</span>
+                </div>
+                <div class="tips__legend-item">
+                    <span class="tips__legend-marker" style="border-color:#3b82f6;color:#3b82f6;font-size:8px">600</span>
+                    <span>Ширина бумаги >450 (до 150 шт)</span>
+                </div>
+            </div>
         </div>
     </div>
 </aside>
@@ -1318,6 +1370,99 @@ try{
         window.addEventListener('resize', debounce(()=>{ measureAndSetWidths(); }, 200));
         el('chipFilters').textContent = `Фильтров: ${LEFT_ROWS.length}`;
         el('chipDays').textContent = `Дней: ${dates.length}`;
+    })();
+
+    // === Перетаскивание панели подсказок ===
+    (function initTipsDragging(){
+        const tipsPanel = document.querySelector('.tips');
+        const tipsHead = document.querySelector('.tips__head');
+        if(!tipsPanel || !tipsHead) return;
+
+        let isDragging = false;
+        let startX = 0;
+        let startY = 0;
+        let initialLeft = 0;
+        let initialTop = 0;
+
+        // Загружаем сохраненную позицию из localStorage
+        const savedPos = localStorage.getItem('tipsPanelPosition');
+        if(savedPos){
+            try{
+                const pos = JSON.parse(savedPos);
+                if(pos.left !== undefined){
+                    tipsPanel.style.left = pos.left;
+                    tipsPanel.style.right = 'auto';
+                }
+                if(pos.top !== undefined){
+                    tipsPanel.style.top = pos.top;
+                }
+            }catch(e){}
+        }
+
+        function dragStart(e){
+            if(e.target === tipsHead || tipsHead.contains(e.target)){
+                isDragging = true;
+                tipsPanel.style.cursor = 'grabbing';
+                
+                const rect = tipsPanel.getBoundingClientRect();
+                initialLeft = rect.left;
+                initialTop = rect.top;
+                
+                if(e.type === "touchstart"){
+                    startX = e.touches[0].clientX;
+                    startY = e.touches[0].clientY;
+                } else {
+                    startX = e.clientX;
+                    startY = e.clientY;
+                }
+                e.preventDefault();
+            }
+        }
+
+        function drag(e){
+            if(!isDragging) return;
+            e.preventDefault();
+
+            let currentX, currentY;
+            if(e.type === "touchmove"){
+                currentX = e.touches[0].clientX;
+                currentY = e.touches[0].clientY;
+            } else {
+                currentX = e.clientX;
+                currentY = e.clientY;
+            }
+
+            const deltaX = currentX - startX;
+            const deltaY = currentY - startY;
+
+            const newLeft = initialLeft + deltaX;
+            const newTop = initialTop + deltaY;
+
+            tipsPanel.style.left = newLeft + 'px';
+            tipsPanel.style.top = newTop + 'px';
+            tipsPanel.style.right = 'auto';
+        }
+
+        function dragEnd(e){
+            if(!isDragging) return;
+            isDragging = false;
+            tipsPanel.style.cursor = '';
+
+            // Сохраняем позицию
+            const rect = tipsPanel.getBoundingClientRect();
+            const pos = {
+                left: rect.left + 'px',
+                top: rect.top + 'px'
+            };
+            localStorage.setItem('tipsPanelPosition', JSON.stringify(pos));
+        }
+
+        tipsHead.addEventListener('mousedown', dragStart);
+        tipsHead.addEventListener('touchstart', dragStart);
+        document.addEventListener('mousemove', drag);
+        document.addEventListener('touchmove', drag);
+        document.addEventListener('mouseup', dragEnd);
+        document.addEventListener('touchend', dragEnd);
     })();
 </script>
 <script>
