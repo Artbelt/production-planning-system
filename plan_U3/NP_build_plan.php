@@ -602,6 +602,80 @@ try{
         font:700 12px/1.2 system-ui;
     }
 
+    /* Панель фильтров высоты валов */
+    .height-filter-panel {
+        max-width: 1400px;
+        margin: 10px auto;
+        padding: 0 16px;
+    }
+    .height-filter-panel__card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 8px 12px;
+        box-shadow: var(--shadow);
+    }
+    .height-filter-panel__title {
+        font-weight: 700;
+        font-size: 13px;
+        margin-bottom: 6px;
+        color: var(--text);
+    }
+    .height-buttons {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+    .height-btn {
+        font-size: 12px;
+        padding: 6px 12px;
+        border: 1px solid #d97706;
+        border-radius: 6px;
+        background: white;
+        color: #92400e;
+        cursor: pointer;
+        min-width: 50px;
+        transition: all 0.2s ease;
+        font-weight: 600;
+    }
+    .height-btn:hover {
+        background: #fef3c7;
+        border-color: #f59e0b;
+    }
+    .height-btn.active {
+        background: #f59e0b;
+        color: white;
+        border-color: #d97706;
+    }
+    .height-filter-clear {
+        font-size: 12px;
+        padding: 6px 12px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: white;
+        color: var(--muted);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-weight: 600;
+        margin-left: 8px;
+    }
+    .height-filter-clear:hover {
+        background: #f3f4f6;
+        border-color: var(--accent);
+        color: var(--accent);
+    }
+    /* Подсветка маркеров высоты при фильтрации */
+    .height-marker.highlighted {
+        background: #fef3c7 !important;
+        border: 2px solid #f59e0b !important;
+        border-radius: 4px;
+        padding: 2px 4px;
+        font-weight: 700;
+        color: #92400e !important;
+        box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
+    }
+
 </style>
 
 <div class="topbar">
@@ -658,6 +732,15 @@ try{
         </div>
         <div id="tableWrap"></div>
         <div class="totline" id="totals">Всего распределено: <b>0</b> шт</div>
+    </div>
+</div>
+
+<div class="height-filter-panel">
+    <div class="height-filter-panel__card">
+        <div class="height-filter-panel__title">Фильтр по высоте валов:</div>
+        <div class="height-buttons" id="heightButtons">
+            <!-- Кнопки будут добавлены через JavaScript -->
+        </div>
     </div>
 </div>
 
@@ -836,7 +919,7 @@ try{
             html += `<tr data-filter="${r.filter}">
             <td class="sticky col-filter">
               <span class="filterTitle">${r.filter}</span>
-              ${vh != null ? `<span class="fTag">[${vh}]</span>` : ``}
+              ${vh != null ? `<span class="fTag height-marker" data-height="${vh}">[${vh}]</span>` : ``}
               ${productivity != null ? `<span class="fTag">max${productivity}</span>` : ``}
               ${hasPress ? `<span class="press-marker inline">П</span>` : ``}
               ${hasPlastic ? `<span class="plastic-marker inline">В</span>` : ``}
@@ -873,6 +956,10 @@ try{
         el('chipFilters').textContent = `Фильтров: ${LEFT_ROWS.length}`;
         el('chipDays').textContent = `Дней: ${dates.length}`;
         el('chipCap').textContent = `Лимит/смену: ${dayCap}`;
+        
+        // Обновляем панель фильтров после построения таблицы
+        initHeightFilterPanel();
+        applyHeightFilter();
     }
 
     // === логика изменения ячейки ===
@@ -1370,7 +1457,83 @@ try{
         window.addEventListener('resize', debounce(()=>{ measureAndSetWidths(); }, 200));
         el('chipFilters').textContent = `Фильтров: ${LEFT_ROWS.length}`;
         el('chipDays').textContent = `Дней: ${dates.length}`;
+        
+        // Инициализация панели фильтров высоты валов
+        initHeightFilterPanel();
     })();
+    
+    // ==== Фильтр по высоте валов ============================================
+    let selectedHeights = new Set();
+    
+    function initHeightFilterPanel() {
+        // Собираем уникальные высоты валов из META данных
+        const heights = new Set();
+        for (const r of LEFT_ROWS) {
+            const meta = META[r.filter] || {};
+            const vh = (meta.val_height_mm != null) ? Math.round(meta.val_height_mm) : null;
+            if (vh != null) {
+                heights.add(vh);
+            }
+        }
+        
+        // Сортируем высоты
+        const sortedHeights = Array.from(heights).sort((a, b) => a - b);
+        
+        // Генерируем кнопки
+        const heightButtons = el('heightButtons');
+        heightButtons.innerHTML = '';
+        
+        sortedHeights.forEach(h => {
+            const btn = document.createElement('button');
+            btn.className = 'height-btn';
+            btn.textContent = `h${h}`;
+            btn.dataset.height = h;
+            btn.addEventListener('click', () => toggleHeightFilter(h));
+            heightButtons.appendChild(btn);
+        });
+    }
+    
+    function toggleHeightFilter(height) {
+        if (selectedHeights.has(height)) {
+            selectedHeights.delete(height);
+        } else {
+            selectedHeights.add(height);
+        }
+        
+        // Обновляем состояние кнопки
+        const button = document.querySelector(`.height-btn[data-height="${height}"]`);
+        if (button) {
+            button.classList.toggle('active', selectedHeights.has(height));
+        }
+        
+        applyHeightFilter();
+    }
+    
+    function clearHeightFilter() {
+        selectedHeights.clear();
+        document.querySelectorAll('.height-btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        applyHeightFilter();
+    }
+    
+    function applyHeightFilter() {
+        // Убираем подсветку со всех маркеров высоты
+        document.querySelectorAll('.height-marker').forEach(marker => {
+            marker.classList.remove('highlighted');
+        });
+        
+        if (selectedHeights.size === 0) {
+            return; // Если ничего не выбрано, убираем подсветку
+        }
+        
+        // Подсвечиваем маркеры выбранных высот
+        selectedHeights.forEach(height => {
+            document.querySelectorAll(`.height-marker[data-height="${height}"]`).forEach(marker => {
+                marker.classList.add('highlighted');
+            });
+        });
+    }
 
     // === Перетаскивание панели подсказок ===
     (function initTipsDragging(){
