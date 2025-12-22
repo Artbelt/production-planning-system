@@ -125,6 +125,7 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
             $dtStart = new DateTime($start);
             $dtEnd   = (clone $dtStart)->modify('+'.($days-1).' day');
 
+            // Сначала получаем суммы и список заявок
             $sql = "SELECT day_date,
                    SUM(qty) AS qty,
                    GROUP_CONCAT(DISTINCT order_number ORDER BY order_number SEPARATOR ',') AS orders
@@ -147,6 +148,34 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                     : [];
             } unset($r);
 
+            // Теперь получаем детальную информацию о фильтрах для каждой даты
+            $sql2 = "SELECT day_date, filter, SUM(qty) AS qty
+            FROM build_plans
+            WHERE shift='D' AND day_date BETWEEN ? AND ?"
+                . ($order!=='' ? " AND order_number<>?" : "")
+                . " GROUP BY day_date, filter";
+            $st2 = $pdo->prepare($sql2);
+            $st2->execute($args);
+            $filterRows = $st2->fetchAll();
+
+            // Группируем фильтры по датам
+            $filtersByDate = [];
+            foreach ($filterRows as $fr) {
+                $date = $fr['day_date'];
+                if (!isset($filtersByDate[$date])) {
+                    $filtersByDate[$date] = [];
+                }
+                $filtersByDate[$date][] = [
+                    'filter' => $fr['filter'],
+                    'qty' => (int)$fr['qty']
+                ];
+            }
+
+            // Добавляем информацию о фильтрах к каждой строке
+            foreach ($rows as &$r) {
+                $r['filters'] = $filtersByDate[$r['day_date']] ?? [];
+            } unset($r);
+
             echo json_encode(['ok'=>true,'items'=>$rows]); exit;
         }
 
@@ -166,6 +195,7 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                     'val_height_mm'  => null,  // p_p_fold_height
                     'paper_width_mm' => null,  // p_p_paper_width
                     'press'          => null,  // нужно ли ставить под пресс
+                    'plastic_insertion' => null,  // пластиковая вставка
                     // опционально, если захочешь в будущем показывать размеры "шторы":
                     'height_mm' => null,
                     'width_mm'  => null,
@@ -178,7 +208,8 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
             rfs.filter                                        AS filter,
             ppr.p_p_fold_height                               AS val_height_mm,
             ppr.p_p_paper_width                               AS paper_width_mm,
-            rfs.press                                         AS press
+            rfs.press                                         AS press,
+            rfs.plastic_insertion                             AS plastic_insertion
         FROM round_filter_structure rfs
         LEFT JOIN paper_package_round ppr
                ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
@@ -197,6 +228,7 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                 $res[$f]['val_height_mm']  = $row['val_height_mm']  !== null ? (float)$row['val_height_mm']  : null;
                 $res[$f]['paper_width_mm'] = $row['paper_width_mm'] !== null ? (float)$row['paper_width_mm'] : null;
                 $res[$f]['press']          = isset($row['press']) && ($row['press'] == 1 || $row['press'] === '1' || $row['press'] === true) ? 1 : 0;
+                $res[$f]['plastic_insertion'] = isset($row['plastic_insertion']) && $row['plastic_insertion'] !== null && trim($row['plastic_insertion']) !== '' ? trim($row['plastic_insertion']) : null;
             }
 
             echo json_encode(['ok'=>true,'items'=>$res]); exit;
@@ -362,9 +394,19 @@ try{
     .dayHead .d{display:block;font-weight:400}
     .dayHead .sum{display:block;color:var(--muted);font-size:11px}
     .dayHead.over{background:#fff2f2}
-    .press-marker{position:absolute;top:4px;right:4px;width:18px;height:18px;border-radius:50%;line-height:16px;text-align:center;font-size:11px;font-weight:700;border:2px solid #9ca3af;background:transparent;color:#9ca3af;transition:border-color .2s ease, color .2s ease;z-index:12}
+    .press-marker{position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:12px;font-weight:700;border:2px solid #9ca3af;background:transparent;color:#9ca3af;transition:border-color .2s ease, color .2s ease;z-index:12}
     .press-marker.active{border-color:#ef4444;color:#ef4444}
-    .press-marker.inline{position:relative;top:auto;right:auto;display:inline-block;margin-left:6px;vertical-align:middle;z-index:auto}
+    .press-marker.inline{position:relative;top:auto;right:auto;display:inline-block;margin-left:6px;vertical-align:middle;z-index:auto;border-color:#f59e0b;color:#f59e0b}
+    .plastic-marker{position:absolute;top:4px;right:30px;width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:12px;font-weight:700;border:2px solid #34d399;background:transparent;color:#34d399;transition:border-color .2s ease, color .2s ease;z-index:12}
+    .plastic-marker.active{border-color:#34d399;color:#34d399}
+    .plastic-marker.inline{position:relative;top:auto;right:auto;display:inline-block;margin-left:6px;vertical-align:middle;z-index:auto}
+    .width-marker{display:inline-block;width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:10px;font-weight:700;border:2px solid #3b82f6;background:transparent;color:#3b82f6;margin-left:6px;vertical-align:middle}
+    .width-marker-header-wrapper{position:absolute;top:32px;right:4px;width:32px;height:32px;z-index:12;display:flex;align-items:center;justify-content:center}
+    .width-marker-header{position:absolute;width:24px;height:24px;border-radius:50%;line-height:20px;text-align:center;font-size:10px;font-weight:700;border:2px solid #9ca3af;background:transparent;color:#9ca3af;transition:border-color .2s ease, color .2s ease;display:flex;align-items:center;justify-content:center;z-index:1}
+    .width-marker-header.active{border-color:#3b82f6;color:#3b82f6}
+    .width-marker-progress{position:absolute;top:0;left:0;width:32px;height:32px;transform:rotate(-90deg)}
+    .width-marker-progress svg{width:100%;height:100%}
+    .width-marker-progress-circle{fill:none;stroke:#ef4444;stroke-width:4;stroke-linecap:round;transition:stroke-dashoffset .3s ease}
 
     .dayCell{width:var(--wDay);min-width:var(--wDay);max-width:var(--wDay);text-align:center;cursor:pointer;user-select:none}
     .dayCell.weekend{background:var(--weekend-bg) !important}
@@ -688,6 +730,14 @@ try{
             const capHtml = dayCap > 0 ? ` / <span class="capVal">${dayCap}</span>` : '';
             html += `<th class="dayHead${wk}" data-date="${d}" title="Заявки: ${fObj.orders.length?fObj.orders.join(', '):'—'}">
   <span class="press-marker" data-date="${d}" title="Позиции под пресс">П</span>
+  <div class="width-marker-header-wrapper" data-date="${d}">
+    <div class="width-marker-progress" data-date="${d}">
+      <svg viewBox="0 0 32 32">
+        <circle class="width-marker-progress-circle" cx="16" cy="16" r="13" data-date="${d}" stroke-dasharray="81.68" stroke-dashoffset="81.68"></circle>
+      </svg>
+    </div>
+    <span class="width-marker-header" data-date="${d}" title="Позиции шириной 600">600</span>
+  </div>
   <span class="d">${fmtDM(d)}</span>
   <span class="sum">
     <span class="dayTotalCombined" data-date="${d}">0</span>${capHtml}
@@ -712,12 +762,14 @@ try{
                 : '';
 
             const hasPress = (meta.press === 1);
+            const hasPlastic = (meta.plastic_insertion != null && meta.plastic_insertion !== '');
             html += `<tr data-filter="${r.filter}">
             <td class="sticky col-filter">
               <span class="filterTitle">${r.filter}</span>
-              ${hasPress ? `<span class="press-marker inline">П</span>` : ``}
               ${vh != null ? `<span class="fTag">[${vh}]</span>` : ``}
-              ${showWidth ? `<span class="fTag">[600]</span>` : ``}
+              ${hasPress ? `<span class="press-marker inline">П</span>` : ``}
+              ${hasPlastic ? `<span class="plastic-marker inline">В</span>` : ``}
+              ${showWidth ? `<span class="width-marker">600</span>` : ``}
               ${panelLine}
             </td>
             <td class="sticky col-ord ord right" title="Заказано по фильтру">${r.ord}</td>
@@ -744,7 +796,7 @@ try{
             td.addEventListener('contextmenu', e=>{ e.preventDefault(); changeCell(td, -STEP); });
         });
 
-        recalcPlannedSums(); recalcDayTotals(); recalcTotals(); recalcPressMarkers();
+        recalcPlannedSums(); recalcDayTotals(); recalcTotals(); recalcPressMarkers(); recalcWidth600Markers();
         el('summary').innerHTML = `<span class="help">Всего строк: <b>${LEFT_ROWS.length}</b></span>`;
         el('chipFilters').textContent = `Фильтров: ${LEFT_ROWS.length}`;
         el('chipDays').textContent = `Дней: ${dates.length}`;
@@ -810,6 +862,7 @@ try{
         recalcDayTotalsDebounced();
         recalcTotalsDebounced();
         recalcPressMarkersDebounced();
+        recalcWidth600MarkersDebounced();
     }
 
     function getOrdered(filter){
@@ -878,7 +931,7 @@ try{
             if(!marker) return;
 
             let hasPress = false;
-            // Проверяем все фильтры в плане на эту дату
+            // Проверяем все фильтры в плане на эту дату (текущая заявка)
             for(const [k, qty] of plan.entries()){
                 if(qty <= 0) continue;
                 const [filter, date] = k.split('|');
@@ -890,6 +943,18 @@ try{
                     break;
                 }
             }
+            
+            // Проверяем фильтры из других заявок (FOREIGN)
+            if(!hasPress){
+                const fObj = FOREIGN.get(d) || {filters:[]};
+                for(const filterItem of (fObj.filters || [])){
+                    const meta = META[filterItem.filter] || {};
+                    if(meta.press === 1){
+                        hasPress = true;
+                        break;
+                    }
+                }
+            }
 
             // Обновляем маркер
             marker.textContent = 'П';
@@ -898,6 +963,56 @@ try{
         });
     }
     const recalcPressMarkersDebounced = debounce(recalcPressMarkers, 40);
+
+    // Проверка наличия позиций шириной 600 в смене
+    function recalcWidth600Markers(){
+        const MAX_WIDTH600 = 150; // максимум для 100% заполнения
+        const CIRCLE_LENGTH = 81.68; // 2 * π * 13 (радиус окружности)
+        dates.forEach(d=>{
+            const marker = document.querySelector(`.width-marker-header[data-date="${d}"]`);
+            const progressCircle = document.querySelector(`.width-marker-progress-circle[data-date="${d}"]`);
+            if(!marker || !progressCircle) return;
+
+            let totalWidth600 = 0;
+            let hasWidth600 = false;
+            // Считаем общее количество фильтров шириной 600 в смене (текущая заявка)
+            for(const [k, qty] of plan.entries()){
+                if(qty <= 0) continue;
+                const [filter, date] = k.split('|');
+                if(date !== d) continue;
+                
+                const meta = META[filter] || {};
+                if(meta.paper_width_mm != null && meta.paper_width_mm > 450){
+                    hasWidth600 = true;
+                    totalWidth600 += qty;
+                }
+            }
+            
+            // Добавляем фильтры из других заявок (FOREIGN)
+            const fObj = FOREIGN.get(d) || {filters:[]};
+            for(const filterItem of (fObj.filters || [])){
+                const meta = META[filterItem.filter] || {};
+                if(meta.paper_width_mm != null && meta.paper_width_mm > 450){
+                    hasWidth600 = true;
+                    totalWidth600 += (filterItem.qty || 0);
+                }
+            }
+
+            // Обновляем маркер
+            marker.textContent = '600';
+            marker.classList.toggle('active', hasWidth600);
+            
+            // Обновляем радиальный прогресс-бар (максимум 150 = 100%)
+            const percent = Math.min(100, (totalWidth600 / MAX_WIDTH600) * 100);
+            const offset = CIRCLE_LENGTH - (CIRCLE_LENGTH * percent / 100);
+            progressCircle.style.strokeDashoffset = offset;
+            
+            marker.title = hasWidth600 
+                ? `Позиции шириной 600: ${totalWidth600} шт (${Math.round(percent)}%)` 
+                : 'Нет позиций шириной 600';
+        });
+    }
+    const recalcWidth600MarkersDebounced = debounce(recalcWidth600Markers, 40);
 
     function recalcTotals(){
         let totalAssigned=0;
@@ -941,12 +1056,38 @@ try{
         if(!data.ok) throw new Error(data.error||'Ошибка FOREIGN');
 
         FOREIGN.clear();
+        const allForeignFilters = new Set();
         for(const r of (data.items||[])){
             FOREIGN.set(r.day_date, {
                 qty: parseInt(r.qty,10)||0,
-                orders: Array.isArray(r.orders) ? r.orders : []
+                orders: Array.isArray(r.orders) ? r.orders : [],
+                filters: Array.isArray(r.filters) ? r.filters : [] // детальная информация о фильтрах
             });
+            // Собираем все уникальные фильтры из FOREIGN
+            for(const filterItem of (r.filters || [])){
+                if(filterItem.filter) allForeignFilters.add(filterItem.filter);
+            }
         }
+        
+        // Загружаем метаданные для всех фильтров из FOREIGN
+        if(allForeignFilters.size > 0){
+            const foreignFiltersArray = Array.from(allForeignFilters);
+            try{
+                await loadMetaForFilters(foreignFiltersArray);
+            }catch(e){
+                console.warn('Не удалось загрузить метаданные для FOREIGN фильтров:', e);
+            }
+        }
+    }
+    
+    async function loadMetaForFilters(filters){
+        if(!filters.length) return;
+        const body=JSON.stringify({filters});
+        const res=await fetch(location.pathname+'?action=load_meta',{method:'POST', headers:{'Content-Type':'application/json'}, body});
+        const data=await res.json();
+        if(!data.ok) throw new Error(data.error||'Ошибка META');
+        // Объединяем с существующими метаданными
+        Object.assign(META, data.items || {});
     }
 
     async function loadMeta(){
