@@ -66,31 +66,90 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                 http_response_code(400); echo json_encode(['ok'=>false,'error'=>'bad payload']); exit;
             }
             $dtStart = new DateTime($start);
+            $dtStart->setTime(0, 0, 0); // Устанавливаем время в начало дня для корректного сравнения
             $dtEnd   = (clone $dtStart)->modify('+'.($days-1).' day');
+            $dtEnd->setTime(23, 59, 59); // Устанавливаем время в конец дня для включения последнего дня
+            
+            $startDateStr = $dtStart->format('Y-m-d');
+            $endDateStr = $dtEnd->format('Y-m-d');
 
-            $pdo->beginTransaction();
-            $pdo->prepare("DELETE FROM build_plans WHERE order_number=? AND day_date BETWEEN ? AND ?")
-                ->execute([$order, $dtStart->format('Y-m-d'), $dtEnd->format('Y-m-d')]);
+            try {
+                $pdo->beginTransaction();
+                
+                // Удаляем только записи для текущей заявки в указанном диапазоне
+                $pdo->prepare("DELETE FROM build_plans WHERE order_number=? AND day_date BETWEEN ? AND ? AND shift='D'")
+                    ->execute([$order, $startDateStr, $endDateStr]);
 
-            $ins = $pdo->prepare("INSERT INTO build_plans(order_number, filter, day_date, shift, qty) VALUES(?,?,?,?,?)");
-            $saved = 0;
-            foreach ($items as $it){
-                $f = $normalizeFilter($it['filter'] ?? '');
-                $d = (string)($it['date'] ?? '');
-                $q = (int)($it['qty'] ?? 0);
-                if ($f==='' || $q<=0) continue;
-                $dd = DateTime::createFromFormat('Y-m-d', $d); if(!$dd) continue;
-                if ($dd < $dtStart || $dd > $dtEnd) continue;
-                $ins->execute([$order, $f, $dd->format('Y-m-d'), 'D', $q]);
-                $saved++;
+                $ins = $pdo->prepare("INSERT INTO build_plans(order_number, filter, day_date, shift, qty) VALUES(?,?,?,?,?)");
+                $saved = 0;
+                $skipped = 0;
+                $errors = [];
+                
+                foreach ($items as $it){
+                    $f = $normalizeFilter($it['filter'] ?? '');
+                    $d = (string)($it['date'] ?? '');
+                    $q = (int)($it['qty'] ?? 0);
+                    
+                    // Пропускаем элементы с нулевым количеством или пустым фильтром
+                    if ($f==='' || $q<=0) {
+                        $skipped++;
+                        continue;
+                    }
+                    
+                    // Проверяем дату
+                    $dd = DateTime::createFromFormat('Y-m-d', $d);
+                    if(!$dd) {
+                        $skipped++;
+                        $errors[] = "Неверная дата: {$d}";
+                        continue;
+                    }
+                    $dd->setTime(0, 0, 0); // Устанавливаем время в начало дня для корректного сравнения
+                    $dateStr = $dd->format('Y-m-d');
+                    
+                    // Проверяем, что дата в пределах диапазона (включая границы)
+                    if ($dateStr < $startDateStr || $dateStr > $endDateStr) {
+                        $skipped++;
+                        $errors[] = "Дата {$dateStr} вне диапазона {$startDateStr} - {$endDateStr}";
+                        continue;
+                    }
+                    
+                    // Выполняем INSERT с обработкой ошибок
+                    try {
+                        $ins->execute([$order, $f, $dd->format('Y-m-d'), 'D', $q]);
+                        $saved++;
+                    } catch (PDOException $e) {
+                        // Логируем ошибку, но продолжаем обработку остальных элементов
+                        $errorMsg = $e->getMessage();
+                        $errors[] = "Ошибка сохранения фильтра '{$f}' на дату {$d}: {$errorMsg}";
+                        // Не прерываем выполнение, продолжаем сохранять остальные элементы
+                    }
+                }
+                
+                $pdo->commit();
+                
+                // Помечаем заявку как готовую к сборке
+                try {
+                    $u = $pdo->prepare("UPDATE orders SET build_ready=1 WHERE order_number=?");
+                    $u->execute([$order]);
+                } catch (PDOException $e) {
+                    // Игнорируем ошибку обновления статуса, это не критично
+                }
+                
+                echo json_encode([
+                    'ok'=>true,
+                    'saved'=>$saved,
+                    'skipped'=>$skipped,
+                    'errors'=>!empty($errors) ? $errors : null
+                ]); exit;
+                
+            } catch (Exception $e) {
+                // Откатываем транзакцию при критической ошибке
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                http_response_code(500);
+                echo json_encode(['ok'=>false,'error'=>'Ошибка сохранения: ' . $e->getMessage()]); exit;
             }
-            $pdo->commit();
-            // Помечаем заявку как готовую к сборке
-            $u = $pdo->prepare("UPDATE orders
-                                SET build_ready=1
-                                WHERE order_number=?");
-            $u->execute([$order]);
-            echo json_encode(['ok'=>true,'saved'=>$saved]); exit;
         }
 
         /* load_plan ---------------------------------------------------------- */
@@ -102,7 +161,9 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                 http_response_code(400); echo json_encode(['ok'=>false,'error'=>'bad params']); exit;
             }
             $dtStart = new DateTime($start);
+            $dtStart->setTime(0, 0, 0);
             $dtEnd   = (clone $dtStart)->modify('+'.($days-1).' day');
+            $dtEnd->setTime(23, 59, 59);
             $st = $pdo->prepare("SELECT filter, day_date, qty
                                  FROM build_plans
                                  WHERE order_number=? AND day_date BETWEEN ? AND ? AND shift='D'
@@ -670,6 +731,16 @@ try{
         padding: 0;
         height: 20px;
     }
+    /* Пустая разделительная строка над всеми строками таблицы */
+    tbody tr.table-spacer {
+        height: 20px;
+    }
+    tbody tr.table-spacer td {
+        border: none;
+        padding: 0;
+        height: 20px;
+        background: transparent;
+    }
     /* ===== Печать ====================================================== */
     @media print {
         @page {
@@ -1187,6 +1258,18 @@ try{
         }
 
         html += '</tr></thead><tbody>';
+        
+        // Добавляем 2 пустые разделительные строки над всеми строками
+        for (let i = 0; i < 2; i++) {
+            html += '<tr class="table-spacer">';
+            html += '<td class="sticky col-filter"></td>';
+            html += '<td class="sticky col-ord"></td>';
+            html += '<td class="sticky col-plan"></td>';
+            for (const d of dates) {
+                html += '<td class="dayCell"></td>';
+            }
+            html += '</tr>';
+        }
 
         for (const r of LEFT_ROWS) {
             const meta = META[r.filter] || {};
@@ -1565,6 +1648,20 @@ try{
         const res=await fetch(location.pathname+'?action=save_plan',{method:'POST', headers:{'Content-Type':'application/json'}, body});
         const data=await res.json();
         if(!data.ok) throw new Error(data.error||'Ошибка сохранения');
+        
+        // Проверяем наличие предупреждений или ошибок
+        if(data.errors && data.errors.length > 0){
+            const errorMsg = data.errors.slice(0, 3).join('; '); // Показываем первые 3 ошибки
+            const moreErrors = data.errors.length > 3 ? ` и ещё ${data.errors.length - 3}...` : '';
+            throw new Error(`Сохранено ${data.saved || 0} элементов, но были ошибки: ${errorMsg}${moreErrors}`);
+        }
+        
+        // Показываем информацию о пропущенных элементах, если они есть
+        if(data.skipped && data.skipped > 0){
+            console.warn(`Пропущено ${data.skipped} элементов при сохранении`);
+        }
+        
+        return data;
     }
     async function loadPlan(){
         const body=JSON.stringify({order:ORDER, start:startDateISO, days});
@@ -1738,8 +1835,17 @@ try{
             markDirty(true);
         });
         el('btnSave').addEventListener('click', async ()=>{
-            try{ await savePlan(); markDirty(false); toast('План сохранён','ok'); }
-            catch(e){ toast('Не удалось сохранить: '+e.message,'err'); }
+            try{ 
+                const result = await savePlan(); 
+                const savedCount = result.saved || 0;
+                const msg = savedCount > 0 ? `План сохранён (${savedCount} позиций)` : 'План сохранён';
+                markDirty(false); 
+                toast(msg,'ok'); 
+            }
+            catch(e){ 
+                toast('Не удалось сохранить: '+e.message,'err'); 
+                console.error('Ошибка сохранения плана:', e);
+            }
         });
         el('btnLoad').addEventListener('click', async ()=>{
             try{
@@ -1996,8 +2102,8 @@ try{
         const tbody = document.querySelector('#mainTbl tbody');
         if (!tbody) return;
         
-        // Удаляем пустые строки-разделители, если они есть
-        tbody.querySelectorAll('tr.analog-spacer').forEach(spacer => spacer.remove());
+        // Удаляем все пустые строки-разделители (и analog-spacer, и table-spacer)
+        tbody.querySelectorAll('tr.analog-spacer, tr.table-spacer').forEach(spacer => spacer.remove());
         
         // Убираем подсветку и скрытие со всех строк в главной таблице
         document.querySelectorAll('#mainTbl tbody tr').forEach(tr => {
@@ -2009,9 +2115,24 @@ try{
             tr.classList.remove('mini-row-analog-highlight', 'analog-hidden');
         });
         
-        if (!nativeForm) return;
+        if (!nativeForm) {
+            // Если фильтрация отключена, восстанавливаем обычные разделительные строки
+            for (let i = 0; i < 2; i++) {
+                const spacerRow = document.createElement('tr');
+                spacerRow.className = 'table-spacer';
+                let spacerHtml = '<td class="sticky col-filter"></td>';
+                spacerHtml += '<td class="sticky col-ord"></td>';
+                spacerHtml += '<td class="sticky col-plan"></td>';
+                for (const d of dates) {
+                    spacerHtml += '<td class="dayCell"></td>';
+                }
+                spacerRow.innerHTML = spacerHtml;
+                tbody.insertBefore(spacerRow, tbody.firstChild);
+            }
+            return;
+        }
         
-        // Добавляем 2 пустые строки-разделители в начало tbody
+        // Добавляем 2 пустые строки-разделители в начало tbody при фильтрации
         for (let i = 0; i < 2; i++) {
             const spacerRow = document.createElement('tr');
             spacerRow.className = 'analog-spacer';
