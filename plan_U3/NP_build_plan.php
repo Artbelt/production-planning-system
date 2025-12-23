@@ -657,6 +657,19 @@ try{
     tbody tr.analog-highlight td.sticky {
         background: #dbeafe !important;
     }
+    /* Скрытие строк, не относящихся к выбранному аналогу */
+    tbody tr.analog-hidden {
+        display: none !important;
+    }
+    /* Пустая строка-разделитель при фильтрации */
+    tbody tr.analog-spacer {
+        height: 20px;
+    }
+    tbody tr.analog-spacer td {
+        border: none;
+        padding: 0;
+        height: 20px;
+    }
     /* ===== Печать ====================================================== */
     @media print {
         @page {
@@ -884,6 +897,9 @@ try{
     }
     .mini-table-panel__table tr.mini-row-analog-highlight td:not(.mini-cell-filled) {
         background: #bfdbfe !important;
+    }
+    .mini-table-panel__table tr.analog-hidden {
+        display: none !important;
     }
 
 </style>
@@ -1531,7 +1547,7 @@ try{
     function recalcTotals(){
         let totalAssigned=0;
         plan.forEach(v=>{ totalAssigned += v||0; });
-        el('totals').innerHTML = `Всего распределено: <b>${totalAssigned}</b> шт`;
+        el('totals').innerHTML = ``;
     }
     const recalcTotalsDebounced = debounce(recalcTotals, 40);
 
@@ -1977,35 +1993,56 @@ try{
     }
     
     function highlightAnalogRows(nativeForm) {
-        // Убираем подсветку со всех строк в главной таблице
+        const tbody = document.querySelector('#mainTbl tbody');
+        if (!tbody) return;
+        
+        // Удаляем пустую строку-разделитель, если она есть
+        const spacer = tbody.querySelector('tr.analog-spacer');
+        if (spacer) spacer.remove();
+        
+        // Убираем подсветку и скрытие со всех строк в главной таблице
         document.querySelectorAll('#mainTbl tbody tr').forEach(tr => {
-            tr.classList.remove('analog-highlight');
+            tr.classList.remove('analog-highlight', 'analog-hidden');
         });
         
-        // Убираем подсветку со всех строк в мини-таблице
+        // Убираем подсветку и скрытие со всех строк в мини-таблице
         document.querySelectorAll('.mini-table-row').forEach(tr => {
-            tr.classList.remove('mini-row-analog-highlight');
+            tr.classList.remove('mini-row-analog-highlight', 'analog-hidden');
         });
         
         if (!nativeForm) return;
         
-        // Подсвечиваем строки с нативной формой в главной таблице
+        // Добавляем пустую строку-разделитель в начало tbody
+        const spacerRow = document.createElement('tr');
+        spacerRow.className = 'analog-spacer';
+        let spacerHtml = '<td class="sticky col-filter"></td>';
+        spacerHtml += '<td class="sticky col-ord"></td>';
+        spacerHtml += '<td class="sticky col-plan"></td>';
+        for (const d of dates) {
+            spacerHtml += '<td class="dayCell"></td>';
+        }
+        spacerRow.innerHTML = spacerHtml;
+        tbody.insertBefore(spacerRow, tbody.firstChild);
+        
+        // Обрабатываем строки в главной таблице
         document.querySelectorAll(`#mainTbl tbody tr[data-filter]`).forEach(tr => {
             const filter = tr.dataset.filter;
             const meta = META[filter] || {};
             const filterAnalog = meta.analog || null;
             
-            // Подсвечиваем если это нативная форма
-            if (canonF(filter) === canonF(nativeForm)) {
+            const isNative = canonF(filter) === canonF(nativeForm);
+            const isBrand = filterAnalog && canonF(filterAnalog) === canonF(nativeForm);
+            
+            if (isNative || isBrand) {
+                // Подсвечиваем строки с нативной формой или брендовой формой с этим аналогом
                 tr.classList.add('analog-highlight');
-            }
-            // Подсвечиваем если это брендовая форма с аналогом = нативная форма
-            else if (filterAnalog && canonF(filterAnalog) === canonF(nativeForm)) {
-                tr.classList.add('analog-highlight');
+            } else {
+                // Скрываем строки, не относящиеся к выбранному аналогу
+                tr.classList.add('analog-hidden');
             }
         });
         
-        // Подсвечиваем строки с нативной формой в мини-таблице
+        // Обрабатываем строки в мини-таблице
         document.querySelectorAll('.mini-table-row').forEach(tr => {
             const filter = tr.dataset.miniFilter;
             if (!filter) return;
@@ -2017,13 +2054,15 @@ try{
             const meta = META[originalFilter.filter] || {};
             const filterAnalog = meta.analog || null;
             
-            // Подсвечиваем если это нативная форма
-            if (canonF(originalFilter.filter) === canonF(nativeForm)) {
+            const isNative = canonF(originalFilter.filter) === canonF(nativeForm);
+            const isBrand = filterAnalog && canonF(filterAnalog) === canonF(nativeForm);
+            
+            if (isNative || isBrand) {
+                // Подсвечиваем строки с нативной формой или брендовой формой с этим аналогом
                 tr.classList.add('mini-row-analog-highlight');
-            }
-            // Подсвечиваем если это брендовая форма с аналогом = нативная форма
-            else if (filterAnalog && canonF(filterAnalog) === canonF(nativeForm)) {
-                tr.classList.add('mini-row-analog-highlight');
+            } else {
+                // Скрываем строки, не относящиеся к выбранному аналогу
+                tr.classList.add('analog-hidden');
             }
         });
     }
