@@ -784,7 +784,6 @@ try{
 
 <div class="toolbar-wrap">
     <div class="toolbar" id="toolbar">
-        <button class="btn" id="btnPickOrder" title="Быстрый выбор другой заявки">Заявка…</button>
         <label>Стартовая дата: <input type="date" id="startDate"></label>
         <label>Дней: <input type="number" id="days" min="1" step="1" value="7" style="width:92px"></label>
         <label>Лимит/смену, шт: <input type="number" id="cap" min="0" step="10" value="0" style="width:110px"></label>
@@ -800,6 +799,7 @@ try{
 
 
 <!-- Modal выбора заявки -->
+<!-- Закомментировано: функционал выбора другой заявки
 <div id="orderModal" class="modal hidden">
     <div class="modal__backdrop"></div>
     <div class="modal__card">
@@ -816,6 +816,7 @@ try{
         </div>
     </div>
 </div>
+-->
 
 <div class="panel-wrap">
     <div class="panel" id="mainPanel">
@@ -1505,6 +1506,8 @@ try{
 
 
     // ==== Order picker ====
+    // Закомментировано: функционал выбора другой заявки
+    /*
     function openOrderModal(){ el('orderModal').classList.remove('hidden'); el('ordQuery').focus(); renderOrderList([]); (async()=>{ try{ const rows=await listOrders('',50); renderOrderList(rows); }catch(e){ toast(e.message,'err'); } })(); }
     function closeOrderModal(){ el('orderModal').classList.add('hidden'); }
     function renderOrderList(rows){
@@ -1555,6 +1558,7 @@ try{
             closeOrderModal();
         }catch(e){ toast('Не удалось переключить: '+e.message,'err'); }
     }
+    */
 
     // ==== init ====
     (async function init(){
@@ -1563,11 +1567,12 @@ try{
         try{ await loadMeta(); }catch(e){ console.warn('META load failed',e); }
         measureAndSetWidths();
 
-        el('btnPickOrder').addEventListener('click', openOrderModal);
-        el('ordFind').addEventListener('click', async ()=>{ try{ const rows=await listOrders(el('ordQuery').value.trim(), 100); renderOrderList(rows);}catch(e){toast(e.message,'err');} });
-        el('ordQuery').addEventListener('keydown', async (e)=>{ if(e.key==='Enter'){ try{ const rows=await listOrders(el('ordQuery').value.trim(), 100); renderOrderList(rows);}catch(err){toast(err.message,'err');} } });
-        el('ordClose').addEventListener('click', closeOrderModal);
-        el('orderModal').addEventListener('click', (e)=>{ if(e.target.classList.contains('modal__backdrop')) closeOrderModal(); });
+        // Закомментировано: обработчики событий для выбора заявки
+        // el('btnPickOrder').addEventListener('click', openOrderModal);
+        // el('ordFind').addEventListener('click', async ()=>{ try{ const rows=await listOrders(el('ordQuery').value.trim(), 100); renderOrderList(rows);}catch(e){toast(e.message,'err');} });
+        // el('ordQuery').addEventListener('keydown', async (e)=>{ if(e.key==='Enter'){ try{ const rows=await listOrders(el('ordQuery').value.trim(), 100); renderOrderList(rows);}catch(err){toast(err.message,'err');} } });
+        // el('ordClose').addEventListener('click', closeOrderModal);
+        // el('orderModal').addEventListener('click', (e)=>{ if(e.target.classList.contains('modal__backdrop')) closeOrderModal(); });
 
         el('btnRebuild').addEventListener('click', async ()=>{
             const todayISO2 = new Date().toISOString().slice(0,10);
