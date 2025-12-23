@@ -11,7 +11,7 @@ $user='root'; $pass='';
 $action = $_GET['action'] ?? '';
 
 /* === AJAX ================================================================= */
-if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_orders','load_left_rows','plan_bounds'], true)) {
+if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_orders','load_left_rows','plan_bounds','load_native_forms'], true)) {
     header('Content-Type: application/json; charset=utf-8');
     try{
         $pdo = new PDO($dsn,$user,$pass,[
@@ -200,6 +200,7 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                     'productivity'  => null,  // максимальное количество в смену
                     'up_cap'        => null,  // верхняя крышка
                     'down_cap'      => null,  // нижняя крышка
+                    'analog'         => null,  // аналог фильтра
                     // опционально, если захочешь в будущем показывать размеры "шторы":
                     'height_mm' => null,
                     'width_mm'  => null,
@@ -217,7 +218,8 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
             rfs.Diametr_outer                                 AS diametr_outer,
             rfs.productivity                                  AS productivity,
             rfs.up_cap                                        AS up_cap,
-            rfs.down_cap                                      AS down_cap
+            rfs.down_cap                                      AS down_cap,
+            rfs.analog                                        AS analog
         FROM round_filter_structure rfs
         LEFT JOIN paper_package_round ppr
                ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
@@ -241,9 +243,40 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                 $res[$f]['productivity']   = $row['productivity'] !== null ? (int)$row['productivity'] : null;
                 $res[$f]['up_cap']         = $row['up_cap'] !== null && trim($row['up_cap']) !== '' ? trim($row['up_cap']) : null;
                 $res[$f]['down_cap']       = $row['down_cap'] !== null && trim($row['down_cap']) !== '' ? trim($row['down_cap']) : null;
+                $res[$f]['analog']         = $row['analog'] !== null && trim($row['analog']) !== '' ? trim($row['analog']) : null;
             }
 
             echo json_encode(['ok'=>true,'items'=>$res]); exit;
+        }
+
+        /* load_native_forms ---------------------------------------------------- */
+        if ($action==='load_native_forms'){
+            // Получаем список фильтров из заявки
+            $filtersIn = $payload['filters'] ?? [];
+            if (!is_array($filtersIn) || empty($filtersIn)) { 
+                echo json_encode(['ok'=>true,'items'=>[]]); exit; 
+            }
+            
+            // Получаем нативные формы, для которых есть брендовые формы в заявке
+            // Нативная форма должна быть:
+            // 1. Аналогом хотя бы одной брендовой формы из заявки
+            // 2. Сама присутствовать в заявке
+            $in = implode(',', array_fill(0, count($filtersIn), '?'));
+            $sql = "SELECT DISTINCT rfs_native.filter 
+                    FROM round_filter_structure rfs_brand
+                    INNER JOIN round_filter_structure rfs_native 
+                        ON UPPER(TRIM(rfs_brand.analog)) = UPPER(TRIM(rfs_native.filter))
+                    WHERE rfs_brand.filter IN ($in)
+                      AND rfs_brand.analog IS NOT NULL 
+                      AND rfs_brand.analog != ''
+                      AND (rfs_native.analog IS NULL OR rfs_native.analog = '')
+                      AND rfs_native.filter IN ($in)
+                    ORDER BY rfs_native.filter";
+            // Передаем список фильтров дважды: для брендовых и для нативных
+            $st = $pdo->prepare($sql);
+            $st->execute(array_merge($filtersIn, $filtersIn));
+            $rows = $st->fetchAll();
+            echo json_encode(['ok'=>true,'items'=>$rows]); exit;
         }
 
 
@@ -552,6 +585,78 @@ try{
     @media (max-width: 1280px){
         .tips{ display:none; }
     }
+    /* === Панель Аналоги =================================================== */
+    .analogs-panel{
+        position: fixed;
+        left: 16px;
+        top: 74px;
+        width: 240px;
+        z-index: 25;
+    }
+    .analogs-panel__card{
+        background: #e0f2fe;
+        border:1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+    }
+    .analogs-panel__head{
+        padding:10px 12px;
+        border-bottom:1px solid var(--border);
+        font-weight:700;
+        cursor:move;
+        user-select:none;
+        background: #bae6fd;
+    }
+    .analogs-panel__head:hover{
+        background:#93c5fd;
+    }
+    .analogs-panel__body{
+        padding:10px 12px;
+        font-size:13px;
+        color:var(--text);
+        max-height: 60vh;
+        overflow-y: auto;
+    }
+    .analogs-panel__buttons{
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .analog-btn{
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: white;
+        color: var(--text);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-weight: 600;
+        font-size: 12px;
+        text-align: left;
+    }
+    .analog-btn:hover{
+        background: #dbeafe;
+        border-color: var(--accent);
+    }
+    .analog-btn.active{
+        background: var(--accent);
+        color: white;
+        border-color: var(--accent);
+    }
+    .analogs-panel.hidden {
+        display: none !important;
+    }
+    /* Подсветка строк с аналогами */
+    tbody tr.analog-highlight {
+        background: #dbeafe !important;
+    }
+    tbody tr.analog-highlight td {
+        background: #dbeafe !important;
+    }
+    tbody tr.analog-highlight td.sticky {
+        background: #dbeafe !important;
+    }
     /* ===== Печать ====================================================== */
     @media print {
         @page {
@@ -773,6 +878,13 @@ try{
     .mini-table-panel__table tr.mini-row-hover td {
         background: #dcfce7 !important;
     }
+    .mini-table-panel__table tr.mini-row-analog-highlight td {
+        outline: 1px solid #3b82f6 !important;
+        outline-offset: -1px;
+    }
+    .mini-table-panel__table tr.mini-row-analog-highlight td:not(.mini-cell-filled) {
+        background: #bfdbfe !important;
+    }
 
 </style>
 
@@ -839,6 +951,7 @@ try{
             <div style="display: flex; gap: 8px;">
                 <button class="height-btn-toggle" id="btnToggleMiniTable" title="Показать/скрыть карту плана">Карта</button>
                 <button class="height-btn-toggle" id="btnToggleLegend" title="Показать/скрыть легенду">Легенда</button>
+                <button class="height-btn-toggle" id="btnToggleAnalogs" title="Показать/скрыть аналоги">Аналоги</button>
             </div>
         </div>
     </div>
@@ -851,6 +964,18 @@ try{
     <div class="mini-table-panel__head">Карта плана</div>
     <div id="miniTableWrap"></div>
 </div>
+
+<!-- Панель Аналоги -->
+<aside class="analogs-panel" aria-label="Аналоги">
+    <div class="analogs-panel__card">
+        <div class="analogs-panel__head">Аналоги</div>
+        <div class="analogs-panel__body">
+            <div class="analogs-panel__buttons" id="analogButtons">
+                <!-- Кнопки будут добавлены через JavaScript -->
+            </div>
+        </div>
+    </div>
+</aside>
 
 <aside class="tips" aria-label="Подсказки">
     <div class="tips__card">
@@ -1123,6 +1248,14 @@ try{
         
         // Обновляем уменьшенную таблицу
         buildMiniTableDebounced();
+        
+        // Обновляем панель Аналоги (чтобы загрузить нативные формы из текущей заявки)
+        initAnalogsPanel();
+        
+        // Обновляем подсветку аналогов, если выбрана нативная форма
+        if (selectedNativeForm) {
+            highlightAnalogRows(selectedNativeForm);
+        }
     }
 
     // === логика изменения ячейки ===
@@ -1637,6 +1770,12 @@ try{
         
         // Инициализация кнопки переключения легенды
         initLegendToggle();
+        
+        // Инициализация кнопки переключения аналогов
+        initAnalogsToggle();
+        
+        // Инициализация панели Аналоги
+        initAnalogsPanel();
     })();
     
     // ==== Фильтр по высоте валов ============================================
@@ -1778,6 +1917,250 @@ try{
                 localStorage.setItem('legendPanelVisible', 'false');
             }
         });
+    }
+
+    // ==== Переключение панели Аналоги ============================================
+    function initAnalogsToggle() {
+        const btn = el('btnToggleAnalogs');
+        const panel = document.querySelector('.analogs-panel');
+        if (!btn || !panel) return;
+        
+        // Загружаем сохраненное состояние из localStorage
+        const savedState = localStorage.getItem('analogsPanelVisible');
+        const isVisible = savedState !== 'false'; // по умолчанию видима
+        
+        // Устанавливаем начальное состояние
+        if (!isVisible) {
+            panel.classList.add('hidden');
+            btn.classList.remove('active');
+        } else {
+            panel.classList.remove('hidden');
+            btn.classList.add('active');
+        }
+        
+        // Обработчик клика
+        btn.addEventListener('click', () => {
+            const isHidden = panel.classList.contains('hidden');
+            if (isHidden) {
+                panel.classList.remove('hidden');
+                btn.classList.add('active');
+                localStorage.setItem('analogsPanelVisible', 'true');
+            } else {
+                panel.classList.add('hidden');
+                btn.classList.remove('active');
+                localStorage.setItem('analogsPanelVisible', 'false');
+            }
+        });
+    }
+
+    // ==== Панель Аналоги ============================================
+    let selectedNativeForm = null;
+    
+    async function loadNativeForms(){
+        try {
+            // Получаем список фильтров из текущей заявки
+            const filters = LEFT_ROWS.map(r => r.filter);
+            if (filters.length === 0) return [];
+            
+            const res = await fetch(location.pathname+'?action=load_native_forms', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({filters: filters})
+            });
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.error || 'Ошибка загрузки нативных форм');
+            return data.items || [];
+        } catch(e) {
+            console.warn('Не удалось загрузить нативные формы:', e);
+            return [];
+        }
+    }
+    
+    function highlightAnalogRows(nativeForm) {
+        // Убираем подсветку со всех строк в главной таблице
+        document.querySelectorAll('#mainTbl tbody tr').forEach(tr => {
+            tr.classList.remove('analog-highlight');
+        });
+        
+        // Убираем подсветку со всех строк в мини-таблице
+        document.querySelectorAll('.mini-table-row').forEach(tr => {
+            tr.classList.remove('mini-row-analog-highlight');
+        });
+        
+        if (!nativeForm) return;
+        
+        // Подсвечиваем строки с нативной формой в главной таблице
+        document.querySelectorAll(`#mainTbl tbody tr[data-filter]`).forEach(tr => {
+            const filter = tr.dataset.filter;
+            const meta = META[filter] || {};
+            const filterAnalog = meta.analog || null;
+            
+            // Подсвечиваем если это нативная форма
+            if (canonF(filter) === canonF(nativeForm)) {
+                tr.classList.add('analog-highlight');
+            }
+            // Подсвечиваем если это брендовая форма с аналогом = нативная форма
+            else if (filterAnalog && canonF(filterAnalog) === canonF(nativeForm)) {
+                tr.classList.add('analog-highlight');
+            }
+        });
+        
+        // Подсвечиваем строки с нативной формой в мини-таблице
+        document.querySelectorAll('.mini-table-row').forEach(tr => {
+            const filter = tr.dataset.miniFilter;
+            if (!filter) return;
+            
+            // Находим оригинальный фильтр из LEFT_ROWS
+            const originalFilter = LEFT_ROWS.find(r => canonF(r.filter) === filter);
+            if (!originalFilter) return;
+            
+            const meta = META[originalFilter.filter] || {};
+            const filterAnalog = meta.analog || null;
+            
+            // Подсвечиваем если это нативная форма
+            if (canonF(originalFilter.filter) === canonF(nativeForm)) {
+                tr.classList.add('mini-row-analog-highlight');
+            }
+            // Подсвечиваем если это брендовая форма с аналогом = нативная форма
+            else if (filterAnalog && canonF(filterAnalog) === canonF(nativeForm)) {
+                tr.classList.add('mini-row-analog-highlight');
+            }
+        });
+    }
+    
+    async function initAnalogsPanel() {
+        const buttonsContainer = el('analogButtons');
+        if (!buttonsContainer) return;
+        
+        // Загружаем нативные формы
+        const nativeForms = await loadNativeForms();
+        
+        if (nativeForms.length === 0) {
+            buttonsContainer.innerHTML = '<div style="color: var(--muted); font-size: 12px;">Нативные формы не найдены</div>';
+            return;
+        }
+        
+        // Создаем кнопки
+        buttonsContainer.innerHTML = '';
+        nativeForms.forEach(form => {
+            const btn = document.createElement('button');
+            btn.className = 'analog-btn';
+            btn.textContent = form.filter;
+            btn.dataset.nativeForm = form.filter;
+            btn.addEventListener('click', () => {
+                // Переключаем активное состояние
+                if (selectedNativeForm === form.filter) {
+                    selectedNativeForm = null;
+                    btn.classList.remove('active');
+                    highlightAnalogRows(null);
+                } else {
+                    // Убираем активность с других кнопок
+                    document.querySelectorAll('.analog-btn').forEach(b => b.classList.remove('active'));
+                    selectedNativeForm = form.filter;
+                    btn.classList.add('active');
+                    highlightAnalogRows(form.filter);
+                }
+            });
+            buttonsContainer.appendChild(btn);
+        });
+        
+        // Инициализация перетаскивания панели
+        initAnalogsDragging();
+    }
+    
+    // === Перетаскивание панели Аналоги ===
+    function initAnalogsDragging(){
+        const analogsPanel = document.querySelector('.analogs-panel');
+        const analogsHead = document.querySelector('.analogs-panel__head');
+        if(!analogsPanel || !analogsHead) return;
+
+        let isDragging = false;
+        let startX = 0;
+        let startY = 0;
+        let initialLeft = 0;
+        let initialTop = 0;
+
+        // Загружаем сохраненную позицию из localStorage
+        const savedPos = localStorage.getItem('analogsPanelPosition');
+        if(savedPos){
+            try{
+                const pos = JSON.parse(savedPos);
+                if(pos.left !== undefined){
+                    analogsPanel.style.left = pos.left;
+                    analogsPanel.style.right = 'auto';
+                }
+                if(pos.top !== undefined){
+                    analogsPanel.style.top = pos.top;
+                    analogsPanel.style.bottom = 'auto';
+                }
+            }catch(e){}
+        }
+
+        function dragStart(e){
+            if(e.target === analogsHead || analogsHead.contains(e.target)){
+                isDragging = true;
+                analogsPanel.style.cursor = 'grabbing';
+                
+                const rect = analogsPanel.getBoundingClientRect();
+                initialLeft = rect.left;
+                initialTop = rect.top;
+                
+                if(e.type === "touchstart"){
+                    startX = e.touches[0].clientX;
+                    startY = e.touches[0].clientY;
+                } else {
+                    startX = e.clientX;
+                    startY = e.clientY;
+                }
+                e.preventDefault();
+            }
+        }
+
+        function drag(e){
+            if(!isDragging) return;
+            e.preventDefault();
+
+            let currentX, currentY;
+            if(e.type === "touchmove"){
+                currentX = e.touches[0].clientX;
+                currentY = e.touches[0].clientY;
+            } else {
+                currentX = e.clientX;
+                currentY = e.clientY;
+            }
+
+            const deltaX = currentX - startX;
+            const deltaY = currentY - startY;
+
+            const newLeft = initialLeft + deltaX;
+            const newTop = initialTop + deltaY;
+
+            analogsPanel.style.left = newLeft + 'px';
+            analogsPanel.style.top = newTop + 'px';
+            analogsPanel.style.right = 'auto';
+            analogsPanel.style.bottom = 'auto';
+        }
+
+        function dragEnd(e){
+            if(!isDragging) return;
+            isDragging = false;
+            analogsPanel.style.cursor = '';
+
+            // Сохраняем позицию
+            const rect = analogsPanel.getBoundingClientRect();
+            const pos = {
+                left: rect.left + 'px',
+                top: rect.top + 'px'
+            };
+            localStorage.setItem('analogsPanelPosition', JSON.stringify(pos));
+        }
+
+        analogsHead.addEventListener('mousedown', dragStart);
+        analogsHead.addEventListener('touchstart', dragStart);
+        document.addEventListener('mousemove', drag);
+        document.addEventListener('touchmove', drag);
+        document.addEventListener('mouseup', dragEnd);
+        document.addEventListener('touchend', dragEnd);
     }
 
     // === Перетаскивание панели подсказок ===
