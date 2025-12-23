@@ -1996,9 +1996,8 @@ try{
         const tbody = document.querySelector('#mainTbl tbody');
         if (!tbody) return;
         
-        // Удаляем пустую строку-разделитель, если она есть
-        const spacer = tbody.querySelector('tr.analog-spacer');
-        if (spacer) spacer.remove();
+        // Удаляем пустые строки-разделители, если они есть
+        tbody.querySelectorAll('tr.analog-spacer').forEach(spacer => spacer.remove());
         
         // Убираем подсветку и скрытие со всех строк в главной таблице
         document.querySelectorAll('#mainTbl tbody tr').forEach(tr => {
@@ -2012,17 +2011,19 @@ try{
         
         if (!nativeForm) return;
         
-        // Добавляем пустую строку-разделитель в начало tbody
-        const spacerRow = document.createElement('tr');
-        spacerRow.className = 'analog-spacer';
-        let spacerHtml = '<td class="sticky col-filter"></td>';
-        spacerHtml += '<td class="sticky col-ord"></td>';
-        spacerHtml += '<td class="sticky col-plan"></td>';
-        for (const d of dates) {
-            spacerHtml += '<td class="dayCell"></td>';
+        // Добавляем 2 пустые строки-разделители в начало tbody
+        for (let i = 0; i < 2; i++) {
+            const spacerRow = document.createElement('tr');
+            spacerRow.className = 'analog-spacer';
+            let spacerHtml = '<td class="sticky col-filter"></td>';
+            spacerHtml += '<td class="sticky col-ord"></td>';
+            spacerHtml += '<td class="sticky col-plan"></td>';
+            for (const d of dates) {
+                spacerHtml += '<td class="dayCell"></td>';
+            }
+            spacerRow.innerHTML = spacerHtml;
+            tbody.insertBefore(spacerRow, tbody.firstChild);
         }
-        spacerRow.innerHTML = spacerHtml;
-        tbody.insertBefore(spacerRow, tbody.firstChild);
         
         // Обрабатываем строки в главной таблице
         document.querySelectorAll(`#mainTbl tbody tr[data-filter]`).forEach(tr => {
