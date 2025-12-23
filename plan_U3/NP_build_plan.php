@@ -545,6 +545,9 @@ try{
         line-height:1.35;
     }
 
+    .tips.hidden {
+        display: none !important;
+    }
     /* На узких экранах прячем, чтобы не мешал горизонтальному скроллу */
     @media (max-width: 1280px){
         .tips{ display:none; }
@@ -671,6 +674,31 @@ try{
         border-color: var(--accent);
         color: var(--accent);
     }
+    .height-btn-toggle {
+        font-size: 12px;
+        padding: 6px 12px;
+        border: 1px solid var(--accent);
+        border-radius: 6px;
+        background: white;
+        color: var(--accent);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-weight: 600;
+        margin-left: 8px;
+        margin-top: 6px;
+    }
+    .height-btn-toggle:hover {
+        background: #eff6ff;
+        border-color: var(--accent);
+    }
+    .height-btn-toggle.active {
+        background: var(--accent);
+        color: white;
+        border-color: var(--accent);
+    }
+    .mini-table-panel.hidden {
+        display: none;
+    }
     /* Подсветка маркеров высоты при фильтрации */
     .height-marker.highlighted {
         background: #fef3c7 !important;
@@ -682,16 +710,75 @@ try{
         box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
     }
 
+    /* Плавающая панель с уменьшенной таблицей */
+    .mini-table-panel {
+        position: fixed;
+        bottom: 16px;
+        left: 16px;
+        z-index: 30;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 8px;
+        max-width: 90vw;
+        max-height: 40vh;
+        overflow: auto;
+        cursor: move;
+        user-select: none;
+    }
+    .mini-table-panel__head {
+        padding: 6px 8px;
+        border-bottom: 1px solid var(--border);
+        font-weight: 700;
+        font-size: 12px;
+        margin-bottom: 4px;
+        cursor: move;
+    }
+    .mini-table-panel__head:hover {
+        background: #f8fafc;
+    }
+    .mini-table-panel__table {
+        border-collapse: separate;
+        border-spacing: 1px;
+        font-size: 0;
+    }
+    .mini-table-panel__table th,
+    .mini-table-panel__table td {
+        width: 4px;
+        height: 4px;
+        padding: 0;
+        margin: 0;
+        border: none;
+        background: #fff;
+        min-width: 4px;
+        min-height: 4px;
+    }
+    .mini-table-panel__table th {
+        background: #e5e7eb;
+        border: 1px solid #d1d5db;
+    }
+    .mini-table-panel__table td.mini-cell-filled {
+        background: #2563eb;
+    }
+    .mini-table-panel__table td.mini-cell-weekend {
+        background: #f3f4f6;
+    }
+    .mini-table-panel__table td.mini-cell-filled.mini-cell-weekend {
+        background: #3b82f6;
+    }
+    .mini-table-panel__table tr.mini-row-empty td {
+        background: #fee2e2 !important;
+    }
+    .mini-table-panel__table tr.mini-row-hover td {
+        background: #dcfce7 !important;
+    }
+
 </style>
 
 <div class="topbar">
     <div class="topbar-inner">
         <h1 class="title">План сборки  — заявка #<span id="titleOrder"><?=htmlspecialchars($orderNumber)?></span></h1>
-        <div class="chips">
-            <span class="chip" id="chipFilters">Фильтров: 0</span>
-            <span class="chip" id="chipDays">Дней: 0</span>
-            <span class="chip" id="chipCap">Лимит/смену: 0</span>
-        </div>
     </div>
 </div>
 
@@ -733,7 +820,7 @@ try{
 <div class="panel-wrap">
     <div class="panel" id="mainPanel">
         <div class="head">
-            <div class="help">Прокрутка по горизонтали; первые три колонки закреплены.</div>
+            <div class="help"></div>
             <div class="summary" id="summary"></div>
         </div>
         <div id="tableWrap"></div>
@@ -743,14 +830,27 @@ try{
 
 <div class="height-filter-panel">
     <div class="height-filter-panel__card">
-        <div class="height-filter-panel__title">Фильтр по высоте валов:</div>
-        <div class="height-buttons" id="heightButtons">
-            <!-- Кнопки будут добавлены через JavaScript -->
+        <div class="height-filter-panel__title"></div>
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <div class="height-buttons" id="heightButtons">
+                <!-- Кнопки будут добавлены через JavaScript -->
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <button class="height-btn-toggle" id="btnToggleMiniTable" title="Показать/скрыть карту плана">Карта</button>
+                <button class="height-btn-toggle" id="btnToggleLegend" title="Показать/скрыть легенду">Легенда</button>
+            </div>
         </div>
     </div>
 </div>
 
 <div class="toasts" id="toasts"></div>
+
+<!-- Плавающая панель с уменьшенной таблицей -->
+<div class="mini-table-panel" id="miniTablePanel">
+    <div class="mini-table-panel__head">Карта плана</div>
+    <div id="miniTableWrap"></div>
+</div>
+
 <aside class="tips" aria-label="Подсказки">
     <div class="tips__card">
         <div class="tips__head">Подсказки</div>
@@ -864,6 +964,45 @@ try{
         rs.setProperty('--wDay',wDay+'px');
     }
 
+    // ==== мини-таблица (1:20) ====
+    function buildMiniTable(){
+        const wrap = el('miniTableWrap');
+        if (!wrap || dates.length === 0 || LEFT_ROWS.length === 0) {
+            wrap.innerHTML = '';
+            return;
+        }
+        
+        let html = '<table class="mini-table-panel__table"><tbody>';
+        
+        // Строки для каждого фильтра
+        for (const r of LEFT_ROWS) {
+            // Проверяем, есть ли хотя бы одна залитая ячейка в строке
+            let hasFilled = false;
+            for (const d of dates) {
+                const q = plan.get(key(r.filter, d)) || 0;
+                if (q > 0) {
+                    hasFilled = true;
+                    break;
+                }
+            }
+            
+            const emptyRowClass = !hasFilled ? ' mini-row-empty' : '';
+            html += `<tr class="mini-table-row ${emptyRowClass}" data-mini-filter="${canonF(r.filter)}">`;
+            
+            // Ячейки дней
+            for (const d of dates) {
+                const q = plan.get(key(r.filter, d)) || 0;
+                const wk = isWeekend(d) ? ' mini-cell-weekend' : '';
+                const filled = q > 0 ? ' mini-cell-filled' : '';
+                html += `<td class="${filled}${wk}" title="${r.filter}: ${d} - ${q} шт"></td>`;
+            }
+            html += '</tr>';
+        }
+        
+        html += '</tbody></table>';
+        wrap.innerHTML = html;
+    }
+
     // ==== table build ====
     function buildMainTable(){
         const wrap = el('tableWrap');
@@ -961,15 +1100,28 @@ try{
             td.addEventListener('contextmenu', e=>{ e.preventDefault(); changeCell(td, -STEP); });
         });
 
+        // Подсветка строк в мини-таблице при наведении на главную таблицу
+        wrap.querySelectorAll('tr[data-filter]').forEach(tr=>{
+            const filter = tr.dataset.filter;
+            tr.addEventListener('mouseenter', ()=>{
+                const miniRow = document.querySelector(`.mini-table-row[data-mini-filter="${canonF(filter)}"]`);
+                if (miniRow) miniRow.classList.add('mini-row-hover');
+            });
+            tr.addEventListener('mouseleave', ()=>{
+                const miniRow = document.querySelector(`.mini-table-row[data-mini-filter="${canonF(filter)}"]`);
+                if (miniRow) miniRow.classList.remove('mini-row-hover');
+            });
+        });
+
         recalcPlannedSums(); recalcDayTotals(); recalcTotals(); recalcPressMarkers(); recalcWidth600Markers(); recalcDiameterMarkers();
-        el('summary').innerHTML = `<span class="help">Всего строк: <b>${LEFT_ROWS.length}</b></span>`;
-        el('chipFilters').textContent = `Фильтров: ${LEFT_ROWS.length}`;
-        el('chipDays').textContent = `Дней: ${dates.length}`;
-        el('chipCap').textContent = `Лимит/смену: ${dayCap}`;
+        el('summary').innerHTML = `<span class="help"></span>`;
         
         // Обновляем панель фильтров после построения таблицы
         initHeightFilterPanel();
         applyHeightFilter();
+        
+        // Обновляем уменьшенную таблицу
+        buildMiniTableDebounced();
     }
 
     // === логика изменения ячейки ===
@@ -1033,6 +1185,7 @@ try{
         recalcPressMarkersDebounced();
         recalcWidth600MarkersDebounced();
         recalcDiameterMarkersDebounced();
+        buildMiniTableDebounced();
     }
 
     function getOrdered(filter){
@@ -1061,6 +1214,7 @@ try{
         });
     }
     const recalcPlannedSumsDebounced = debounce(recalcPlannedSums, 40);
+    const buildMiniTableDebounced = debounce(buildMiniTable, 100);
 
     // Итоги по дням (Σ наш+чужой) + сравнение с лимитом/смену
     function recalcDayTotals(){
@@ -1427,7 +1581,6 @@ try{
         el('cap').addEventListener('input', ()=>{
             dayCap = Math.max(0, parseInt(el('cap').value,10) || 0);
             recalcDayTotals();
-            el('chipCap').textContent = `Лимит/смену: ${dayCap}`;
             markDirty(true);
         });
         el('btnSave').addEventListener('click', async ()=>{
@@ -1455,7 +1608,6 @@ try{
                 rebuildDates();
                 await Promise.all([loadForeign(), loadPlan()]);
                 buildMainTable();
-                el('chipDays').textContent = `Дней: ${days}`;
                 toast('План загружен','ok');
             }catch(e){ toast('Не удалось загрузить: '+e.message,'err'); }
         });
@@ -1471,11 +1623,15 @@ try{
         buildMainTable();
 
         window.addEventListener('resize', debounce(()=>{ measureAndSetWidths(); }, 200));
-        el('chipFilters').textContent = `Фильтров: ${LEFT_ROWS.length}`;
-        el('chipDays').textContent = `Дней: ${dates.length}`;
         
         // Инициализация панели фильтров высоты валов
         initHeightFilterPanel();
+        
+        // Инициализация кнопки переключения мини-таблицы
+        initMiniTableToggle();
+        
+        // Инициализация кнопки переключения легенды
+        initLegendToggle();
     })();
     
     // ==== Фильтр по высоте валов ============================================
@@ -1548,6 +1704,74 @@ try{
             document.querySelectorAll(`.height-marker[data-height="${height}"]`).forEach(marker => {
                 marker.classList.add('highlighted');
             });
+        });
+    }
+
+    // ==== Переключение мини-таблицы ============================================
+    function initMiniTableToggle() {
+        const btn = el('btnToggleMiniTable');
+        const panel = el('miniTablePanel');
+        if (!btn || !panel) return;
+        
+        // Загружаем сохраненное состояние из localStorage
+        const savedState = localStorage.getItem('miniTablePanelVisible');
+        const isVisible = savedState !== 'false'; // по умолчанию видима
+        
+        // Устанавливаем начальное состояние
+        if (!isVisible) {
+            panel.classList.add('hidden');
+            btn.classList.remove('active');
+        } else {
+            panel.classList.remove('hidden');
+            btn.classList.add('active');
+        }
+        
+        // Обработчик клика
+        btn.addEventListener('click', () => {
+            const isHidden = panel.classList.contains('hidden');
+            if (isHidden) {
+                panel.classList.remove('hidden');
+                btn.classList.add('active');
+                localStorage.setItem('miniTablePanelVisible', 'true');
+            } else {
+                panel.classList.add('hidden');
+                btn.classList.remove('active');
+                localStorage.setItem('miniTablePanelVisible', 'false');
+            }
+        });
+    }
+
+    // ==== Переключение легенды ============================================
+    function initLegendToggle() {
+        const btn = el('btnToggleLegend');
+        const panel = document.querySelector('.tips');
+        if (!btn || !panel) return;
+        
+        // Загружаем сохраненное состояние из localStorage
+        const savedState = localStorage.getItem('legendPanelVisible');
+        const isVisible = savedState !== 'false'; // по умолчанию видима
+        
+        // Устанавливаем начальное состояние
+        if (!isVisible) {
+            panel.classList.add('hidden');
+            btn.classList.remove('active');
+        } else {
+            panel.classList.remove('hidden');
+            btn.classList.add('active');
+        }
+        
+        // Обработчик клика
+        btn.addEventListener('click', () => {
+            const isHidden = panel.classList.contains('hidden');
+            if (isHidden) {
+                panel.classList.remove('hidden');
+                btn.classList.add('active');
+                localStorage.setItem('legendPanelVisible', 'true');
+            } else {
+                panel.classList.add('hidden');
+                btn.classList.remove('active');
+                localStorage.setItem('legendPanelVisible', 'false');
+            }
         });
     }
 
@@ -1638,6 +1862,101 @@ try{
 
         tipsHead.addEventListener('mousedown', dragStart);
         tipsHead.addEventListener('touchstart', dragStart);
+        document.addEventListener('mousemove', drag);
+        document.addEventListener('touchmove', drag);
+        document.addEventListener('mouseup', dragEnd);
+        document.addEventListener('touchend', dragEnd);
+    })();
+
+    // === Перетаскивание панели мини-таблицы ===
+    (function initMiniTableDragging(){
+        const miniPanel = el('miniTablePanel');
+        const miniHead = miniPanel?.querySelector('.mini-table-panel__head');
+        if(!miniPanel || !miniHead) return;
+
+        let isDragging = false;
+        let startX = 0;
+        let startY = 0;
+        let initialLeft = 0;
+        let initialTop = 0;
+
+        // Загружаем сохраненную позицию из localStorage
+        const savedPos = localStorage.getItem('miniTablePanelPosition');
+        if(savedPos){
+            try{
+                const pos = JSON.parse(savedPos);
+                if(pos.left !== undefined){
+                    miniPanel.style.left = pos.left;
+                    miniPanel.style.right = 'auto';
+                }
+                if(pos.top !== undefined){
+                    miniPanel.style.top = pos.top;
+                    miniPanel.style.bottom = 'auto';
+                }
+            }catch(e){}
+        }
+
+        function dragStart(e){
+            if(e.target === miniHead || miniHead.contains(e.target)){
+                isDragging = true;
+                miniPanel.style.cursor = 'grabbing';
+                
+                const rect = miniPanel.getBoundingClientRect();
+                initialLeft = rect.left;
+                initialTop = rect.top;
+                
+                if(e.type === "touchstart"){
+                    startX = e.touches[0].clientX;
+                    startY = e.touches[0].clientY;
+                } else {
+                    startX = e.clientX;
+                    startY = e.clientY;
+                }
+                e.preventDefault();
+            }
+        }
+
+        function drag(e){
+            if(!isDragging) return;
+            e.preventDefault();
+
+            let currentX, currentY;
+            if(e.type === "touchmove"){
+                currentX = e.touches[0].clientX;
+                currentY = e.touches[0].clientY;
+            } else {
+                currentX = e.clientX;
+                currentY = e.clientY;
+            }
+
+            const deltaX = currentX - startX;
+            const deltaY = currentY - startY;
+
+            const newLeft = initialLeft + deltaX;
+            const newTop = initialTop + deltaY;
+
+            miniPanel.style.left = newLeft + 'px';
+            miniPanel.style.top = newTop + 'px';
+            miniPanel.style.right = 'auto';
+            miniPanel.style.bottom = 'auto';
+        }
+
+        function dragEnd(e){
+            if(!isDragging) return;
+            isDragging = false;
+            miniPanel.style.cursor = '';
+
+            // Сохраняем позицию
+            const rect = miniPanel.getBoundingClientRect();
+            const pos = {
+                left: rect.left + 'px',
+                top: rect.top + 'px'
+            };
+            localStorage.setItem('miniTablePanelPosition', JSON.stringify(pos));
+        }
+
+        miniHead.addEventListener('mousedown', dragStart);
+        miniHead.addEventListener('touchstart', dragStart);
         document.addEventListener('mousemove', drag);
         document.addEventListener('touchmove', drag);
         document.addEventListener('mouseup', dragEnd);
