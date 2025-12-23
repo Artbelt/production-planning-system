@@ -198,6 +198,8 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                     'plastic_insertion' => null,  // пластиковая вставка
                     'diametr_outer' => null,  // внешний диаметр фильтра
                     'productivity'  => null,  // максимальное количество в смену
+                    'up_cap'        => null,  // верхняя крышка
+                    'down_cap'      => null,  // нижняя крышка
                     // опционально, если захочешь в будущем показывать размеры "шторы":
                     'height_mm' => null,
                     'width_mm'  => null,
@@ -213,7 +215,9 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
             rfs.press                                         AS press,
             rfs.plastic_insertion                             AS plastic_insertion,
             rfs.Diametr_outer                                 AS diametr_outer,
-            rfs.productivity                                  AS productivity
+            rfs.productivity                                  AS productivity,
+            rfs.up_cap                                        AS up_cap,
+            rfs.down_cap                                      AS down_cap
         FROM round_filter_structure rfs
         LEFT JOIN paper_package_round ppr
                ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
@@ -235,6 +239,8 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                 $res[$f]['plastic_insertion'] = isset($row['plastic_insertion']) && $row['plastic_insertion'] !== null && trim($row['plastic_insertion']) !== '' ? trim($row['plastic_insertion']) : null;
                 $res[$f]['diametr_outer']  = $row['diametr_outer'] !== null ? (float)$row['diametr_outer'] : null;
                 $res[$f]['productivity']   = $row['productivity'] !== null ? (int)$row['productivity'] : null;
+                $res[$f]['up_cap']         = $row['up_cap'] !== null && trim($row['up_cap']) !== '' ? trim($row['up_cap']) : null;
+                $res[$f]['down_cap']       = $row['down_cap'] !== null && trim($row['down_cap']) !== '' ? trim($row['down_cap']) : null;
             }
 
             echo json_encode(['ok'=>true,'items'=>$res]); exit;
@@ -389,7 +395,7 @@ try{
     thead th.col-ord, tbody td.col-ord,
     thead th.col-plan, tbody td.col-plan{border-right:none !important}
     
-    .col-filter{left:0 !important;width:var(--wFilter) !important;min-width:var(--wFilter) !important;max-width:var(--wFilter) !important}
+    .col-filter{left:0 !important;width:var(--wFilter) !important;min-width:var(--wFilter) !important;max-width:var(--wFilter) !important;text-overflow:clip !important;padding:6px 10px !important}
     .col-ord{left:var(--wFilter) !important;width:var(--wOrd) !important;min-width:var(--wOrd) !important;max-width:var(--wOrd) !important;text-align:right;color:var(--muted);box-shadow:1px 0 0 0 var(--border)}
     .col-plan{left:calc(var(--wFilter) + var(--wOrd)) !important;width:var(--wPlan) !important;min-width:var(--wPlan) !important;max-width:var(--wPlan) !important;text-align:right;box-shadow:1px 0 0 0 var(--border)}
 
@@ -765,7 +771,7 @@ try{
                 </div>
                 <div class="tips__legend-item">
                     <span class="tips__legend-marker" style="border-color:#8b5cf6;color:#8b5cf6">D</span>
-                    <span>Большой диаметр >250 (до 100 шт)</span>
+                    <span>Большой диаметр >250, ширина бумаги >400 мм, алюминиевые формы (до 100 шт)</span>
                 </div>
                 <div class="tips__legend-item">
                     <span class="tips__legend-marker" style="border-color:#3b82f6;color:#3b82f6;font-size:8px">600</span>
@@ -841,7 +847,7 @@ try{
         }
 
 
-        let wFilter=Math.ceil(ctx.measureText(maxFilter).width)+28; wFilter=Math.min(Math.max(wFilter,160),560);
+        let wFilter=Math.ceil(ctx.measureText(maxFilter).width)+80; wFilter=Math.min(Math.max(wFilter,240),700);
         // Учитываем заголовки "Заказано" и "В плане" для правильной ширины
         let wOrdHeader=Math.ceil(ctx.measureText('Заказано').width)+18;
         let wOrdNumber=Math.ceil(ctx.measureText('00000').width)+18;
@@ -887,7 +893,7 @@ try{
         <circle class="diameter-marker-progress-circle" cx="16" cy="16" r="13" data-date="${d}" stroke-dasharray="81.68" stroke-dashoffset="81.68"></circle>
       </svg>
     </div>
-    <span class="diameter-marker-header" data-date="${d}" title="Позиции с большим диаметром">D</span>
+    <span class="diameter-marker-header" data-date="${d}" title="Позиции с большим диаметром >250, шириной бумаги >400 мм (алюминиевые формы)">D</span>
   </div>
   <span class="d">${fmtDM(d)}</span>
   <span class="sum">
@@ -915,7 +921,11 @@ try{
 
             const hasPress = (meta.press === 1);
             const hasPlastic = (meta.plastic_insertion != null && meta.plastic_insertion !== '');
-            const hasLargeDiameter = (meta.diametr_outer != null && meta.diametr_outer > 250);
+            // Индикатор D только для фильтров с диаметром > 250, шириной бумаги > 400 мм,
+            // которые заливаются в алюминиевые формы (т.е. когда up_cap и down_cap не оба заполнены)
+            const hasLargeDiameter = (meta.diametr_outer != null && meta.diametr_outer > 250) &&
+                                     (meta.paper_width_mm != null && meta.paper_width_mm > 400) &&
+                                     (meta.up_cap == null || meta.down_cap == null);
             html += `<tr data-filter="${r.filter}">
             <td class="sticky col-filter">
               <span class="filterTitle">${r.filter}</span>
@@ -1186,13 +1196,17 @@ try{
             let totalDiameter = 0;
             let hasDiameter = false;
             // Считаем общее количество фильтров с большим диаметром в смене (текущая заявка)
+            // Индикатор D только для фильтров с диаметром > 250, шириной бумаги > 400 мм,
+            // которые заливаются в алюминиевые формы (т.е. когда up_cap и down_cap не оба заполнены)
             for(const [k, qty] of plan.entries()){
                 if(qty <= 0) continue;
                 const [filter, date] = k.split('|');
                 if(date !== d) continue;
                 
                 const meta = META[filter] || {};
-                if(meta.diametr_outer != null && meta.diametr_outer > 250){
+                if(meta.diametr_outer != null && meta.diametr_outer > 250 &&
+                   meta.paper_width_mm != null && meta.paper_width_mm > 400 &&
+                   (meta.up_cap == null || meta.down_cap == null)){
                     hasDiameter = true;
                     totalDiameter += qty;
                 }
@@ -1202,7 +1216,9 @@ try{
             const fObj = FOREIGN.get(d) || {filters:[]};
             for(const filterItem of (fObj.filters || [])){
                 const meta = META[filterItem.filter] || {};
-                if(meta.diametr_outer != null && meta.diametr_outer > 250){
+                if(meta.diametr_outer != null && meta.diametr_outer > 250 &&
+                   meta.paper_width_mm != null && meta.paper_width_mm > 400 &&
+                   (meta.up_cap == null || meta.down_cap == null)){
                     hasDiameter = true;
                     totalDiameter += (filterItem.qty || 0);
                 }
@@ -1218,8 +1234,8 @@ try{
             progressCircle.style.strokeDashoffset = offset;
             
             marker.title = hasDiameter 
-                ? `Позиции с большим диаметром: ${totalDiameter} шт (${Math.round(percent)}%)` 
-                : 'Нет позиций с большим диаметром';
+                ? `Позиции с большим диаметром >250, шириной бумаги >400 мм (алюминиевые формы): ${totalDiameter} шт (${Math.round(percent)}%)` 
+                : 'Нет позиций с большим диаметром >250, шириной бумаги >400 мм (алюминиевые формы)';
         });
     }
     const recalcDiameterMarkersDebounced = debounce(recalcDiameterMarkers, 40);
