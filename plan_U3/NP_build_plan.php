@@ -960,7 +960,13 @@ try{
         background: #fee2e2 !important;
     }
     .mini-table-panel__table tr.mini-row-hover td {
-        background: #dcfce7 !important;
+        background: #86efac !important;
+    }
+    .mini-table-panel__table tr.mini-row-hover td.mini-cell-filled {
+        background: #2563eb !important;
+    }
+    .mini-table-panel__table tr.mini-row-hover td.mini-cell-filled.mini-cell-weekend {
+        background: #3b82f6 !important;
     }
     .mini-table-panel__table tr.mini-row-analog-highlight td {
         outline: 1px solid #3b82f6 !important;
