@@ -499,6 +499,7 @@ echo "<!-- Аккуратная панель авторизации -->
                         <input type="hidden" name="workshop" value="<?= htmlspecialchars($workshop) ?>">
                         <input type="submit" value="Кол-во гофропакетов из рулона">
                     </form>
+                    <a href="NP_supply_requirements.php" target="_blank" rel="noopener" class="stack"><button>Потребность комплектующих по заявке</button></a>
                 </div>
 
                 <div class="section-title" style="margin-top:14px">Управление данными</div>
@@ -796,9 +797,6 @@ foreach ($orders_list as $order_num => $orders_data){
                 echo '<div class="stack">';
                 echo "<form action='new_order.php' method='post' target='_blank' class='stack'>"
                     ."<input type='submit' value='Создать заявку вручную'>"
-                    ."</form>";
-                echo "<form action='planning_manager.php' method='post' target='_blank' class='stack'>"
-                    ."<input type='submit' value='Менеджер планирования'>"
                     ."</form>";
                 echo "<form action='combine_orders.php' method='post' target='_blank' class='stack'>"
                     ."<input type='submit' value='Объединение заявок'>"

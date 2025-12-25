@@ -78,9 +78,14 @@ try {
     $total_count = 0;
     $norms_sum = 0.0;
     
+    // Получаем текущую дату для включения текущей смены
+    $today = date('Y-m-d');
+    
     while ($row = $result->fetch_assoc()) {
         $count = (int)$row['count_of_filters'];
         $build_complexity = (float)$row['build_complexity'];
+        $filter_name = $row['name_of_filter'] ?? '';
+        $order_number = $row['name_of_order'] ?? '';
         
         $total_count += $count;
         
@@ -94,13 +99,74 @@ try {
             $item_percentage = round($norms * 100, 0);
         }
         
+        // Получаем заказанное количество в текущей заявке
+        $ordered_in_order = 0;
+        $stmt_order = $mysqli->prepare("SELECT SUM(count) as total FROM orders WHERE order_number = ? AND filter = ?");
+        if ($stmt_order) {
+            $stmt_order->bind_param('ss', $order_number, $filter_name);
+            $stmt_order->execute();
+            $result_order = $stmt_order->get_result();
+            if ($row_order = $result_order->fetch_assoc()) {
+                $ordered_in_order = (int)($row_order['total'] ?? 0);
+            }
+            $stmt_order->close();
+        }
+        
+        // Получаем изготовленное количество по текущей заявке (включая текущую смену)
+        $produced_in_order = 0;
+        $stmt_prod = $mysqli->prepare("SELECT SUM(count_of_filters) as total FROM manufactured_production WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production <= ?");
+        if ($stmt_prod) {
+            $stmt_prod->bind_param('sss', $order_number, $filter_name, $today);
+            $stmt_prod->execute();
+            $result_prod = $stmt_prod->get_result();
+            if ($row_prod = $result_prod->fetch_assoc()) {
+                $produced_in_order = (int)($row_prod['total'] ?? 0);
+            }
+            $stmt_prod->close();
+        }
+        
+        // Получаем данные по остальным заявкам (для того же фильтра) - по каждой заявке отдельно
+        $other_orders_data = [];
+        $stmt_other_orders = $mysqli->prepare("
+            SELECT 
+                o.order_number,
+                COALESCE(SUM(o.count), 0) as ordered_count,
+                COALESCE((
+                    SELECT SUM(mp2.count_of_filters)
+                    FROM manufactured_production mp2
+                    WHERE mp2.name_of_order = o.order_number 
+                        AND mp2.name_of_filter = o.filter 
+                        AND mp2.date_of_production <= ?
+                ), 0) as produced_count
+            FROM orders o
+            WHERE o.order_number != ? AND o.filter = ?
+            GROUP BY o.order_number
+            ORDER BY o.order_number
+        ");
+        if ($stmt_other_orders) {
+            $stmt_other_orders->bind_param('sss', $today, $order_number, $filter_name);
+            $stmt_other_orders->execute();
+            $result_other_orders = $stmt_other_orders->get_result();
+            while ($row_other = $result_other_orders->fetch_assoc()) {
+                $other_orders_data[] = [
+                    'order_number' => htmlspecialchars($row_other['order_number'] ?? '', ENT_QUOTES, 'UTF-8'),
+                    'ordered_count' => (int)($row_other['ordered_count'] ?? 0),
+                    'produced_count' => (int)($row_other['produced_count'] ?? 0)
+                ];
+            }
+            $stmt_other_orders->close();
+        }
+        
         $items[] = [
-            'filter_name' => htmlspecialchars($row['name_of_filter'] ?? '', ENT_QUOTES, 'UTF-8'),
-            'order_number' => htmlspecialchars($row['name_of_order'] ?? '', ENT_QUOTES, 'UTF-8'),
+            'filter_name' => htmlspecialchars($filter_name, ENT_QUOTES, 'UTF-8'),
+            'order_number' => htmlspecialchars($order_number, ENT_QUOTES, 'UTF-8'),
             'count' => $count,
             'build_complexity' => $build_complexity,
             'norms' => $norms,
-            'item_percentage' => $item_percentage
+            'item_percentage' => $item_percentage,
+            'ordered_in_order' => $ordered_in_order,
+            'produced_in_order' => $produced_in_order,
+            'other_orders_data' => $other_orders_data
         ];
     }
     
