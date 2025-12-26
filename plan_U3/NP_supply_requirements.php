@@ -1,7 +1,6 @@
 <?php
 // NP_supply_requirements.php — потребность по конкретной заявке для У3
-// Печать: таблица разбивается на несколько страниц по N дат (по умолчанию 20)
-// Режим: "Недельные итоги" — после каждого воскресенья добавляется столбец с суммой за неделю (ISO: пн–вс)
+// Все данные отображаются в одной таблице без разбиения на страницы
 
 $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_U3;charset=utf8mb4","root","",[
     PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION
@@ -11,8 +10,6 @@ $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_U3;charset=utf8mb4","root","",[
 if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
     $order     = $_POST['order']  ?? '';
     $ctype     = $_POST['ctype']  ?? '';           // caps (крышки)
-    $chunkSize = (int)($_POST['chunk'] ?? 20);     // сколько дат на одну «страницу»
-    if ($chunkSize <= 0) $chunkSize = 20;
 
     if ($order==='' || $ctype==='') {
         http_response_code(400);
@@ -122,79 +119,73 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
     // Заголовок для печати (один раз)
     echo "<h3 class=\"subtitle\">Заявка ".htmlspecialchars($order).": потребность — ".htmlspecialchars($title)."</h3>";
 
-    // Разбиение дат на чанки
-    $dateChunks = array_chunk($dates, $chunkSize, true);
-
-    foreach ($dateChunks as $i => $chunkDates) {
-        echo '<div class="sheet">';                   // оболочка страницы
-        echo '<div class="table-wrap"><table class="pivot">';
-        echo '<thead><tr><th class="left">Позиция</th>';
-        foreach ($chunkDates as $d) {
-            $ts = strtotime($d);
-            echo '<th class="nowrap vertical-date">' . date('d-m-y', $ts) . '</th>';
-        }
-        echo '<th class="nowrap vertical-date">В заказе</th><th class="nowrap vertical-date">На складе</th><th class="nowrap vertical-date">Дефицит</th></tr></thead><tbody>';
-
-        // Строки с позициями
-        foreach ($items as $name) {
-            $rowTotal = 0;
-            $stockQty = $stockMap[$name] ?? 0;
-            echo '<tr><td class="left">'.htmlspecialchars($name).'</td>';
-            foreach ($chunkDates as $d) {
-                $ts = strtotime($d);
-                $v  = $matrix[$name][$d] ?? 0;
-                $rowTotal += $v;
-                
-                // Заливаем только дни, в которые фильтр запланирован к сборке (v > 0)
-                // Проверяем, хватает ли остатка на складе для покрытия потребности до этой даты включительно
-                $cellClass = '';
-                if ($v > 0) {
-                    $cumulative = $cumulativeDemand[$name][$d] ?? 0;
-                    if ($stockQty > 0 && $cumulative <= $stockQty) {
-                        // Хватает крышек
-                        $cellClass = 'stock-sufficient';
-                    } elseif ($cumulative > $stockQty) {
-                        // Не хватает крышек
-                        $cellClass = 'stock-insufficient';
-                    }
-                }
-                
-                echo '<td class="'.$cellClass.'">'.($v ? fmt($v) : '').'</td>';
-            }
-            // В заказе
-            echo '<td class="total">'.fmt($rowTotal).'</td>';
-            // На складе
-            echo '<td class="total">'.fmt($stockQty).'</td>';
-            // Дефицит (разница между заказом и складом, если заказ больше)
-            $deficit = max(0, $rowTotal - $stockQty);
-            $deficitClass = $deficit > 0 ? 'deficit' : '';
-            echo '<td class="total '.$deficitClass.'">'.($deficit > 0 ? fmt($deficit) : '').'</td></tr>';
-        }
-
-        // Итоги по датам
-        echo '<tr class="foot"><td class="left nowrap">Итого по дням</td>';
-        $grand = 0;
-        $totalStock = 0;
-        foreach ($chunkDates as $d) {
-            $col = 0;
-            foreach ($items as $name) $col += $matrix[$name][$d] ?? 0;
-            $grand += $col;
-            echo '<td class="total">'.($col?fmt($col):'').'</td>';
-        }
-        // Итого в заказе
-        echo '<td class="grand">'.fmt($grand).'</td>';
-        // Итого на складе
-        foreach ($items as $name) {
-            $totalStock += $stockMap[$name] ?? 0;
-        }
-        echo '<td class="grand">'.fmt($totalStock).'</td>';
-        // Итого дефицит
-        $totalDeficit = max(0, $grand - $totalStock);
-        echo '<td class="grand">'.($totalDeficit > 0 ? fmt($totalDeficit) : '').'</td></tr>';
-
-        echo '</tbody></table></div>'; // table-wrap
-        echo '</div>'; // sheet
+    // Создаем одну таблицу со всеми датами
+    echo '<div class="table-wrap"><table class="pivot">';
+    echo '<thead><tr><th class="left">Позиция</th>';
+    foreach ($dates as $d) {
+        $ts = strtotime($d);
+        echo '<th class="nowrap vertical-date">' . date('d-m-y', $ts) . '</th>';
     }
+    echo '<th class="nowrap vertical-date">В заказе</th><th class="nowrap vertical-date">На складе</th><th class="nowrap vertical-date">Дефицит</th></tr></thead><tbody>';
+
+    // Строки с позициями
+    foreach ($items as $name) {
+        $rowTotal = 0;
+        $stockQty = $stockMap[$name] ?? 0;
+        echo '<tr><td class="left">'.htmlspecialchars($name).'</td>';
+        foreach ($dates as $d) {
+            $ts = strtotime($d);
+            $v  = $matrix[$name][$d] ?? 0;
+            $rowTotal += $v;
+            
+            // Заливаем только дни, в которые фильтр запланирован к сборке (v > 0)
+            // Проверяем, хватает ли остатка на складе для покрытия потребности до этой даты включительно
+            $cellClass = '';
+            if ($v > 0) {
+                $cumulative = $cumulativeDemand[$name][$d] ?? 0;
+                if ($stockQty > 0 && $cumulative <= $stockQty) {
+                    // Хватает крышек
+                    $cellClass = 'stock-sufficient';
+                } elseif ($cumulative > $stockQty) {
+                    // Не хватает крышек
+                    $cellClass = 'stock-insufficient';
+                }
+            }
+            
+            echo '<td class="'.$cellClass.'">'.($v ? fmt($v) : '').'</td>';
+        }
+        // В заказе
+        echo '<td class="total">'.fmt($rowTotal).'</td>';
+        // На складе
+        echo '<td class="total">'.fmt($stockQty).'</td>';
+        // Дефицит (разница между заказом и складом, если заказ больше)
+        $deficit = max(0, $rowTotal - $stockQty);
+        $deficitClass = $deficit > 0 ? 'deficit' : '';
+        echo '<td class="total '.$deficitClass.'">'.($deficit > 0 ? fmt($deficit) : '').'</td></tr>';
+    }
+
+    // Итоги по датам
+    echo '<tr class="foot"><td class="left nowrap">Итого по дням</td>';
+    $grand = 0;
+    $totalStock = 0;
+    foreach ($dates as $d) {
+        $col = 0;
+        foreach ($items as $name) $col += $matrix[$name][$d] ?? 0;
+        $grand += $col;
+        echo '<td class="total">'.($col?fmt($col):'').'</td>';
+    }
+    // Итого в заказе
+    echo '<td class="grand">'.fmt($grand).'</td>';
+    // Итого на складе
+    foreach ($items as $name) {
+        $totalStock += $stockMap[$name] ?? 0;
+    }
+    echo '<td class="grand">'.fmt($totalStock).'</td>';
+    // Итого дефицит
+    $totalDeficit = max(0, $grand - $totalStock);
+    echo '<td class="grand">'.($totalDeficit > 0 ? fmt($totalDeficit) : '').'</td></tr>';
+
+    echo '</tbody></table></div>'; // table-wrap
 
     exit;
 }
@@ -232,7 +223,13 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
             writing-mode: vertical-rl;
             transform: rotate(180deg);
             white-space: nowrap;
-            padding: 4px;
+            padding: 6px 4px;
+            width: 26px;
+            min-width: 26px;
+            max-width: 26px;
+            font-size: 11.5px;
+            line-height: 1.3;
+            box-sizing: border-box;
         }
         label{white-space:nowrap; display:flex; align-items:center; gap:6px}
         select,button{padding:7px 10px;font-size:13px;border:1px solid var(--line);border-radius:8px;background:#fff}
@@ -240,20 +237,31 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         button{cursor:pointer;font-weight:600}
         .btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
         .btn-soft{background:var(--accent-soft);color:var(--accent);border-color:#cfe0ff}
-        #result{max-width:1100px;margin:0 auto}
+        #result{width:100%;margin:0 auto}
 
         .subtitle{margin:6px 0 8px}
 
-        .table-wrap{overflow-x:auto;background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.08);padding:10px;margin-bottom:14px}
-        table.pivot{border-collapse:collapse;width:100%;min-width:640px;font-size:12.5px;table-layout:fixed}
-        table.pivot th, table.pivot td{border:1px solid #ddd;padding:5px 7px;text-align:center;vertical-align:middle}
+        .table-wrap{overflow-x:auto;background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.08);padding:6px;margin-bottom:14px;width:100%}
+        table.pivot{border-collapse:collapse;width:100%;min-width:640px;font-size:11px;table-layout:fixed}
+        table.pivot th, table.pivot td{border:1px solid #ddd;padding:4px 5px;text-align:center;vertical-align:middle}
         table.pivot thead th{background:#f0f0f0;font-weight:600}
-        .left{text-align:left;white-space:normal;min-width:200px;width:200px}
+        .left{text-align:left;white-space:normal;min-width:140px;width:140px;max-width:140px;font-size:10.5px}
         .nowrap{white-space:nowrap}
-        table.pivot td.total{background:#f9fafb;font-weight:bold}
+        table.pivot td.total{background:#f9fafb;font-weight:bold;min-width:100px;width:100px}
         table.pivot tr.foot td{background:#eef6ff;font-weight:bold}
-        table.pivot td.grand{background:#e6ffe6;font-weight:bold}
-        table.pivot td.deficit{background:#fee2e2;color:#991b1b;font-weight:bold}
+        table.pivot td.grand{background:#e6ffe6;font-weight:bold;min-width:100px;width:100px}
+        table.pivot td.deficit{background:#fee2e2;color:#991b1b;font-weight:bold;min-width:100px;width:100px}
+        table.pivot th.vertical-date:last-child,
+        table.pivot th.vertical-date:nth-last-child(2){
+            min-width:44px;
+            width:44px;
+            max-width:44px;
+        }
+        table.pivot th.vertical-date:nth-last-child(3){
+            min-width:44px;
+            width:44px;
+            max-width:44px;
+        }
         table.pivot td.stock-sufficient{background:#d1fae5 !important;color:#065f46;font-weight:500}
         table.pivot td.stock-insufficient{background:#fee2e2 !important;color:#991b1b;font-weight:500}
         tbody tr:nth-child(even){background:#fafafa}
@@ -265,23 +273,117 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
 
         @media(max-width:700px){ select,button{width:100%} }
 
-        /* Блок-страница для печати каждой части */
-        .sheet{page-break-after:always;}
-        .sheet:last-child{page-break-after:auto;}
 
         @media print{
-            @page { size: A4 landscape; margin: 10mm; }
-            body{background:#fff}
-            .panel{display:none !important}
-            .table-wrap{box-shadow:none;border-radius:0;padding:0;overflow:visible}
-            table.pivot{font-size:11px;min-width:0 !important;width:auto}
-            table.pivot th, table.pivot td{
-                padding:3px 4px !important;
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-                white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+            @page { 
+                size: A4 landscape; 
+                margin: 8mm 5mm;
             }
-            .vertical-date{padding:2px !important;letter-spacing:.2px}
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+            }
+            body{
+                background:#fff !important;
+                margin:0;
+                padding:0;
+                font-size:10px;
+            }
+            h2, h3{
+                margin:0 0 8px 0;
+                page-break-after:avoid;
+            }
+            .panel{
+                display:none !important;
+            }
+            .subtitle{
+                margin:0 0 6px 0;
+                font-size:12px;
+            }
+            .table-wrap{
+                box-shadow:none !important;
+                border-radius:0 !important;
+                padding:0 !important;
+                margin:0 !important;
+                overflow:visible !important;
+                width:100% !important;
+                page-break-inside:avoid;
+            }
+            table.pivot{
+                font-size:9px !important;
+                min-width:100% !important;
+                width:100% !important;
+                table-layout:fixed !important;
+                border-collapse:collapse !important;
+                page-break-inside:auto;
+            }
+            table.pivot thead{
+                display:table-header-group;
+            }
+            table.pivot thead th{
+                background:#f0f0f0 !important;
+                font-weight:600 !important;
+                padding:4px 3px !important;
+                border:1px solid #000 !important;
+                page-break-after:avoid;
+            }
+            table.pivot tbody tr{
+                page-break-inside:avoid;
+                page-break-after:auto;
+            }
+            table.pivot tbody td{
+                padding:3px 2px !important;
+                border:1px solid #000 !important;
+                white-space:nowrap !important;
+                overflow:visible !important;
+                text-overflow:clip !important;
+            }
+            .vertical-date{
+                padding:3px 1px !important;
+                font-size:8px !important;
+                letter-spacing:0 !important;
+                width:18px !important;
+                min-width:18px !important;
+                max-width:18px !important;
+            }
+            .left{
+                min-width:120px !important;
+                width:120px !important;
+                max-width:120px !important;
+                font-size:9px !important;
+                white-space:normal !important;
+            }
+            table.pivot td.total{
+                min-width:80px !important;
+                width:80px !important;
+                font-weight:bold !important;
+            }
+            table.pivot td.grand,
+            table.pivot td.deficit{
+                min-width:80px !important;
+                width:80px !important;
+                font-weight:bold !important;
+            }
+            table.pivot th.vertical-date:last-child,
+            table.pivot th.vertical-date:nth-last-child(2){
+                min-width:44px !important;
+                width:44px !important;
+                max-width:44px !important;
+            }
+            table.pivot th.vertical-date:nth-last-child(3){
+                min-width:44px !important;
+                width:44px !important;
+                max-width:44px !important;
+            }
+            #result{
+                width:100% !important;
+                max-width:100% !important;
+                margin:0 !important;
+            }
+            #createRequestModal{
+                display:none !important;
+            }
         }
 
         /* Модальное окно */
@@ -369,14 +471,6 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         <option value="caps">Крышки</option>
     </select>
 
-    <label>Дат на страницу:
-        <select id="chunk">
-            <?php foreach ([12,16,20,24,28,32] as $n): ?>
-                <option value="<?= $n ?>" <?= $n==20?'selected':'' ?>><?= $n ?></option>
-            <?php endforeach; ?>
-        </select>
-    </label>
-
     <button class="btn-primary" onclick="loadPivot()">Показать потребность</button>
     <button class="btn-soft" onclick="window.print()">Печать</button>
     <button class="btn-soft" onclick="openCreateRequestModal()" id="createRequestBtn" style="display:none;">Создать заявку</button>
@@ -388,7 +482,6 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
     function loadPivot(){
         const order    = document.getElementById('order').value;
         const ctype    = document.getElementById('ctype').value;
-        const chunk    = document.getElementById('chunk').value;
         if(!order){ alert('Выберите заявку'); return; }
         if(!ctype){ alert('Выберите тип комплектующих'); return; }
 
@@ -408,8 +501,7 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
         xhr.send(
             'order='+encodeURIComponent(order)+
-            '&ctype='+encodeURIComponent(ctype)+
-            '&chunk='+encodeURIComponent(chunk)
+            '&ctype='+encodeURIComponent(ctype)
         );
     }
 
@@ -422,6 +514,11 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
             return;
         }
 
+        // Получаем заголовки с датами
+        const headerRow = table.querySelector('thead tr');
+        const dateHeaders = Array.from(headerRow.querySelectorAll('th.vertical-date'));
+        const dateHeadersText = dateHeaders.map(th => th.textContent.trim());
+        
         const deficitData = [];
         const rows = table.querySelectorAll('tbody tr');
         
@@ -439,11 +536,39 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
             const deficit = parseFloat(deficitCell.textContent.trim()) || 0;
             
             if (deficit > 0) {
+                // Находим первую дату наступления дефицита
+                // Ищем первую ячейку с классом stock-insufficient
+                let deficitDate = '';
+                const dateCells = Array.from(cells).slice(1, -3); // Все ячейки кроме первой и последних трех
+                
+                for (let i = 0; i < dateCells.length && i < dateHeadersText.length - 3; i++) {
+                    const cell = dateCells[i];
+                    if (cell.classList.contains('stock-insufficient')) {
+                        deficitDate = dateHeadersText[i];
+                        break;
+                    }
+                }
+                
+                // Если не нашли по классу, вычисляем по накопленной потребности
+                if (!deficitDate) {
+                    let cumulative = 0;
+                    for (let i = 0; i < dateCells.length && i < dateHeadersText.length - 3; i++) {
+                        const cell = dateCells[i];
+                        const value = parseFloat(cell.textContent.trim()) || 0;
+                        cumulative += value;
+                        if (cumulative > inStock) {
+                            deficitDate = dateHeadersText[i];
+                            break;
+                        }
+                    }
+                }
+                
                 deficitData.push({
                     position: position,
                     inOrder: inOrder,
                     inStock: inStock,
-                    deficit: deficit
+                    deficit: deficit,
+                    deficitDate: deficitDate
                 });
             }
         });
@@ -453,9 +578,24 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
             return;
         }
 
+        // Сортируем по дате наступления дефицита
+        deficitData.sort((a, b) => {
+            if (!a.deficitDate && !b.deficitDate) return 0;
+            if (!a.deficitDate) return 1;
+            if (!b.deficitDate) return -1;
+            
+            // Преобразуем даты в формат для сравнения
+            const dateA = convertDateToInput(a.deficitDate);
+            const dateB = convertDateToInput(b.deficitDate);
+            
+            if (dateA < dateB) return -1;
+            if (dateA > dateB) return 1;
+            return 0;
+        });
+
         // Формируем содержимое модального окна
         let tableHtml = '<table class="request-table">';
-        tableHtml += '<thead><tr><th>Позиция</th><th>В заказе</th><th>На складе</th><th>Дефицит</th></tr></thead>';
+        tableHtml += '<thead><tr><th>Позиция</th><th>В заказе</th><th>На складе</th><th>Дефицит</th><th>Дата поставки</th></tr></thead>';
         tableHtml += '<tbody>';
         
         deficitData.forEach(item => {
@@ -464,6 +604,7 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
             tableHtml += '<td>' + item.inOrder + '</td>';
             tableHtml += '<td>' + item.inStock + '</td>';
             tableHtml += '<td style="background:#fee2e2;font-weight:bold;">' + item.deficit + '</td>';
+            tableHtml += '<td><input type="date" value="' + (item.deficitDate ? convertDateToInput(item.deficitDate) : '') + '" style="width:100%;padding:4px;border:1px solid #ddd;border-radius:4px;"></td>';
             tableHtml += '</tr>';
         });
         
@@ -483,6 +624,18 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    function convertDateToInput(dateStr) {
+        // Преобразуем формат dd-mm-yy в yyyy-mm-dd для input[type="date"]
+        // dateStr в формате "25-12-25" (dd-mm-yy)
+        if (!dateStr) return '';
+        const parts = dateStr.split('-');
+        if (parts.length !== 3) return '';
+        const day = parts[0].padStart(2, '0');
+        const month = parts[1].padStart(2, '0');
+        const year = '20' + parts[2]; // Преобразуем yy в yyyy
+        return year + '-' + month + '-' + day;
     }
 
     // Закрытие модального окна при клике вне его

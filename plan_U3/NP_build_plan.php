@@ -578,11 +578,15 @@ try{
     /* Sticky колонки - убираем границы и добавляем визуальные разделители */
     thead th.col-filter, tbody td.col-filter,
     thead th.col-ord, tbody td.col-ord,
-    thead th.col-plan, tbody td.col-plan{border-right:none !important}
+    thead th.col-plan, tbody td.col-plan,
+    thead th.col-stock, tbody td.col-stock{border-right:none !important}
     
     .col-filter{left:0 !important;width:var(--wFilter) !important;min-width:var(--wFilter) !important;max-width:var(--wFilter) !important;text-overflow:clip !important;padding:6px 10px !important}
     .col-ord{left:var(--wFilter) !important;width:var(--wOrd) !important;min-width:var(--wOrd) !important;max-width:var(--wOrd) !important;text-align:right;color:var(--muted);box-shadow:1px 0 0 0 var(--border)}
     .col-plan{left:calc(var(--wFilter) + var(--wOrd)) !important;width:var(--wPlan) !important;min-width:var(--wPlan) !important;max-width:var(--wPlan) !important;text-align:right;box-shadow:1px 0 0 0 var(--border)}
+    .col-stock{left:calc(var(--wFilter) + var(--wOrd) + var(--wPlan)) !important;width:var(--wStock) !important;min-width:var(--wStock) !important;max-width:var(--wStock) !important;text-align:right;box-shadow:1px 0 0 0 var(--border);display:none !important}
+    .col-stock.show{display:table-cell !important}
+    thead th.col-stock.show{display:table-cell !important}
 
     .dayHead{width:var(--wDay);min-width:var(--wDay);max-width:var(--wDay);text-align:center;border-top:1px solid var(--border);padding:10px 8px !important;min-height:120px}
     thead th.dayHead{position:sticky;top:48px;z-index:10;background:#f8fafc}
@@ -799,103 +803,13 @@ try{
     .analogs-panel.hidden {
         display: none !important;
     }
-    /* === Панель Крышки =================================================== */
-    .covers-panel{
-        position: fixed;
-        right: 16px;
-        top: 74px;
-        width: 480px;
-        max-width: calc(100vw - 32px);
-        z-index: 25;
-    }
-    .covers-panel__card{
-        background: #fef3c7;
-        border:1px solid var(--border);
-        border-radius: var(--radius);
-        box-shadow: var(--shadow);
-        overflow: hidden;
-    }
-    .covers-panel__head{
-        padding:10px 12px;
-        border-bottom:1px solid var(--border);
-        font-weight:700;
-        cursor:move;
-        user-select:none;
-        background: #fde68a;
-    }
-    .covers-panel__head:hover{
-        background:#fcd34d;
-    }
-    .covers-panel__body{
-        padding:8px 10px;
-        font-size:11px;
-        color:var(--text);
-        max-height: 70vh;
-        overflow-y: auto;
-    }
-    .covers-panel__table{
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 11px;
-    }
-    .covers-panel__table th,
-    .covers-panel__table td{
-        padding: 4px 6px;
-        text-align: left;
-        border-bottom: 1px solid rgba(0,0,0,0.1);
-    }
-    .covers-panel__table th{
-        background: #fcd34d;
-        font-weight: 600;
-        position: sticky;
-        top: 0;
-        z-index: 1;
-    }
-    .covers-panel__table tr:hover{
-        background: rgba(255,255,255,0.5);
-    }
-    .covers-panel__table td:nth-child(1){
-        font-weight: 600;
-    }
-    .covers-panel__table th:nth-child(2),
-    .covers-panel__table td:nth-child(2){
-        text-align: left;
-        width: auto;
-        white-space: nowrap;
-        padding-left: 4px;
-        padding-right: 4px;
-    }
-    .covers-panel__table td:nth-child(3){
-        text-align: right;
-    }
-    .covers-panel__table tr.covers-row-up td:nth-child(2){
-        font-size: 10px;
-        color: #6b7280;
-        padding-top: 3px;
-    }
-    .covers-panel__table tr.covers-row-down td:nth-child(2){
-        font-size: 10px;
-        color: #6b7280;
-        padding-bottom: 3px;
-    }
-    .covers-panel__table tr.covers-row-down{
-        border-bottom: 1px solid rgba(0,0,0,0.15);
-    }
+    /* Стили для остатков крышек в основной таблице */
     .covers-stock-low{
         color: #dc2626;
         font-weight: 600;
     }
     .covers-stock-ok{
         color: #059669;
-    }
-    .covers-panel__table tr.covers-row-highlight{
-        background: #dbeafe !important;
-    }
-    .covers-panel__table tr.covers-row-highlight td{
-        background: #dbeafe !important;
-    }
-    .covers-panel.hidden {
-        display: none !important;
     }
     /* Подсветка строк с аналогами */
     tbody tr.analog-highlight {
@@ -938,7 +852,7 @@ try{
         }
         body { background:#fff !important; }
         /* Скрываем все интерактивные части */
-        .topbar, .toolbar-wrap, .panel-wrap, .tips, .toasts, .analogs-panel, .covers-panel { display:none !important; }
+        .topbar, .toolbar-wrap, .panel-wrap, .tips, .toasts, .analogs-panel { display:none !important; }
         /* Показываем только печатную разметку */
         #printArea { display:block !important; }
 
@@ -1234,7 +1148,7 @@ try{
                 <button class="height-btn-toggle" id="btnToggleMiniTable" title="Показать/скрыть карту плана">Карта</button>
                 <button class="height-btn-toggle" id="btnToggleLegend" title="Показать/скрыть легенду">Легенда</button>
                 <button class="height-btn-toggle" id="btnToggleAnalogs" title="Показать/скрыть аналоги">Аналоги</button>
-                <button class="height-btn-toggle" id="btnToggleCovers" title="Показать/скрыть крышки">Крышки</button>
+                <button class="height-btn-toggle" id="btnToggleCovers" title="Показать/скрыть столбец Склад">Склад</button>
             </div>
         </div>
     </div>
@@ -1260,17 +1174,6 @@ try{
     </div>
 </aside>
 
-<!-- Панель Крышки -->
-<aside class="covers-panel hidden" aria-label="Крышки">
-    <div class="covers-panel__card">
-        <div class="covers-panel__head">Крышки</div>
-        <div class="covers-panel__body">
-            <div id="coversContent">
-                <div style="text-align: center; padding: 20px; color: var(--muted);">Загрузка данных...</div>
-            </div>
-        </div>
-    </div>
-</aside>
 
 <aside class="tips" aria-label="Подсказки">
     <div class="tips__card">
@@ -1316,6 +1219,9 @@ try{
     const key = (f, d) => `${canonF(f)}|${d}`;
 
     let ORDER = <?=json_encode($orderNumber)?>;
+
+    // Данные о складе крышек для каждого фильтра
+    let COVERS_STOCK = new Map();
 
     // Данные слева (PHP → JS на старте)
     let LEFT_ROWS = [
@@ -1376,12 +1282,16 @@ try{
         let wPlanHeader=Math.ceil(ctx.measureText('В плане').width)+18;
         let wPlanNumber=Math.ceil(ctx.measureText('0000').width)+18;
         let wPlan=Math.max(wPlanHeader, wPlanNumber); wPlan=Math.min(Math.max(wPlan,70),140);
+        let wStockHeader=Math.ceil(ctx.measureText('Склад').width)+18;
+        let wStockNumber=Math.ceil(ctx.measureText('00000').width)+18;
+        let wStock=Math.max(wStockHeader, wStockNumber); wStock=Math.min(Math.max(wStock,70),120);
         let wDay=Math.ceil(ctx.measureText('00.00').width)+18; wDay=Math.min(Math.max(wDay,112),192);
 
         const rs=document.documentElement.style;
         rs.setProperty('--wFilter',wFilter+'px');
         rs.setProperty('--wOrd',wOrd+'px');
         rs.setProperty('--wPlan',wPlan+'px');
+        rs.setProperty('--wStock',wStock+'px');
         rs.setProperty('--wDay',wDay+'px');
     }
 
@@ -1431,6 +1341,7 @@ try{
         html += '<th class="sticky col-filter">Фильтр</th>';
         html += '<th class="sticky col-ord">Заказано</th>';
         html += '<th class="sticky col-plan">В&nbsp;плане</th>';
+        html += '<th class="sticky col-stock">Склад</th>';
 
         for (const d of dates) {
 
@@ -1511,6 +1422,21 @@ try{
             </td>
             <td class="sticky col-ord ord right" title="Заказано по фильтру">${r.ord}</td>
             <td class="sticky col-plan plan right" title="Сумма распределённого по фильтру">0</td>`;
+            
+            // Ячейка склада крышек
+            const stockInfo = COVERS_STOCK.get(canonF(r.filter));
+            let stockHtml = '—';
+            let stockClass = '';
+            if (stockInfo) {
+                const minStock = stockInfo.minStock;
+                if (minStock !== null) {
+                    stockHtml = minStock.toString();
+                    // Красный если недостаточно, зеленый если достаточно
+                    stockClass = minStock < r.ord ? 'covers-stock-low' : 'covers-stock-ok';
+                }
+            }
+            html += `<td class="sticky col-stock right ${stockClass}" title="${stockInfo ? (stockInfo.up_cap ? `Верхняя: ${stockInfo.up_cap_stock ?? '—'}, ` : '') + (stockInfo.down_cap ? `Нижняя: ${stockInfo.down_cap_stock ?? '—'}` : '') : 'Нет данных'}">${stockHtml}</td>`;
+                    
                     // ... дальше ячейки дней как у тебя
 
 
@@ -1539,51 +1465,11 @@ try{
             tr.addEventListener('mouseenter', ()=>{
                 const miniRow = document.querySelector(`.mini-table-row[data-mini-filter="${canonF(filter)}"]`);
                 if (miniRow) miniRow.classList.add('mini-row-hover');
-                
-                // Подсветка строк в панели крышек (обе строки для одного фильтра) и прокрутка
-                const coversRows = document.querySelectorAll(`.covers-panel__table tr[data-cover-filter="${canonF(filter)}"]`);
-                if (coversRows.length > 0) {
-                    // Подсвечиваем все строки для этого фильтра
-                    coversRows.forEach(row => {
-                        row.classList.add('covers-row-highlight');
-                    });
-                    
-                    // Прокручиваем панель, чтобы первая строка была в центре
-                    const coversPanelBody = document.querySelector('.covers-panel__body');
-                    if (coversPanelBody && coversRows[0]) {
-                        // Используем getBoundingClientRect для точного вычисления позиции
-                        const rowRect = coversRows[0].getBoundingClientRect();
-                        const panelRect = coversPanelBody.getBoundingClientRect();
-                        
-                        // Вычисляем текущую позицию строки относительно верха прокручиваемого контейнера
-                        // rowRect.top - это позиция относительно viewport
-                        // panelRect.top - это позиция контейнера относительно viewport
-                        // coversPanelBody.scrollTop - текущая прокрутка
-                        const rowTopInPanel = (rowRect.top - panelRect.top) + coversPanelBody.scrollTop;
-                        // Учитываем высоту обеих строк для лучшего центрирования
-                        const totalRowHeight = Array.from(coversRows).reduce((sum, row) => sum + row.offsetHeight, 0);
-                        const panelHeight = coversPanelBody.clientHeight;
-                        
-                        // Вычисляем позицию для центрирования блока из двух строк
-                        const targetScrollTop = rowTopInPanel - (panelHeight / 2) + (totalRowHeight / 2);
-                        
-                        // Плавная прокрутка
-                        coversPanelBody.scrollTo({
-                            top: Math.max(0, targetScrollTop),
-                            behavior: 'smooth'
-                        });
-                    }
-                }
             });
             tr.addEventListener('mouseleave', ()=>{
                 const miniRow = document.querySelector(`.mini-table-row[data-mini-filter="${canonF(filter)}"]`);
                 if (miniRow) miniRow.classList.remove('mini-row-hover');
                 
-                // Убираем подсветку всех строк для этого фильтра в панели крышек
-                const coversRows = document.querySelectorAll(`.covers-panel__table tr[data-cover-filter="${canonF(filter)}"]`);
-                coversRows.forEach(row => {
-                    row.classList.remove('covers-row-highlight');
-                });
             });
         });
 
@@ -1600,8 +1486,6 @@ try{
         // Обновляем панель Аналоги (чтобы загрузить нативные формы из текущей заявки)
         initAnalogsPanel();
         
-        // Обновляем панель Крышки (чтобы загрузить данные о крышках из текущей заявки)
-        initCoversPanel();
         
         // Обновляем подсветку аналогов, если выбрана нативная форма
         if (selectedNativeForm) {
@@ -2079,6 +1963,7 @@ try{
             dayCap = Math.max(0, parseInt(el('cap').value,10) || 0);
             rebuildDates();
             try{ await loadForeign(); }catch(e){ console.warn('FOREIGN error',e); }
+            try{ await loadCoversStockData(); }catch(e){ console.warn('Covers stock load failed',e); }
             buildMainTable(); markDirty(true);
         });
         el('cap').addEventListener('input', ()=>{
@@ -2119,19 +2004,23 @@ try{
                 dayCap = Math.max(0, parseInt(el('cap').value,10) || 0);
                 rebuildDates();
                 await Promise.all([loadForeign(), loadPlan()]);
+                try{ await loadCoversStockData(); }catch(e){ console.warn('Covers stock load failed',e); }
                 buildMainTable();
                 toast('План загружен','ok');
             }catch(e){ toast('Не удалось загрузить: '+e.message,'err'); }
         });
-        el('btnClear').addEventListener('click', ()=>{
+        el('btnClear').addEventListener('click', async ()=>{
             if(confirm('Очистить текущий план?')){
-                plan.clear(); buildMainTable(); markDirty(true);
+                plan.clear(); 
+                try{ await loadCoversStockData(); }catch(e){ console.warn('Covers stock load failed',e); }
+                buildMainTable(); markDirty(true);
             }
         });
 
         // первичный рендер
         startDateISO = todayISO; days = 7; dayCap = 0; rebuildDates();
         try{ await loadForeign(); }catch(e){}
+        try{ await loadCoversStockData(); }catch(e){ console.warn('Covers stock load failed',e); }
         buildMainTable();
 
         window.addEventListener('resize', debounce(()=>{ measureAndSetWidths(); }, 200));
@@ -2154,8 +2043,6 @@ try{
         // Инициализация кнопки переключения крышек
         initCoversToggle();
         
-        // Инициализация панели Крышки
-        initCoversPanel();
     })();
     
     // ==== Фильтр по высоте валов ============================================
@@ -2378,16 +2265,17 @@ try{
             for (let i = 0; i < 2; i++) {
                 const spacerRow = document.createElement('tr');
                 spacerRow.className = 'table-spacer';
-                let spacerHtml = '<td class="sticky col-filter"></td>';
-                spacerHtml += '<td class="sticky col-ord"></td>';
-                spacerHtml += '<td class="sticky col-plan"></td>';
-                for (const d of dates) {
-                    spacerHtml += '<td class="dayCell"></td>';
-                }
-                spacerRow.innerHTML = spacerHtml;
-                tbody.insertBefore(spacerRow, tbody.firstChild);
+            let spacerHtml = '<td class="sticky col-filter"></td>';
+            spacerHtml += '<td class="sticky col-ord"></td>';
+            spacerHtml += '<td class="sticky col-plan"></td>';
+            spacerHtml += '<td class="sticky col-stock"></td>';
+            for (const d of dates) {
+                spacerHtml += '<td class="dayCell"></td>';
             }
-            return;
+            spacerRow.innerHTML = spacerHtml;
+            tbody.insertBefore(spacerRow, tbody.firstChild);
+        }
+        return;
         }
         
         // Добавляем 2 пустые строки-разделители в начало tbody при фильтрации
@@ -2397,6 +2285,7 @@ try{
             let spacerHtml = '<td class="sticky col-filter"></td>';
             spacerHtml += '<td class="sticky col-ord"></td>';
             spacerHtml += '<td class="sticky col-plan"></td>';
+            spacerHtml += '<td class="sticky col-stock"></td>';
             for (const d of dates) {
                 spacerHtml += '<td class="dayCell"></td>';
             }
@@ -2582,44 +2471,10 @@ try{
         document.addEventListener('touchend', dragEnd);
     }
 
-    // ==== Переключение панели Крышки ============================================
-    function initCoversToggle() {
-        const btn = el('btnToggleCovers');
-        const panel = document.querySelector('.covers-panel');
-        if (!btn || !panel) return;
-        
-        // Загружаем сохраненное состояние из localStorage
-        const savedState = localStorage.getItem('coversPanelVisible');
-        const isVisible = savedState === 'true'; // по умолчанию скрыта
-        
-        // Устанавливаем начальное состояние
-        if (!isVisible) {
-            panel.classList.add('hidden');
-            btn.classList.remove('active');
-        } else {
-            panel.classList.remove('hidden');
-            btn.classList.add('active');
-        }
-        
-        // Обработчик клика
-        btn.addEventListener('click', () => {
-            const isHidden = panel.classList.contains('hidden');
-            if (isHidden) {
-                panel.classList.remove('hidden');
-                btn.classList.add('active');
-                localStorage.setItem('coversPanelVisible', 'true');
-            } else {
-                panel.classList.add('hidden');
-                btn.classList.remove('active');
-                localStorage.setItem('coversPanelVisible', 'false');
-            }
-        });
-    }
-
-    // ==== Панель Крышки ============================================
-    async function loadCoversData() {
+    // ==== Загрузка данных о складе крышек ============================================
+    async function loadCoversStockData() {
         try {
-            if (!ORDER) return [];
+            if (!ORDER) return;
             
             const res = await fetch(location.pathname+'?action=load_covers_data', {
                 method: 'POST',
@@ -2628,178 +2483,82 @@ try{
             });
             const data = await res.json();
             if (!data.ok) throw new Error(data.error || 'Ошибка загрузки данных о крышках');
-            return data.items || [];
+            
+            // Сохраняем данные в глобальную переменную
+            COVERS_STOCK.clear();
+            if (data.items && data.items.length > 0) {
+                data.items.forEach(item => {
+                    const filter = canonF(item.filter);
+                    const upCapStock = item.up_cap_stock !== null ? item.up_cap_stock : null;
+                    const downCapStock = item.down_cap_stock !== null ? item.down_cap_stock : null;
+                    
+                    // Вычисляем минимальный остаток
+                    let minStock = null;
+                    if (upCapStock !== null && downCapStock !== null) {
+                        minStock = Math.min(upCapStock, downCapStock);
+                    } else if (upCapStock !== null) {
+                        minStock = upCapStock;
+                    } else if (downCapStock !== null) {
+                        minStock = downCapStock;
+                    }
+                    
+                    COVERS_STOCK.set(filter, {
+                        up_cap: item.up_cap,
+                        down_cap: item.down_cap,
+                        up_cap_stock: upCapStock,
+                        down_cap_stock: downCapStock,
+                        minStock: minStock
+                    });
+                });
+            }
         } catch(e) {
-            console.warn('Не удалось загрузить данные о крышках:', e);
-            return [];
+            console.warn('Не удалось загрузить данные о складе крышек:', e);
         }
     }
-    
-    async function initCoversPanel() {
-        const contentContainer = el('coversContent');
-        if (!contentContainer) return;
+
+    // ==== Переключение столбца Склад ============================================
+    function initCoversToggle() {
+        const btn = el('btnToggleCovers');
+        if (!btn) return;
         
-        // Показываем индикатор загрузки
-        contentContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--muted);">Загрузка данных...</div>';
+        // Загружаем сохраненное состояние из localStorage
+        const stockVisible = localStorage.getItem('coversStockVisible') === 'true'; // состояние столбца "Склад"
         
-        // Загружаем данные
-        const coversData = await loadCoversData();
-        
-        if (coversData.length === 0) {
-            contentContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--muted);">Нет данных о крышках</div>';
-            return;
+        // Устанавливаем начальное состояние столбца "Склад"
+        toggleStockColumn(stockVisible);
+        if (stockVisible) {
+            btn.classList.add('active');
         }
         
-        // Формируем таблицу
-        let html = '<table class="covers-panel__table">';
-        html += '<thead><tr>';
-        html += '<th>Фильтр</th>';
-        html += '<th>Крышка</th>';
-        html += '<th>Склад</th>';
-        html += '</tr></thead>';
-        html += '<tbody>';
-        
-        coversData.forEach(item => {
-            const upCapStock = item.up_cap_stock !== null ? item.up_cap_stock : null;
-            const downCapStock = item.down_cap_stock !== null ? item.down_cap_stock : null;
+        // Обработчик клика
+        btn.addEventListener('click', () => {
+            const stockIsVisible = document.querySelectorAll('.col-stock.show').length > 0;
             
-            // Определяем класс для остатков (красный если недостаточно, зеленый если достаточно)
-            const upCapClass = upCapStock !== null ? (upCapStock < item.ordered_qty ? 'covers-stock-low' : 'covers-stock-ok') : '';
-            const downCapClass = downCapStock !== null ? (downCapStock < item.ordered_qty ? 'covers-stock-low' : 'covers-stock-ok') : '';
+            // Переключаем видимость столбца "Склад"
+            toggleStockColumn(!stockIsVisible);
+            localStorage.setItem('coversStockVisible', !stockIsVisible ? 'true' : 'false');
             
-            const filterNormalized = escapeHtml(canonF(item.filter));
-            
-            // Первая строка - верхняя крышка
-            html += `<tr data-cover-filter="${filterNormalized}" class="covers-row-up">`;
-            html += `<td rowspan="2" style="vertical-align: top;">${escapeHtml(item.filter)}</td>`;
-            html += `<td>${item.up_cap ? escapeHtml(item.up_cap) : '—'}</td>`;
-            html += `<td class="${upCapClass}">${upCapStock !== null ? upCapStock : '—'}</td>`;
-            html += '</tr>';
-            
-            // Вторая строка - нижняя крышка
-            html += `<tr data-cover-filter="${filterNormalized}" class="covers-row-down">`;
-            html += `<td>${item.down_cap ? escapeHtml(item.down_cap) : '—'}</td>`;
-            html += `<td class="${downCapClass}">${downCapStock !== null ? downCapStock : '—'}</td>`;
-            html += '</tr>';
-        });
-        
-        html += '</tbody></table>';
-        contentContainer.innerHTML = html;
-        
-        // Инициализация перетаскивания панели
-        initCoversDragging();
-        
-        // Подсветка строк будет инициализирована при построении главной таблицы (в buildMainTable)
-    }
-    
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-    
-    // === Перетаскивание панели Крышки ===
-    function initCoversDragging(){
-        const coversPanel = document.querySelector('.covers-panel');
-        const coversHead = document.querySelector('.covers-panel__head');
-        if(!coversPanel || !coversHead) return;
-
-        let isDragging = false;
-        let startX = 0;
-        let startY = 0;
-        let initialLeft = 0;
-        let initialTop = 0;
-
-        // Загружаем сохраненную позицию из localStorage
-        const savedPos = localStorage.getItem('coversPanelPosition');
-        if(savedPos){
-            try{
-                const pos = JSON.parse(savedPos);
-                if(pos.left !== undefined){
-                    coversPanel.style.left = pos.left;
-                    coversPanel.style.right = 'auto';
-                }
-                if(pos.top !== undefined){
-                    coversPanel.style.top = pos.top;
-                    coversPanel.style.bottom = 'auto';
-                }
-            }catch(e){}
-        }
-
-        function dragStart(e){
-            if(e.target === coversHead || coversHead.contains(e.target)){
-                isDragging = true;
-                coversPanel.style.cursor = 'grabbing';
-                
-                const rect = coversPanel.getBoundingClientRect();
-                initialLeft = rect.left;
-                initialTop = rect.top;
-                
-                if(e.type === "touchstart"){
-                    startX = e.touches[0].clientX;
-                    startY = e.touches[0].clientY;
-                } else {
-                    startX = e.clientX;
-                    startY = e.clientY;
-                }
-                e.preventDefault();
-            }
-        }
-
-        function drag(e){
-            if(!isDragging) return;
-            e.preventDefault();
-            
-            let currentX = 0;
-            let currentY = 0;
-            
-            if(e.type === "touchmove"){
-                currentX = e.touches[0].clientX;
-                currentY = e.touches[0].clientY;
+            // Обновляем состояние кнопки
+            if (!stockIsVisible) {
+                btn.classList.add('active');
             } else {
-                currentX = e.clientX;
-                currentY = e.clientY;
+                btn.classList.remove('active');
             }
-            
-            const deltaX = currentX - startX;
-            const deltaY = currentY - startY;
-            
-            let newLeft = initialLeft + deltaX;
-            let newTop = initialTop + deltaY;
-            
-            // Ограничиваем перемещение в пределах окна
-            const maxLeft = window.innerWidth - coversPanel.offsetWidth;
-            const maxTop = window.innerHeight - coversPanel.offsetHeight;
-            
-            newLeft = Math.max(0, Math.min(newLeft, maxLeft));
-            newTop = Math.max(0, Math.min(newTop, maxTop));
-            
-            coversPanel.style.left = newLeft + 'px';
-            coversPanel.style.top = newTop + 'px';
-            coversPanel.style.right = 'auto';
-            coversPanel.style.bottom = 'auto';
-        }
-
-        function dragEnd(e){
-            if(!isDragging) return;
-            isDragging = false;
-            coversPanel.style.cursor = '';
-            
-            const rect = coversPanel.getBoundingClientRect();
-            const pos = {
-                left: rect.left + 'px',
-                top: rect.top + 'px'
-            };
-            localStorage.setItem('coversPanelPosition', JSON.stringify(pos));
-        }
-
-        coversHead.addEventListener('mousedown', dragStart);
-        coversHead.addEventListener('touchstart', dragStart);
-        document.addEventListener('mousemove', drag);
-        document.addEventListener('touchmove', drag);
-        document.addEventListener('mouseup', dragEnd);
-        document.addEventListener('touchend', dragEnd);
+        });
     }
+    
+    // ==== Переключение видимости столбца "Склад" ============================================
+    function toggleStockColumn(show) {
+        const stockCells = document.querySelectorAll('.col-stock');
+        stockCells.forEach(cell => {
+            if (show) {
+                cell.classList.add('show');
+            } else {
+                cell.classList.remove('show');
+            }
+        });
+    }
+
 
     // === Перетаскивание панели подсказок ===
     (function initTipsDragging(){
