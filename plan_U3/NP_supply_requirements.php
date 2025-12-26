@@ -802,9 +802,11 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         // Получаем заголовки с датами
         const headerRow = table.querySelector('thead tr');
         const dateHeaders = Array.from(headerRow.querySelectorAll('th.vertical-date'));
-        const dateHeadersText = dateHeaders.map(th => th.textContent.trim());
-
-        const deficitData = [];
+        const dateHeadersText = dateHeaders.map(th => th.textContent.trim()).slice(0, -3); // Исключаем последние 3 столбца
+        
+        // Собираем данные по плану сборки и остаткам на складе для каждой позиции
+        const planData = {}; // {position: {date: qty}}
+        const stockData = {}; // {position: stockQty}
         const rows = table.querySelectorAll('tbody tr');
         
         rows.forEach(row => {
@@ -815,86 +817,166 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
             if (cells.length < 2) return;
             
             const position = cells[0].textContent.trim();
-            // Дополнительная проверка на случай, если класс не установлен
             if (position === 'Итого по дням') return;
-            const inOrderCell = cells[cells.length - 3]; // "В заказе"
-            const inStockCell = cells[cells.length - 2];  // "На складе"
-            const deficitCell = cells[cells.length - 1];  // "Дефицит"
             
-            const inOrder = parseFloat(inOrderCell.textContent.trim()) || 0;
-            const inStock = parseFloat(inStockCell.textContent.trim()) || 0;
-            const deficit = parseFloat(deficitCell.textContent.trim()) || 0;
+            // Получаем остаток на складе (предпоследний столбец)
+            const inStockCell = cells[cells.length - 2];
+            const stockQty = parseFloat(inStockCell.textContent.trim()) || 0;
+            stockData[position] = stockQty;
             
-            if (deficit > 0) {
-                // Находим первую дату наступления дефицита
-                // Ищем первую ячейку с классом stock-insufficient
-                let deficitDate = '';
-                const dateCells = Array.from(cells).slice(1, -3); // Все ячейки кроме первой и последних трех
-                
-                for (let i = 0; i < dateCells.length && i < dateHeadersText.length - 3; i++) {
-                    const cell = dateCells[i];
-                    if (cell.classList.contains('stock-insufficient')) {
-                        deficitDate = dateHeadersText[i];
-                        break;
-                    }
-                }
-                
-                // Если не нашли по классу, вычисляем по накопленной потребности
-                if (!deficitDate) {
-                    let cumulative = 0;
-                    for (let i = 0; i < dateCells.length && i < dateHeadersText.length - 3; i++) {
-                        const cell = dateCells[i];
-                        const value = parseFloat(cell.textContent.trim()) || 0;
-                        cumulative += value;
-                        if (cumulative > inStock) {
-                            deficitDate = dateHeadersText[i];
-                            break;
+            if (!planData[position]) {
+                planData[position] = {};
+            }
+            
+            // Собираем данные по датам (исключаем последние 3 столбца)
+            const dateCells = Array.from(cells).slice(1, -3);
+            dateCells.forEach((cell, index) => {
+                if (index < dateHeadersText.length) {
+                    const date = dateHeadersText[index];
+                    const qty = parseFloat(cell.textContent.trim()) || 0;
+                    if (qty > 0) {
+                        if (!planData[position][date]) {
+                            planData[position][date] = 0;
                         }
+                        planData[position][date] += qty;
                     }
                 }
+            });
+        });
+        
+        // Определяем партии для каждой позиции и проверяем дефицит
+        const batches = [];
+        
+        Object.keys(planData).forEach(position => {
+            const stockQty = stockData[position] || 0;
+            
+            // Собираем даты и сортируем их правильно (по дате, а не по строке)
+            const dates = Object.keys(planData[position])
+                .filter(d => planData[position][d] > 0)
+                .sort((a, b) => {
+                    // Преобразуем даты для корректного сравнения
+                    const dateA = convertDateToInput(a);
+                    const dateB = convertDateToInput(b);
+                    if (dateA < dateB) return -1;
+                    if (dateA > dateB) return 1;
+                    return 0;
+                });
+            
+            if (dates.length === 0) return;
+            
+            // Рассчитываем накопленную потребность по датам
+            let cumulativeBefore = 0; // Накопленная потребность до текущей даты
+            
+            // Группируем даты в партии по непрерывности
+            let currentBatch = {
+                position: position,
+                startDate: dates[0],
+                dates: [dates[0]],
+                qty: planData[position][dates[0]],
+                cumulativeBefore: 0 // Накопленная потребность до начала партии
+            };
+            
+            // Обновляем накопленную потребность после первой даты
+            cumulativeBefore = planData[position][dates[0]];
+            
+            for (let i = 1; i < dates.length; i++) {
+                // Преобразуем даты из формата "d-m-y" в формат для сравнения
+                const prevDateStr = convertDateToInput(dates[i - 1]);
+                const currDateStr = convertDateToInput(dates[i]);
+                const prevDate = new Date(prevDateStr + 'T00:00:00');
+                const currDate = new Date(currDateStr + 'T00:00:00');
+                const daysDiff = (currDate - prevDate) / (1000 * 60 * 60 * 24);
                 
-                deficitData.push({
-                    position: position,
-                    inOrder: inOrder,
-                    inStock: inStock,
-                    deficit: deficit,
-                    deficitDate: deficitDate
+                // Если пропущена смена (больше 1 дня) - начинается новая партия
+                if (daysDiff > 1) {
+                    // Проверяем, есть ли дефицит в текущей партии
+                    // Накопленная потребность на конец партии = накопленная до начала + размер партии
+                    const batchEndCumulative = currentBatch.cumulativeBefore + currentBatch.qty;
+                    
+                    // Если накопленная потребность на конец партии превышает остаток - есть дефицит
+                    if (batchEndCumulative > stockQty) {
+                        // Количество дефицита = сколько не хватает на конец партии
+                        const batchDeficit = batchEndCumulative - stockQty;
+                        
+                        // Но нужно учесть, что если остаток покрывает начало партии, 
+                        // то дефицит только на часть партии
+                        const deficitAtStart = Math.max(0, currentBatch.cumulativeBefore - stockQty);
+                        const actualDeficit = deficitAtStart > 0 ? currentBatch.qty : batchDeficit;
+                        
+                        batches.push({
+                            position: currentBatch.position,
+                            qty: actualDeficit,
+                            date: convertDateToInput(currentBatch.startDate)
+                        });
+                    }
+                    
+                    // Обновляем накопленную потребность (на конец предыдущей партии)
+                    cumulativeBefore = batchEndCumulative;
+                    
+                    // Начинаем новую партию
+                    currentBatch = {
+                        position: position,
+                        startDate: dates[i],
+                        dates: [dates[i]],
+                        qty: planData[position][dates[i]],
+                        cumulativeBefore: cumulativeBefore
+                    };
+                    
+                    // Обновляем накопленную потребность после добавления новой даты
+                    cumulativeBefore += planData[position][dates[i]];
+                } else {
+                    // Продолжаем текущую партию
+                    currentBatch.dates.push(dates[i]);
+                    currentBatch.qty += planData[position][dates[i]];
+                    
+                    // Обновляем накопленную потребность
+                    cumulativeBefore += planData[position][dates[i]];
+                }
+            }
+            
+            // Проверяем последнюю партию на дефицит
+            const batchEndCumulative = currentBatch.cumulativeBefore + currentBatch.qty;
+            
+            // Если накопленная потребность на конец партии превышает остаток - есть дефицит
+            if (batchEndCumulative > stockQty) {
+                const batchDeficit = batchEndCumulative - stockQty;
+                
+                // Учитываем, покрывает ли остаток начало партии
+                const deficitAtStart = Math.max(0, currentBatch.cumulativeBefore - stockQty);
+                const actualDeficit = deficitAtStart > 0 ? currentBatch.qty : batchDeficit;
+                
+                batches.push({
+                    position: currentBatch.position,
+                    qty: actualDeficit,
+                    date: convertDateToInput(currentBatch.startDate)
                 });
             }
         });
-
-        if (deficitData.length === 0) {
-            alert('Нет дефицитных позиций для создания заявки');
+        
+        if (batches.length === 0) {
+            alert('Нет данных для создания заявки');
             return;
         }
 
-        // Сортируем по дате наступления дефицита
-        deficitData.sort((a, b) => {
-            if (!a.deficitDate && !b.deficitDate) return 0;
-            if (!a.deficitDate) return 1;
-            if (!b.deficitDate) return -1;
-            
-            // Преобразуем даты в формат для сравнения
-            const dateA = convertDateToInput(a.deficitDate);
-            const dateB = convertDateToInput(b.deficitDate);
-            
-            if (dateA < dateB) return -1;
-            if (dateA > dateB) return 1;
+        // Сортируем партии по дате, затем по позиции
+        batches.sort((a, b) => {
+            if (a.date < b.date) return -1;
+            if (a.date > b.date) return 1;
+            if (a.position < b.position) return -1;
+            if (a.position > b.position) return 1;
             return 0;
         });
 
         // Формируем содержимое модального окна
         let tableHtml = '<table class="request-table">';
-        tableHtml += '<thead><tr><th>Позиция</th><th>В заказе</th><th>На складе</th><th>Дефицит</th><th>Дата поставки</th></tr></thead>';
+        tableHtml += '<thead><tr><th>Крышка</th><th>Количество</th><th>Дата</th></tr></thead>';
         tableHtml += '<tbody>';
         
-        deficitData.forEach(item => {
-            tableHtml += '<tr>';
-            tableHtml += '<td>' + escapeHtml(item.position) + '</td>';
-            tableHtml += '<td>' + item.inOrder + '</td>';
-            tableHtml += '<td>' + item.inStock + '</td>';
-            tableHtml += '<td style="background:#fee2e2;font-weight:bold;">' + item.deficit + '</td>';
-            tableHtml += '<td><input type="date" value="' + (item.deficitDate ? convertDateToInput(item.deficitDate) : '') + '" style="width:100%;padding:4px;border:1px solid #ddd;border-radius:4px;"></td>';
+        batches.forEach((batch, index) => {
+            tableHtml += '<tr data-index="' + index + '">';
+            tableHtml += '<td>' + escapeHtml(batch.position) + '</td>';
+            tableHtml += '<td style="font-weight:bold;">' + Math.round(batch.qty) + '</td>';
+            tableHtml += '<td><input type="date" class="batch-date-input" value="' + batch.date + '" data-index="' + index + '" style="width:100%;padding:4px;border:1px solid #ddd;border-radius:4px;"></td>';
             tableHtml += '</tr>';
         });
         
@@ -904,6 +986,9 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         document.getElementById('requestOrder').textContent = order;
         document.getElementById('requestTableBody').innerHTML = tableHtml;
         document.getElementById('createRequestModal').style.display = 'block';
+        
+        // Сохраняем данные партий
+        window.batchesArray = batches;
     }
 
     function closeCreateRequestModal() {
