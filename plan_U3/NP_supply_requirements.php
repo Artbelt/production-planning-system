@@ -6,6 +6,290 @@ $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_U3;charset=utf8mb4","root","",[
     PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION
 ]);
 
+/* ===== AJAX: экспорт в Excel ===== */
+if (isset($_GET['export']) && $_GET['export']=='excel') {
+    $order = $_GET['order'] ?? '';
+    $ctype = $_GET['ctype'] ?? '';
+    
+    if ($order==='' || $ctype==='') {
+        http_response_code(400);
+        echo "Не указана заявка или тип комплектующих.";
+        exit;
+    }
+    
+    // Подключаем PHPExcel
+    require_once __DIR__ . '/PHPExcel.php';
+    
+    // Получаем данные (та же логика, что и для отображения)
+    $sql = "
+    WITH bp AS (
+      SELECT
+        order_number,
+        filter AS base_filter,
+        filter,
+        day_date,
+        SUM(qty) AS qty
+      FROM build_plans
+      WHERE order_number = :ord
+      GROUP BY order_number, filter, day_date
+    ),
+    p AS (
+      SELECT b.order_number, b.base_filter, b.filter, b.day_date, b.qty,
+             rfs.up_cap, rfs.down_cap
+      FROM bp b
+      JOIN round_filter_structure rfs ON rfs.filter = b.base_filter
+    )
+    SELECT
+      'caps' AS component_type,
+      p.up_cap AS component_name,
+      p.day_date AS need_by_date,
+      p.filter AS filter_label,
+      p.base_filter,
+      p.qty,
+      'верхняя' AS cap_type
+    FROM p
+    WHERE p.up_cap IS NOT NULL AND p.up_cap <> ''
+    UNION ALL
+    SELECT
+      'caps' AS component_type,
+      p.down_cap AS component_name,
+      p.day_date AS need_by_date,
+      p.filter AS filter_label,
+      p.base_filter,
+      p.qty,
+      'нижняя' AS cap_type
+    FROM p
+    WHERE p.down_cap IS NOT NULL AND p.down_cap <> ''
+    ORDER BY need_by_date, component_name, base_filter
+    ";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([':ord'=>$order]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    if (!$rows) {
+        http_response_code(404);
+        echo "По заявке ".htmlspecialchars($order)." для крышек данных нет.";
+        exit;
+    }
+    
+    // Пивот-структура
+    $dates  = [];
+    $items  = [];
+    $matrix = [];
+    foreach ($rows as $r) {
+        $d = $r['need_by_date'];
+        $name = $r['component_name'];
+        if ($name === null || $name === '') continue;
+        
+        $dates[$d] = true;
+        $items[$name] = true;
+        
+        if (!isset($matrix[$name])) $matrix[$name] = [];
+        if (!isset($matrix[$name][$d])) $matrix[$name][$d] = 0;
+        $matrix[$name][$d] += (float)$r['qty'];
+    }
+    $dates = array_keys($dates);
+    sort($dates);
+    $items = array_keys($items);
+    sort($items, SORT_NATURAL|SORT_FLAG_CASE);
+    
+    // Получаем остатки крышек на складе
+    $stockMap = [];
+    if (!empty($items)) {
+        $placeholders = str_repeat('?,', count($items) - 1) . '?';
+        $stmtStock = $pdo->prepare("SELECT cap_name, current_quantity FROM cap_stock WHERE cap_name IN ($placeholders)");
+        $stmtStock->execute($items);
+        $stockRows = $stmtStock->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($stockRows as $sr) {
+            $stockMap[$sr['cap_name']] = (int)$sr['current_quantity'];
+        }
+    }
+    
+    // Предрасчёт накопленной потребности
+    $cumulativeDemand = [];
+    foreach ($items as $name) {
+        $cumulative = 0;
+        foreach ($dates as $d) {
+            $cumulative += $matrix[$name][$d] ?? 0;
+            $cumulativeDemand[$name][$d] = $cumulative;
+        }
+    }
+    
+    // Создаем Excel файл
+    $objPHPExcel = new PHPExcel();
+    $objPHPExcel->setActiveSheetIndex(0);
+    $sheet = $objPHPExcel->getActiveSheet();
+    $sheet->setTitle('Потребность');
+    
+    // Заголовок
+    $lastCol = PHPExcel_Cell::stringFromColumnIndex(count($dates) + 3);
+    $sheet->setCellValue('A1', 'Заявка ' . $order . ': потребность — крышки');
+    $sheet->mergeCells('A1:' . $lastCol . '1');
+    $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+    $sheet->getStyle('A1')->getAlignment()->setHorizontal(PHPExcel_Style_Alignment::HORIZONTAL_CENTER);
+    
+    // Заголовки столбцов
+    $col = 1;
+    $sheet->setCellValueByColumnAndRow($col, 2, 'Позиция');
+    $col++;
+    
+    foreach ($dates as $d) {
+        $ts = strtotime($d);
+        $sheet->setCellValueByColumnAndRow($col, 2, date('d-m-y', $ts));
+        $col++;
+    }
+    
+    $sheet->setCellValueByColumnAndRow($col, 2, 'В заказе');
+    $col++;
+    $sheet->setCellValueByColumnAndRow($col, 2, 'На складе');
+    $col++;
+    $sheet->setCellValueByColumnAndRow($col, 2, 'Дефицит');
+    
+    // Стили для заголовков
+    $headerRange = 'A2:' . PHPExcel_Cell::stringFromColumnIndex($col - 1) . '2';
+    $sheet->getStyle($headerRange)->getFont()->setBold(true);
+    $sheet->getStyle($headerRange)->getFill()
+        ->setFillType(PHPExcel_Style_Fill::FILL_SOLID)
+        ->getStartColor()->setRGB('F0F0F0');
+    $sheet->getStyle($headerRange)->getAlignment()
+        ->setHorizontal(PHPExcel_Style_Alignment::HORIZONTAL_CENTER)
+        ->setVertical(PHPExcel_Style_Alignment::VERTICAL_CENTER);
+    $sheet->getStyle($headerRange)->getBorders()->getAllBorders()
+        ->setBorderStyle(PHPExcel_Style_Border::BORDER_THIN);
+    
+    // Данные
+    $row = 3;
+    foreach ($items as $name) {
+        $col = 1;
+        $rowTotal = 0;
+        $stockQty = $stockMap[$name] ?? 0;
+        
+        $sheet->setCellValueByColumnAndRow($col, $row, $name);
+        $col++;
+        
+        foreach ($dates as $d) {
+            $v = (float)($matrix[$name][$d] ?? 0);
+            $rowTotal += $v;
+            
+            if ($v > 0) {
+                $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+                $sheet->setCellValue($cellAddress, (string)$v);
+                $cumulative = (float)($cumulativeDemand[$name][$d] ?? 0);
+                if ($stockQty > 0 && $cumulative <= $stockQty) {
+                    $sheet->getStyle($cellAddress)->getFill()
+                        ->setFillType(PHPExcel_Style_Fill::FILL_SOLID)
+                        ->getStartColor()->setRGB('D1FAE5');
+                } elseif ($cumulative > $stockQty) {
+                    $sheet->getStyle($cellAddress)->getFill()
+                        ->setFillType(PHPExcel_Style_Fill::FILL_SOLID)
+                        ->getStartColor()->setRGB('FEE2E2');
+                }
+            }
+            $col++;
+        }
+        
+        // В заказе
+        $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+        $sheet->setCellValue($cellAddress, (string)$rowTotal);
+        $sheet->getStyle($cellAddress)->getFont()->setBold(true);
+        $col++;
+        
+        // На складе
+        $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+        $sheet->setCellValue($cellAddress, (string)$stockQty);
+        $sheet->getStyle($cellAddress)->getFont()->setBold(true);
+        $col++;
+        
+        // Дефицит
+        $deficit = max(0, $rowTotal - $stockQty);
+        if ($deficit > 0) {
+            $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+            $sheet->setCellValue($cellAddress, (string)$deficit);
+            $sheet->getStyle($cellAddress)->getFont()->setBold(true);
+            $sheet->getStyle($cellAddress)->getFill()
+                ->setFillType(PHPExcel_Style_Fill::FILL_SOLID)
+                ->getStartColor()->setRGB('FEE2E2');
+        }
+        
+        $row++;
+    }
+    
+    // Итоги
+    $col = 1;
+    $sheet->setCellValueByColumnAndRow($col, $row, 'Итого по дням');
+    $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+    $sheet->getStyle($cellAddress)->getFont()->setBold(true);
+    $col++;
+    
+    $grand = 0;
+    $totalStock = 0;
+    foreach ($dates as $d) {
+        $colTotal = 0;
+        foreach ($items as $name) $colTotal += (float)($matrix[$name][$d] ?? 0);
+        $grand += $colTotal;
+        if ($colTotal > 0) {
+            $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+            $sheet->setCellValue($cellAddress, (string)$colTotal);
+        }
+        $col++;
+    }
+    
+    $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+    $sheet->setCellValue($cellAddress, (string)$grand);
+    $sheet->getStyle($cellAddress)->getFont()->setBold(true);
+    $col++;
+    
+    foreach ($items as $name) {
+        $totalStock += (int)($stockMap[$name] ?? 0);
+    }
+    $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+    $sheet->setCellValue($cellAddress, (string)$totalStock);
+    $sheet->getStyle($cellAddress)->getFont()->setBold(true);
+    $col++;
+    
+    $totalDeficit = max(0, $grand - $totalStock);
+    if ($totalDeficit > 0) {
+        $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+        $sheet->setCellValue($cellAddress, (string)$totalDeficit);
+        $sheet->getStyle($cellAddress)->getFont()->setBold(true);
+    }
+    
+    // Границы для всех ячеек
+    $lastCol = PHPExcel_Cell::stringFromColumnIndex($col - 1);
+    $dataRange = 'A2:' . $lastCol . $row;
+    $sheet->getStyle($dataRange)->getBorders()->getAllBorders()
+        ->setBorderStyle(PHPExcel_Style_Border::BORDER_THIN);
+    
+    // Автоширина столбцов
+    foreach (range(0, $col - 1) as $colNum) {
+        $colLetter = PHPExcel_Cell::stringFromColumnIndex($colNum);
+        $sheet->getColumnDimension($colLetter)->setAutoSize(true);
+    }
+    
+    // Настройки печати
+    $sheet->getPageSetup()->setOrientation(PHPExcel_Worksheet_PageSetup::ORIENTATION_LANDSCAPE);
+    $sheet->getPageSetup()->setPaperSize(PHPExcel_Worksheet_PageSetup::PAPERSIZE_A4);
+    $sheet->getPageSetup()->setFitToWidth(1);
+    $sheet->getPageSetup()->setFitToHeight(0);
+    $sheet->getPageMargins()->setTop(0.5);
+    $sheet->getPageMargins()->setRight(0.5);
+    $sheet->getPageMargins()->setLeft(0.5);
+    $sheet->getPageMargins()->setBottom(0.5);
+    
+    // Повторение заголовков на каждой странице
+    $sheet->getPageSetup()->setRowsToRepeatAtTopByStartAndEnd(1, 2);
+    
+    // Отправка файла
+    $filename = 'Потребность_' . $order . '_' . date('Y-m-d') . '.xlsx';
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment;filename="' . $filename . '"');
+    header('Cache-Control: max-age=0');
+    
+    $objWriter = PHPExcel_IOFactory::createWriter($objPHPExcel, 'Excel2007');
+    $objWriter->save('php://output');
+    exit;
+}
+
 /* ===== AJAX: отрисовать только таблицы ===== */
 if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
     $order     = $_POST['order']  ?? '';
@@ -120,72 +404,72 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
     echo "<h3 class=\"subtitle\">Заявка ".htmlspecialchars($order).": потребность — ".htmlspecialchars($title)."</h3>";
 
     // Создаем одну таблицу со всеми датами
-    echo '<div class="table-wrap"><table class="pivot">';
-    echo '<thead><tr><th class="left">Позиция</th>';
+        echo '<div class="table-wrap"><table class="pivot">';
+        echo '<thead><tr><th class="left">Позиция</th>';
     foreach ($dates as $d) {
-        $ts = strtotime($d);
-        echo '<th class="nowrap vertical-date">' . date('d-m-y', $ts) . '</th>';
-    }
-    echo '<th class="nowrap vertical-date">В заказе</th><th class="nowrap vertical-date">На складе</th><th class="nowrap vertical-date">Дефицит</th></tr></thead><tbody>';
-
-    // Строки с позициями
-    foreach ($items as $name) {
-        $rowTotal = 0;
-        $stockQty = $stockMap[$name] ?? 0;
-        echo '<tr><td class="left">'.htmlspecialchars($name).'</td>';
-        foreach ($dates as $d) {
             $ts = strtotime($d);
-            $v  = $matrix[$name][$d] ?? 0;
-            $rowTotal += $v;
-            
-            // Заливаем только дни, в которые фильтр запланирован к сборке (v > 0)
-            // Проверяем, хватает ли остатка на складе для покрытия потребности до этой даты включительно
-            $cellClass = '';
-            if ($v > 0) {
-                $cumulative = $cumulativeDemand[$name][$d] ?? 0;
-                if ($stockQty > 0 && $cumulative <= $stockQty) {
-                    // Хватает крышек
-                    $cellClass = 'stock-sufficient';
-                } elseif ($cumulative > $stockQty) {
-                    // Не хватает крышек
-                    $cellClass = 'stock-insufficient';
-                }
-            }
-            
-            echo '<td class="'.$cellClass.'">'.($v ? fmt($v) : '').'</td>';
+            echo '<th class="nowrap vertical-date">' . date('d-m-y', $ts) . '</th>';
         }
-        // В заказе
-        echo '<td class="total">'.fmt($rowTotal).'</td>';
-        // На складе
-        echo '<td class="total">'.fmt($stockQty).'</td>';
-        // Дефицит (разница между заказом и складом, если заказ больше)
-        $deficit = max(0, $rowTotal - $stockQty);
-        $deficitClass = $deficit > 0 ? 'deficit' : '';
-        echo '<td class="total '.$deficitClass.'">'.($deficit > 0 ? fmt($deficit) : '').'</td></tr>';
-    }
+        echo '<th class="nowrap vertical-date">В заказе</th><th class="nowrap vertical-date">На складе</th><th class="nowrap vertical-date">Дефицит</th></tr></thead><tbody>';
 
-    // Итоги по датам
-    echo '<tr class="foot"><td class="left nowrap">Итого по дням</td>';
-    $grand = 0;
-    $totalStock = 0;
+        // Строки с позициями
+        foreach ($items as $name) {
+            $rowTotal = 0;
+            $stockQty = $stockMap[$name] ?? 0;
+            echo '<tr><td class="left">'.htmlspecialchars($name).'</td>';
+        foreach ($dates as $d) {
+                $ts = strtotime($d);
+                $v  = $matrix[$name][$d] ?? 0;
+                $rowTotal += $v;
+                
+                // Заливаем только дни, в которые фильтр запланирован к сборке (v > 0)
+                // Проверяем, хватает ли остатка на складе для покрытия потребности до этой даты включительно
+                $cellClass = '';
+                if ($v > 0) {
+                    $cumulative = $cumulativeDemand[$name][$d] ?? 0;
+                    if ($stockQty > 0 && $cumulative <= $stockQty) {
+                        // Хватает крышек
+                        $cellClass = 'stock-sufficient';
+                    } elseif ($cumulative > $stockQty) {
+                        // Не хватает крышек
+                        $cellClass = 'stock-insufficient';
+                    }
+                }
+                
+                echo '<td class="'.$cellClass.'">'.($v ? fmt($v) : '').'</td>';
+            }
+            // В заказе
+            echo '<td class="total">'.fmt($rowTotal).'</td>';
+            // На складе
+            echo '<td class="total">'.fmt($stockQty).'</td>';
+            // Дефицит (разница между заказом и складом, если заказ больше)
+            $deficit = max(0, $rowTotal - $stockQty);
+            $deficitClass = $deficit > 0 ? 'deficit' : '';
+            echo '<td class="total '.$deficitClass.'">'.($deficit > 0 ? fmt($deficit) : '').'</td></tr>';
+        }
+
+        // Итоги по датам
+        echo '<tr class="foot"><td class="left nowrap">Итого по дням</td>';
+        $grand = 0;
+        $totalStock = 0;
     foreach ($dates as $d) {
-        $col = 0;
-        foreach ($items as $name) $col += $matrix[$name][$d] ?? 0;
-        $grand += $col;
-        echo '<td class="total">'.($col?fmt($col):'').'</td>';
-    }
-    // Итого в заказе
-    echo '<td class="grand">'.fmt($grand).'</td>';
-    // Итого на складе
-    foreach ($items as $name) {
-        $totalStock += $stockMap[$name] ?? 0;
-    }
-    echo '<td class="grand">'.fmt($totalStock).'</td>';
-    // Итого дефицит
-    $totalDeficit = max(0, $grand - $totalStock);
-    echo '<td class="grand">'.($totalDeficit > 0 ? fmt($totalDeficit) : '').'</td></tr>';
+            $col = 0;
+            foreach ($items as $name) $col += $matrix[$name][$d] ?? 0;
+            $grand += $col;
+            echo '<td class="total">'.($col?fmt($col):'').'</td>';
+        }
+        // Итого в заказе
+        echo '<td class="grand">'.fmt($grand).'</td>';
+        // Итого на складе
+        foreach ($items as $name) {
+            $totalStock += $stockMap[$name] ?? 0;
+        }
+        echo '<td class="grand">'.fmt($totalStock).'</td>';
+        // Итого дефицит
+        $totalDeficit = max(0, $grand - $totalStock);
+        echo '<td class="grand">'.($totalDeficit > 0 ? fmt($totalDeficit) : '').'</td></tr>';
 
-    echo '</tbody></table></div>'; // table-wrap
+        echo '</tbody></table></div>'; // table-wrap
 
     exit;
 }
@@ -473,6 +757,7 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
 
     <button class="btn-primary" onclick="loadPivot()">Показать потребность</button>
     <button class="btn-soft" onclick="window.print()">Печать</button>
+    <button class="btn-soft" onclick="exportToExcel()" id="exportExcelBtn" style="display:none;">Экспорт в Excel</button>
     <button class="btn-soft" onclick="openCreateRequestModal()" id="createRequestBtn" style="display:none;">Создать заявку</button>
 </div>
 
@@ -490,8 +775,9 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
             if(this.readyState===4){
                 if(this.status===200){
                     document.getElementById('result').innerHTML = this.responseText;
-                    // Показываем кнопку создания заявки после загрузки данных
+                    // Показываем кнопки после загрузки данных
                     document.getElementById('createRequestBtn').style.display = 'inline-block';
+                    document.getElementById('exportExcelBtn').style.display = 'inline-block';
                 }else{
                     alert('Ошибка загрузки: '+this.status);
                 }
@@ -518,7 +804,7 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         const headerRow = table.querySelector('thead tr');
         const dateHeaders = Array.from(headerRow.querySelectorAll('th.vertical-date'));
         const dateHeadersText = dateHeaders.map(th => th.textContent.trim());
-        
+
         const deficitData = [];
         const rows = table.querySelectorAll('tbody tr');
         
@@ -624,6 +910,15 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    function exportToExcel() {
+        const order = document.getElementById('order').value;
+        const ctype = document.getElementById('ctype').value;
+        if(!order){ alert('Выберите заявку'); return; }
+        if(!ctype){ alert('Выберите тип комплектующих'); return; }
+        
+        window.location.href = '?export=excel&order=' + encodeURIComponent(order) + '&ctype=' + encodeURIComponent(ctype);
     }
 
     function convertDateToInput(dateStr) {
