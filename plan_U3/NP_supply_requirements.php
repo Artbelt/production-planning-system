@@ -400,8 +400,6 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
     // Хелпер форматирования
     function fmt($x){ return rtrim(rtrim(number_format((float)$x,3,'.',''), '0'), '.'); }
 
-    // Заголовок для печати (один раз)
-    echo "<h3 class=\"subtitle\">Заявка ".htmlspecialchars($order).": потребность — ".htmlspecialchars($title)."</h3>";
 
     // Создаем одну таблицу со всеми датами
         echo '<div class="table-wrap"><table class="pivot">';
@@ -499,7 +497,7 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         }
         h2{margin:6px 0 12px;text-align:center}
         .panel{
-            max-width:1100px;margin:0 auto 12px;background:#fff;border-radius:10px;
+            max-width:1200px;margin:0 auto 12px;background:#fff;border-radius:10px;
             padding:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);
             display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center
         }
@@ -527,7 +525,7 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
 
         .table-wrap{overflow-x:auto;background:#fff;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.08);padding:6px;margin-bottom:14px;width:100%}
         table.pivot{border-collapse:collapse;width:100%;min-width:640px;font-size:11px;table-layout:fixed}
-        table.pivot th, table.pivot td{border:1px solid #ddd;padding:4px 5px;text-align:center;vertical-align:middle}
+        table.pivot th, table.pivot td{border:1px solid #ddd;padding:3px 4px;text-align:center;vertical-align:middle;line-height:1.2}
         table.pivot thead th{background:#f0f0f0;font-weight:600}
         .left{text-align:left;white-space:normal;min-width:140px;width:140px;max-width:140px;font-size:10.5px}
         .nowrap{white-space:nowrap}
@@ -738,10 +736,11 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
 </head>
 <body>
 
-<h2>Потребность комплектующих по заявке (У3)</h2>
+
 
 <div class="panel">
-    <label>Заявка:</label>
+
+    <label>Потребность комплектующих по заявке:</label>
     <select id="order">
         <option value="">— выберите —</option>
         <?php foreach ($orders as $o): ?>
@@ -756,7 +755,7 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
     </select>
 
     <button class="btn-primary" onclick="loadPivot()">Показать потребность</button>
-    <button class="btn-soft" onclick="window.print()">Печать</button>
+
     <button class="btn-soft" onclick="exportToExcel()" id="exportExcelBtn" style="display:none;">Экспорт в Excel</button>
     <button class="btn-soft" onclick="openCreateRequestModal()" id="createRequestBtn" style="display:none;">Создать заявку</button>
 </div>
@@ -809,10 +808,15 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         const rows = table.querySelectorAll('tbody tr');
         
         rows.forEach(row => {
+            // Пропускаем строку "Итого по дням"
+            if (row.classList.contains('foot')) return;
+            
             const cells = row.querySelectorAll('td');
             if (cells.length < 2) return;
             
             const position = cells[0].textContent.trim();
+            // Дополнительная проверка на случай, если класс не установлен
+            if (position === 'Итого по дням') return;
             const inOrderCell = cells[cells.length - 3]; // "В заказе"
             const inStockCell = cells[cells.length - 2];  // "На складе"
             const deficitCell = cells[cells.length - 1];  // "Дефицит"
