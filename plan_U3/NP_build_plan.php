@@ -11,7 +11,7 @@ $user='root'; $pass='';
 $action = $_GET['action'] ?? '';
 
 /* === AJAX ================================================================= */
-if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_orders','load_left_rows','plan_bounds','load_native_forms'], true)) {
+if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_orders','load_left_rows','plan_bounds','load_native_forms','load_covers_data'], true)) {
     header('Content-Type: application/json; charset=utf-8');
     try{
         $pdo = new PDO($dsn,$user,$pass,[
@@ -338,6 +338,97 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
             $st->execute(array_merge($filtersIn, $filtersIn));
             $rows = $st->fetchAll();
             echo json_encode(['ok'=>true,'items'=>$rows]); exit;
+        }
+
+        /* load_covers_data ---------------------------------------------------- */
+        if ($action==='load_covers_data'){
+            $order = (string)($payload['order'] ?? ($_GET['order'] ?? ''));
+            if ($order===''){ 
+                http_response_code(400); 
+                echo json_encode(['ok'=>false,'error'=>'no order']); 
+                exit; 
+            }
+            
+            // Получаем фильтры из заявки с количеством
+            $st = $pdo->prepare("
+                SELECT TRIM(REPLACE(o.filter, CHAR(160), ' ')) AS filter,
+                       SUM(o.count) AS ordered_qty
+                FROM orders o
+                WHERE o.order_number=? AND (o.hide IS NULL OR o.hide != 1)
+                GROUP BY TRIM(REPLACE(o.filter, CHAR(160), ' '))
+                ORDER BY filter
+            ");
+            $st->execute([$order]);
+            $orderFilters = $st->fetchAll();
+            
+            if (empty($orderFilters)) {
+                echo json_encode(['ok'=>true,'items'=>[]]); exit;
+            }
+            
+            // Получаем уникальные названия фильтров
+            $filters = array_column($orderFilters, 'filter');
+            $in = implode(',', array_fill(0, count($filters), '?'));
+            
+            // Получаем информацию о крышках для фильтров
+            $st = $pdo->prepare("
+                SELECT filter, up_cap, down_cap
+                FROM round_filter_structure
+                WHERE filter IN ($in)
+            ");
+            $st->execute($filters);
+            $filterCaps = $st->fetchAll();
+            
+            // Создаем карту фильтр -> крышки
+            $filterCapsMap = [];
+            foreach ($filterCaps as $fc) {
+                $filterCapsMap[$fc['filter']] = [
+                    'up_cap' => $fc['up_cap'] ? trim($fc['up_cap']) : null,
+                    'down_cap' => $fc['down_cap'] ? trim($fc['down_cap']) : null
+                ];
+            }
+            
+            // Собираем все уникальные крышки
+            $allCaps = [];
+            foreach ($filterCapsMap as $caps) {
+                if ($caps['up_cap']) $allCaps[$caps['up_cap']] = true;
+                if ($caps['down_cap']) $allCaps[$caps['down_cap']] = true;
+            }
+            
+            // Получаем остатки по крышкам
+            $capStockMap = [];
+            if (!empty($allCaps)) {
+                $capIn = implode(',', array_fill(0, count($allCaps), '?'));
+                $st = $pdo->prepare("
+                    SELECT cap_name, current_quantity
+                    FROM cap_stock
+                    WHERE cap_name IN ($capIn)
+                ");
+                $st->execute(array_keys($allCaps));
+                $stockRows = $st->fetchAll();
+                foreach ($stockRows as $sr) {
+                    $capStockMap[$sr['cap_name']] = (int)$sr['current_quantity'];
+                }
+            }
+            
+            // Формируем результат: фильтры с их крышками и остатками
+            $result = [];
+            foreach ($orderFilters as $of) {
+                $filter = $of['filter'];
+                $orderedQty = (int)$of['ordered_qty'];
+                $caps = $filterCapsMap[$filter] ?? ['up_cap' => null, 'down_cap' => null];
+                
+                $item = [
+                    'filter' => $filter,
+                    'ordered_qty' => $orderedQty,
+                    'up_cap' => $caps['up_cap'],
+                    'down_cap' => $caps['down_cap'],
+                    'up_cap_stock' => $caps['up_cap'] ? ($capStockMap[$caps['up_cap']] ?? 0) : null,
+                    'down_cap_stock' => $caps['down_cap'] ? ($capStockMap[$caps['down_cap']] ?? 0) : null
+                ];
+                $result[] = $item;
+            }
+            
+            echo json_encode(['ok'=>true,'items'=>$result]); exit;
         }
 
 
@@ -708,6 +799,104 @@ try{
     .analogs-panel.hidden {
         display: none !important;
     }
+    /* === Панель Крышки =================================================== */
+    .covers-panel{
+        position: fixed;
+        right: 16px;
+        top: 74px;
+        width: 480px;
+        max-width: calc(100vw - 32px);
+        z-index: 25;
+    }
+    .covers-panel__card{
+        background: #fef3c7;
+        border:1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+    }
+    .covers-panel__head{
+        padding:10px 12px;
+        border-bottom:1px solid var(--border);
+        font-weight:700;
+        cursor:move;
+        user-select:none;
+        background: #fde68a;
+    }
+    .covers-panel__head:hover{
+        background:#fcd34d;
+    }
+    .covers-panel__body{
+        padding:8px 10px;
+        font-size:11px;
+        color:var(--text);
+        max-height: 70vh;
+        overflow-y: auto;
+    }
+    .covers-panel__table{
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+    }
+    .covers-panel__table th,
+    .covers-panel__table td{
+        padding: 4px 6px;
+        text-align: left;
+        border-bottom: 1px solid rgba(0,0,0,0.1);
+    }
+    .covers-panel__table th{
+        background: #fcd34d;
+        font-weight: 600;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+    }
+    .covers-panel__table tr:hover{
+        background: rgba(255,255,255,0.5);
+    }
+    .covers-panel__table td:nth-child(1){
+        font-weight: 600;
+    }
+    .covers-panel__table th:nth-child(2),
+    .covers-panel__table td:nth-child(2){
+        text-align: left;
+        width: auto;
+        white-space: nowrap;
+        padding-left: 4px;
+        padding-right: 4px;
+    }
+    .covers-panel__table td:nth-child(3){
+        text-align: right;
+    }
+    .covers-panel__table tr.covers-row-up td:nth-child(2){
+        font-size: 10px;
+        color: #6b7280;
+        padding-top: 3px;
+    }
+    .covers-panel__table tr.covers-row-down td:nth-child(2){
+        font-size: 10px;
+        color: #6b7280;
+        padding-bottom: 3px;
+    }
+    .covers-panel__table tr.covers-row-down{
+        border-bottom: 1px solid rgba(0,0,0,0.15);
+    }
+    .covers-stock-low{
+        color: #dc2626;
+        font-weight: 600;
+    }
+    .covers-stock-ok{
+        color: #059669;
+    }
+    .covers-panel__table tr.covers-row-highlight{
+        background: #dbeafe !important;
+    }
+    .covers-panel__table tr.covers-row-highlight td{
+        background: #dbeafe !important;
+    }
+    .covers-panel.hidden {
+        display: none !important;
+    }
     /* Подсветка строк с аналогами */
     tbody tr.analog-highlight {
         background: #dbeafe !important;
@@ -749,7 +938,7 @@ try{
         }
         body { background:#fff !important; }
         /* Скрываем все интерактивные части */
-        .topbar, .toolbar-wrap, .panel-wrap, .tips, .toasts { display:none !important; }
+        .topbar, .toolbar-wrap, .panel-wrap, .tips, .toasts, .analogs-panel, .covers-panel { display:none !important; }
         /* Показываем только печатную разметку */
         #printArea { display:block !important; }
 
@@ -1045,6 +1234,7 @@ try{
                 <button class="height-btn-toggle" id="btnToggleMiniTable" title="Показать/скрыть карту плана">Карта</button>
                 <button class="height-btn-toggle" id="btnToggleLegend" title="Показать/скрыть легенду">Легенда</button>
                 <button class="height-btn-toggle" id="btnToggleAnalogs" title="Показать/скрыть аналоги">Аналоги</button>
+                <button class="height-btn-toggle" id="btnToggleCovers" title="Показать/скрыть крышки">Крышки</button>
             </div>
         </div>
     </div>
@@ -1065,6 +1255,18 @@ try{
         <div class="analogs-panel__body">
             <div class="analogs-panel__buttons" id="analogButtons">
                 <!-- Кнопки будут добавлены через JavaScript -->
+            </div>
+        </div>
+    </div>
+</aside>
+
+<!-- Панель Крышки -->
+<aside class="covers-panel hidden" aria-label="Крышки">
+    <div class="covers-panel__card">
+        <div class="covers-panel__head">Крышки</div>
+        <div class="covers-panel__body">
+            <div id="coversContent">
+                <div style="text-align: center; padding: 20px; color: var(--muted);">Загрузка данных...</div>
             </div>
         </div>
     </div>
@@ -1331,16 +1533,57 @@ try{
             td.addEventListener('contextmenu', e=>{ e.preventDefault(); changeCell(td, -STEP); });
         });
 
-        // Подсветка строк в мини-таблице при наведении на главную таблицу
+        // Подсветка строк в мини-таблице и панели крышек при наведении на главную таблицу
         wrap.querySelectorAll('tr[data-filter]').forEach(tr=>{
             const filter = tr.dataset.filter;
             tr.addEventListener('mouseenter', ()=>{
                 const miniRow = document.querySelector(`.mini-table-row[data-mini-filter="${canonF(filter)}"]`);
                 if (miniRow) miniRow.classList.add('mini-row-hover');
+                
+                // Подсветка строк в панели крышек (обе строки для одного фильтра) и прокрутка
+                const coversRows = document.querySelectorAll(`.covers-panel__table tr[data-cover-filter="${canonF(filter)}"]`);
+                if (coversRows.length > 0) {
+                    // Подсвечиваем все строки для этого фильтра
+                    coversRows.forEach(row => {
+                        row.classList.add('covers-row-highlight');
+                    });
+                    
+                    // Прокручиваем панель, чтобы первая строка была в центре
+                    const coversPanelBody = document.querySelector('.covers-panel__body');
+                    if (coversPanelBody && coversRows[0]) {
+                        // Используем getBoundingClientRect для точного вычисления позиции
+                        const rowRect = coversRows[0].getBoundingClientRect();
+                        const panelRect = coversPanelBody.getBoundingClientRect();
+                        
+                        // Вычисляем текущую позицию строки относительно верха прокручиваемого контейнера
+                        // rowRect.top - это позиция относительно viewport
+                        // panelRect.top - это позиция контейнера относительно viewport
+                        // coversPanelBody.scrollTop - текущая прокрутка
+                        const rowTopInPanel = (rowRect.top - panelRect.top) + coversPanelBody.scrollTop;
+                        // Учитываем высоту обеих строк для лучшего центрирования
+                        const totalRowHeight = Array.from(coversRows).reduce((sum, row) => sum + row.offsetHeight, 0);
+                        const panelHeight = coversPanelBody.clientHeight;
+                        
+                        // Вычисляем позицию для центрирования блока из двух строк
+                        const targetScrollTop = rowTopInPanel - (panelHeight / 2) + (totalRowHeight / 2);
+                        
+                        // Плавная прокрутка
+                        coversPanelBody.scrollTo({
+                            top: Math.max(0, targetScrollTop),
+                            behavior: 'smooth'
+                        });
+                    }
+                }
             });
             tr.addEventListener('mouseleave', ()=>{
                 const miniRow = document.querySelector(`.mini-table-row[data-mini-filter="${canonF(filter)}"]`);
                 if (miniRow) miniRow.classList.remove('mini-row-hover');
+                
+                // Убираем подсветку всех строк для этого фильтра в панели крышек
+                const coversRows = document.querySelectorAll(`.covers-panel__table tr[data-cover-filter="${canonF(filter)}"]`);
+                coversRows.forEach(row => {
+                    row.classList.remove('covers-row-highlight');
+                });
             });
         });
 
@@ -1356,6 +1599,9 @@ try{
         
         // Обновляем панель Аналоги (чтобы загрузить нативные формы из текущей заявки)
         initAnalogsPanel();
+        
+        // Обновляем панель Крышки (чтобы загрузить данные о крышках из текущей заявки)
+        initCoversPanel();
         
         // Обновляем подсветку аналогов, если выбрана нативная форма
         if (selectedNativeForm) {
@@ -1904,6 +2150,12 @@ try{
         
         // Инициализация панели Аналоги
         initAnalogsPanel();
+        
+        // Инициализация кнопки переключения крышек
+        initCoversToggle();
+        
+        // Инициализация панели Крышки
+        initCoversPanel();
     })();
     
     // ==== Фильтр по высоте валов ============================================
@@ -2324,6 +2576,225 @@ try{
 
         analogsHead.addEventListener('mousedown', dragStart);
         analogsHead.addEventListener('touchstart', dragStart);
+        document.addEventListener('mousemove', drag);
+        document.addEventListener('touchmove', drag);
+        document.addEventListener('mouseup', dragEnd);
+        document.addEventListener('touchend', dragEnd);
+    }
+
+    // ==== Переключение панели Крышки ============================================
+    function initCoversToggle() {
+        const btn = el('btnToggleCovers');
+        const panel = document.querySelector('.covers-panel');
+        if (!btn || !panel) return;
+        
+        // Загружаем сохраненное состояние из localStorage
+        const savedState = localStorage.getItem('coversPanelVisible');
+        const isVisible = savedState === 'true'; // по умолчанию скрыта
+        
+        // Устанавливаем начальное состояние
+        if (!isVisible) {
+            panel.classList.add('hidden');
+            btn.classList.remove('active');
+        } else {
+            panel.classList.remove('hidden');
+            btn.classList.add('active');
+        }
+        
+        // Обработчик клика
+        btn.addEventListener('click', () => {
+            const isHidden = panel.classList.contains('hidden');
+            if (isHidden) {
+                panel.classList.remove('hidden');
+                btn.classList.add('active');
+                localStorage.setItem('coversPanelVisible', 'true');
+            } else {
+                panel.classList.add('hidden');
+                btn.classList.remove('active');
+                localStorage.setItem('coversPanelVisible', 'false');
+            }
+        });
+    }
+
+    // ==== Панель Крышки ============================================
+    async function loadCoversData() {
+        try {
+            if (!ORDER) return [];
+            
+            const res = await fetch(location.pathname+'?action=load_covers_data', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({order: ORDER})
+            });
+            const data = await res.json();
+            if (!data.ok) throw new Error(data.error || 'Ошибка загрузки данных о крышках');
+            return data.items || [];
+        } catch(e) {
+            console.warn('Не удалось загрузить данные о крышках:', e);
+            return [];
+        }
+    }
+    
+    async function initCoversPanel() {
+        const contentContainer = el('coversContent');
+        if (!contentContainer) return;
+        
+        // Показываем индикатор загрузки
+        contentContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--muted);">Загрузка данных...</div>';
+        
+        // Загружаем данные
+        const coversData = await loadCoversData();
+        
+        if (coversData.length === 0) {
+            contentContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--muted);">Нет данных о крышках</div>';
+            return;
+        }
+        
+        // Формируем таблицу
+        let html = '<table class="covers-panel__table">';
+        html += '<thead><tr>';
+        html += '<th>Фильтр</th>';
+        html += '<th>Крышка</th>';
+        html += '<th>Склад</th>';
+        html += '</tr></thead>';
+        html += '<tbody>';
+        
+        coversData.forEach(item => {
+            const upCapStock = item.up_cap_stock !== null ? item.up_cap_stock : null;
+            const downCapStock = item.down_cap_stock !== null ? item.down_cap_stock : null;
+            
+            // Определяем класс для остатков (красный если недостаточно, зеленый если достаточно)
+            const upCapClass = upCapStock !== null ? (upCapStock < item.ordered_qty ? 'covers-stock-low' : 'covers-stock-ok') : '';
+            const downCapClass = downCapStock !== null ? (downCapStock < item.ordered_qty ? 'covers-stock-low' : 'covers-stock-ok') : '';
+            
+            const filterNormalized = escapeHtml(canonF(item.filter));
+            
+            // Первая строка - верхняя крышка
+            html += `<tr data-cover-filter="${filterNormalized}" class="covers-row-up">`;
+            html += `<td rowspan="2" style="vertical-align: top;">${escapeHtml(item.filter)}</td>`;
+            html += `<td>${item.up_cap ? escapeHtml(item.up_cap) : '—'}</td>`;
+            html += `<td class="${upCapClass}">${upCapStock !== null ? upCapStock : '—'}</td>`;
+            html += '</tr>';
+            
+            // Вторая строка - нижняя крышка
+            html += `<tr data-cover-filter="${filterNormalized}" class="covers-row-down">`;
+            html += `<td>${item.down_cap ? escapeHtml(item.down_cap) : '—'}</td>`;
+            html += `<td class="${downCapClass}">${downCapStock !== null ? downCapStock : '—'}</td>`;
+            html += '</tr>';
+        });
+        
+        html += '</tbody></table>';
+        contentContainer.innerHTML = html;
+        
+        // Инициализация перетаскивания панели
+        initCoversDragging();
+        
+        // Подсветка строк будет инициализирована при построении главной таблицы (в buildMainTable)
+    }
+    
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    // === Перетаскивание панели Крышки ===
+    function initCoversDragging(){
+        const coversPanel = document.querySelector('.covers-panel');
+        const coversHead = document.querySelector('.covers-panel__head');
+        if(!coversPanel || !coversHead) return;
+
+        let isDragging = false;
+        let startX = 0;
+        let startY = 0;
+        let initialLeft = 0;
+        let initialTop = 0;
+
+        // Загружаем сохраненную позицию из localStorage
+        const savedPos = localStorage.getItem('coversPanelPosition');
+        if(savedPos){
+            try{
+                const pos = JSON.parse(savedPos);
+                if(pos.left !== undefined){
+                    coversPanel.style.left = pos.left;
+                    coversPanel.style.right = 'auto';
+                }
+                if(pos.top !== undefined){
+                    coversPanel.style.top = pos.top;
+                    coversPanel.style.bottom = 'auto';
+                }
+            }catch(e){}
+        }
+
+        function dragStart(e){
+            if(e.target === coversHead || coversHead.contains(e.target)){
+                isDragging = true;
+                coversPanel.style.cursor = 'grabbing';
+                
+                const rect = coversPanel.getBoundingClientRect();
+                initialLeft = rect.left;
+                initialTop = rect.top;
+                
+                if(e.type === "touchstart"){
+                    startX = e.touches[0].clientX;
+                    startY = e.touches[0].clientY;
+                } else {
+                    startX = e.clientX;
+                    startY = e.clientY;
+                }
+                e.preventDefault();
+            }
+        }
+
+        function drag(e){
+            if(!isDragging) return;
+            e.preventDefault();
+            
+            let currentX = 0;
+            let currentY = 0;
+            
+            if(e.type === "touchmove"){
+                currentX = e.touches[0].clientX;
+                currentY = e.touches[0].clientY;
+            } else {
+                currentX = e.clientX;
+                currentY = e.clientY;
+            }
+            
+            const deltaX = currentX - startX;
+            const deltaY = currentY - startY;
+            
+            let newLeft = initialLeft + deltaX;
+            let newTop = initialTop + deltaY;
+            
+            // Ограничиваем перемещение в пределах окна
+            const maxLeft = window.innerWidth - coversPanel.offsetWidth;
+            const maxTop = window.innerHeight - coversPanel.offsetHeight;
+            
+            newLeft = Math.max(0, Math.min(newLeft, maxLeft));
+            newTop = Math.max(0, Math.min(newTop, maxTop));
+            
+            coversPanel.style.left = newLeft + 'px';
+            coversPanel.style.top = newTop + 'px';
+            coversPanel.style.right = 'auto';
+            coversPanel.style.bottom = 'auto';
+        }
+
+        function dragEnd(e){
+            if(!isDragging) return;
+            isDragging = false;
+            coversPanel.style.cursor = '';
+            
+            const rect = coversPanel.getBoundingClientRect();
+            const pos = {
+                left: rect.left + 'px',
+                top: rect.top + 'px'
+            };
+            localStorage.setItem('coversPanelPosition', JSON.stringify(pos));
+        }
+
+        coversHead.addEventListener('mousedown', dragStart);
+        coversHead.addEventListener('touchstart', dragStart);
         document.addEventListener('mousemove', drag);
         document.addEventListener('touchmove', drag);
         document.addEventListener('mouseup', dragEnd);
