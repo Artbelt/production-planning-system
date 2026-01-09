@@ -239,6 +239,10 @@ $users = $db->select("SELECT DISTINCT u.id, u.phone, u.full_name FROM auth_logs 
         .action-failed_login { background: var(--danger-light); color: var(--danger); }
         .action-department_switch { background: var(--primary-light); color: var(--primary); }
         .action-session_expired { background: var(--warning-light); color: var(--warning); }
+        .action-account_locked { background: var(--danger-light); color: var(--danger); }
+        .action-account_unlocked { background: var(--success-light); color: var(--success); }
+        .action-password_reset { background: var(--warning-light); color: var(--warning); }
+        .action-password_changed { background: var(--primary-light); color: var(--primary); }
         
         .user-info {
             font-size: 12px;

@@ -262,6 +262,69 @@ function createUserWithDefaultPassword($phone, $fullName, $email = null) {
     }
 }
 
+/**
+ * Сброс пароля пользователя на дефолтный (последние 4 цифры телефона)
+ * Используется администратором для восстановления доступа
+ */
+function resetPasswordToDefault($userId, $resetByUserId = null) {
+    $db = Database::getInstance();
+    
+    try {
+        // Получаем данные пользователя
+        $user = $db->selectOne("SELECT * FROM auth_users WHERE id = ?", [$userId]);
+        
+        if (!$user) {
+            return ['success' => false, 'error' => 'Пользователь не найден'];
+        }
+        
+        // Генерируем дефолтный пароль
+        $defaultPassword = generateDefaultPassword($user['phone']);
+        $passwordHash = password_hash($defaultPassword, PASSWORD_DEFAULT);
+        
+        // Обновляем пароль в БД
+        $sql = "UPDATE auth_users 
+                SET password_hash = ?, 
+                    is_default_password = 1,
+                    password_changed_at = NOW(),
+                    failed_login_attempts = 0,
+                    locked_until = NULL
+                WHERE id = ?";
+        
+        $result = $db->update($sql, [$passwordHash, $userId]);
+        
+        if ($result !== false) {
+            // Логируем сброс пароля
+            $details = [
+                'reset_by' => $resetByUserId,
+                'default_password' => $defaultPassword,
+                'reason' => 'admin_reset'
+            ];
+            
+            $db->insert("INSERT INTO auth_logs (user_id, action, ip_address, user_agent, details) VALUES (?, 'password_reset', ?, ?, ?)", [
+                $userId,
+                $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
+                $_SERVER['HTTP_USER_AGENT'] ?? 'System',
+                json_encode($details)
+            ]);
+            
+            // Завершаем все активные сессии пользователя (принудительный выход)
+            $db->delete("DELETE FROM auth_sessions WHERE user_id = ?", [$userId]);
+            
+            return [
+                'success' => true, 
+                'default_password' => $defaultPassword,
+                'message' => 'Пароль успешно сброшен на дефолтный'
+            ];
+        } else {
+            return ['success' => false, 'error' => 'Ошибка при сбросе пароля'];
+        }
+        
+    } catch (Exception $e) {
+        error_log("Password reset error: " . $e->getMessage());
+        return ['success' => false, 'error' => 'Системная ошибка при сбросе пароля'];
+    }
+}
+
 ?>
 
 

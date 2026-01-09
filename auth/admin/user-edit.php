@@ -122,6 +122,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Ошибка обновления прав доступа';
         }
     }
+    
+    if ($action === 'unlock_account') {
+        // Проверка существования пользователя
+        $checkUser = $db->selectOne("SELECT id, full_name FROM auth_users WHERE id = ?", [$userId]);
+        
+        if (!$checkUser) {
+            $error = 'Пользователь не найден';
+        } else {
+            // Разблокировка аккаунта
+            $result = $db->update("UPDATE auth_users SET locked_until = NULL, failed_login_attempts = 0 WHERE id = ?", [$userId]);
+            
+            if ($result !== false) {
+                // Логирование разблокировки
+                $db->insert("INSERT INTO auth_logs (user_id, action, ip_address, user_agent, details) VALUES (?, 'account_unlocked', ?, ?, ?)", [
+                    $userId,
+                    $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
+                    $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown',
+                    json_encode(['unlocked_by' => $session['user_id'], 'unlocked_by_name' => $session['full_name']])
+                ]);
+                
+                $message = "Аккаунт пользователя успешно разблокирован";
+                // Обновляем данные пользователя для отображения
+                $user = $db->selectOne("SELECT * FROM auth_users WHERE id = ?", [$userId]);
+            } else {
+                $error = 'Ошибка разблокировки аккаунта';
+            }
+        }
+    }
+    
+    if ($action === 'reset_password') {
+        require_once '../includes/password-functions.php';
+        
+        // Проверка существования пользователя
+        $checkUser = $db->selectOne("SELECT id, full_name, phone FROM auth_users WHERE id = ?", [$userId]);
+        
+        if (!$checkUser) {
+            $error = 'Пользователь не найден';
+        } else {
+            $result = resetPasswordToDefault($userId, $session['user_id']);
+            
+            if ($result['success']) {
+                $message = "Пароль пользователя сброшен на дефолтный: <strong>{$result['default_password']}</strong>";
+                // Обновляем данные пользователя для отображения
+                $user = $db->selectOne("SELECT * FROM auth_users WHERE id = ?", [$userId]);
+            } else {
+                $error = $result['error'];
+            }
+        }
+    }
 }
 
 // Получение ролей
@@ -238,6 +287,58 @@ $userLogs = $db->select("
         .action-logout { background: var(--gray-200); color: var(--gray-700); }
         .action-failed_login { background: var(--danger-light); color: var(--danger); }
         .action-department_switch { background: var(--primary-light); color: var(--primary); }
+        .action-account_locked { background: var(--danger-light); color: var(--danger); }
+        .action-account_unlocked { background: var(--success-light); color: var(--success); }
+        
+        .lock-status-card {
+            background: var(--warning-light);
+            border: 1px solid var(--warning);
+            border-radius: var(--border-radius);
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .lock-status-card.locked {
+            background: var(--danger-light);
+            border-color: var(--danger);
+        }
+        
+        .lock-status-card.unlocked {
+            background: var(--success-light);
+            border-color: var(--success);
+        }
+        
+        .password-info-card {
+            background: var(--primary-light);
+            border: 1px solid var(--primary);
+            border-radius: var(--border-radius);
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .password-status-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .password-status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        
+        .password-default {
+            background: var(--warning-light);
+            color: var(--warning);
+        }
+        
+        .password-custom {
+            background: var(--success-light);
+            color: var(--success);
+        }
         
         .full-width {
             grid-column: 1 / -1;
@@ -269,6 +370,84 @@ $userLogs = $db->select("
         <?php if ($error): ?>
             <div class="alert alert-error"><?= htmlspecialchars($error) ?></div>
         <?php endif; ?>
+
+        <?php 
+        // Проверка статуса блокировки
+        $isLocked = $user['locked_until'] && strtotime($user['locked_until']) > time();
+        if ($isLocked || $user['locked_until']): 
+        ?>
+            <div class="lock-status-card <?= $isLocked ? 'locked' : 'unlocked' ?>">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <h3 style="margin: 0 0 10px;">
+                            <?= $isLocked ? '🔒 Аккаунт заблокирован' : '✓ Аккаунт разблокирован' ?>
+                        </h3>
+                        <?php if ($isLocked): ?>
+                            <div style="margin-bottom: 5px;">
+                                <strong>Заблокирован до:</strong> <?= date('d.m.Y H:i:s', strtotime($user['locked_until'])) ?>
+                            </div>
+                            <div style="margin-bottom: 5px;">
+                                <strong>Неудачных попыток входа:</strong> <?= $user['failed_login_attempts'] ?? 0 ?>
+                            </div>
+                            <div style="font-size: 12px; color: var(--gray-600);">
+                                Осталось времени: <?php
+                                    $remaining = strtotime($user['locked_until']) - time();
+                                    $minutes = floor($remaining / 60);
+                                    $seconds = $remaining % 60;
+                                    echo "{$minutes} мин. {$seconds} сек.";
+                                ?>
+                            </div>
+                        <?php else: ?>
+                            <div style="font-size: 12px; color: var(--gray-600);">
+                                Аккаунт был разблокирован автоматически
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                    <?php if ($isLocked): ?>
+                        <form method="POST" style="margin: 0;">
+                            <input type="hidden" name="action" value="unlock_account">
+                            <button type="submit" class="btn btn-success" 
+                                    onclick="return confirm('Разблокировать аккаунт пользователя <?= htmlspecialchars($user['full_name']) ?>?')">
+                                🔓 Разблокировать сейчас
+                            </button>
+                        </form>
+                    <?php endif; ?>
+                </div>
+            </div>
+        <?php endif; ?>
+
+        <!-- Информация о пароле -->
+        <div class="password-info-card">
+            <div class="password-status-info">
+                <div>
+                    <h3 style="margin: 0 0 10px;">🔑 Статус пароля</h3>
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 5px;">
+                        <span>Тип пароля:</span>
+                        <?php if ($user['is_default_password']): ?>
+                            <span class="password-status-badge password-default">Базовый пароль</span>
+                        <?php else: ?>
+                            <span class="password-status-badge password-custom">Персональный пароль</span>
+                        <?php endif; ?>
+                    </div>
+                    <?php if ($user['password_changed_at']): ?>
+                        <div style="font-size: 12px; color: var(--gray-600);">
+                            Последняя смена: <?= date('d.m.Y H:i', strtotime($user['password_changed_at'])) ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+                <form method="POST" style="margin: 0;">
+                    <input type="hidden" name="action" value="reset_password">
+                    <button type="submit" class="btn btn-warning" 
+                            onclick="return confirm('Сбросить пароль пользователя <?= htmlspecialchars($user['full_name']) ?> на дефолтный (последние 4 цифры телефона)?\n\nВсе активные сессии пользователя будут завершены.')">
+                        🔑 Сбросить пароль
+                    </button>
+                </form>
+            </div>
+            <div style="margin-top: 10px; padding: 10px; background: white; border-radius: 4px; font-size: 12px; color: var(--gray-700);">
+                <strong>ℹ️ Информация:</strong> При сбросе пароля пользователь сможет войти в систему, используя последние 4 цифры своего номера телефона. 
+                После входа рекомендуется сменить пароль на персональный через страницу "Смена пароля".
+            </div>
+        </div>
 
         <div class="content-grid">
             <!-- Основные данные -->
@@ -363,7 +542,17 @@ $userLogs = $db->select("
                         <div class="log-item">
                             <div>
                                 <div class="log-action action-<?= $log['action'] ?>">
-                                    <?= ucfirst(str_replace('_', ' ', $log['action'])) ?>
+                                    <?php
+                                    $actionNames = [
+                                        'account_locked' => 'Аккаунт заблокирован',
+                                        'account_unlocked' => 'Аккаунт разблокирован',
+                                        'failed_login' => 'Неудачный вход',
+                                        'login' => 'Успешный вход',
+                                        'logout' => 'Выход',
+                                        'department_switch' => 'Переключение цеха'
+                                    ];
+                                    echo $actionNames[$log['action']] ?? ucfirst(str_replace('_', ' ', $log['action']));
+                                    ?>
                                 </div>
                                 <?php if ($log['department_code']): ?>
                                     <div style="font-size: 12px; color: var(--gray-500);">

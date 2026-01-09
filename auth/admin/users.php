@@ -84,6 +84,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
+    
+    if ($action === 'unlock_account') {
+        $userId = (int)$_POST['user_id'];
+        
+        // Проверка существования пользователя
+        $user = $db->selectOne("SELECT id, full_name FROM auth_users WHERE id = ?", [$userId]);
+        
+        if (!$user) {
+            $error = 'Пользователь не найден';
+        } else {
+            // Разблокировка аккаунта
+            $result = $db->update("UPDATE auth_users SET locked_until = NULL, failed_login_attempts = 0 WHERE id = ?", [$userId]);
+            
+            if ($result !== false) {
+                // Логирование разблокировки
+                $db->insert("INSERT INTO auth_logs (user_id, action, ip_address, user_agent, details) VALUES (?, 'account_unlocked', ?, ?, ?)", [
+                    $userId,
+                    $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
+                    $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown',
+                    json_encode(['unlocked_by' => $session['user_id'], 'unlocked_by_name' => $session['full_name']])
+                ]);
+                
+                $message = "Аккаунт пользователя {$user['full_name']} успешно разблокирован";
+            } else {
+                $error = 'Ошибка разблокировки аккаунта';
+            }
+        }
+    }
+    
+    if ($action === 'reset_password') {
+        require_once '../includes/password-functions.php';
+        
+        $userId = (int)$_POST['user_id'];
+        
+        // Проверка существования пользователя
+        $user = $db->selectOne("SELECT id, full_name, phone FROM auth_users WHERE id = ?", [$userId]);
+        
+        if (!$user) {
+            $error = 'Пользователь не найден';
+        } else {
+            $result = resetPasswordToDefault($userId, $session['user_id']);
+            
+            if ($result['success']) {
+                $message = "Пароль пользователя {$user['full_name']} сброшен на дефолтный: <strong>{$result['default_password']}</strong>";
+            } else {
+                $error = $result['error'];
+            }
+        }
+    }
 }
 
 // Получение списка пользователей с их ролями
@@ -202,6 +251,27 @@ $roles = $db->select("SELECT * FROM auth_roles WHERE is_active = 1 ORDER BY id")
             color: white;
         }
         
+        .btn-unlock {
+            background: var(--success);
+            color: white;
+        }
+        
+        .btn-reset-password {
+            background: var(--warning);
+            color: white;
+        }
+        
+        .status-locked {
+            background: var(--danger-light);
+            color: var(--danger);
+        }
+        
+        .lock-info {
+            font-size: 11px;
+            color: var(--gray-600);
+            margin-top: 4px;
+        }
+        
         .modal {
             display: none;
             position: fixed;
@@ -288,6 +358,7 @@ $roles = $db->select("SELECT * FROM auth_roles WHERE is_active = 1 ORDER BY id")
                         <th>ФИО</th>
                         <th>Роли в цехах</th>
                         <th>Статус</th>
+                        <th>Блокировка</th>
                         <th>Последний вход</th>
                         <th>Действия</th>
                     </tr>
@@ -309,19 +380,63 @@ $roles = $db->select("SELECT * FROM auth_roles WHERE is_active = 1 ORDER BY id")
                                 </span>
                             </td>
                             <td>
+                                <?php 
+                                $isLocked = $user['locked_until'] && strtotime($user['locked_until']) > time();
+                                if ($isLocked): 
+                                ?>
+                                    <span class="status-badge status-locked">
+                                        🔒 Заблокирован
+                                    </span>
+                                    <div class="lock-info">
+                                        До: <?= date('d.m.Y H:i', strtotime($user['locked_until'])) ?>
+                                    </div>
+                                    <div class="lock-info">
+                                        Попыток: <?= $user['failed_login_attempts'] ?? 0 ?>
+                                    </div>
+                                <?php elseif ($user['locked_until']): ?>
+                                    <span style="color: var(--gray-500); font-size: 12px;">
+                                        Разблокирован
+                                    </span>
+                                <?php else: ?>
+                                    <span style="color: var(--success); font-size: 12px;">
+                                        ✓ Не заблокирован
+                                    </span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
                                 <?= $user['last_login'] ? date('d.m.Y H:i', strtotime($user['last_login'])) : 'Никогда' ?>
                             </td>
                             <td>
-                                <form method="POST" style="display: inline;">
-                                    <input type="hidden" name="action" value="toggle_user">
-                                    <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
-                                    <input type="hidden" name="current_status" value="<?= $user['is_active'] ?>">
-                                    <button type="submit" class="btn-small btn-toggle" 
-                                            onclick="return confirm('Изменить статус пользователя?')">
-                                        <?= $user['is_active'] ? 'Деактивировать' : 'Активировать' ?>
-                                    </button>
-                                </form>
-                                <a href="user-edit.php?id=<?= $user['id'] ?>" class="btn-small btn-edit">Редактировать</a>
+                                <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                                    <?php if ($isLocked): ?>
+                                        <form method="POST" style="display: inline;">
+                                            <input type="hidden" name="action" value="unlock_account">
+                                            <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
+                                            <button type="submit" class="btn-small btn-unlock" 
+                                                    onclick="return confirm('Разблокировать аккаунт пользователя <?= htmlspecialchars($user['full_name']) ?>?')">
+                                                🔓 Разблокировать
+                                            </button>
+                                        </form>
+                                    <?php endif; ?>
+                                    <form method="POST" style="display: inline;">
+                                        <input type="hidden" name="action" value="reset_password">
+                                        <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
+                                        <button type="submit" class="btn-small btn-reset-password" 
+                                                onclick="return confirm('Сбросить пароль пользователя <?= htmlspecialchars($user['full_name']) ?> на дефолтный (последние 4 цифры телефона)?\n\nВсе активные сессии пользователя будут завершены.')">
+                                            🔑 Сбросить пароль
+                                        </button>
+                                    </form>
+                                    <form method="POST" style="display: inline;">
+                                        <input type="hidden" name="action" value="toggle_user">
+                                        <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
+                                        <input type="hidden" name="current_status" value="<?= $user['is_active'] ?>">
+                                        <button type="submit" class="btn-small btn-toggle" 
+                                                onclick="return confirm('Изменить статус пользователя?')">
+                                            <?= $user['is_active'] ? 'Деактивировать' : 'Активировать' ?>
+                                        </button>
+                                    </form>
+                                    <a href="user-edit.php?id=<?= $user['id'] ?>" class="btn-small btn-edit">Редактировать</a>
+                                </div>
                             </td>
                         </tr>
                     <?php endforeach; ?>
