@@ -1,0 +1,10 @@
+RewriteEngine On
+
+# Проксирование API на бэкенд
+RewriteCond %{REQUEST_URI} ^/yum/api
+RewriteRule ^api/(.*)$ http://localhost:3001/api/$1 [P,L]
+
+# Для SPA - все запросы на index.html
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /yum/index.html [L]

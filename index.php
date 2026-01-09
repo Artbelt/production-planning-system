@@ -465,6 +465,11 @@ foreach ($userDepartments as $dept) {
 		<?php endif; ?>
 	<?php endif; ?>
 	
+	<!-- Проверка наличия фильтра в заявках (только для сборщиц) -->
+	<?php if ($userRole === 'assembler'): ?>
+	<button class="btn" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);" onclick="window.open('check_filter_in_orders.php', '_blank')">Проверка наличия фильтра в заявках</button>
+	<?php endif; ?>
+	
 	<!-- Заявки на лазер (только для сборщиков) -->
 	<?php if ($canAccessLaser): ?>
 		<?php if (in_array('U2', $availableDepartments) && canAccessLaserRequests($userDepartments, 'U2')): ?>

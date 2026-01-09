@@ -1,0 +1,16 @@
+# .htaccess для корневой директории (если приложение в поддиректории)
+# Этот файл нужен только если вы размещаете приложение не в корне домена
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /yum/
+  
+  # Проксирование API
+  RewriteCond %{REQUEST_URI} ^/yum/api
+  RewriteRule ^api/(.*)$ http://localhost:3001/api/$1 [P,L]
+  
+  # SPA роутинг для фронтенда
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /yum/index.html [L]
+</IfModule>
