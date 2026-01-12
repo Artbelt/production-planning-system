@@ -366,6 +366,33 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
             box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
         }
 
+        /* Стили для выпадающего списка фильтров */
+        #filterSuggestions {
+            font-size: 14px;
+        }
+
+        .filter-suggestion-item {
+            padding: 10px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid var(--gray-200);
+            transition: var(--transition);
+            color: var(--gray-800);
+        }
+
+        .filter-suggestion-item:last-child {
+            border-bottom: none;
+        }
+
+        .filter-suggestion-item:hover,
+        .filter-suggestion-item.highlighted {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .filter-suggestion-item:active {
+            background: var(--primary-dark);
+        }
+
         #addProductionForm button:hover {
             background: var(--primary-dark);
         }
@@ -493,6 +520,17 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
             #addProductionForm button {
                 padding: 8px 16px;
                 font-size: 13px;
+            }
+
+            /* выпадающий список фильтров на мобильных */
+            #filterSuggestions {
+                max-height: 150px;
+                font-size: 13px;
+            }
+
+            .filter-suggestion-item {
+                padding: 12px;
+                font-size: 14px;
             }
 
             /* таблица выпущенных гофропакетов */
@@ -700,16 +738,12 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
 
     <div style="padding-top: 24px; border-top: 1px solid var(--gray-200);">
         <form id="addProductionForm" style="display: flex; flex-direction: column; gap: 12px; max-width: 100%;">
-            <div>
+            <div style="position: relative;">
                 <label for="filterInput" style="display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--gray-700);">Имя фильтра:</label>
-                <input type="text" id="filterInput" name="filter" list="filtersList" required 
+                <input type="text" id="filterInput" name="filter" required 
                        style="width: 100%; padding: 8px 12px; border: 1px solid var(--gray-300); border-radius: var(--border-radius-sm); font-size: 14px; transition: var(--transition);"
                        placeholder="Введите имя фильтра" autocomplete="off">
-                <datalist id="filtersList">
-                    <?php foreach ($all_filters as $filter): ?>
-                        <option value="<?= htmlspecialchars($filter) ?>">
-                    <?php endforeach; ?>
-                </datalist>
+                <div id="filterSuggestions" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid var(--gray-300); border-top: none; border-radius: 0 0 var(--border-radius-sm) var(--border-radius-sm); max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: var(--shadow-md); margin-top: -1px;"></div>
             </div>
             <div>
                 <label for="orderSelect" style="display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--gray-700);">Заявка:</label>
@@ -733,25 +767,159 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
 </div>
 
     <script>
+        // Список всех фильтров из PHP
+        const allFilters = <?= json_encode($all_filters, JSON_UNESCAPED_UNICODE) ?>;
+        
         let currentFilterOrders = [];
+        let loadOrdersTimeout = null;
+        let filterSuggestionsTimeout = null;
+        let currentHighlightIndex = -1;
         const filterInput = document.getElementById('filterInput');
         const orderSelect = document.getElementById('orderSelect');
-        const filtersList = document.getElementById('filtersList');
+        const filterSuggestions = document.getElementById('filterSuggestions');
         const submitButton = document.querySelector('#addProductionForm button[type="submit"]');
 
-        // Загрузка заявок при выборе фильтра
-        filterInput.addEventListener('blur', async function() {
-            const filter = this.value.trim();
+        // Функция поиска фильтров
+        function searchFilters(query) {
+            const trimmedQuery = query.trim().toLowerCase();
+            
+            if (trimmedQuery.length < 1) {
+                hideFilterSuggestions();
+                return;
+            }
+
+            // Фильтруем список фильтров
+            const matched = allFilters.filter(filter => 
+                filter.toLowerCase().includes(trimmedQuery)
+            ).slice(0, 10); // Ограничиваем до 10 результатов
+
+            if (matched.length > 0) {
+                showFilterSuggestions(matched);
+            } else {
+                hideFilterSuggestions();
+            }
+        }
+
+        // Показать выпадающий список
+        function showFilterSuggestions(filters) {
+            filterSuggestions.innerHTML = '';
+            
+            filters.forEach((filter, index) => {
+                const item = document.createElement('div');
+                item.className = 'filter-suggestion-item';
+                item.textContent = filter;
+                item.onclick = () => selectFilter(filter);
+                item.onmouseover = () => highlightSuggestion(index);
+                item.ontouchstart = () => highlightSuggestion(index);
+                filterSuggestions.appendChild(item);
+            });
+            
+            filterSuggestions.style.display = 'block';
+            currentHighlightIndex = -1;
+        }
+
+        // Скрыть выпадающий список
+        function hideFilterSuggestions() {
+            setTimeout(() => {
+                filterSuggestions.style.display = 'none';
+            }, 200);
+        }
+
+        // Выделить элемент в списке
+        function highlightSuggestion(index) {
+            const items = filterSuggestions.querySelectorAll('.filter-suggestion-item');
+            items.forEach((item, i) => {
+                item.classList.toggle('highlighted', i === index);
+            });
+            currentHighlightIndex = index;
+        }
+
+        // Выбрать фильтр
+        function selectFilter(filterName) {
+            filterInput.value = filterName;
+            hideFilterSuggestions();
+            // Загружаем заявки для выбранного фильтра
+            loadOrdersForFilter(filterName);
+        }
+
+        // Обработка ввода в поле фильтра
+        filterInput.addEventListener('input', function() {
+            const value = this.value;
+            
+            // Очищаем предыдущий таймаут
+            if (filterSuggestionsTimeout) {
+                clearTimeout(filterSuggestionsTimeout);
+            }
+            
+            // Поиск с небольшой задержкой (debounce)
+            filterSuggestionsTimeout = setTimeout(() => {
+                searchFilters(value);
+            }, 150);
+        });
+
+        // Обработка фокуса
+        filterInput.addEventListener('focus', function() {
+            if (this.value.trim().length > 0) {
+                searchFilters(this.value);
+            }
+        });
+
+        // Скрываем список при клике вне поля
+        document.addEventListener('click', function(e) {
+            const target = e.target;
+            if (target !== filterInput && 
+                !filterInput.contains(target) && 
+                target !== filterSuggestions && 
+                !filterSuggestions.contains(target)) {
+                hideFilterSuggestions();
+            }
+        });
+
+        // Обработка клавиш в поле ввода
+        filterInput.addEventListener('keydown', function(e) {
+            const items = filterSuggestions.querySelectorAll('.filter-suggestion-item');
+            
+            if (filterSuggestions.style.display === 'block' && items.length > 0) {
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    currentHighlightIndex = Math.min(currentHighlightIndex + 1, items.length - 1);
+                    highlightSuggestion(currentHighlightIndex);
+                    items[currentHighlightIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    currentHighlightIndex = Math.max(currentHighlightIndex - 1, -1);
+                    if (currentHighlightIndex === -1) {
+                        items.forEach(item => item.classList.remove('highlighted'));
+                    } else {
+                        highlightSuggestion(currentHighlightIndex);
+                        items[currentHighlightIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                    }
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (currentHighlightIndex >= 0 && items[currentHighlightIndex]) {
+                        selectFilter(items[currentHighlightIndex].textContent);
+                    } else if (items.length > 0) {
+                        selectFilter(items[0].textContent);
+                    }
+                } else if (e.key === 'Escape') {
+                    hideFilterSuggestions();
+                }
+            }
+        });
+
+        // Функция загрузки заявок для фильтра
+        async function loadOrdersForFilter(filter) {
+            const trimmedFilter = filter.trim();
             orderSelect.innerHTML = '<option value="">Выберите заявку</option>';
             orderSelect.value = '';
             
-            if (!filter) {
+            if (!trimmedFilter) {
                 currentFilterOrders = [];
                 return;
             }
 
             try {
-                const response = await fetch(`get_orders_for_filter.php?filter=${encodeURIComponent(filter)}`);
+                const response = await fetch(`get_orders_for_filter.php?filter=${encodeURIComponent(trimmedFilter)}`);
                 const data = await response.json();
                 
                 if (data.success && data.orders && data.orders.length > 0) {
@@ -764,14 +932,25 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
                     });
                 } else {
                     currentFilterOrders = [];
-                    if (filter) {
-                        alert('Для этого фильтра не найдено активных заявок');
-                    }
                 }
             } catch (error) {
                 console.error('Ошибка загрузки заявок:', error);
                 currentFilterOrders = [];
             }
+        }
+
+        // Загрузка заявок при потере фокуса (если фильтр введен вручную)
+        filterInput.addEventListener('blur', async function() {
+            if (loadOrdersTimeout) {
+                clearTimeout(loadOrdersTimeout);
+            }
+            // Небольшая задержка, чтобы дать время событию клика по списку сработать
+            setTimeout(async () => {
+                const value = this.value.trim();
+                if (value) {
+                    await loadOrdersForFilter(value);
+                }
+            }, 300);
         });
 
         // Валидация заявки при выборе

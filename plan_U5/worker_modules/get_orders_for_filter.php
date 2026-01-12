@@ -16,7 +16,21 @@ try {
         exit;
     }
 
-    // Получаем список заявок для данного фильтра из corrugation_plan
+    // Получаем список заявок для данного фильтра из orders и corrugation_plan
+    // Сначала проверяем таблицу orders (основной источник заявок)
+    $stmt = $pdo->prepare("
+        SELECT DISTINCT order_number 
+        FROM orders 
+        WHERE `filter` = ? 
+          AND order_number IS NOT NULL 
+          AND order_number != ''
+          AND COALESCE(hide, 0) != 1
+        ORDER BY order_number DESC
+    ");
+    $stmt->execute([$filter]);
+    $ordersFromOrders = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    
+    // Также проверяем corrugation_plan за последние 30 дней (для активных планов)
     $stmt = $pdo->prepare("
         SELECT DISTINCT order_number 
         FROM corrugation_plan 
@@ -27,7 +41,12 @@ try {
         ORDER BY order_number DESC
     ");
     $stmt->execute([$filter]);
-    $orders = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    $ordersFromPlan = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    
+    // Объединяем результаты и убираем дубликаты
+    $orders = array_unique(array_merge($ordersFromOrders, $ordersFromPlan));
+    // Сортируем по убыванию
+    rsort($orders);
 
     echo json_encode([
         'success' => true,
