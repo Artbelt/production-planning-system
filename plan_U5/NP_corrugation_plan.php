@@ -10,27 +10,29 @@ if ($order==='') { http_response_code(400); exit('Укажите ?order=...'); }
 
 /*
  * Верхняя таблица = полосы, полученные при раскрое (по датам раскроя).
+ * Используем LEFT JOIN с roll_plans, чтобы показывать все позиции из cut_plans,
+ * даже если для них нет записи в roll_plans.
  */
 $sql = "
 SELECT
-  rp.work_date,
-  rp.bale_id,
+  COALESCE(rp.work_date, CURDATE()) AS work_date,
+  cps.bale_id,
   cps.strip_no,
   cps.filter,
   cps.height,
   cps.width,
   cps.fact_length,
-  pps.p_p_pleats_count AS pleats
-FROM roll_plans rp
-JOIN cut_plans cps
+  COALESCE(pps.p_p_pleats_count, 0) AS pleats
+FROM cut_plans cps
+LEFT JOIN roll_plans rp
   ON cps.order_number = rp.order_number
  AND cps.bale_id      = rp.bale_id
-JOIN salon_filter_structure sfs
+LEFT JOIN salon_filter_structure sfs
   ON sfs.filter = cps.filter
-JOIN paper_package_salon pps
+LEFT JOIN paper_package_salon pps
   ON pps.p_p_name = sfs.paper_package
-WHERE rp.order_number = ?
-ORDER BY rp.work_date, rp.bale_id, cps.strip_no
+WHERE cps.order_number = ?
+ORDER BY COALESCE(rp.work_date, CURDATE()), cps.bale_id, cps.strip_no
 ";
 $st = $pdo->prepare($sql);
 $st->execute([$order]);
