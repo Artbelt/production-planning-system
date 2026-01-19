@@ -794,30 +794,31 @@ foreach ($orders_list as $order_num => $orders_data){
                 echo '</div>';
 
                 echo '<div class="section-title" style="margin-top:14px">Операции над заявками</div>';
-                echo '<div class="stack">';
+                echo '<section class="stack">';
                 echo "<form action='new_order.php' method='post' target='_blank' class='stack'>"
                     ."<input type='submit' value='Создать заявку вручную'>"
-                    ."</form>";
-                echo "<form action='combine_orders.php' method='post' target='_blank' class='stack'>"
-                    ."<input type='submit' value='Объединение заявок'>"
-                    ."</form>";
-                echo "<form action='NP_cut_index.php' method='post' target='_blank' class='stack'>"
-                    ."<input type='submit' value='Планирование работы (new)'>"
                     ."</form>";
                 echo "<form action='archived_orders.php' target='_blank' class='stack'>"
                     ."<input type='submit' value='Архив заявок'>"
                     ."</form>";
-                echo '</div>';
-
-                echo '<div class="section-title" style="margin-top:14px">Загрузка заявок</div>';
-                echo '<div class="stack">';
-                echo '<form enctype="multipart/form-data" action="load_file.php" method="POST" target="_blank" class="stack">'
-                    .'<input type="hidden" name="MAX_FILE_SIZE" value="3000000" />'
-                    .'<label>Добавить заявку в систему:</label>'
-                    .'<input name="userfile" type="file" />'
-                    .'<input type="submit" value="Загрузить файл" />'
-                    .'</form>';
-                echo '</div>';
+                echo '<button type="button" onclick="openLoadFileModal()">Загрузить файл</button>';
+                
+                echo '<div style="border-top: 1px dashed var(--border); margin: 8px 0;"></div>';
+                
+                echo "<form action='NP_cut_index.php' method='post' target='_blank' class='stack'>"
+                    ."<input type='submit' value='Менеджер планирования'>"
+                    ."</form>";
+                echo '</section>';
+                
+                echo '<div class="section-title" style="margin-top:14px">Сервис</div>';
+                echo '<section class="stack">';
+                echo '<a href="knives_bobinorezka.php" target="_blank" rel="noopener" class="stack">';
+                echo '<button>Ножи бобинорезки</button>';
+                echo '</a>';
+                echo '<a href="knives_prosechnik.php" target="_blank" rel="noopener" class="stack">';
+                echo '<button>Ножи просечников</button>';
+                echo '</a>';
+                echo '</section>';
                 ?>
             </td>
         </tr>
@@ -909,6 +910,7 @@ document.addEventListener('keydown', function(event) {
         document.getElementById('partsEditorModal').style.display = 'none';
         document.getElementById('addPositionModal').style.display = 'none';
         document.getElementById('addPartPositionModal').style.display = 'none';
+        closeLoadFileModal();
     }
 });
 
@@ -971,6 +973,7 @@ window.onclick = function(event) {
     const partsModal = document.getElementById('partsEditorModal');
     const addPositionModal = document.getElementById('addPositionModal');
     const addPartPositionModal = document.getElementById('addPartPositionModal');
+    const loadFileModal = document.getElementById('loadFileModal');
     
     if (event.target == capModal) {
         closeCapManagementModal();
@@ -992,6 +995,9 @@ window.onclick = function(event) {
     }
     if (event.target === addPartPositionModal) {
         closeAddPartPositionModal();
+    }
+    if (event.target === loadFileModal) {
+        closeLoadFileModal();
     }
 }
 
@@ -1812,6 +1818,90 @@ function submitAddPartPosition() {
     });
 }
 
+// Функции для модального окна загрузки файла
+function openLoadFileModal() {
+    document.getElementById('loadFileModal').style.display = 'block';
+    // Сброс формы при открытии
+    document.getElementById('loadFileForm').reset();
+    document.getElementById('fileNameDisplay').style.display = 'none';
+    document.getElementById('submitFileButton').disabled = true;
+    document.getElementById('submitFileButton').style.background = 'var(--muted)';
+    document.getElementById('submitFileButton').style.opacity = '0.5';
+    document.getElementById('submitFileButton').style.cursor = 'not-allowed';
+}
+
+// Функция закрытия модального окна загрузки файла
+function closeLoadFileModal() {
+    document.getElementById('loadFileModal').style.display = 'none';
+    document.getElementById('loadFileForm').reset();
+    document.getElementById('fileNameDisplay').style.display = 'none';
+    document.getElementById('submitFileButton').disabled = true;
+    document.getElementById('submitFileButton').style.background = 'var(--muted)';
+    document.getElementById('submitFileButton').style.opacity = '0.5';
+    document.getElementById('submitFileButton').style.cursor = 'not-allowed';
+    
+    // Сброс кнопки выбора файла
+    const fileSelectButton = document.getElementById('fileSelectButton');
+    if (fileSelectButton) {
+        const iconSpan = fileSelectButton.querySelector('span:first-child');
+        const textSpan = fileSelectButton.querySelector('span:last-child');
+        if (iconSpan) iconSpan.textContent = '📎';
+        if (textSpan) textSpan.textContent = 'Выбрать файл';
+        fileSelectButton.style.borderColor = 'var(--border)';
+        fileSelectButton.style.background = 'var(--panel)';
+        fileSelectButton.removeAttribute('data-selected');
+    }
+}
+
+// Обработка выбора файла
+document.addEventListener('DOMContentLoaded', function() {
+    const fileInput = document.getElementById('loadFileInput');
+    const fileSelectButton = document.getElementById('fileSelectButton');
+    const fileNameDisplay = document.getElementById('fileNameDisplay');
+    const fileNameText = document.getElementById('fileNameText');
+    const submitButton = document.getElementById('submitFileButton');
+    
+    if (fileInput && fileSelectButton) {
+        // Стили для кнопки при наведении
+        fileSelectButton.addEventListener('mouseenter', function() {
+            if (!this.dataset.selected) {
+                this.style.borderColor = 'var(--accent)';
+                this.style.background = '#f0f4ff';
+            }
+        });
+        fileSelectButton.addEventListener('mouseleave', function() {
+            if (!this.dataset.selected) {
+                this.style.borderColor = 'var(--border)';
+                this.style.background = 'var(--panel)';
+            }
+        });
+        
+        // Обработка выбора файла
+        fileInput.addEventListener('change', function() {
+            if (this.files.length > 0) {
+                const fileName = this.files[0].name;
+                fileNameText.textContent = fileName;
+                fileNameDisplay.style.display = 'block';
+                
+                // Активация кнопки загрузки
+                submitButton.disabled = false;
+                submitButton.style.background = 'var(--accent)';
+                submitButton.style.opacity = '1';
+                submitButton.style.cursor = 'pointer';
+                
+                // Обновление текста и стиля кнопки выбора
+                const iconSpan = fileSelectButton.querySelector('span:first-child');
+                const textSpan = fileSelectButton.querySelector('span:last-child');
+                if (iconSpan) iconSpan.textContent = '✓';
+                if (textSpan) textSpan.textContent = 'Файл выбран';
+                fileSelectButton.style.borderColor = 'var(--accent)';
+                fileSelectButton.style.background = '#f0f4ff';
+                fileSelectButton.dataset.selected = 'true';
+            }
+        });
+    }
+});
+
 </script>
 
 <!-- Модальное окно создания объявления -->
@@ -2012,6 +2102,44 @@ function submitAddPartPosition() {
                     </button>
                     <button type="submit" style="padding: 8px 16px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer;">
                         ➕ Добавить
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно загрузки файла -->
+<div id="loadFileModal" class="modal">
+    <div class="modal-content" style="max-width: 420px; padding: 16px; overflow-x: hidden;">
+        <div class="modal-header" style="margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border);">
+            <div class="modal-title" style="font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 18px;">📄</span>
+                Загрузить файл
+            </div>
+            <span class="close" onclick="closeLoadFileModal()" style="font-size: 20px;">&times;</span>
+        </div>
+        <div class="modal-body" style="padding: 0; overflow-x: hidden;">
+            <form id="loadFileForm" enctype="multipart/form-data" action="load_file.php" method="POST">
+                <input type="hidden" name="MAX_FILE_SIZE" value="3000000" />
+                <p style="margin: 0 0 12px 0; color: var(--muted); font-size: 12px; line-height: 1.4;">Выберите файл Excel с заявкой коммерческого отдела</p>
+                <div style="margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                    <input id="loadFileInput" name="userfile" type="file" accept=".xls,.xlsx" style="position: absolute; width: 0; height: 0; opacity: 0; overflow: hidden;" />
+                    <button type="button" onclick="document.getElementById('loadFileInput').click();" id="fileSelectButton" style="padding: 7px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--ink);">
+                        <span style="font-size: 14px;">📎</span>
+                        <span>Выбрать файл</span>
+                    </button>
+                    <span style="font-size: 11px; color: var(--muted);">(.xls, .xlsx)</span>
+                </div>
+                <div id="fileNameDisplay" style="margin-bottom: 12px; padding: 6px 10px; background: var(--panel); border-radius: 6px; font-size: 11px; color: var(--ink); display: none; border: 1px solid var(--border);">
+                    <span style="font-weight: 500;">Выбранный файл: </span><span id="fileNameText"></span>
+                </div>
+                <div style="display: flex; gap: 8px; justify-content: flex-end; padding-top: 8px; border-top: 1px solid var(--border);">
+                    <button type="button" onclick="closeLoadFileModal()" style="padding: 7px 16px; background: transparent; color: var(--ink); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s;">
+                        Отмена
+                    </button>
+                    <button type="submit" id="submitFileButton" disabled style="padding: 7px 16px; background: var(--muted); color: white; border: none; border-radius: 6px; cursor: not-allowed; font-size: 12px; font-weight: 500; transition: all 0.2s; opacity: 0.5;">
+                        Загрузить
                     </button>
                 </div>
             </form>

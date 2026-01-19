@@ -752,27 +752,82 @@ echo "<!-- Аккуратная панель авторизации -->
                             ?>
                         </div>
                         <div id="filterSearchResult" style="margin-top:10px;"></div>
+                        <div id="showAllButtonContainer" style="margin-top:10px; display:none;">
+                            <button id="showAllButton" style="padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                                Показать все
+                            </button>
+                        </div>
                     </div>
                 </div>
 
                 <script>
                     (function(){
                         const resultBox = document.getElementById('filterSearchResult');
+                        const showAllButtonContainer = document.getElementById('showAllButtonContainer');
+                        const showAllButton = document.getElementById('showAllButton');
+                        let currentFilter = '';
+                        let showingAll = false;
+                        
                         function getSelectEl(){ return document.querySelector('select[name="analog_filter"]'); }
-                        async function runSearch(){
+                        
+                        async function runSearch(showAll = false){
                             const sel = getSelectEl();
                             if(!sel){ resultBox.innerHTML = '<div class="muted">Не найден выпадающий список.</div>'; return; }
                             const val = sel.value.trim();
-                            if(!val){ resultBox.innerHTML = '<div class="muted">Выберите фильтр…</div>'; return; }
+                            if(!val){ 
+                                resultBox.innerHTML = '<div class="muted">Выберите фильтр…</div>'; 
+                                showAllButtonContainer.style.display = 'none';
+                                return; 
+                            }
+                            
+                            currentFilter = val;
+                            showingAll = showAll;
                             resultBox.textContent = 'Загрузка…';
+                            
                             try{
-                                const formData = new FormData(); formData.append('filter', val);
+                                const formData = new FormData(); 
+                                formData.append('filter', val);
+                                if(showAll) {
+                                    formData.append('show_all', '1');
+                                }
+                                
                                 const resp = await fetch('search_filter_in_the_orders.php', { method:'POST', body:formData });
-                                if(!resp.ok){ resultBox.innerHTML = `<div class="alert">Ошибка запроса: ${resp.status} ${resp.statusText}</div>`; return; }
-                                resultBox.innerHTML = await resp.text();
-                            }catch(e){ resultBox.innerHTML = `<div class="alert">Ошибка: ${e}</div>`; }
+                                if(!resp.ok){ 
+                                    resultBox.innerHTML = `<div class="alert">Ошибка запроса: ${resp.status} ${resp.statusText}</div>`; 
+                                    showAllButtonContainer.style.display = 'none';
+                                    return; 
+                                }
+                                
+                                const html = await resp.text();
+                                resultBox.innerHTML = html;
+                                
+                                // Показываем кнопку "Показать все" только если сейчас показываются не все заявки
+                                if(!showAll) {
+                                    showAllButtonContainer.style.display = 'block';
+                                    showAllButton.textContent = 'Показать все';
+                                } else {
+                                    showAllButtonContainer.style.display = 'block';
+                                    showAllButton.textContent = 'Показать за последний год';
+                                }
+                            }catch(e){ 
+                                resultBox.innerHTML = `<div class="alert">Ошибка: ${e}</div>`; 
+                                showAllButtonContainer.style.display = 'none';
+                            }
                         }
-                        const sel = getSelectEl(); if(sel){ sel.id='filterSelect'; sel.addEventListener('change', runSearch); }
+                        
+                        // Обработчик кнопки "Показать все"
+                        showAllButton.addEventListener('click', function(){
+                            runSearch(!showingAll);
+                        });
+                        
+                        const sel = getSelectEl(); 
+                        if(sel){ 
+                            sel.id='filterSelect'; 
+                            sel.addEventListener('change', function(){
+                                showingAll = false;
+                                runSearch(false);
+                            }); 
+                        }
                     })();
                 </script>
             </td>

@@ -131,25 +131,123 @@ if ($order) {
     }
 }
 
-$stmt = $pdo->prepare("SELECT bale_id, filter, height, width, format FROM cut_plans WHERE order_number = ? ORDER BY bale_id");
+// Получаем данные из cut_plans
+$stmt = $pdo->prepare("
+    SELECT 
+        c.bale_id, 
+        c.filter, 
+        c.height, 
+        c.width, 
+        c.format,
+        c.length
+    FROM cut_plans c
+    WHERE c.order_number = ? 
+    ORDER BY c.bale_id
+");
 $stmt->execute([$order]);
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Получаем уникальные фильтры и их paper_package
+$filters = array_unique(array_column($rows, 'filter'));
+$paper_data = [];
+$filter_papers = [];
+if (!empty($filters)) {
+    $placeholders = implode(',', array_fill(0, count($filters), '?'));
+    $stmt2 = $pdo->prepare("
+        SELECT filter, paper_package 
+        FROM panel_filter_structure 
+        WHERE filter IN ($placeholders)
+    ");
+    $stmt2->execute(array_values($filters));
+    while ($row = $stmt2->fetch()) {
+        $filter_papers[trim($row['filter'])] = $row['paper_package'];
+    }
+    
+    // Получаем данные о гофропакетах
+    $paper_names = array_filter(array_unique(array_values($filter_papers)));
+    if (!empty($paper_names)) {
+        $placeholders_paper = implode(',', array_fill(0, count($paper_names), '?'));
+        $stmt3 = $pdo->prepare("
+            SELECT p_p_name, p_p_pleats_count, p_p_height
+            FROM paper_package_panel 
+            WHERE p_p_name IN ($placeholders_paper)
+        ");
+        $stmt3->execute(array_values($paper_names));
+        while ($row = $stmt3->fetch()) {
+            $paper_data[$row['p_p_name']] = $row;
+        }
+    }
+}
+
 $bales = [];
+$debug_info = []; // Для отладки
 foreach ($rows as $r) {
     $bid = (int)$r['bale_id'];
     if (!isset($bales[$bid])) {
         $bales[$bid] = [
             'bale_id' => $bid, 
             'strips' => [],
-            'format' => $r['format'] ?? '1000' // Формат бухты
+            'format' => $r['format'] ?? '1000', // Формат бухты
+            'total_packages' => 0 // Общее количество гофропакетов в бухте
         ];
     }
+    
+    // Получаем данные о гофропакете через panel_filter_structure
+    $filter_key = trim($r['filter']);
+    $paper_name = $filter_papers[$filter_key] ?? null;
+    $paper_info = $paper_name ? ($paper_data[$paper_name] ?? null) : null;
+    
+    // Рассчитываем количество гофропакетов для этой позиции
+    $height = (float)($r['height'] ?? 0);
+    $length = (float)($r['length'] ?? 0);
+    $pleats = $paper_info ? (int)($paper_info['p_p_pleats_count'] ?? 0) : 0;
+    
+    // Отладка для первых нескольких записей
+    if (count($debug_info) < 10) {
+        $debug_info[] = sprintf(
+            "Бухта %d, фильтр: %s, height: %.2f, length: %.2f, paper: %s, pleats: %d",
+            $bid, $r['filter'], $height, $length, $paper_name ?? 'не найдено', $pleats
+        );
+    }
+    
+    $packages_count = 0;
+    if ($pleats > 0 && $height > 0 && $length > 0) {
+        // Длина на один гофропакет = pleats * 2 * height (в мм)
+        $length_per_package = $pleats * 2 * $height;
+        if ($length_per_package > 0) {
+            // length хранится в метрах (1000 или 500), переводим в мм
+            $length_mm = $length * 1000;
+            $packages_count = round($length_mm / $length_per_package);
+            
+            // Дополнительная отладка
+            if (count($debug_info) < 10) {
+                $debug_info[] = sprintf(
+                    "  Расчет: length=%.2fм (%.0fмм), length_per_package=%.2fмм, packages_count=%d",
+                    $length, $length_mm, $length_per_package, $packages_count
+                );
+            }
+        }
+    } else {
+        // Отладка почему не считается
+        if (count($debug_info) < 10) {
+            $debug_info[] = sprintf(
+                "  Пропуск расчета: pleats=%d, height=%.2f, length=%.2f",
+                $pleats, $height, $length
+            );
+        }
+    }
+    
     $bales[$bid]['strips'][] = [
         'filter' => $r['filter'],
-        'height' => (float)$r['height'],
-        'width'  => (float)$r['width'],
+        'height' => $height,
+        'width'  => (float)($r['width'] ?? 0),
+        'packages_count' => $packages_count,
+        'length' => $length, // Добавляем для отладки
+        'pleats' => $pleats, // Добавляем для отладки
+        'paper_name' => $paper_name // Добавляем для отладки
     ];
+    
+    $bales[$bid]['total_packages'] += $packages_count;
 }
 ?>
 <!DOCTYPE html>
@@ -231,6 +329,28 @@ foreach ($rows as $r) {
         .bale-label{ display:block; font-size:11px; color:#6b7280; margin-top:3px; line-height:1.2; white-space:normal; }
         .highlight{ background:#d1ecf1 !important; border-color:#0bb !important; }
         .overload{ background:#fde2e2 !important; }
+        
+        /* Количество гофропакетов в правом верхнем углу */
+        .left-label{ 
+            position: relative; 
+            padding-right: 50px !important; /* Место для бейджа */
+        }
+        .bale-packages-count{
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            background: #3b82f6;
+            color: white;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 3px 7px;
+            border-radius: 4px;
+            z-index: 10;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            line-height: 1;
+            min-width: 20px;
+            text-align: center;
+        }
 
         /* Панель висот (чіпи) */
         #heightBarWrap{margin-top:12px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 1px 6px rgba(0,0,0,.05);padding:8px 10px;}
@@ -410,6 +530,22 @@ foreach ($rows as $r) {
 <script>
     const ORDER  = <?= json_encode($order) ?>;
     const BALES  = <?= json_encode(array_values($bales), JSON_UNESCAPED_UNICODE) ?>;
+    const DEBUG_INFO = <?= json_encode($debug_info ?? [], JSON_UNESCAPED_UNICODE) ?>;
+    
+    // Отладка: выводим данные о бухтах в консоль
+    console.log('=== ОТЛАДКА РАСЧЕТА ГОФРОПАКЕТОВ ===');
+    console.log('Первые записи из БД:', DEBUG_INFO);
+    console.log('BALES данные:', BALES);
+    BALES.forEach(b => {
+        console.log(`Бухта ${b.bale_id}: total_packages = ${b.total_packages || 0}`);
+        if (b.strips && b.strips.length > 0) {
+            console.log(`  Позиции в бухте:`, b.strips.map(s => ({
+                filter: s.filter,
+                height: s.height,
+                packages_count: s.packages_count
+            })));
+        }
+    });
 
     let selected = {}; // { "YYYY-MM-DD": ["baleId1","baleId2", ...] }
 
@@ -644,7 +780,10 @@ foreach ($rows as $r) {
             td0.className = 'left-label';
             td0.dataset.baleId = b.bale_id;
             const formatLabel = b.format ? `[${b.format}]` : '[1000]';
-            td0.innerHTML = `<strong class="bale-name" data-bale-id="${b.bale_id}">Бухта ${b.bale_id} ${formatLabel}</strong><div class="bale-label">`
+            const packagesCount = b.total_packages || 0;
+            // Всегда показываем бейдж, даже если 0 (для отладки можно временно)
+            const packagesBadge = `<span class="bale-packages-count" title="Количество гофропакетов в бухте">${packagesCount}</span>`;
+            td0.innerHTML = packagesBadge + `<strong class="bale-name" data-bale-id="${b.bale_id}">Бухта ${b.bale_id} ${formatLabel}</strong><div class="bale-label">`
                 + uniqHeights.map(h=>`<span class="hval" data-h="${h}">[${h}]</span>`).join(' ')
                 + '</div>';
             td0.title = tooltip;

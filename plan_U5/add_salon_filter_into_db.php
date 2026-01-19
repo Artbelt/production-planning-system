@@ -202,11 +202,22 @@ require_once('tools/tools.php');
 
     // Текущий выбранный прототип
     $analog_filter = (isset($_POST['analog_filter']) && $_POST['analog_filter'] !== '') ? $_POST['analog_filter'] : '';
+    
+    // Сохраняем тариф и сложность при смене прототипа (если они были сохранены в скрытых полях)
+    $preserved_tariff_id = isset($_POST['preserved_tariff_id']) ? $_POST['preserved_tariff_id'] : '';
+    $preserved_build_complexity = isset($_POST['preserved_build_complexity']) ? $_POST['preserved_build_complexity'] : '';
 
     // Получаем данные прототипа (если выбран)
     if ($analog_filter !== '') {
         echo "<p class='muted' style='margin:8px 2px 18px'>Загружен прототип: <b>".htmlspecialchars($analog_filter)."</b></p>";
         $analog_data = get_salon_filter_data($analog_filter);
+        // Если тариф и сложность не были в прототипе, но были сохранены ранее, используем сохраненные значения
+        if (empty($analog_data['tariff_id']) && !empty($preserved_tariff_id)) {
+            $analog_data['tariff_id'] = $preserved_tariff_id;
+        }
+        if (empty($analog_data['build_complexity']) && !empty($preserved_build_complexity)) {
+            $analog_data['build_complexity'] = $preserved_build_complexity;
+        }
     } else {
         echo "<p class='muted' style='margin:8px 2px 18px'>Прототип не выбран</p>";
         $analog_data = array();
@@ -260,6 +271,13 @@ require_once('tools/tools.php');
             </div>
             <!-- сохраняем уже введённое имя нового фильтра при смене прототипа -->
             <input type="hidden" name="filter_name" value="<?= htmlspecialchars($filter_name) ?>">
+            <!-- сохраняем тариф и сложность при смене прототипа -->
+            <?php if (!empty($analog_data['tariff_id'])): ?>
+                <input type="hidden" name="preserved_tariff_id" value="<?= htmlspecialchars($analog_data['tariff_id']) ?>">
+            <?php endif; ?>
+            <?php if (!empty($analog_data['build_complexity'])): ?>
+                <input type="hidden" name="preserved_build_complexity" value="<?= htmlspecialchars($analog_data['build_complexity']) ?>">
+            <?php endif; ?>
         </form>
     </section>
 
@@ -289,9 +307,14 @@ require_once('tools/tools.php');
                     <label>Тариф</label>
                     <select name="tariff_id" id="tariffSelect" form="saveForm" onchange="updateBuildComplexity()">
                         <option value="">— Не выбран —</option>
-                        <?php foreach ($tariffs as $tariff): ?>
+                        <?php 
+                        $selected_tariff_id = isset($analog_data['tariff_id']) ? $analog_data['tariff_id'] : '';
+                        foreach ($tariffs as $tariff): 
+                            $is_selected = ($selected_tariff_id != '' && $selected_tariff_id == $tariff['id']) ? 'selected' : '';
+                        ?>
                             <option value="<?= htmlspecialchars($tariff['id']) ?>" 
-                                    data-complexity="<?= htmlspecialchars($tariff['build_complexity'] ?? '') ?>">
+                                    data-complexity="<?= htmlspecialchars($tariff['build_complexity'] ?? '') ?>"
+                                    <?= $is_selected ?>>
                                 <?= htmlspecialchars($tariff['tariff_name']) ?> 
                                 <?php if (!empty($tariff['rate_per_unit'])): ?>
                                     (<?= htmlspecialchars($tariff['rate_per_unit']) ?>)
@@ -303,7 +326,7 @@ require_once('tools/tools.php');
                 <div>
                     <label>Сложность производства (шт/смену)</label>
                     <input type="number" name="build_complexity" id="buildComplexityInput" form="saveForm" step="0.01" 
-                           value="" 
+                           value="<?= htmlspecialchars($analog_data['build_complexity'] ?? '') ?>" 
                            placeholder="Автоматически из тарифа" readonly style="background:#f3f4f6; cursor:not-allowed;">
                     <small style="color:var(--muted); font-size:11px; margin-top:4px; display:block">Заполняется автоматически из выбранного тарифа</small>
                 </div>
@@ -705,7 +728,16 @@ function updateBuildComplexity() {
 
 // Устанавливаем начальное значение при загрузке страницы
 document.addEventListener('DOMContentLoaded', function() {
-    updateBuildComplexity();
+    const tariffSelect = document.getElementById('tariffSelect');
+    const complexityInput = document.getElementById('buildComplexityInput');
+    
+    if (tariffSelect && complexityInput) {
+        // Если тариф выбран из прототипа, но сложность не установлена,
+        // подтягиваем сложность из тарифа
+        if (tariffSelect.selectedIndex > 0 && !complexityInput.value) {
+            updateBuildComplexity();
+        }
+    }
 });
 </script>
 

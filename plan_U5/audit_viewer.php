@@ -365,6 +365,8 @@
                     <option value="manufactured_production">manufactured_production</option>
                     <option value="orders">orders</option>
                     <option value="salon_filter_structure">salon_filter_structure</option>
+                    <option value="salary_tariffs">salary_tariffs (Тарифы)</option>
+                    <option value="salary_additions">salary_additions (Доплаты)</option>
                 </select>
             </div>
             

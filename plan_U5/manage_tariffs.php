@@ -1,6 +1,7 @@
 <?php
 require_once('tools/tools.php');
 require_once('settings.php');
+require_once('audit_logger.php');
 
 $action = $_GET['action'] ?? 'list';
 $tariff_id = $_GET['id'] ?? null;
@@ -15,7 +16,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'add' || $action === 'edit') {
             $tariff_name = trim($_POST['tariff_name'] ?? '');
             $rate_per_unit = floatval($_POST['rate_per_unit'] ?? 0);
-            $type = trim($_POST['type'] ?? 'normal');
+            $type = trim($_POST['type'] ?? '');
+            // Если type пустой, устанавливаем значение по умолчанию 'normal'
+            if (empty($type)) {
+                $type = 'normal';
+            }
+            // Проверяем, что type имеет допустимое значение
+            if (!in_array($type, ['normal', 'fixed', 'hourly'])) {
+                $type = 'normal';
+            }
             $build_complexity = isset($_POST['build_complexity']) && $_POST['build_complexity'] !== '' ? floatval($_POST['build_complexity']) : null;
             
             if (empty($tariff_name)) {
@@ -27,6 +36,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($mysqli->connect_errno) {
                     $error = 'Ошибка подключения к БД: ' . $mysqli->connect_error;
                 } else {
+                    $auditLogger = new AuditLogger($mysqli);
+                    
                     if ($action === 'add') {
                         // Используем отдельные запросы для обработки NULL значений
                         if ($build_complexity !== null) {
@@ -38,6 +49,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                     } else {
                         $tariff_id = intval($_POST['tariff_id']);
+                        
+                        // Получаем старые значения для логирования
+                        $old_values = null;
+                        $old_stmt = $mysqli->prepare("SELECT * FROM salary_tariffs WHERE id = ?");
+                        $old_stmt->bind_param('i', $tariff_id);
+                        $old_stmt->execute();
+                        $old_result = $old_stmt->get_result();
+                        if ($old_row = $old_result->fetch_assoc()) {
+                            $old_values = $old_row;
+                        }
+                        $old_stmt->close();
+                        
                         // Обновляем основные поля
                         $stmt = $mysqli->prepare("UPDATE salary_tariffs SET tariff_name = ?, rate_per_unit = ?, type = ? WHERE id = ?");
                         $stmt->bind_param('sdsi', $tariff_name, $rate_per_unit, $type, $tariff_id);
@@ -58,6 +81,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 $stmt2->execute();
                                 $stmt2->close();
                             }
+                            
+                            // Получаем новые значения для логирования
+                            $new_stmt = $mysqli->prepare("SELECT * FROM salary_tariffs WHERE id = ?");
+                            $new_stmt->bind_param('i', $tariff_id);
+                            $new_stmt->execute();
+                            $new_result = $new_stmt->get_result();
+                            $new_values = null;
+                            if ($new_row = $new_result->fetch_assoc()) {
+                                $new_values = $new_row;
+                            }
+                            $new_stmt->close();
+                            
+                            // Определяем измененные поля
+                            $changed_fields = [];
+                            if ($old_values && $new_values) {
+                                foreach ($new_values as $key => $value) {
+                                    if (isset($old_values[$key]) && $old_values[$key] != $value) {
+                                        $changed_fields[] = $key;
+                                    }
+                                }
+                            }
+                            
+                            // Логируем изменение тарифа
+                            if ($old_values && $new_values) {
+                                $auditLogger->logUpdate(
+                                    'salary_tariffs',
+                                    (string)$tariff_id,
+                                    $old_values,
+                                    $new_values,
+                                    $changed_fields,
+                                    'Изменение тарифа через manage_tariffs.php'
+                                );
+                            }
+                        } else {
+                            // Логируем добавление тарифа
+                            $new_tariff_id = $mysqli->insert_id;
+                            $new_values = [
+                                'id' => $new_tariff_id,
+                                'tariff_name' => $tariff_name,
+                                'rate_per_unit' => $rate_per_unit,
+                                'type' => $type,
+                                'build_complexity' => $build_complexity
+                            ];
+                            $auditLogger->logInsert(
+                                'salary_tariffs',
+                                (string)$new_tariff_id,
+                                $new_values,
+                                'Добавление тарифа через manage_tariffs.php'
+                            );
                         }
                         
                         header('Location: manage_tariffs.php?success=' . ($action === 'add' ? 'added' : 'updated'));
@@ -86,10 +158,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($mysqli->connect_errno) {
                     $error = 'Ошибка подключения к БД: ' . $mysqli->connect_error;
                 } else {
+                    $auditLogger = new AuditLogger($mysqli);
+                    
+                    // Получаем данные тарифа перед удалением для логирования
+                    $old_values = null;
+                    $old_stmt = $mysqli->prepare("SELECT * FROM salary_tariffs WHERE id = ?");
+                    $old_stmt->bind_param('i', $tariff_id);
+                    $old_stmt->execute();
+                    $old_result = $old_stmt->get_result();
+                    if ($old_row = $old_result->fetch_assoc()) {
+                        $old_values = $old_row;
+                    }
+                    $old_stmt->close();
+                    
                     $stmt = $mysqli->prepare("DELETE FROM salary_tariffs WHERE id = ?");
                     $stmt->bind_param('i', $tariff_id);
                     
                     if ($stmt->execute()) {
+                        // Логируем удаление тарифа
+                        if ($old_values) {
+                            $auditLogger->logDelete(
+                                'salary_tariffs',
+                                (string)$tariff_id,
+                                $old_values,
+                                'Удаление тарифа через manage_tariffs.php'
+                            );
+                        }
+                        
                         header('Location: manage_tariffs.php?success=deleted');
                         exit;
                     } else {
@@ -119,16 +214,101 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($mysqli->connect_errno) {
                     $error = 'Ошибка подключения к БД: ' . $mysqli->connect_error;
                 } else {
+                    $auditLogger = new AuditLogger($mysqli);
+                    
                     if ($addition_action === 'add') {
+                        // Получаем старые значения для логирования (если доплата уже существует)
+                        $old_values = null;
+                        $old_stmt = $mysqli->prepare("SELECT * FROM salary_additions WHERE code = ?");
+                        $old_stmt->bind_param('s', $code);
+                        $old_stmt->execute();
+                        $old_result = $old_stmt->get_result();
+                        if ($old_row = $old_result->fetch_assoc()) {
+                            $old_values = $old_row;
+                        }
+                        $old_stmt->close();
+                        
                         $stmt = $mysqli->prepare("INSERT INTO salary_additions (code, amount) VALUES (?, ?) ON DUPLICATE KEY UPDATE amount = VALUES(amount)");
                         $stmt->bind_param('sd', $code, $amount);
                     } else {
                         $old_code = trim($_POST['old_code'] ?? '');
+                        
+                        // Получаем старые значения для логирования
+                        $old_values = null;
+                        $old_stmt = $mysqli->prepare("SELECT * FROM salary_additions WHERE code = ?");
+                        $old_stmt->bind_param('s', $old_code);
+                        $old_stmt->execute();
+                        $old_result = $old_stmt->get_result();
+                        if ($old_row = $old_result->fetch_assoc()) {
+                            $old_values = $old_row;
+                        }
+                        $old_stmt->close();
+                        
                         $stmt = $mysqli->prepare("UPDATE salary_additions SET code = ?, amount = ? WHERE code = ?");
                         $stmt->bind_param('sds', $code, $amount, $old_code);
                     }
                     
                     if ($stmt->execute()) {
+                        // Получаем новые значения для логирования
+                        $new_stmt = $mysqli->prepare("SELECT * FROM salary_additions WHERE code = ?");
+                        $new_stmt->bind_param('s', $code);
+                        $new_stmt->execute();
+                        $new_result = $new_stmt->get_result();
+                        $new_values = null;
+                        if ($new_row = $new_result->fetch_assoc()) {
+                            $new_values = $new_row;
+                        }
+                        $new_stmt->close();
+                        
+                        if ($addition_action === 'add') {
+                            // Логируем добавление или обновление (если был ON DUPLICATE KEY UPDATE)
+                            if ($old_values) {
+                                // Это было обновление через ON DUPLICATE KEY UPDATE
+                                $changed_fields = [];
+                                if ($old_values['amount'] != $new_values['amount']) {
+                                    $changed_fields[] = 'amount';
+                                }
+                                if ($old_values['code'] != $new_values['code']) {
+                                    $changed_fields[] = 'code';
+                                }
+                                $auditLogger->logUpdate(
+                                    'salary_additions',
+                                    $code,
+                                    $old_values,
+                                    $new_values,
+                                    $changed_fields,
+                                    'Добавление/обновление доплаты через manage_tariffs.php (ON DUPLICATE KEY UPDATE)'
+                                );
+                            } else {
+                                // Это было новое добавление
+                                $auditLogger->logInsert(
+                                    'salary_additions',
+                                    $code,
+                                    $new_values,
+                                    'Добавление доплаты через manage_tariffs.php'
+                                );
+                            }
+                        } else {
+                            // Логируем редактирование доплаты
+                            $changed_fields = [];
+                            if ($old_values && $new_values) {
+                                if ($old_values['amount'] != $new_values['amount']) {
+                                    $changed_fields[] = 'amount';
+                                }
+                                if ($old_values['code'] != $new_values['code']) {
+                                    $changed_fields[] = 'code';
+                                }
+                            }
+                            $auditLogger->logUpdate(
+                                'salary_additions',
+                                $code,
+                                $old_values,
+                                $new_values,
+                                $changed_fields,
+                                'Изменение доплаты через manage_tariffs.php'
+                            );
+                        }
+                        
                         header('Location: manage_tariffs.php?success=addition_' . ($addition_action === 'add' ? 'added' : 'updated'));
                         exit;
                     } else {
@@ -147,10 +327,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($mysqli->connect_errno) {
                 $error = 'Ошибка подключения к БД: ' . $mysqli->connect_error;
             } else {
+                $auditLogger = new AuditLogger($mysqli);
+                
+                // Получаем данные доплаты перед удалением для логирования
+                $old_values = null;
+                $old_stmt = $mysqli->prepare("SELECT * FROM salary_additions WHERE code = ?");
+                $old_stmt->bind_param('s', $code);
+                $old_stmt->execute();
+                $old_result = $old_stmt->get_result();
+                if ($old_row = $old_result->fetch_assoc()) {
+                    $old_values = $old_row;
+                }
+                $old_stmt->close();
+                
                 $stmt = $mysqli->prepare("DELETE FROM salary_additions WHERE code = ?");
                 $stmt->bind_param('s', $code);
                 
                 if ($stmt->execute()) {
+                    // Логируем удаление доплаты
+                    if ($old_values) {
+                        $auditLogger->logDelete(
+                            'salary_additions',
+                            $code,
+                            $old_values,
+                            'Удаление доплаты через manage_tariffs.php'
+                        );
+                    }
+                    
                     header('Location: manage_tariffs.php?success=addition_deleted');
                     exit;
                 } else {
@@ -450,7 +653,9 @@ if (isset($_GET['success'])) {
                                         'fixed' => ['text' => 'Фиксированный', 'class' => 'fixed'],
                                         'hourly' => ['text' => 'Почасовый', 'class' => 'hourly']
                                     ];
-                                    $type_info = $type_labels[$tariff['type']] ?? ['text' => $tariff['type'], 'class' => 'normal'];
+                                    // Если type пустой или NULL, используем 'normal' по умолчанию
+                                    $tariff_type = !empty($tariff['type']) ? $tariff['type'] : 'normal';
+                                    $type_info = $type_labels[$tariff_type] ?? ['text' => 'Обычный', 'class' => 'normal'];
                                     ?>
                                     <span class="badge <?php echo $type_info['class']; ?>"><?php echo htmlspecialchars($type_info['text']); ?></span>
                                 </td>
