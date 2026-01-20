@@ -449,7 +449,10 @@ try{
     .pill{border:1px solid #dbe3f0;background:#eef6ff;border-radius:10px;padding:8px;margin:6px 0;display:flex;flex-direction:column;gap:6px;position:relative}
     .pillTop{display:flex;align-items:center;gap:10px;justify-content:space-between}
     .qty{width:72px;padding:6px;border:1px solid #c9d4ea;border-radius:8px}
-    .pillName{font-weight:600;display:flex;align-items:center;gap:6px}
+    .pillName{font-weight:600;display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden}
+    .pillNameContainer{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden}
+    .pillNameText{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:1;min-width:0}
+    .pillHeightBadge{flex-shrink:0;white-space:nowrap}
     .pillSub{font-size:12px;color:#374151}
     .pill.disabled{opacity:.45;filter:grayscale(.15);pointer-events:none}
     .pill.corrugated{border-color:#22c55e;background:#f0fdf4;box-shadow:0 1px 3px rgba(34,197,94,0.2)}
@@ -478,6 +481,9 @@ try{
     .dropzone{min-height:36px}
     .rowItem{display:flex;align-items:center;justify-content:space-between;background:#dff7c7;border:1px solid #bddda2;border-radius:8px;padding:6px 8px;margin:6px 0}
     .rowLeft{display:flex;flex-direction:column}
+    .rowNameContainer{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden}
+    .rowName{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:1;min-width:0}
+    .height-badge{flex-shrink:0;white-space:nowrap}
     .rm{border:1px solid #ccc;background:#fff;border-radius:8px;padding:2px 8px;cursor:pointer}
     .mv{border:1px solid #ccc;background:#fff;border-radius:8px;padding:2px 6px;cursor:pointer}
     .mv:disabled{opacity:.5;cursor:not-allowed}
@@ -499,10 +505,14 @@ try{
     #topGrid .pill{ padding:6px 8px; border-radius:8px; }
     #topGrid .pillTop{ gap:6px; }
     #topGrid .pillName{
-        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-        max-width:130px;
         font-family:"Arial Narrow", Arial, "Nimbus Sans Narrow", system-ui, sans-serif;
         font-size:12px; line-height:1.2;
+    }
+    #topGrid .pillNameContainer{
+        max-width:130px;
+    }
+    #topGrid .pillNameText{
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
     }
     #topGrid .pillSub{ font-size:11px; }
     #topGrid .qty{ width:40px; padding:4px 6px; font-size:12px; }
@@ -848,7 +858,12 @@ try{
                                 <div class="pillTop">
                                     <div>
                                         <div class="pillName">
-                                            <?= $p['is_corrugated'] ? '✅ ' : '' ?><?=h($p['filter'])?><?= $ht ?>
+                                            <div class="pillNameContainer">
+                                                <span class="pillNameText"><?= $p['is_corrugated'] ? '✅ ' : '' ?><?=h($p['filter'])?></span>
+                                                <?php if ($htStr !== null): ?>
+                                                    <span class="pillHeightBadge muted">[<?=h($htStr)?>]</span>
+                                                <?php endif; ?>
+                                            </div>
                                             <span class="complexity-indicator" style="display:none"></span>
                                         </div>
                                         <div class="pillSub">
@@ -874,6 +889,10 @@ try{
         <div class="floating-panel-header" id="panel-header">
             <div class="floating-panel-title">📋 Сетка дней сборки</div>
             <div class="floating-panel-controls">
+                <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:white;cursor:pointer;user-select:none;">
+                    <input type="checkbox" id="chkOtherOrders" checked style="cursor:pointer;">
+                    <span>Учитывать другие заявки</span>
+                </label>
                 <button class="floating-panel-btn" id="btnDense">Плотный режим</button>
                 <button class="floating-panel-btn" id="btnAddRange">+ Дни</button>
                 <button class="floating-panel-btn" id="btnLoad">Загрузить</button>
@@ -971,10 +990,20 @@ try{
         busyHeights.set(d, {'1': BUSY_HEIGHTS_INIT[d][1] || [], '2': BUSY_HEIGHTS_INIT[d][2] || []});
     });
 
-    // базовые доступности
+    // состояние чекбокса "учитывать другие заявки" (будет инициализировано после определения refreshTotalsDOM)
+    let considerOtherOrders = (localStorage.getItem('considerOtherOrders') ?? '1') !== '0';
+
+    // базовые доступности и проверка высот для плашек
     document.querySelectorAll('.pill').forEach(p=>{
         if (!p.dataset.avail0) p.dataset.avail0 = p.dataset.avail || '0';
     });
+    
+    // Проверяем высоты для всех плашек после загрузки DOM
+    setTimeout(() => {
+        document.querySelectorAll('#topGrid .pill').forEach(pill => {
+            checkAndHidePillHeight(pill);
+        });
+    }, 100);
 
     // ===== helpers =====
     function cssEscape(s){ return String(s).replace(/["\\]/g, '\\$&'); }
@@ -1041,10 +1070,14 @@ try{
         topPills.forEach(el=>{
             const t = themeForHeight(el.dataset.height);
             if (t){ el.style.backgroundColor=t.bg; el.style.borderColor=t.bd; }
+            // Проверяем высоту после применения цветов
+            checkAndHidePillHeight(el);
         });
         rows.forEach(el=>{
             const t = themeForHeight(el.dataset.height);
             if (t){ el.style.backgroundColor=t.bg; el.style.borderColor=t.bd; }
+            // Проверяем высоту после применения цветов
+            checkAndHideHeight(el);
         });
     }
     /* ===== /ПОДСВЕТКА ===== */
@@ -1252,15 +1285,122 @@ try{
         refreshTotalsDOM(day);
     }
 
+    // Функция проверки и скрытия высоты, если название не влезает (для строк в сетке дней)
+    function checkAndHideHeight(row) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:checkAndHideHeight:entry',message:'Function called',data:{hasRow:!!row,rowClass:row?.className},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+        
+        const nameContainer = row.querySelector('.rowNameContainer');
+        const nameEl = row.querySelector('.rowName');
+        const heightEl = row.querySelector('.height-badge');
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:checkAndHideHeight:selectors',message:'Elements found',data:{hasContainer:!!nameContainer,hasNameEl:!!nameEl,hasHeightEl:!!heightEl,nameText:nameEl?.textContent?.substring(0,20)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        
+        if (!nameContainer || !nameEl || !heightEl) return;
+        
+        // Временно показываем высоту для измерения
+        heightEl.style.display = '';
+        
+        // Принудительно пересчитываем layout
+        void nameContainer.offsetWidth;
+        
+        // Проверяем переполнение: если название обрезано (scrollWidth > offsetWidth), скрываем высоту
+        const nameScrollWidth = nameEl.scrollWidth;
+        const nameOffsetWidth = nameEl.offsetWidth;
+        const containerWidth = nameContainer.offsetWidth;
+        const heightWidth = heightEl.offsetWidth;
+        const nameWithHeightWidth = nameEl.offsetWidth + heightEl.offsetWidth;
+        
+        // Проверяем, обрезано ли название CSS (scrollWidth > offsetWidth означает обрезку через text-overflow: ellipsis)
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:checkAndHideHeight:measurements',message:'Size measurements',data:{nameScrollWidth,nameOffsetWidth,containerWidth,heightWidth,nameWithHeightWidth,nameText:nameEl.textContent?.substring(0,30)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+        // #endregion
+        
+        // Если название обрезано CSS (scrollWidth > offsetWidth) или суммарная ширина превышает контейнер, скрываем высоту
+        const isTextTruncated = nameScrollWidth > nameOffsetWidth;
+        const exceedsContainer = nameWithHeightWidth > containerWidth;
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:checkAndHideHeight:decision',message:'Decision logic',data:{isTextTruncated,exceedsContainer,willHide:isTextTruncated||exceedsContainer},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+        // #endregion
+        
+        if (isTextTruncated || exceedsContainer) {
+            heightEl.style.display = 'none';
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:checkAndHideHeight:hidden',message:'Height hidden',data:{reason:isTextTruncated?'text-truncated':'exceeds-container'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+            // #endregion
+        } else {
+            heightEl.style.display = '';
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:checkAndHideHeight:shown',message:'Height shown',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+            // #endregion
+        }
+    }
+    
+    // Функция проверки и скрытия высоты для верхних плашек
+    function checkAndHidePillHeight(pill) {
+        const nameContainer = pill.querySelector('.pillNameContainer');
+        const nameEl = pill.querySelector('.pillNameText');
+        const heightEl = pill.querySelector('.pillHeightBadge');
+        if (!nameContainer || !nameEl || !heightEl) return;
+        
+        // Временно показываем высоту для измерения
+        heightEl.style.display = '';
+        
+        // Принудительно пересчитываем layout
+        void nameContainer.offsetWidth;
+        
+        // Проверяем переполнение: если название обрезано (scrollWidth > offsetWidth), скрываем высоту
+        const nameScrollWidth = nameEl.scrollWidth;
+        const nameOffsetWidth = nameEl.offsetWidth;
+        const containerWidth = nameContainer.offsetWidth;
+        const nameWithHeightWidth = nameEl.offsetWidth + heightEl.offsetWidth;
+        
+        // Если название обрезано (есть многоточие) или суммарная ширина превышает контейнер, скрываем высоту
+        const isTextTruncated = nameScrollWidth > nameOffsetWidth;
+        const exceedsContainer = nameWithHeightWidth > containerWidth;
+        
+        if (isTextTruncated || exceedsContainer) {
+            heightEl.style.display = 'none';
+        } else {
+            heightEl.style.display = '';
+        }
+    }
+    
+    // Обновление всех строк и плашек при изменении размера окна
+    function updateAllRowHeights() {
+        const rows = document.querySelectorAll('#daysGrid .rowItem');
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:updateAllRowHeights:entry',message:'Updating all row heights',data:{rowCount:rows.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+        rows.forEach(row => {
+            checkAndHideHeight(row);
+        });
+        document.querySelectorAll('#topGrid .pill').forEach(pill => {
+            checkAndHidePillHeight(pill);
+        });
+    }
+    
+    // Обновляем при изменении размера окна
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(updateAllRowHeights, 100);
+    });
+
     function refreshTotalsDOM(day){
         const c = countsByTeam.get(day) || {'1':0,'2':0,'sum':0};
         const h = hoursByTeam.get(day)  || {'1':0,'2':0,'sum':0};
 
-        const busy1 = (busyHours.get(day) || {})['1'] || 0;
-        const busy2 = (busyHours.get(day) || {})['2'] || 0;
+        // Учитываем другие заявки только если чекбокс включен
+        const busy1 = considerOtherOrders ? ((busyHours.get(day) || {})['1'] || 0) : 0;
+        const busy2 = considerOtherOrders ? ((busyHours.get(day) || {})['2'] || 0) : 0;
 
-        const heights1 = uniq((busyHeights.get(day) || {})['1'] || []).map(fmtMM).filter(x=>x!=='');
-        const heights2 = uniq((busyHeights.get(day) || {})['2'] || []).map(fmtMM).filter(x=>x!=='');
+        const heights1 = considerOtherOrders ? uniq((busyHeights.get(day) || {})['1'] || []).map(fmtMM).filter(x=>x!=='') : [];
+        const heights2 = considerOtherOrders ? uniq((busyHeights.get(day) || {})['2'] || []).map(fmtMM).filter(x=>x!=='') : [];
 
         const el1 = document.querySelector(`.totB[data-totb="${cssEscape(day)}|1"]`);
         const el2 = document.querySelector(`.totB[data-totb="${cssEscape(day)}|2"]`);
@@ -1279,6 +1419,18 @@ try{
         if (eH2) eH2.textContent = heights2.length ? ` [${heights2.join(', ')}]` : '';
         if (edC) edC.textContent = String((c['1']||0) + (c['2']||0));
         if (edH) edH.textContent = fmtH(((h['1']||0) + busy1) + ((h['2']||0) + busy2));
+    }
+
+    // Инициализация чекбокса "учитывать другие заявки"
+    const chkOtherOrders = document.getElementById('chkOtherOrders');
+    if (chkOtherOrders) {
+        chkOtherOrders.checked = considerOtherOrders;
+        chkOtherOrders.addEventListener('change', (e) => {
+            considerOtherOrders = e.target.checked;
+            localStorage.setItem('considerOtherOrders', considerOtherOrders ? '1' : '0');
+            // Обновляем отображение для всех дней
+            getAllDays().forEach(refreshTotalsDOM);
+        });
     }
 
     function incTotals(day, team, deltaCount, deltaHours){
@@ -1360,19 +1512,13 @@ try{
         row.dataset.hours = rowHours;
         if (height) row.dataset.height = height;
 
-        // Сокращаем длинные названия фильтров
-        const truncateFilter = (name) => {
-            if (name.length <= 7) return name;
-            return name.substring(0, 4) + '...';
-        };
-        
-        const shortName = truncateFilter(flt);
-        const heightBadge = height ? ` <span class="sub">[${escapeHtml(String(height))}]</span>` : '';
+        // Используем полное название - CSS сам обрежет его через text-overflow: ellipsis если нужно
+        const heightBadge = height ? ` <span class="sub height-badge">[${escapeHtml(String(height))}]</span>` : '';
         const complexityIndicator = rate > 0 ? `<span class="complexity-indicator" style="display:none"></span>` : '';
 
         row.innerHTML = `
         <div class="rowLeft">
-            <div><b title="${escapeHtml(flt)}">${escapeHtml(shortName)}</b>${heightBadge}${complexityIndicator}</div>
+            <div class="rowNameContainer"><b class="rowName" title="${escapeHtml(flt)}">${escapeHtml(flt)}</b>${heightBadge}${complexityIndicator}</div>
             <div class="sub">
                 <b class="cnt">${count}</b> шт ·
                 <b class="h">${fmtH(rowHours)}</b>ч
@@ -1385,7 +1531,7 @@ try{
         </div>
         `;
         dz.appendChild(row);
-
+        
         row.querySelector('.rm').onclick  = ()=> removeRow(row);
         row.querySelector('.mvL').onclick = ()=> moveRow(row, -1);
         row.querySelector('.mvR').onclick = ()=> moveRow(row, +1);
@@ -1393,6 +1539,15 @@ try{
         incTotals(day, team, count, rowHours);
         applyHeightColors();
         applyComplexityIndicator();
+        
+        // Проверяем, влезает ли название, и скрываем высоту если нет
+        // Используем таймаут для гарантии, что DOM обновлен и стили применены
+        setTimeout(() => {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:addRowElement:timeout',message:'Calling checkAndHideHeight after timeout',data:{filter:flt,hasRow:!!row},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+            // #endregion
+            checkAndHideHeight(row);
+        }, 100);
     }
 
     function removeRow(row){
@@ -1562,6 +1717,9 @@ try{
 
     // пререндер сохранённого плана
     (function renderPre(){
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:renderPre:entry',message:'Pre-render started',data:{planDays:Object.keys(prePlan||{}).length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
         Object.keys(prePlan||{}).forEach(day=>{
             ensureDay(day);
             ['1','2'].forEach(team=>{
@@ -1575,6 +1733,13 @@ try{
             lastDay = day;
         });
         applyHeightColors();
+        // Проверяем высоты для всех загруженных строк
+        setTimeout(() => {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:renderPre:updateAll',message:'Calling updateAllRowHeights',data:{rowCount:document.querySelectorAll('#daysGrid .rowItem').length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+            // #endregion
+            updateAllRowHeights();
+        }, 100);
     })();
 
     // корректировка доступности после пререндеринга
@@ -1715,6 +1880,11 @@ try{
 
             fetchBusyForDays(days);
             applyHeightColors();
+            
+            // Проверяем высоты для всех загруженных строк
+            setTimeout(() => {
+                updateAllRowHeights();
+            }, 100);
 
             alert('План сборки загружен.');
         }catch(e){
@@ -1821,11 +1991,22 @@ try{
             denseOn = !denseOn;
             document.body.classList.toggle('dense', denseOn);
             btnDense.textContent = denseOn ? 'Обычный режим' : 'Плотный режим';
+            // Обновляем высоты после изменения режима
+            setTimeout(() => {
+                updateAllRowHeights();
+            }, 50);
         });
     })();
 
     // первичная подсветка
     applyHeightColors();
+    
+    // Проверяем высоты для всех плашек при загрузке
+    setTimeout(() => {
+        document.querySelectorAll('#topGrid .pill').forEach(pill => {
+            checkAndHidePillHeight(pill);
+        });
+    }, 100);
     
     // ===== ФУНКЦИОНАЛ ПЛАВАЮЩЕЙ ПАНЕЛИ =====
     (function() {
