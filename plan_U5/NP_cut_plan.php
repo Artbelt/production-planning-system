@@ -136,6 +136,7 @@ try{
       pps.p_p_material      AS material,
       pps.p_p_width         AS strip_width_mm,
       pps.p_p_height        AS pleat_height_mm,
+      pps.p_p_pleats_count  AS pleats_count,
       SUM(o.count)          AS strips_qty,
       ROUND(((pps.p_p_height*2*pps.p_p_pleats_count)*SUM(o.count))/1000, 3) AS total_length_m
     FROM orders o
@@ -159,7 +160,8 @@ try{
       sfs.filter               AS filter,
       COALESCE(pps1.p_p_material, pps2.p_p_material, 'Simple') AS material,
       COALESCE(pps1.p_p_width, pps2.p_p_width, cp_width.width, 0) AS strip_width_mm,
-      COALESCE(pps1.p_p_height, pps2.p_p_height, cp_height.height, 0) AS pleat_height_mm
+      COALESCE(pps1.p_p_height, pps2.p_p_height, cp_height.height, 0) AS pleat_height_mm,
+      COALESCE(pps1.p_p_pleats_count, pps2.p_p_pleats_count, 1) AS pleats_count
     FROM salon_filter_structure sfs
     LEFT JOIN paper_package_salon pps1 ON pps1.p_p_name = sfs.paper_package
     LEFT JOIN paper_package_salon pps2 ON pps2.p_p_name = CONCAT('гофропакет ', sfs.filter)
@@ -175,7 +177,7 @@ try{
         WHERE height IS NOT NULL AND height > 0
         GROUP BY TRIM(filter)
     ) cp_height ON TRIM(cp_height.filter) = TRIM(sfs.filter)
-    GROUP BY sfs.filter, pps1.p_p_material, pps2.p_p_material, pps1.p_p_width, pps2.p_p_width, cp_width.width, pps1.p_p_height, pps2.p_p_height, cp_height.height
+    GROUP BY sfs.filter, pps1.p_p_material, pps2.p_p_material, pps1.p_p_width, pps2.p_p_width, cp_width.width, pps1.p_p_height, pps2.p_p_height, cp_height.height, pps1.p_p_pleats_count, pps2.p_p_pleats_count
     ORDER BY COALESCE(pps1.p_p_material, pps2.p_p_material, 'Simple'), sfs.filter";
     $assort = $pdo->query($sqlAssort)->fetchAll();
 
@@ -228,7 +230,11 @@ try{
         padding: 10px;
     }
 
-    #currentBalePanel{max-height:600px;overflow-y:auto}
+    #currentBalePanel{
+        max-height:600px;
+        overflow-y:auto;
+        padding:12px;
+    }
 
     table{border-collapse:collapse;table-layout:fixed;width:100%}
     th,td{border:1px solid #ccc;padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -285,7 +291,11 @@ try{
     .menu input{width:35px;padding:4px 6px;border:1px solid #bbb;border-radius:6px}
     #mi_auto{min-width:180px; text-align:center;}
 
-    #assortPanel{max-height:340px;overflow:auto}
+    #assortPanel{
+        max-height:340px;
+        overflow:auto;
+        padding:12px;
+    }
     .acol-mat{width:80px}.acol-filter{width:180px}.acol-w{width:70px}.acol-h{width:60px}.acol-act{width:120px}
     .assortBtn{border:1px solid #aaa;padding:3px 8px;border-radius:6px;background:#fafafa;cursor:pointer;margin-right:4px}
 
@@ -308,6 +318,158 @@ try{
     .addBtn{ border:1px solid #2563eb; background:#eff6ff; color:#1d4ed8; border-radius:8px; padding:6px 10px; cursor:pointer; white-space:nowrap; }
     .addBtn:hover{ background:#dbeafe; }
     .muted{ color:#6b7280; }
+
+    /* ===== ПЛАВАЮЩАЯ ПАНЕЛЬ КАЛЬКУЛЯТОРА ДЛИНЫ ===== */
+    .lengthCalcOverlay {
+        position: fixed;
+        inset: 0;
+        background: transparent;
+        display: none;
+        z-index: 2000;
+        pointer-events: none;
+    }
+    .lengthCalcPanel {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: #fff9e6;
+        border: 2px solid #2563eb;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        padding: 12px;
+        width: 500px;
+        max-height: 90vh;
+        overflow: visible;
+        z-index: 10000;
+        display: none;
+        cursor: move;
+        resize: none;
+    }
+    .lengthCalcPanel.show {
+        display: block;
+    }
+    .lengthCalcOverlay.show {
+        display: block;
+    }
+    .lengthCalcPanel .panelHeader {
+        cursor: move;
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .lengthCalcPanel h3 {
+        margin: 0;
+        font: 700 15px/1.2 system-ui, Arial;
+        color: #1f2937;
+    }
+    .lengthCalcPanel .closeBtn {
+        border: 1px solid #d1d5db;
+        background: #f9fafb;
+        border-radius: 4px;
+        padding: 4px 10px;
+        cursor: pointer;
+        font-size: 11px;
+    }
+    .lengthCalcPanel .closeBtn:hover {
+        background: #e5e7eb;
+    }
+    .lengthCalcPanel .calcContent {
+        max-height: calc(90vh - 100px);
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+    .lengthCalcPanel .calcTable {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: 12px;
+    }
+    .lengthCalcPanel .calcTable th,
+    .lengthCalcPanel .calcTable td {
+        padding: 5px;
+        border: 1px solid #e5e7eb;
+        text-align: left;
+        position: relative;
+    }
+    .lengthCalcPanel .calcTable th {
+        background: #f9fafb;
+        font-weight: 600;
+    }
+    .lengthCalcPanel .calcTable input {
+        width: 100%;
+        padding: 4px 8px;
+        border: 1px solid #d1d5db;
+        border-radius: 4px;
+        font-size: 13px;
+        box-sizing: border-box;
+    }
+    .lengthCalcPanel .calcTable input:read-only {
+        background: #f3f4f6;
+        cursor: not-allowed;
+    }
+    .lengthCalcPanel .filterInputWrapper {
+        position: relative;
+        overflow: visible;
+    }
+    .lengthCalcPanel .calcTable td {
+        overflow: visible;
+        position: relative;
+    }
+    .autocompleteList {
+        position: fixed;
+        background: #fff;
+        border: 1px solid #d1d5db;
+        border-radius: 4px;
+        max-height: 200px;
+        overflow-y: auto;
+        z-index: 10002;
+        display: none;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        min-width: 200px;
+    }
+    .autocompleteList.show {
+        display: block !important;
+    }
+    .autocompleteItem {
+        padding: 8px 12px;
+        cursor: pointer;
+        border-bottom: 1px solid #f3f4f6;
+    }
+    .autocompleteItem:hover {
+        background: #f0f9ff;
+    }
+    .autocompleteItem:last-child {
+        border-bottom: none;
+    }
+    .lengthCalcPanel .addRowBtn {
+        margin-top: 12px;
+        border: 1px solid #2563eb;
+        background: #eff6ff;
+        color: #1d4ed8;
+        border-radius: 6px;
+        padding: 8px 16px;
+        cursor: pointer;
+        font-size: 13px;
+    }
+    .lengthCalcPanel .addRowBtn:hover {
+        background: #dbeafe;
+    }
+    .lengthCalcPanel .delRowBtn {
+        border: 1px solid #dc2626;
+        background: #fee2e2;
+        color: #991b1b;
+        border-radius: 4px;
+        padding: 4px 8px;
+        cursor: pointer;
+        font-size: 12px;
+    }
+    .lengthCalcPanel .delRowBtn:hover {
+        background: #fecaca;
+    }
 
     @media print {
         @page { size: A4 portrait; margin: 10mm; }
@@ -363,16 +525,17 @@ try{
                         data-filter="<?=htmlspecialchars($r['filter'])?>"
                         data-w="<?=$r['strip_width_mm']?>"
                         data-h="<?=$r['pleat_height_mm']?>"
+                        data-pleats="<?=$r['pleats_count'] ?? 1?>"
                         data-tm="<?=$tm?>"
                         data-cutm="0">
-                        <td class="markCell"><span class="dot" aria-hidden="true"></span></td>
-                        <td><?=htmlspecialchars($r['filter'])?></td>
-                        <td><?=$r['strip_width_mm']?></td>
-                        <td><?=$r['pleat_height_mm']?></td>
-                        <td class="right tm"><?=number_format($tm,3,'.',' ')?></td>
-                        <td class="right cutm">0.000</td>
-                        <td class="right restm"><?=number_format($tm,3,'.',' ')?></td>
-                    </tr>
+                    <td class="markCell"><span class="dot" aria-hidden="true"></span></td>
+                    <td><?=htmlspecialchars($r['filter'])?></td>
+                    <td><?=$r['strip_width_mm']?></td>
+                    <td><?=$r['pleat_height_mm']?></td>
+                    <td class="right tm"><?=number_format($tm,3,'.',' ')?></td>
+                    <td class="right cutm">0.000</td>
+                    <td class="right restm"><?=number_format($tm,3,'.',' ')?></td>
+                </tr>
                 <?php endforeach; ?>
             </table>
         </div>
@@ -397,6 +560,7 @@ try{
                         data-filter="<?=htmlspecialchars($r['filter'])?>"
                         data-w="<?=$r['strip_width_mm']?>"
                         data-h="<?=$r['pleat_height_mm']?>"
+                        data-pleats="<?=$r['pleats_count'] ?? 1?>"
                         data-tm="<?=$tm?>"
                         data-cutm="0">
                         <td class="markCell"><span class="dot" aria-hidden="true"></span></td>
@@ -446,7 +610,8 @@ try{
                     <tr data-mat="<?=htmlspecialchars($a['material'])?>"
                         data-filter="<?=htmlspecialchars($a['filter'])?>"
                         data-w="<?=$a['strip_width_mm']?>"
-                        data-h="<?=$a['pleat_height_mm']?>">
+                        data-h="<?=$a['pleat_height_mm']?>"
+                        data-pleats="<?=$a['pleats_count'] ?? 1?>">
                         <td><?=htmlspecialchars($a['material'])?></td>
                         <td><?=htmlspecialchars($a['filter'])?></td>
                         <td><?=$a['strip_width_mm']?> мм</td>
@@ -458,6 +623,10 @@ try{
                     </tr>
                 <?php endforeach; ?>
             </table>
+        </div>
+
+        <div style="margin-top:6px">
+            <button class="btn" id="btnLengthCalc" style="width:100%;padding:8px 16px;font-size:13px">Калькулятор длины</button>
         </div>
     </div>
 
@@ -509,6 +678,31 @@ try{
     <div class="row">
         <button class="mi" id="mi_addN">Добавить N</button>
         <input id="mi_n" type="number" min="1" step="1" value="1" placeholder="N">
+    </div>
+</div>
+
+<!-- ПЛАВАЮЩАЯ ПАНЕЛЬ КАЛЬКУЛЯТОРА ДЛИНЫ -->
+<div class="lengthCalcOverlay" id="lengthCalcOverlay"></div>
+<div class="lengthCalcPanel" id="lengthCalcPanel">
+    <div class="panelHeader">
+        <h3>Калькулятор длины</h3>
+        <button class="closeBtn" id="lengthCalcClose">✕ Закрыть</button>
+    </div>
+    <div class="calcContent">
+        <table class="calcTable">
+            <thead>
+                <tr>
+                    <th style="width:35%">Наименование фильтра</th>
+                    <th style="width:20%">Количество, шт</th>
+                    <th style="width:25%">Длина, м</th>
+                    <th style="width:20%"></th>
+                </tr>
+            </thead>
+            <tbody id="calcTableBody">
+                <!-- Ряды будут добавляться динамически -->
+            </tbody>
+        </table>
+        <button class="addRowBtn" id="addCalcRow">+ Добавить ряд</button>
     </div>
 </div>
 
@@ -1227,6 +1421,491 @@ try{
         el('missBack').onclick = close;
         el('missClose').onclick = close;
     }
+
+    // ===== КАЛЬКУЛЯТОР ДЛИНЫ =====
+    let calcRowCounter = 0;
+    let calcRows = [];
+    
+    // Получаем все доступные фильтры для автодополнения
+    function getAllFilters() {
+        const filters = new Map();
+        
+        // Из ассортимента
+        if (Array.isArray(ASSORT)) {
+            ASSORT.forEach(a => {
+                if (a && a.filter) {
+                    const key = a.filter.toLowerCase();
+                    if (!filters.has(key)) {
+                    filters.set(key, {
+                        filter: a.filter,
+                        height: parseFloat(a.pleat_height_mm) || 0,
+                        width: parseFloat(a.strip_width_mm) || 0,
+                        material: a.material || '',
+                        pleats: parseInt(a.pleats_count) || 1
+                    });
+                    }
+                }
+            });
+        }
+        
+        // Из заявки (rowsSimple и rowsCarbon)
+        document.querySelectorAll('.posTable tr[data-filter]').forEach(tr => {
+            const filter = tr.dataset.filter;
+            const height = parseFloat(tr.dataset.h) || 0;
+            const width = parseFloat(tr.dataset.w) || 0;
+            const material = tr.dataset.mat || '';
+            const pleats = parseInt(tr.dataset.pleats) || 1;
+            
+            if (filter) {
+                const key = filter.toLowerCase();
+                if (!filters.has(key)) {
+                    filters.set(key, { filter, height, width, material, pleats });
+                }
+            }
+        });
+        
+        return Array.from(filters.values());
+    }
+    
+    // Автодополнение для поля фильтра
+    let autocompleteClickHandler = null;
+    let currentAutocompleteInput = null;
+    
+    function setupAutocomplete(input, rowIndex) {
+        let autocompleteList = document.getElementById('autocompleteListGlobal');
+        
+        if (!autocompleteList) {
+            autocompleteList = document.createElement('div');
+            autocompleteList.id = 'autocompleteListGlobal';
+            autocompleteList.className = 'autocompleteList';
+            document.body.appendChild(autocompleteList);
+        }
+        
+        function updateAutocompletePosition() {
+            const rect = input.getBoundingClientRect();
+            autocompleteList.style.left = rect.left + 'px';
+            autocompleteList.style.top = (rect.bottom + 2) + 'px';
+            autocompleteList.style.width = Math.max(rect.width, 200) + 'px';
+        }
+        
+        function showAutocomplete(matches) {
+            if (!matches || matches.length === 0) {
+                autocompleteList.classList.remove('show');
+                return;
+            }
+            
+            updateAutocompletePosition();
+            
+            autocompleteList.innerHTML = matches.map(f => {
+                const info = f.height > 0 ? ` (H: ${f.height}мм)` : '';
+                return `<div class="autocompleteItem" data-filter="${f.filter}" data-height="${f.height}" data-pleats="${f.pleats || 1}">${f.filter}${info}</div>`;
+            }).join('');
+            
+            // Обработка выбора из списка
+            autocompleteList.querySelectorAll('.autocompleteItem').forEach(item => {
+                item.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    
+                    input.value = this.dataset.filter;
+                    autocompleteList.classList.remove('show');
+                    currentAutocompleteInput = null;
+                    
+                    // Обновляем высоту, количество складок и пересчитываем длину
+                    const height = parseFloat(this.dataset.height) || 0;
+                    const pleats = parseInt(this.dataset.pleats) || 1;
+                    const row = calcRows[rowIndex];
+                    if (row) {
+                        row.height = height;
+                        row.pleats = pleats;
+                        updateCalcRowLength(rowIndex);
+                    }
+                });
+            });
+            
+            autocompleteList.classList.add('show');
+        }
+        
+        input.addEventListener('input', function() {
+            currentAutocompleteInput = input;
+            const value = this.value.trim();
+            const allFilters = getAllFilters();
+            
+            // Проверяем, совпадает ли введенное значение с известным фильтром
+            const exactMatch = allFilters.find(f => f.filter.toLowerCase() === value.toLowerCase());
+            if (exactMatch) {
+                const row = calcRows[rowIndex];
+                if (row) {
+                    if (row.height !== exactMatch.height) {
+                        row.height = exactMatch.height || 0;
+                    }
+                    if (row.pleats !== exactMatch.pleats) {
+                        row.pleats = exactMatch.pleats || 1;
+                    }
+                    updateCalcRowLength(rowIndex);
+                }
+            }
+            
+            if (value.length === 0) {
+                autocompleteList.classList.remove('show');
+                currentAutocompleteInput = null;
+                // Сбрасываем высоту при очистке поля
+                const row = calcRows[rowIndex];
+                if (row) {
+                    row.height = 0;
+                    updateCalcRowLength(rowIndex);
+                }
+                return;
+            }
+            
+            const matches = allFilters.filter(f => 
+                f.filter.toLowerCase().includes(value.toLowerCase())
+            ).slice(0, 10);
+            
+            showAutocomplete(matches);
+        });
+        
+        // Обновляем позицию при скролле или изменении размера
+        input.addEventListener('focus', function() {
+            currentAutocompleteInput = input;
+            updateAutocompletePosition();
+            const value = this.value.trim();
+            if (value.length > 0) {
+                const allFilters = getAllFilters();
+                const matches = allFilters.filter(f => 
+                    f.filter.toLowerCase().includes(value.toLowerCase())
+                ).slice(0, 10);
+                if (matches.length > 0) {
+                    showAutocomplete(matches);
+                }
+            }
+        });
+        
+        input.addEventListener('blur', function() {
+            // Не закрываем сразу, даем время на клик по элементу списка
+            setTimeout(() => {
+                if (currentAutocompleteInput !== input) {
+                    autocompleteList.classList.remove('show');
+                }
+            }, 200);
+        });
+        
+        window.addEventListener('scroll', () => {
+            if (autocompleteList.classList.contains('show')) {
+                updateAutocompletePosition();
+            }
+        }, true);
+        
+        // Закрываем список при клике вне его (один обработчик для всех полей)
+        if (!autocompleteClickHandler) {
+            autocompleteClickHandler = function(e) {
+                // Не закрываем во время перетаскивания панели
+                if (isDraggingPanel) return;
+                
+                // Если клик по самому списку - не закрываем
+                if (autocompleteList.contains(e.target)) {
+                    return;
+                }
+                
+                // Проверяем все поля ввода фильтров
+                const allFilterInputs = document.querySelectorAll('#calcTableBody input[type="text"]');
+                let isInsideAnyInput = false;
+                allFilterInputs.forEach(inp => {
+                    if (inp === e.target || inp.contains(e.target)) {
+                        isInsideAnyInput = true;
+                    }
+                });
+                
+                if (!isInsideAnyInput) {
+                    autocompleteList.classList.remove('show');
+                    currentAutocompleteInput = null;
+                }
+            };
+            document.addEventListener('click', autocompleteClickHandler, true);
+        }
+    }
+    
+    // Расчет длины для ряда
+    function updateCalcRowLength(rowIndex) {
+        const row = calcRows[rowIndex];
+        if (!row || !row.qtyInput || !row.lengthInput) return;
+        
+        const height = row.height || 0;
+        const pleats = row.pleats || 1;  // Количество складок (по умолчанию 1)
+        const qty = parseInt(row.qtyInput.value) || 0;  // Количество фильтров
+        
+        // Формула: (высота * 2 * количество_складок * количество_фильтров) / 1000
+        // Соответствует формуле из SQL: (pps.p_p_height*2*pps.p_p_pleats_count)*SUM(o.count))/1000
+        const length = height > 0 && qty > 0 && pleats > 0 ? (height * 2 * pleats * qty) / 1000 : 0;
+        
+        // Форматируем число, убирая лишние нули после запятой
+        if (length > 0) {
+            const formatted = parseFloat(length.toFixed(3)).toString();
+            row.lengthInput.value = formatted;
+        } else {
+            row.lengthInput.value = '';
+        }
+    }
+    
+    // Добавление нового ряда
+    function addCalcRow() {
+        const tbody = el('calcTableBody');
+        if (!tbody) return;
+        
+        const rowIndex = calcRowCounter++;
+        const tr = document.createElement('tr');
+        tr.dataset.rowIndex = rowIndex;
+        
+        const row = {
+            rowIndex: rowIndex,
+            filterInput: null,
+            qtyInput: null,
+            lengthInput: null,
+            height: 0,
+            pleats: 1  // Стандартное количество складок
+        };
+        
+        // Ячейка с фильтром
+        const tdFilter = document.createElement('td');
+        const filterWrapper = document.createElement('div');
+        filterWrapper.className = 'filterInputWrapper';
+        const filterInput = document.createElement('input');
+        filterInput.type = 'text';
+        filterInput.placeholder = 'Введите фильтр';
+        filterInput.dataset.rowIndex = rowIndex;
+        row.filterInput = filterInput;
+        filterWrapper.appendChild(filterInput);
+        tdFilter.appendChild(filterWrapper);
+        tr.appendChild(tdFilter);
+        
+        // Ячейка с количеством
+        const tdQty = document.createElement('td');
+        const qtyInput = document.createElement('input');
+        qtyInput.type = 'number';
+        qtyInput.min = '1';
+        qtyInput.step = '1';
+        qtyInput.value = '1';
+        qtyInput.dataset.rowIndex = rowIndex;
+        row.qtyInput = qtyInput;
+        tdQty.appendChild(qtyInput);
+        tr.appendChild(tdQty);
+        
+        // Ячейка с длиной (readonly)
+        const tdLength = document.createElement('td');
+        const lengthInput = document.createElement('input');
+        lengthInput.type = 'text';
+        lengthInput.readOnly = true;
+        lengthInput.dataset.rowIndex = rowIndex;
+        row.lengthInput = lengthInput;
+        tdLength.appendChild(lengthInput);
+        tr.appendChild(tdLength);
+        
+        // Ячейка с кнопкой удаления
+        const tdAction = document.createElement('td');
+        const delBtn = document.createElement('button');
+        delBtn.className = 'delRowBtn';
+        delBtn.textContent = '×';
+        delBtn.type = 'button';
+        delBtn.addEventListener('click', () => removeCalcRow(rowIndex));
+        tdAction.appendChild(delBtn);
+        tr.appendChild(tdAction);
+        
+        calcRows.push(row);
+        tbody.appendChild(tr);
+        
+        // Настройка автодополнения
+        setupAutocomplete(filterInput, rowIndex);
+        
+        // Обработчики для пересчета
+        qtyInput.addEventListener('input', () => updateCalcRowLength(rowIndex));
+        qtyInput.addEventListener('change', () => updateCalcRowLength(rowIndex));
+    }
+    
+    // Удаление ряда
+    function removeCalcRow(rowIndex) {
+        const row = calcRows[rowIndex];
+        if (!row) return;
+        
+        const tr = document.querySelector(`#calcTableBody tr[data-row-index="${rowIndex}"]`);
+        if (tr) tr.remove();
+        
+        calcRows[rowIndex] = null;
+    }
+    
+    // Перемещение панели
+    let panelOffsetX = 0, panelOffsetY = 0;
+    let isDraggingPanel = false;
+    let dragStartTime = 0;
+    
+    function makePanelDraggable() {
+        const panel = el('lengthCalcPanel');
+        const header = panel?.querySelector('.panelHeader');
+        if (!panel || !header) return;
+        
+        let isDragging = false;
+        let startX, startY;
+        let hasMoved = false;
+        
+        // Используем один обработчик для всех событий
+        header.addEventListener('mousedown', function(e) {
+            if (e.target.closest('.closeBtn')) return;
+            
+            if (e.target === header || header.contains(e.target)) {
+                isDragging = true;
+                isDraggingPanel = true;
+                panel.style.cursor = 'grabbing';
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                
+                // Получаем текущую позицию панели и позицию мыши
+                const rect = panel.getBoundingClientRect();
+                const currentX = rect.left;
+                const currentY = rect.top;
+                const mouseX = e.clientX;
+                const mouseY = e.clientY;
+                
+                // Вычисляем смещение мыши относительно панели
+                const offsetX = mouseX - currentX;
+                const offsetY = mouseY - currentY;
+                
+                hasMoved = false;
+                dragStartTime = Date.now();
+                
+                const onMouseMove = function(e) {
+                    if (!isDragging) return;
+                    
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    
+                    // Вычисляем новую позицию панели
+                    let newX = e.clientX - offsetX;
+                    let newY = e.clientY - offsetY;
+                    
+                    // Получаем размеры панели и окна
+                    const panelWidth = rect.width;
+                    const panelHeight = rect.height;
+                    const windowWidth = window.innerWidth;
+                    const windowHeight = window.innerHeight;
+                    
+                    // Ограничиваем позицию, чтобы панель не выходила за границы экрана
+                    const minX = 0;
+                    const minY = 0;
+                    const maxX = windowWidth - panelWidth;
+                    const maxY = windowHeight - panelHeight;
+                    
+                    // Применяем ограничения
+                    newX = Math.max(minX, Math.min(newX, maxX));
+                    newY = Math.max(minY, Math.min(newY, maxY));
+                    
+                    // Проверяем, было ли движение
+                    if (!hasMoved) {
+                        const deltaX = Math.abs(newX - currentX);
+                        const deltaY = Math.abs(newY - currentY);
+                        if (deltaX > 3 || deltaY > 3) {
+                            hasMoved = true;
+                        }
+                    }
+                    
+                    // Обновляем позицию
+                    panelOffsetX = newX;
+                    panelOffsetY = newY;
+                    
+                    panel.style.left = panelOffsetX + 'px';
+                    panel.style.top = panelOffsetY + 'px';
+                    panel.style.transform = 'none';
+                };
+                
+                const onMouseUp = function(e) {
+                    if (!isDragging) return;
+                    
+                    const dragDuration = Date.now() - dragStartTime;
+                    isDragging = false;
+                    panel.style.cursor = 'move';
+                    
+                    // Предотвращаем клик, если было перемещение или перетаскивание длилось больше 50мс
+                    if (hasMoved || dragDuration > 50) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        e.stopImmediatePropagation();
+                        isDraggingPanel = false;
+                        
+                        // Задержка перед сбросом флага
+                        setTimeout(() => {
+                            isDraggingPanel = false;
+                        }, 200);
+                    } else {
+                        isDraggingPanel = false;
+                    }
+                    
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                };
+                
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            }
+        });
+    }
+    
+    function showLengthCalc() {
+        const panel = el('lengthCalcPanel');
+        if (panel) {
+            // Сброс позиции при открытии
+            panelOffsetX = 0;
+            panelOffsetY = 0;
+            panel.style.left = '50%';
+            panel.style.top = '50%';
+            panel.style.transform = 'translate(-50%, -50%)';
+            
+            panel.classList.add('show');
+            panel.style.display = 'block';
+            
+            // Добавляем первый ряд, если их нет
+            if (calcRows.length === 0) {
+                addCalcRow();
+            }
+        }
+    }
+    
+    function hideLengthCalc(e) {
+        // Не закрываем панель во время перетаскивания
+        if (isDraggingPanel) {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            return;
+        }
+        
+        const panel = el('lengthCalcPanel');
+        if (panel) {
+            panel.classList.remove('show');
+            panel.style.display = 'none';
+        }
+    }
+    
+    if (el('btnLengthCalc')) {
+        el('btnLengthCalc').addEventListener('click', showLengthCalc);
+    }
+    if (el('lengthCalcClose')) {
+        el('lengthCalcClose').addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            // Принудительно сбрасываем флаг перетаскивания перед закрытием
+            isDraggingPanel = false;
+            hideLengthCalc(e);
+        });
+    }
+    if (el('addCalcRow')) {
+        el('addCalcRow').addEventListener('click', addCalcRow);
+    }
+    
+    // Инициализация перемещения панели
+    makePanelDraggable();
 
     // ===== init =====
     function toggleCtrls(){ const hasBale=baleStrips.length>0; if(el('btnSave'))  el('btnSave').disabled=!hasBale; if(el('btnClear')) el('btnClear').disabled=!hasBale; }

@@ -1,4 +1,51 @@
 <?php
+// Проверяем авторизацию через новую систему
+require_once('../auth/includes/config.php');
+require_once('../auth/includes/auth-functions.php');
+
+// Подключаем настройки базы данных
+require_once('settings.php');
+require_once('tools/tools.php');
+
+// Инициализация системы авторизации
+initAuthSystem();
+
+// Запуск сессии
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+$auth = new AuthManager();
+$session = $auth->checkSession();
+
+if (!$session) {
+    header('Location: ../auth/login.php');
+    exit;
+}
+
+// Получаем информацию о пользователе и его роли
+$db = Database::getInstance();
+$userDepartments = $db->select("
+    SELECT ud.department_code, r.name as role_name, r.display_name as role_display_name
+    FROM auth_user_departments ud
+    JOIN auth_roles r ON ud.role_id = r.id
+    WHERE ud.user_id = ?
+", [$session['user_id']]);
+
+// Проверяем роль пользователя в цехе U5
+$userRole = null;
+$canArchiveOrder = false;
+foreach ($userDepartments as $dept) {
+    if ($dept['department_code'] === 'U5') {
+        $userRole = $dept['role_name'];
+        // Только мастер (supervisor) и директор (director) могут отправлять в архив
+        if (in_array($userRole, ['supervisor', 'director'])) {
+            $canArchiveOrder = true;
+        }
+        break;
+    }
+}
+
 // Получаем номер заявки для заголовка
 $order_number = $_POST['order_number'] ?? '';
 $page_title = $order_number ? $order_number : "Заявка";
@@ -17,9 +64,18 @@ $page_title = $order_number ? $order_number : "Заявка";
             --muted:#64748b;
             --border:#e2e8f0;
             --accent:#667eea;
+            --secondary:#f1f5f9;
             --radius:14px;
             --shadow:0 10px 25px rgba(0,0,0,0.08), 0 4px 8px rgba(0,0,0,0.06);
             --shadow-soft:0 2px 8px rgba(0,0,0,0.08);
+            /* Дополнительные переменные для совместимости с NP_cut_index.php */
+            --foreground: var(--ink);
+            --muted-foreground: var(--muted);
+            --card: var(--panel);
+            --success: hsl(142, 71%, 45%);
+            --success-foreground: hsl(0, 0%, 100%);
+            --warning: hsl(38, 92%, 50%);
+            --warning-foreground: hsl(0, 0%, 100%);
         }
         html,body{height:100%}
         body{
@@ -91,30 +147,17 @@ $page_title = $order_number ? $order_number : "Заявка";
             color: #fff;
         }
 
-        /* Таблица */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-            margin-top: 16px;
-            background: var(--panel);
-            border:1px solid var(--border);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow-soft);
-            overflow: hidden;
-        }
-        th, td {
-            border-bottom: 1px solid var(--border);
-            padding: 10px 12px;
-            text-align: center;
-            color: var(--ink);
-        }
-        tr:last-child td{ border-bottom: 0; }
-        thead th{
-            background:#f8fafc;
-            font-weight:600;
-        }
         h3{ margin:0; font-size:18px; font-weight:700; }
+
+        /* Таблица */
+        #order_table {
+            font-size: 12px;
+        }
+        
+        #order_table th,
+        #order_table td {
+            font-size: 12px;
+        }
 
         /* Buttons */
         input[type='submit'], .btn{
@@ -126,39 +169,150 @@ $page_title = $order_number ? $order_number : "Заявка";
         input[type='submit']:hover, .btn:hover{ transform: translateY(-1px); box-shadow: var(--shadow); filter: brightness(1.05); }
         input[type='submit']:active, .btn:active{ transform: translateY(0); }
 
-        /* Responsive table */
-        .table-wrap{ overflow:auto; border-radius: var(--radius); box-shadow: var(--shadow); }
+        /* Button styles matching NP_cut_index.php */
+        button, .btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.375rem;
+            padding: 0.375rem 0.75rem;
+            font-size: 0.8125rem;
+            font-weight: 500;
+            border-radius: calc(var(--radius) - 2px);
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            font-family: inherit;
+            text-decoration: none;
+        }
+
+        .btn-secondary {
+            background: var(--secondary);
+            color: var(--ink);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: hsl(220, 14%, 92%);
+        }
+
+        input[type='submit'].btn-secondary {
+            background: var(--secondary);
+            color: var(--ink);
+            border: 1px solid var(--border);
+            box-shadow: none;
+        }
+
+        input[type='submit'].btn-secondary:hover {
+            background: hsl(220, 14%, 92%);
+            transform: none;
+            filter: none;
+        }
+
+        .btn-sm {
+            padding: 0.3rem 0.625rem;
+            font-size: 0.75rem;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        /* Панель для кнопок */
+        .action-panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow-soft);
+        }
+
+        .action-panel-title {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--muted);
+            margin-bottom: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
         @media (max-width: 900px){
             .container{ padding:16px; }
-            table{ font-size:13px; }
-            th, td{ padding: 8px 10px; }
         }
 
-        /* Modal styles */
+        /* Modal styles - в стиле NP_cut_index.php */
         .modal {
+            display: none;
             position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
             z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.5);
-            display: flex;
-            justify-content: center;
             align-items: center;
+            justify-content: center;
+            padding: 1rem;
         }
-
+        
         .modal-content {
-            background-color: white;
-            margin: auto;
-            padding: 20px;
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            max-width: 600px;
-            max-height: 80vh;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            max-width: 900px;
+            width: 100%;
+            max-height: 90vh;
             overflow-y: auto;
-            position: relative;
+            animation: slideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateY(-20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--panel);
+        }
+        
+        .modal-header h2,
+        .modal-header h3 {
+            margin: 0;
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: var(--ink);
+        }
+        
+        .modal-close {
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 2px);
+            font-size: 1.25rem;
+            cursor: pointer;
+            color: var(--muted);
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+        
+        .modal-close:hover {
+            background: var(--secondary);
+            color: var(--ink);
         }
 
         .close {
@@ -175,9 +329,8 @@ $page_title = $order_number ? $order_number : "Заявка";
         }
 
         .modal-body {
-            padding: 12px 16px;
-            max-height: 60vh;
-            overflow-y: auto;
+            padding: 1.5rem;
+            background: var(--panel);
         }
         
         /* Стили для модального окна параметров фильтра */
@@ -201,26 +354,6 @@ $page_title = $order_number ? $order_number : "Заявка";
             }
         }
 
-        .modal-body .table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 6px;
-        }
-
-        .modal-body .table th, 
-        .modal-body .table td {
-            border-bottom: 1px solid var(--border);
-            padding: 6px 4px;
-            text-align: left;
-            vertical-align: top;
-            font-size: 12px;
-        }
-
-        .modal-body .table th { 
-            width: 35%; 
-            color: var(--muted); 
-            font-weight: 600; 
-        }
 
         .modal-body .badge {
             display: inline-block;
@@ -269,15 +402,22 @@ $page_title = $order_number ? $order_number : "Заявка";
             100% { transform: rotate(360deg); }
         }
 
+        /* Стили для позиций с нулевым выпуском - в стиле NP_cut_index.php */
         .zero-position-item {
-            background: #fef3c7;
-            border: 1px solid #f59e0b;
-            border-radius: 6px;
-            padding: 6px 10px;
-            margin-bottom: 4px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 2px);
+            padding: 0.5rem 0.75rem;
+            margin-bottom: 0.5rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .zero-position-item:hover {
+            box-shadow: 0 2px 4px 0 hsla(220, 15%, 15%, 0.08);
+            border-color: var(--accent);
         }
 
         .zero-position-info {
@@ -286,53 +426,57 @@ $page_title = $order_number ? $order_number : "Заявка";
 
         .zero-position-filter {
             font-weight: 600;
-            color: #92400e;
-            font-size: 0.95rem;
+            color: var(--ink);
+            font-size: 0.8125rem;
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 0.5rem;
+            flex-wrap: wrap;
         }
 
         .zero-position-planned {
-            color: #6b7280;
-            font-size: 0.8rem;
+            color: var(--muted);
+            font-size: 0.75rem;
             font-weight: normal;
         }
 
         .zero-position-details {
-            color: #6b7280;
-            font-size: 0.75rem;
-            margin-top: 2px;
+            color: var(--muted);
+            font-size: 0.6875rem;
+            margin-top: 0.25rem;
         }
 
         .zero-position-count {
-            background: #f59e0b;
-            color: white;
-            padding: 4px 8px;
-            border-radius: 4px;
+            background: var(--warning);
+            color: var(--warning-foreground);
+            padding: 0.25rem 0.5rem;
+            border-radius: calc(var(--radius) - 4px);
             font-weight: 600;
-            font-size: 0.9rem;
+            font-size: 0.75rem;
         }
 
         .no-zero-positions {
             text-align: center;
-            padding: 20px;
-            color: #6b7280;
+            padding: 2.5rem;
+            color: var(--muted);
             font-size: 1rem;
         }
 
         .no-zero-positions .icon {
             font-size: 2rem;
-            margin-bottom: 8px;
+            margin-bottom: 0.5rem;
             display: block;
         }
 
         .zero-positions-header {
-            margin: 0 0 12px 0;
-            font-size: 1rem;
-            color: #374151;
+            margin: 0 0 1rem 0;
+            font-size: 0.75rem;
+            color: var(--ink);
             font-weight: 600;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--border);
         }
+
 
         /* Мобильная адаптация для модального окна */
         @media (max-width: 768px) {
@@ -397,8 +541,7 @@ $page_title = $order_number ? $order_number : "Заявка";
 
 <div class="container">
     <?php
-    require('tools/tools.php');
-    require('settings.php');
+    // tools/tools.php и settings.php уже подключены в начале файла
     require('style/table.txt');
 
     /**
@@ -503,6 +646,29 @@ $page_title = $order_number ? $order_number : "Заявка";
 
     // Отрисовка таблицы
     echo "<h3>Заявка: ".htmlspecialchars($order_number)."</h3>";
+    
+    // Панель с кнопками действий (перенесены наверх)
+    echo "<div class='action-panel'>";
+    echo "<div class='action-panel-title'>Действия</div>";
+    echo "<div class='button-group'>";
+    echo "<button onclick='showZeroProductionPositions()' class='btn-secondary btn-sm'>Позиции выпуск которых = 0</button>";
+    echo "<button onclick='checkGofraPackages()' class='btn-secondary btn-sm'>Проверка гофропакетов</button>";
+    echo "<button onclick='openWorkersSpecification()' class='btn-secondary btn-sm'>Спецификация для рабочих</button>";
+    
+    // Кнопка отправки в архив - только для мастеров и директоров
+    if ($canArchiveOrder) {
+        echo "<button onclick='confirmArchiveOrder()' class='btn-secondary btn-sm'>Отправить заявку в архив</button>";
+    }
+    echo "</div>";
+    echo "</div>";
+    
+    // Скрытая форма для отправки в архив
+    if ($canArchiveOrder) {
+        echo "<form id='archiveForm' action='hiding_order.php' method='post' style='display: none;'>";
+        echo "<input type='hidden' name='order_number' value='".htmlspecialchars($order_number)."'>";
+        echo "</form>";
+    }
+    
     echo "<div class='table-wrap'>";
     echo "<table id='order_table'>";
     echo "<tr>
@@ -544,21 +710,21 @@ $page_title = $order_number ? $order_number : "Заявка";
         
         echo "<tr>
         <td style='text-align: center;'>
-            <button onclick='showFilterInfo(\"".htmlspecialchars($row['filter'])."\")' 
+            <button onclick='showFilterInfo(\"".htmlspecialchars($row['filter'] ?? '')."\")' 
                     style='background: white; color: #3b82f6; border: 1px solid #3b82f6; border-radius: 50%; padding: 4px; cursor: pointer; font-weight: bold; font-size: 11px; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; margin: 0 auto;'
                     title='Информация о фильтре'>
                 i
             </button>
         </td>
-        <td>".htmlspecialchars($row['filter'])."</td>
+        <td>".htmlspecialchars($row['filter'] ?? '')."</td>
         <td>".(int)$row['count']."</td>
-        <td>".htmlspecialchars($row['marking'])."</td>
-        <td>".htmlspecialchars($row['personal_packaging'])."</td>
-        <td>".htmlspecialchars($row['personal_label'])."</td>
-        <td>".htmlspecialchars($row['group_packaging'])."</td>
-        <td>".htmlspecialchars($row['packaging_rate'])."</td>
-        <td>".htmlspecialchars($row['group_label'])."</td>
-        <td>".htmlspecialchars($row['remark'])."</td>";
+        <td>".htmlspecialchars($row['marking'] ?? '')."</td>
+        <td>".htmlspecialchars($row['personal_packaging'] ?? '')."</td>
+        <td>".htmlspecialchars($row['personal_label'] ?? '')."</td>
+        <td>".htmlspecialchars($row['group_packaging'] ?? '')."</td>
+        <td>".htmlspecialchars($row['packaging_rate'] ?? '')."</td>
+        <td>".htmlspecialchars($row['group_label'] ?? '')."</td>
+        <td>".htmlspecialchars($row['remark'] ?? '')."</td>";
 
         // Колонка «Изготовлено, шт» — готовые фильтры с тултипом по датам (как было)
         echo renderTooltipCell($date_list_filters, $total_qty_filters);
@@ -590,71 +756,54 @@ $page_title = $order_number ? $order_number : "Заявка";
     echo "<p>* - без учета перевыполнения</p>";
     ?>
 
-    <br>
-    <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
-        <button onclick="showZeroProductionPositions()" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
-            ⚠️ Позиции выпуск которых = 0
-        </button>
-        <button onclick="checkGofraPackages()" style="background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);">
-            🔍 Проверка гофропакетов
-        </button>
-        <button onclick="openWorkersSpecification()" style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);">
-            👷 Спецификация для рабочих
-        </button>
-        <form action='hiding_order.php' method='post' style="margin: 0;">
-            <input type='hidden' name='order_number' value='<?= htmlspecialchars($order_number) ?>'>
-            <input type='submit' value='Отправить заявку в архив'>
-        </form>
-    </div>
-
 </div>
 
 <!-- Модальное окно для позиций с нулевым выпуском -->
-<div id="zeroProductionModal" class="modal" style="display: none;">
-    <div class="modal-content" style="max-width: 800px;">
+<div id="zeroProductionModal" class="modal">
+    <div class="modal-content" style="max-width: 585px;">
         <div class="modal-header">
-            <h2 class="modal-title">⚠️ Позиции с нулевым выпуском</h2>
-            <span class="close" onclick="closeZeroProductionModal()">&times;</span>
+            <h3>Позиции с нулевым выпуском</h3>
+            <button class="modal-close" onclick="closeZeroProductionModal()">&times;</button>
         </div>
         <div class="modal-body">
             <div id="zeroProductionContent">
-                <p>Загрузка данных...</p>
+                <p style="text-align:center;padding:40px;color:var(--muted);">Загрузка данных...</p>
             </div>
         </div>
     </div>
 </div>
 
 <!-- Модальное окно для проверки гофропакетов -->
-<div id="gofraCheckModal" class="modal" style="display: none;">
-    <div class="modal-content" style="max-width: 800px;">
+<div id="gofraCheckModal" class="modal">
+    <div class="modal-content" style="max-width: 585px;">
         <div class="modal-header">
-            <h2 class="modal-title">🔍 Проверка гофропакетов</h2>
-            <div style="display: flex; gap: 10px;">
-                <button onclick="printGofraCheck()" style="background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px;">
-                    🖨️ Печать
+            <h3>Проверка гофропакетов</h3>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <button onclick="printGofraCheck()" class="btn-secondary btn-sm" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
+                    Печать
                 </button>
-                <span class="close" onclick="closeGofraCheckModal()">&times;</span>
+                <button class="modal-close" onclick="closeGofraCheckModal()">&times;</button>
             </div>
         </div>
         <div class="modal-body">
             <!-- Фильтры для типов проблем -->
-            <div id="gofraFilters" style="margin-bottom: 15px; padding: 10px; background: #f8fafc; border-radius: 6px; border: 1px solid #e2e8f0;">
-                <div style="font-weight: bold; margin-bottom: 8px; color: #374151;">🔍 Фильтр по типу проблемы:</div>
-                <div style="display: flex; gap: 15px; flex-wrap: wrap;">
-                    <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+            <div id="gofraFilters" style="margin-bottom: 1rem; padding: 0.75rem; background: var(--secondary); border-radius: calc(var(--radius) - 2px); border: 1px solid var(--border);">
+                <div style="font-weight: 600; margin-bottom: 0.5rem; color: var(--ink); font-size: 0.75rem;">Фильтр по типу проблемы:</div>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.75rem;">
                         <input type="checkbox" id="filterNoGofra" checked style="margin: 0;">
-                        <span style="color: #dc2626; font-weight: bold;">Нет гофропакетов</span>
-                        <span style="color: #64748b; font-size: 12px;">(0 гофропакетов, но есть выпуск)</span>
+                        <span style="color: #dc2626; font-weight: 600;">Нет гофропакетов</span>
+                        <span style="color: var(--muted); font-size: 0.6875rem;">(0 гофропакетов, но есть выпуск)</span>
                     </label>
-                    <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.75rem;">
                         <input type="checkbox" id="filterShortage" checked style="margin: 0;">
-                        <span style="color: #f59e0b; font-weight: bold;">Недостаток</span>
-                        <span style="color: #64748b; font-size: 12px;">(недостаток ≥ 20 штук)</span>
+                        <span style="color: #f59e0b; font-weight: 600;">Недостаток</span>
+                        <span style="color: var(--muted); font-size: 0.6875rem;">(недостаток ≥ 20 штук)</span>
                     </label>
                 </div>
             </div>
             <div id="gofraCheckContent">
-                <p>Загрузка данных...</p>
+                <p style="text-align:center;padding:40px;color:var(--muted);">Загрузка данных...</p>
             </div>
         </div>
     </div>
@@ -697,7 +846,7 @@ $page_title = $order_number ? $order_number : "Заявка";
     // Функция для загрузки данных о позициях с нулевым выпуском
     function loadZeroProductionData() {
         const content = document.getElementById('zeroProductionContent');
-        content.innerHTML = '<p>Загрузка данных...</p>';
+        content.innerHTML = '<p style="text-align:center;padding:40px;color:var(--muted);">Загрузка данных...</p>';
         
         // Получаем данные из таблицы на странице
         const table = document.getElementById('order_table');
@@ -709,18 +858,25 @@ $page_title = $order_number ? $order_number : "Заявка";
             const row = rows[i];
             const cells = row.querySelectorAll('td');
             
-            if (cells.length >= 12) {
+            if (cells.length >= 13) {
                 const filter = cells[1].textContent.trim();
                 const plannedCount = parseInt(cells[2].textContent) || 0;
                 const producedCount = parseInt(cells[10].textContent) || 0;
                 const remark = cells[9].textContent.trim();
+                
+                // Извлекаем количество гофропакетов (колонка 12)
+                // Учитываем, что может быть тултип, поэтому берем первый текстовый узел
+                const gofraElement = cells[12].querySelector('.tooltip') || cells[12];
+                const gofraText = gofraElement.firstChild ? gofraElement.firstChild.textContent.trim() : cells[12].textContent.trim();
+                const gofraCount = parseInt(gofraText) || 0;
                 
                 if (producedCount === 0 && plannedCount > 0) {
                     zeroPositions.push({
                         filter: filter,
                         plannedCount: plannedCount,
                         producedCount: producedCount,
-                        remark: remark
+                        remark: remark,
+                        gofraCount: gofraCount
                     });
                 }
             }
@@ -737,29 +893,43 @@ $page_title = $order_number ? $order_number : "Заявка";
         if (positions.length === 0) {
             content.innerHTML = `
                 <div class="no-zero-positions">
-                    <span class="icon">✅</span>
-                    <p>Отлично! Все позиции имеют выпуск больше 0</p>
+                    <p style="color: var(--success); font-weight: 600;">Отлично! Все позиции имеют выпуск больше 0</p>
                 </div>
             `;
             return;
         }
         
         let html = `<div class="zero-positions-header">Найдено позиций с нулевым выпуском: ${positions.length}</div>`;
+        html += `
+            <table class="compact-table">
+                <thead>
+                    <tr>
+                        <th>Фильтр</th>
+                        <th style="text-align: center;">План, шт</th>
+                        <th style="text-align: center;">Гофропакетов, шт</th>
+                        <th style="text-align: center;">Выпуск, шт</th>
+                        ${positions.some(p => p.remark) ? '<th>Примечание</th>' : ''}
+                    </tr>
+                </thead>
+                <tbody>
+        `;
         
         positions.forEach((position, index) => {
             html += `
-                <div class="zero-position-item">
-                    <div class="zero-position-info">
-                        <div class="zero-position-filter">
-                            ${position.filter}
-                            <span class="zero-position-planned">(${position.plannedCount} шт)</span>
-                        </div>
-                        ${position.remark ? `<div class="zero-position-details">Примечание: ${position.remark}</div>` : ''}
-                    </div>
-                    <div class="zero-position-count">0 шт</div>
-                </div>
+                <tr>
+                    <td>${position.filter}</td>
+                    <td style="text-align: center;">${position.plannedCount}</td>
+                    <td style="text-align: center; color: var(--accent); font-weight: 500;">${position.gofraCount}</td>
+                    <td style="text-align: center; color: #dc2626; font-weight: 600;">0</td>
+                    ${positions.some(p => p.remark) ? `<td style="font-size: 0.6875rem; color: var(--muted);">${position.remark || ''}</td>` : ''}
+                </tr>
             `;
         });
+        
+        html += `
+                </tbody>
+            </table>
+        `;
         
         content.innerHTML = html;
     }
@@ -784,6 +954,16 @@ $page_title = $order_number ? $order_number : "Заявка";
         document.body.appendChild(form);
         form.submit();
         document.body.removeChild(form);
+    }
+
+    // Функция подтверждения отправки заявки в архив
+    function confirmArchiveOrder() {
+        const orderNumber = '<?= htmlspecialchars($order_number) ?>';
+        const confirmed = confirm('Вы уверены, что хотите отправить заявку "' + orderNumber + '" в архив?\n\nЭто действие можно отменить только администратором базы данных.');
+        
+        if (confirmed) {
+            document.getElementById('archiveForm').submit();
+        }
     }
 
     // Функция для проверки гофропакетов
@@ -886,7 +1066,7 @@ $page_title = $order_number ? $order_number : "Заявка";
                 </style>
             </head>
             <body>
-                <h1>🔍 Проверка гофропакетов</h1>
+                <h1>Проверка гофропакетов</h1>
                 <h2>Заявка: ${orderNumber}</h2>
                 <p style="color: #6b7280; font-size: 11px;">Дата проверки: ${new Date().toLocaleDateString('ru-RU')}</p>
                 <p style="color: #374151; font-size: 11px; margin: 10px 0;">Проверяются позиции с проблемами гофропакетов:</p>
@@ -918,7 +1098,7 @@ $page_title = $order_number ? $order_number : "Заявка";
     // Функция для загрузки данных о гофропакетах
     function loadGofraCheckData() {
         const content = document.getElementById('gofraCheckContent');
-        content.innerHTML = '<p>Загрузка данных...</p>';
+        content.innerHTML = '<p style="text-align:center;padding:40px;color:var(--muted);">Загрузка данных...</p>';
         
         // Получаем настройки фильтров
         const showNoGofra = document.getElementById('filterNoGofra').checked;
@@ -986,9 +1166,9 @@ $page_title = $order_number ? $order_number : "Заявка";
             }
             
             content.innerHTML = `
-                <div style="text-align: center; padding: 20px;">
-                    <p style="color: #10b981; font-size: 18px; font-weight: bold;">✅ ${message}</p>
-                    <p style="color: #64748b;">Проверьте настройки фильтров или убедитесь, что данные корректны.</p>
+                <div style="text-align: center; padding: 2.5rem;">
+                    <p style="color: var(--success); font-size: 0.875rem; font-weight: 600;">${message}</p>
+                    <p style="color: var(--muted); font-size: 0.75rem; margin-top: 0.5rem;">Проверьте настройки фильтров или убедитесь, что данные корректны.</p>
                 </div>
             `;
         } else {
@@ -998,44 +1178,44 @@ $page_title = $order_number ? $order_number : "Заявка";
             if (showShortage) activeFilters.push('Недостаток гофропакетов ≥ 20 штук');
             
             let html = `
-                <div style="margin-bottom: 10px;">
-                    <p style="color: #dc2626; font-weight: bold;">⚠️ Обнаружено проблемных позиций: ${problemPositions.length}</p>
-                    <p style="color: #64748b; font-size: 14px;">Активные фильтры:</p>
-                    <ul style="color: #64748b; font-size: 13px; margin: 5px 0;">
-                        ${activeFilters.map(filter => `<li>• ${filter}</li>`).join('')}
-                    </ul>
+                <div class="zero-positions-header" style="margin-bottom: 1rem;">
+                    Обнаружено проблемных позиций: ${problemPositions.length}
                 </div>
-                <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-                    <tr style="background: #f1f5f9;">
-                        <th style="padding: 8px; border: 1px solid #e2e8f0; text-align: left;">№</th>
-                        <th style="padding: 8px; border: 1px solid #e2e8f0; text-align: left;">Фильтр</th>
-                        <th style="padding: 8px; border: 1px solid #e2e8f0; text-align: center;">План, шт</th>
-                        <th style="padding: 8px; border: 1px solid #e2e8f0; text-align: center;">Выпущено фильтров, шт</th>
-                        <th style="padding: 8px; border: 1px solid #e2e8f0; text-align: center;">Гофропакетов, шт</th>
-                        <th style="padding: 8px; border: 1px solid #e2e8f0; text-align: center;">Недостаток, шт</th>
-                        <th style="padding: 8px; border: 1px solid #e2e8f0; text-align: center;">Тип проблемы</th>
-                    </tr>
+                <table class="compact-table">
+                    <thead>
+                        <tr>
+                            <th>Фильтр</th>
+                            <th style="text-align: center;">План, шт</th>
+                            <th style="text-align: center;">Выпущено, шт</th>
+                            <th style="text-align: center;">Гофропакетов, шт</th>
+                            <th style="text-align: center;">Недостаток, шт</th>
+                            <th style="text-align: center;">Тип проблемы</th>
+                        </tr>
+                    </thead>
+                    <tbody>
             `;
             
             problemPositions.forEach(pos => {
                 // Цвет для типа проблемы
                 let typeColor = pos.problemType === 'Нет гофропакетов' ? '#dc2626' : '#f59e0b';
-                let typeBg = pos.problemType === 'Нет гофропакетов' ? '#fee2e2' : '#fef3c7';
                 
                 html += `
                     <tr>
-                        <td style="padding: 8px; border: 1px solid #e2e8f0;">${pos.num}</td>
-                        <td style="padding: 8px; border: 1px solid #e2e8f0;">${pos.filter}</td>
-                        <td style="padding: 8px; border: 1px solid #e2e8f0; text-align: center;">${pos.plan}</td>
-                        <td style="padding: 8px; border: 1px solid #e2e8f0; text-align: center; color: #10b981; font-weight: bold;">${pos.produced}</td>
-                        <td style="padding: 8px; border: 1px solid #e2e8f0; text-align: center; color: #dc2626; font-weight: bold;">${pos.gofra}</td>
-                        <td style="padding: 8px; border: 1px solid #e2e8f0; text-align: center; color: #dc2626; font-weight: bold;">${pos.shortage}</td>
-                        <td style="padding: 8px; border: 1px solid #e2e8f0; text-align: center; background: ${typeBg}; color: ${typeColor}; font-weight: bold; font-size: 12px;">${pos.problemType}</td>
+                        <td>${pos.filter}</td>
+                        <td style="text-align: center;">${pos.plan}</td>
+                        <td style="text-align: center; color: var(--success); font-weight: 600;">${pos.produced}</td>
+                        <td style="text-align: center; color: #dc2626; font-weight: 600;">${pos.gofra}</td>
+                        <td style="text-align: center; color: #dc2626; font-weight: 600;">${pos.shortage}</td>
+                        <td style="text-align: center; color: ${typeColor}; font-weight: 600; font-size: 0.6875rem;">${pos.problemType}</td>
                     </tr>
                 `;
             });
             
-            html += '</table>';
+            html += `
+                    </tbody>
+                </table>
+            `;
+            
             content.innerHTML = html;
         }
     }
