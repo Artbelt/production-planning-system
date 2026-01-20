@@ -23,6 +23,47 @@ try {
     $stmt->execute([$order]);
     $bales_info = $stmt->fetch(PDO::FETCH_ASSOC);
     
+    // Статистика по бухтам (материалы, метры, раскрои, эквивалент бухт)
+    // Группируем по bale_id и material, берем MAX(fact_length) для каждой бухты
+    $stmt = $pdo->prepare("
+        SELECT 
+            bale_id,
+            material,
+            MAX(fact_length) as bale_fact_length
+        FROM cut_plans
+        WHERE order_number = ?
+        GROUP BY bale_id, material
+    ");
+    $stmt->execute([$order]);
+    $bales_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    $carbonMeters = 0;
+    $carbonBales = 0;
+    $whiteMeters = 0;
+    $whiteBales = 0;
+    
+    foreach ($bales_data as $bale) {
+        $matUpper = strtoupper(trim($bale['material'] ?? ''));
+        $factLength = (float)($bale['bale_fact_length'] ?? 0);
+        
+        // Если фактическая длина не указана, используем стандартную (300 для угольного, 400 для белого)
+        if ($factLength <= 0) {
+            $factLength = ($matUpper === 'CARBON') ? 300 : 400;
+        }
+        
+        if ($matUpper === 'CARBON') {
+            $carbonMeters += round($factLength);
+            $carbonBales++;
+        } else {
+            $whiteMeters += round($factLength);
+            $whiteBales++;
+        }
+    }
+    
+    // Вычисляем эквивалент бухт (угольные по 300м, белые по 400м)
+    $carbonBalesEquiv = $carbonMeters > 0 ? round($carbonMeters / 300, 2) : 0;
+    $whiteBalesEquiv = $whiteMeters > 0 ? round($whiteMeters / 400, 2) : 0;
+    
     // Прогресс по раскрою
     $stmt = $pdo->prepare("
         SELECT 
@@ -134,11 +175,57 @@ try {
         }
     }
     
+    // Сложные позиции (build_complexity < 600)
+    $stmt = $pdo->prepare("
+        SELECT 
+            o.filter,
+            SUM(o.count) as total_count,
+            sfs.build_complexity
+        FROM orders o
+        LEFT JOIN salon_filter_structure sfs ON TRIM(o.filter) = TRIM(sfs.filter)
+        WHERE o.order_number = ? 
+            AND (o.hide IS NULL OR o.hide != 1)
+            AND sfs.build_complexity IS NOT NULL
+            AND sfs.build_complexity < 600
+        GROUP BY o.filter, sfs.build_complexity
+        ORDER BY sfs.build_complexity ASC, SUM(o.count) DESC
+    ");
+    $stmt->execute([$order]);
+    $complex_positions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Позиции с большим количеством (топ-10)
+    $stmt = $pdo->prepare("
+        SELECT 
+            o.filter,
+            SUM(o.count) as total_count,
+            sfs.build_complexity
+        FROM orders o
+        LEFT JOIN salon_filter_structure sfs ON TRIM(o.filter) = TRIM(sfs.filter)
+        WHERE o.order_number = ? AND (o.hide IS NULL OR o.hide != 1)
+        GROUP BY o.filter, sfs.build_complexity
+        ORDER BY SUM(o.count) DESC
+        LIMIT 10
+    ");
+    $stmt->execute([$order]);
+    $top_positions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
     echo json_encode([
         'ok' => true,
         'total_filters' => (int)$order_info['total_count'],
         'unique_filters' => (int)$order_info['total'],
         'bales_count' => (int)$bales_info['bales_count'],
+        'bales_stats' => [
+            'carbon' => [
+                'meters' => $carbonMeters,
+                'bales' => $carbonBales,
+                'bales_equiv' => $carbonBalesEquiv
+            ],
+            'white' => [
+                'meters' => $whiteMeters,
+                'bales' => $whiteBales,
+                'bales_equiv' => $whiteBalesEquiv
+            ]
+        ],
         'progress' => [
             'cut' => $cut_percent,
             'corr' => $corr_percent,
@@ -150,7 +237,9 @@ try {
         'materials' => [
             'white' => $white_filters,
             'carbon' => $carbon_filters
-        ]
+        ],
+        'complex_positions' => $complex_positions,
+        'top_positions' => $top_positions
     ]);
     
 } catch (Exception $e) {

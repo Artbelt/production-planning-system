@@ -391,6 +391,25 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
     }
 
     // Порахувати прогрес по кожній висоті і намалювати у чіпах
+    // Функция для подсчета количества фильтров в бухте
+    function getFilterCountForBale(bale) {
+        let totalFilterCount = 0;
+        bale.strips.forEach(s => {
+            const H = Number(s.height); // высота фильтра в мм
+            const Z = s.pleats_count !== null ? Number(s.pleats_count) : 0; // количество гофр
+            const L = s.fact_length !== null ? Number(s.fact_length) : (s.length !== null ? Number(s.length) : null); // длина полосы в метрах
+            
+            if (L !== null && L > 0 && H > 0 && Z > 0) {
+                const L_one = (H * 2 * Z) / 1000.0; // длина одного фильтра в метрах
+                if (L_one > 0) {
+                    const cnt = Math.floor(L / L_one);
+                    totalFilterCount += cnt;
+                }
+            }
+        });
+        return totalFilterCount;
+    }
+
     function updateHeightProgress(){
         const planned = new Map(); // Map<height, count>
         Object.values(selected).forEach(arr=>{
@@ -443,7 +462,20 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
         for(let d=0; d<days; d++){
             const date = new Date(start); date.setDate(start.getDate()+d);
             const ds = fmtDateISO(date);
-            headRow.innerHTML += `<th>${ds}<span class="dow"><br>${dowName(date)}</span></th>`;
+            
+            // Подсчитываем количество фильтров для этой даты
+            let filterCount = 0;
+            if (selected[ds] && Array.isArray(selected[ds])) {
+                selected[ds].forEach(bid => {
+                    const b = bales.find(x => x.bale_id === bid);
+                    if (b) {
+                        filterCount += getFilterCountForBale(b);
+                    }
+                });
+            }
+            
+            const filterCountText = filterCount > 0 ? ` <span style="font-size:11px;color:#0369a1;font-weight:600;">(${filterCount})</span>` : '';
+            headRow.innerHTML += `<th>${ds}<span class="dow"><br>${dowName(date)}</span>${filterCountText}</th>`;
         }
         thead.appendChild(headRow);
         table.appendChild(thead);
@@ -622,6 +654,7 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
             updateTotals();
             updateLeftMarkers();
             updateHeightProgress();
+            updateDateHeaders();
         });
 
         // Липкий підсумок годин
@@ -648,6 +681,7 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
         updateHeightHighlights();
         updateLeftMarkers();
         updateHeightProgress();  // ← після побудови таблиці
+        updateDateHeaders();  // ← обновляем заголовки дат с количеством фильтров
     }
 
     function updateTotals(){
@@ -660,6 +694,39 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
                 el.textContent = hours.toFixed(2);
                 if (hours > 7) el.classList.add('overload');
             }
+        });
+    }
+
+    // Функция для обновления количества фильтров в заголовках дат
+    function updateDateHeaders() {
+        const startVal = document.getElementById('startDate').value;
+        const days = parseInt(document.getElementById('daysCount').value, 10);
+        if (!startVal || isNaN(days)) return;
+
+        const start = new Date(startVal + 'T00:00:00');
+        const headers = document.querySelectorAll('thead th:not(:first-child)');
+        
+        headers.forEach((th, index) => {
+            if (index >= days) return;
+            const date = new Date(start);
+            date.setDate(start.getDate() + index);
+            const ds = fmtDateISO(date);
+            
+            // Подсчитываем количество фильтров для этой даты
+            let filterCount = 0;
+            if (selected[ds] && Array.isArray(selected[ds])) {
+                selected[ds].forEach(bid => {
+                    const b = bales.find(x => x.bale_id === bid);
+                    if (b) {
+                        filterCount += getFilterCountForBale(b);
+                    }
+                });
+            }
+            
+            // Обновляем заголовок, сохраняя дату и день недели
+            const dow = dowName(date);
+            const filterCountText = filterCount > 0 ? ` <span style="font-size:11px;color:#0369a1;font-weight:600;">(${filterCount})</span>` : '';
+            th.innerHTML = `${ds}<span class="dow"><br>${dow}</span>${filterCountText}`;
         });
     }
 
@@ -739,6 +806,7 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
             updateHeightHighlights();
             updateLeftMarkers();
             updateHeightProgress();
+            updateDateHeaders();
         }catch(e){
             alert('Не удалось загрузить: '+e.message);
             console.error(e);

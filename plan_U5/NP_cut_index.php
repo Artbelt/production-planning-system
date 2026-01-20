@@ -963,25 +963,41 @@ try{
                 </div>
             `;
             
-            // Прогресс по этапам
+            // Прогресс по этапам - Раскрой с информацией о бухтах
             if (data.progress) {
-                html += `
-                    <div class="info-card">
-                        <h4>Раскрой</h4>
-                        <div class="info-value">${data.progress.cut || 0}%</div>
-                        <div class="info-label">выполнено</div>
-                    </div>
-                    <div class="info-card">
-                        <h4>Гофрирование</h4>
-                        <div class="info-value">${data.progress.corr || 0}%</div>
-                        <div class="info-label">выполнено</div>
-                    </div>
-                    <div class="info-card">
-                        <h4>Сборка</h4>
-                        <div class="info-value">${data.progress.build || 0}%</div>
-                        <div class="info-label">выполнено</div>
-                    </div>
-                `;
+                html += `<div class="info-card" style="grid-column: 1 / -1;">`;
+                html += `<h4>Раскрой</h4>`;
+                html += `<div style="display:flex;align-items:center;gap:16px;margin-bottom:8px;">`;
+                html += `<div>`;
+                html += `<div class="info-value" style="font-size:24px;margin-bottom:4px;">${data.progress.cut || 0}%</div>`;
+                html += `<div class="info-label">выполнено</div>`;
+                html += `</div>`;
+                
+                // Информация о бухтах
+                if (data.bales_stats) {
+                    html += `<div style="flex:1;display:flex;flex-direction:column;gap:6px;font-size:12px;">`;
+                    
+                    if (data.bales_stats.carbon && (data.bales_stats.carbon.meters > 0 || data.bales_stats.carbon.bales > 0)) {
+                        html += `<div style="color:#374151;">`;
+                        html += `<strong>Угольный:</strong> ${data.bales_stats.carbon.meters} м `;
+                        html += `(${data.bales_stats.carbon.bales} раскроев) `;
+                        html += `<strong>${parseFloat(data.bales_stats.carbon.bales_equiv).toFixed(2)}</strong> бухты`;
+                        html += `</div>`;
+                    }
+                    
+                    if (data.bales_stats.white && (data.bales_stats.white.meters > 0 || data.bales_stats.white.bales > 0)) {
+                        html += `<div style="color:#374151;">`;
+                        html += `<strong>Белый:</strong> ${data.bales_stats.white.meters} м `;
+                        html += `(${data.bales_stats.white.bales} раскроев) `;
+                        html += `<strong>${parseFloat(data.bales_stats.white.bales_equiv).toFixed(2)}</strong> бухты`;
+                        html += `</div>`;
+                    }
+                    
+                    html += `</div>`;
+                }
+                
+                html += `</div>`;
+                html += `</div>`;
             }
             
             // Фильтры по материалам
@@ -1085,6 +1101,72 @@ try{
             }
             
             html += '</div>';
+            
+            // Сложные позиции и массовые позиции рядом
+            if ((data.complex_positions && data.complex_positions.length > 0) || (data.top_positions && data.top_positions.length > 0)) {
+                html += '<div class="section-block" style="margin-top:12px;">';
+                html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">';
+                
+                // Левая колонка - Сложные позиции
+                if (data.complex_positions && data.complex_positions.length > 0) {
+                    html += '<div>';
+                    html += '<div class="section-title" style="font-size:11px;margin-bottom:4px;">Сложные позиции (&lt; 600)</div>';
+                    html += '<div style="display:flex;flex-direction:column;gap:3px;max-height:300px;overflow-y:auto;">';
+                    
+                    data.complex_positions.forEach(pos => {
+                        const complexity = parseFloat(pos.build_complexity) || 0;
+                        html += `
+                            <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 6px;background:#fff;border:1px solid #e5e7eb;border-radius:3px;border-left:2px solid #dc2626;">
+                                <div style="flex:1;min-width:0;">
+                                    <div style="font-size:11px;font-weight:600;color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${pos.filter}</div>
+                                    <div style="font-size:9px;color:#9ca3af;">${complexity.toFixed(0)}</div>
+                                </div>
+                                <div style="text-align:right;margin-left:6px;flex-shrink:0;">
+                                    <div style="font-size:12px;font-weight:700;color:#dc2626;">${parseInt(pos.total_count)}</div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    html += '</div></div>';
+                }
+                
+                // Правая колонка - Позиции с большим количеством
+                if (data.top_positions && data.top_positions.length > 0) {
+                    html += '<div>';
+                    html += '<div class="section-title" style="font-size:11px;margin-bottom:4px;">Массовые позиции</div>';
+                    html += '<div style="display:flex;flex-direction:column;gap:3px;max-height:300px;overflow-y:auto;">';
+                    
+                    data.top_positions.forEach((pos, index) => {
+                        const complexity = pos.build_complexity ? parseFloat(pos.build_complexity) : null;
+                        const isComplex = complexity !== null && complexity < 600;
+                        html += `
+                            <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 6px;background:#fff;border:1px solid #e5e7eb;border-radius:3px;${isComplex ? 'border-left:2px solid #dc2626;' : ''}">
+                                <div style="flex:1;min-width:0;">
+                                    <div style="display:flex;align-items:center;gap:4px;">
+                                        <span style="font-size:9px;color:#9ca3af;font-weight:600;flex-shrink:0;">${index + 1}.</span>
+                                        <div style="flex:1;min-width:0;">
+                                            <div style="font-size:11px;font-weight:600;color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${pos.filter}</div>
+                                            ${complexity !== null ? `
+                                                <div style="font-size:9px;color:${isComplex ? '#dc2626' : '#9ca3af'};">
+                                                    ${complexity.toFixed(0)}${isComplex ? ' ⚠️' : ''}
+                                                </div>
+                                            ` : ''}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="text-align:right;margin-left:6px;flex-shrink:0;">
+                                    <div style="font-size:12px;font-weight:700;color:#111827;">${parseInt(pos.total_count)}</div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    html += '</div></div>';
+                }
+                
+                html += '</div></div>';
+            }
             
             body.innerHTML = html;
             
