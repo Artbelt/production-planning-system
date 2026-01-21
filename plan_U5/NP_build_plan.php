@@ -443,7 +443,8 @@ try{
     }
 
     .col{border-left:1px solid var(--line);padding-left:8px;min-height:200px}
-    .col h4{margin:0 0 8px;font-weight:600}
+    .col h4{margin:0 0 8px;font-weight:600;color:#111827}
+    #topGrid .col h4{color:#ffffff;background:#374151;padding:4px 8px;border-radius:6px;margin-bottom:8px;text-align:center}
 
     /* верхние плашки */
     .pill{border:1px solid #dbe3f0;background:#eef6ff;border-radius:10px;padding:8px;margin:6px 0;display:flex;flex-direction:column;gap:6px;position:relative}
@@ -527,10 +528,18 @@ try{
         gap:4px;
     }
     .snakeGrid .pill{ margin:0; padding:4px 6px; }
-    .snakeGrid .dayBadge{ margin:2px 0; }
+    .snakeGrid .dayBadge{ 
+        margin:2px 0;
+        padding:4px 8px !important;
+        font-size:12px !important;
+        line-height:1.2 !important;
+        min-height:0 !important;
+        max-height:none !important;
+        box-sizing:border-box !important;
+    }
     .dayBadge{
-        border:1px solid #dbe3f0; background:#f4f8ff; border-radius:8px;
-        padding:6px 8px; font-weight:600; font-size:12px; color:#374151;
+        border:1px solid rgba(55, 65, 81, 0.75); background:#374151; border-radius:8px;
+        padding:4px 8px; font-weight:600; font-size:12px; color:#ffffff;text-align:center;
     }
 
     /* Плотный режим (низ) */
@@ -1287,18 +1296,9 @@ try{
 
     // Функция проверки и скрытия высоты, если название не влезает (для строк в сетке дней)
     function checkAndHideHeight(row) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:checkAndHideHeight:entry',message:'Function called',data:{hasRow:!!row,rowClass:row?.className},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
-        
         const nameContainer = row.querySelector('.rowNameContainer');
         const nameEl = row.querySelector('.rowName');
         const heightEl = row.querySelector('.height-badge');
-        
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:checkAndHideHeight:selectors',message:'Elements found',data:{hasContainer:!!nameContainer,hasNameEl:!!nameEl,hasHeightEl:!!heightEl,nameText:nameEl?.textContent?.substring(0,20)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
-        
         if (!nameContainer || !nameEl || !heightEl) return;
         
         // Временно показываем высоту для измерения
@@ -1314,29 +1314,14 @@ try{
         const heightWidth = heightEl.offsetWidth;
         const nameWithHeightWidth = nameEl.offsetWidth + heightEl.offsetWidth;
         
-        // Проверяем, обрезано ли название CSS (scrollWidth > offsetWidth означает обрезку через text-overflow: ellipsis)
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:checkAndHideHeight:measurements',message:'Size measurements',data:{nameScrollWidth,nameOffsetWidth,containerWidth,heightWidth,nameWithHeightWidth,nameText:nameEl.textContent?.substring(0,30)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-        // #endregion
-        
         // Если название обрезано CSS (scrollWidth > offsetWidth) или суммарная ширина превышает контейнер, скрываем высоту
         const isTextTruncated = nameScrollWidth > nameOffsetWidth;
         const exceedsContainer = nameWithHeightWidth > containerWidth;
         
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:checkAndHideHeight:decision',message:'Decision logic',data:{isTextTruncated,exceedsContainer,willHide:isTextTruncated||exceedsContainer},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
-        // #endregion
-        
         if (isTextTruncated || exceedsContainer) {
             heightEl.style.display = 'none';
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:checkAndHideHeight:hidden',message:'Height hidden',data:{reason:isTextTruncated?'text-truncated':'exceeds-container'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-            // #endregion
         } else {
             heightEl.style.display = '';
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:checkAndHideHeight:shown',message:'Height shown',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
-            // #endregion
         }
     }
     
@@ -1372,11 +1357,7 @@ try{
     
     // Обновление всех строк и плашек при изменении размера окна
     function updateAllRowHeights() {
-        const rows = document.querySelectorAll('#daysGrid .rowItem');
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:updateAllRowHeights:entry',message:'Updating all row heights',data:{rowCount:rows.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
-        rows.forEach(row => {
+        document.querySelectorAll('#daysGrid .rowItem').forEach(row => {
             checkAndHideHeight(row);
         });
         document.querySelectorAll('#topGrid .pill').forEach(pill => {
@@ -1543,9 +1524,6 @@ try{
         // Проверяем, влезает ли название, и скрываем высоту если нет
         // Используем таймаут для гарантии, что DOM обновлен и стили применены
         setTimeout(() => {
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:addRowElement:timeout',message:'Calling checkAndHideHeight after timeout',data:{filter:flt,hasRow:!!row},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-            // #endregion
             checkAndHideHeight(row);
         }, 100);
     }
@@ -1717,9 +1695,6 @@ try{
 
     // пререндер сохранённого плана
     (function renderPre(){
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:renderPre:entry',message:'Pre-render started',data:{planDays:Object.keys(prePlan||{}).length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
         Object.keys(prePlan||{}).forEach(day=>{
             ensureDay(day);
             ['1','2'].forEach(team=>{
@@ -1735,9 +1710,6 @@ try{
         applyHeightColors();
         // Проверяем высоты для всех загруженных строк
         setTimeout(() => {
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/1c8459e1-6ffa-454c-aa74-1638eba4d607',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'NP_build_plan.php:renderPre:updateAll',message:'Calling updateAllRowHeights',data:{rowCount:document.querySelectorAll('#daysGrid .rowItem').length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-            // #endregion
             updateAllRowHeights();
         }, 100);
     })();
@@ -1907,6 +1879,10 @@ try{
             d.className = 'dayBadge';
             d.textContent = day;
             d.dataset.isDayBadge = '1';
+            d.style.padding = '4px 8px';
+            d.style.fontSize = '12px';
+            d.style.lineHeight = '1.2';
+            d.style.maxHeight = 'none';
             return d;
         }
 
@@ -1934,7 +1910,13 @@ try{
                 const col = Math.floor(idx / PER_COL) + 1;
                 el.style.gridRow = String(row);
                 el.style.gridColumn = String(col);
-                if (el.classList.contains('dayBadge')) el.style.marginBottom = '2px';
+                if (el.classList.contains('dayBadge')) {
+                    el.style.marginBottom = '2px';
+                    el.style.minHeight = '0';
+                    el.style.maxHeight = 'none';
+                    el.style.height = 'auto';
+                    el.style.boxSizing = 'border-box';
+                }
             });
             applyHeightColors();
         }
