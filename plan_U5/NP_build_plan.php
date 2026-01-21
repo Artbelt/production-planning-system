@@ -461,8 +461,8 @@ try{
     /* Индикатор сложности */
     .complexity-indicator {
         display:inline-block;
-        width:12px;
-        height:12px;
+        width:10px;
+        height:10px;
         border-radius:50%;
         flex-shrink:0;
         border:1px solid rgba(0,0,0,0.1);
@@ -470,9 +470,9 @@ try{
     }
     /* Индикатор сложности в плавающем окне (меньше) */
     .floating-panel .complexity-indicator {
-        width:9px;
-        height:9px;
-        margin-left:4px;
+        width:7px;
+        height:7px;
+        margin-left:2px;
     }
 
     /* низ — две бригады */
