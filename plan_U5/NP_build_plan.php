@@ -537,7 +537,6 @@ try{
         max-height:none !important;
         box-sizing:border-box !important;
     }
-    .dayBadge{
         border:1px solid rgba(55, 65, 81, 0.75); background:#374151; border-radius:8px;
         padding:4px 8px; font-weight:600; font-size:12px; color:#ffffff;text-align:center;
     }
@@ -761,19 +760,38 @@ try{
         flex-direction: column;
         overflow: hidden;
     }
-    .modalWrap .teamSwitch {
-        position: sticky;
-        top: 0;
-        z-index: 10;
-        background: white;
-        padding-bottom: 10px;
-        border-bottom: 1px solid #e5e7eb;
-        margin-bottom: 10px;
+    .modalWrap .daysContainer {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        overflow: hidden;
+    }
+    .modalWrap .daysColumn {
+        display: flex;
+        flex-direction: column;
+    }
+    .modalWrap .daysColumnTitle {
+        font-weight: 600;
+        font-size: 14px;
+        padding: 8px 0;
+        margin-bottom: 8px;
+        border-bottom: 2px solid #e5e7eb;
+    }
+    .modalWrap .daysColumnTitle.team1 {
+        color: #f59e0b;
+        border-bottom-color: #fbbf24;
+    }
+    .modalWrap .daysColumnTitle.team2 {
+        color: #3b82f6;
+        border-bottom-color: #60a5fa;
     }
     .modalWrap .daysGrid {
         overflow-y: auto;
         max-height: 50vh;
         padding-right: 4px;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 3px;
     }
     .modalWrap .dayBtn {
         padding: 8px 12px;
@@ -805,20 +823,107 @@ try{
         background: #bfdbfe;
         border-color: #3b82f6;
     }
-    .modalWrap .teamBtn {
-        border: 1px solid #cbd5e1;
-        background: #f8fafc;
-        border-radius: 8px;
-        padding: 6px 10px;
-        cursor: pointer;
-        transition: all 0.2s;
+    
+    /* Прогресс-бар загрузки */
+    #loadingProgress {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
-    .modalWrap .teamBtn.active {
-        background: #2563eb !important;
-        color: white !important;
-        border-color: #2563eb !important;
+    #loadingProgressBar {
+        width: 200px;
+        height: 20px;
+        background: #e5e7eb;
+        border-radius: 10px;
+        overflow: hidden;
+        position: relative;
+    }
+    #loadingProgressBar::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        width: var(--progress-width, 0%);
+        background: linear-gradient(90deg, #2563eb, #3b82f6, #60a5fa);
+        transition: width 0.3s ease;
+        animation: loadingPulse 1.5s ease-in-out infinite;
+    }
+    @keyframes loadingPulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+    #loadingProgress.hidden {
+        opacity: 0;
+        transition: opacity 0.5s ease;
+        pointer-events: none;
     }
 </style>
+
+<!-- Прогресс-бар загрузки -->
+<div id="loadingProgress">
+    <div id="loadingProgressBar"></div>
+</div>
+<script>
+// Обновляем прогресс сразу при загрузке DOM, до основного скрипта
+(function() {
+    const progressBar = document.getElementById('loadingProgressBar');
+    if (progressBar) {
+        progressBar.style.setProperty('--progress-width', '5%');
+    }
+    
+    // Плавное увеличение прогресса до загрузки основного скрипта
+    let progress = 5;
+    const earlyInterval = setInterval(() => {
+        progress += 0.3;
+        if (progressBar) {
+            progressBar.style.setProperty('--progress-width', Math.min(progress, 20) + '%');
+        }
+        if (progress >= 20) {
+            clearInterval(earlyInterval);
+        }
+    }, 30);
+    
+    // Останавливаем интервал когда основной скрипт загрузится
+    window.addEventListener('load', () => {
+        clearInterval(earlyInterval);
+    });
+})();
+</script>
+
+<script>
+// Обновляем прогресс сразу при загрузке DOM
+(function() {
+    const progressBar = document.getElementById('loadingProgressBar');
+    if (progressBar) {
+        progressBar.style.setProperty('--progress-width', '5%');
+    }
+    
+    // Плавное увеличение прогресса до загрузки основного скрипта
+    let progress = 5;
+    const earlyInterval = setInterval(() => {
+        progress += 0.5;
+        if (progressBar) {
+            progressBar.style.setProperty('--progress-width', Math.min(progress, 20) + '%');
+        }
+        if (progress >= 20) {
+            clearInterval(earlyInterval);
+        }
+    }, 50);
+    
+    // Останавливаем интервал когда основной скрипт загрузится
+    window.addEventListener('load', () => {
+        clearInterval(earlyInterval);
+    });
+})();
+</script>
 
 <div class="wrap">
     <b>План сборки заявки <?=h($order)?></b>
@@ -953,28 +1058,73 @@ try{
 
 <!-- Модалка выбора дня/бригады -->
 <div class="modalWrap" id="datePicker" style="position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.35);z-index:1000">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dpTitle" style="background:#fff;border-radius:12px;border:1px solid #e5e7eb;min-width:360px;max-width:600px">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dpTitle" style="background:#fff;border-radius:12px;border:1px solid #e5e7eb;min-width:500px;max-width:840px">
         <div class="modalHeader" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #e5e7eb">
             <div class="modalTitle" id="dpTitle" style="font-weight:600">Выберите день и бригаду</div>
-            <button class="modalClose" id="dpClose" title="Закрыть" style="border:1px solid #ccc;background:#f8f8f8;border-radius:8px;padding:4px 8px;cursor:pointer">×</button>
+            <div style="display:flex;align-items:center;gap:12px">
+                <label style="white-space:nowrap;font-size:13px">Кол-во:
+                    <input id="dpQty" type="number" min="1" step="1" value="1" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;width:80px;margin-left:4px">
+                </label>
+                <button class="modalClose" id="dpClose" title="Закрыть" style="border:1px solid #ccc;background:#f8f8f8;border-radius:8px;padding:4px 8px;cursor:pointer">×</button>
+            </div>
         </div>
         <div class="modalBody" style="padding:10px">
-            <div class="teamSwitch" style="display:flex;gap:8px;align-items:center">
-                <button class="teamBtn active" id="team1">Бригада 1</button>
-                <button class="teamBtn" id="team2">Бригада 2</button>
-                <div style="flex:1"></div>
-                <label style="white-space:nowrap">Кол-во:
-                    <input id="dpQty" type="number" min="1" step="1" value="1" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;width:80px">
-                </label>
+            <div class="daysContainer" id="dpDaysContainer">
+                <div class="daysColumn">
+                    <div class="daysColumnTitle team1">Бригада 1</div>
+                    <div class="daysGrid" id="dpDays1"></div>
+                </div>
+                <div class="daysColumn">
+                    <div class="daysColumnTitle team2">Бригада 2</div>
+                    <div class="daysGrid" id="dpDays2"></div>
+                </div>
             </div>
-            <div class="daysGrid" id="dpDays" style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px"></div>
         </div>
     </div>
 </div>
 
 <script>
+    // Инициализация прогресс-бара загрузки
+    const loadingProgress = document.getElementById('loadingProgress');
+    const loadingProgressBar = document.getElementById('loadingProgressBar');
+    let loadingProgressValue = 0;
+    
+    function updateLoadingProgress(value) {
+        loadingProgressValue = Math.min(100, Math.max(0, value));
+        if (loadingProgressBar) {
+            // Используем CSS переменную для ширины псевдоэлемента ::after
+            loadingProgressBar.style.setProperty('--progress-width', loadingProgressValue + '%');
+        }
+    }
+    
+    function hideLoadingProgress() {
+        if (loadingProgress) {
+            updateLoadingProgress(100);
+            setTimeout(() => {
+                loadingProgress.classList.add('hidden');
+                setTimeout(() => {
+                    if (loadingProgress) loadingProgress.style.display = 'none';
+                }, 500);
+            }, 200);
+        }
+    }
+    
+    // Начинаем с того места, где остановился ранний прогресс (или с 20%)
+    const currentProgress = loadingProgressBar ? parseFloat(loadingProgressBar.style.getPropertyValue('--progress-width') || '20') : 20;
+    updateLoadingProgress(Math.max(currentProgress, 20));
+    
+    // Плавное увеличение прогресса в начале загрузки
+    const progressInterval = setInterval(() => {
+        if (loadingProgressValue < 28) {
+            updateLoadingProgress(loadingProgressValue + 0.5);
+        } else {
+            clearInterval(progressInterval);
+        }
+    }, 30);
+    
     const ORDER = <?= json_encode($order) ?>;
     const SHIFT_HOURS = <?= json_encode($SHIFT_HOURS) ?>;
+    updateLoadingProgress(25);
 
     // ===== in-memory =====
     const plan   = new Map();
@@ -985,10 +1135,12 @@ try{
     let lastTeam = '1';
 
     const prePlan = <?= json_encode($prePlan, JSON_UNESCAPED_UNICODE) ?>;
+    updateLoadingProgress(27);
 
     // стартовые часы/высоты других заявок
     const BUSY_INIT = <?= json_encode($busyInit, JSON_UNESCAPED_UNICODE) ?>;
     const BUSY_HEIGHTS_INIT = <?= json_encode($busyHeightsInit, JSON_UNESCAPED_UNICODE) ?>;
+    updateLoadingProgress(28);
 
     const busyHours = new Map();
     Object.keys(BUSY_INIT || {}).forEach(d => {
@@ -1601,53 +1753,57 @@ try{
 
     // ===== модалка дня/бригады =====
     const dpWrap  = document.getElementById('datePicker');
-    const dpDays  = document.getElementById('dpDays');
+    const dpDays1 = document.getElementById('dpDays1');
+    const dpDays2 = document.getElementById('dpDays2');
     const dpQty   = document.getElementById('dpQty');
     const dpClose = document.getElementById('dpClose');
-    const team1Btn= document.getElementById('team1');
-    const team2Btn= document.getElementById('team2');
     let pending = null;
-
-    function setTeamActive(t){
-        lastTeam = (t==='2'?'2':'1');
-        team1Btn.classList.toggle('active', lastTeam==='1');
-        team2Btn.classList.toggle('active', lastTeam==='2');
-        const days = getAllDays();
-        dpDays.querySelectorAll('.dayBtn').forEach(btn=>{
-            const ds = btn.dataset.day;
-            const c  = (countsByTeam.get(ds)||{})[lastTeam] || 0;
-            const h  = (hoursByTeam.get(ds)||{})[lastTeam]  || 0;
-            btn.querySelector('.daySub').textContent = `Бригада ${lastTeam}: ${c} шт · ${fmtH(h)} ч`;
-            
-            // Меняем цвет кнопки в зависимости от бригады
-            btn.classList.remove('team1', 'team2');
-            btn.classList.add(lastTeam === '1' ? 'team1' : 'team2');
-        });
-    }
-    team1Btn.onclick = ()=> setTeamActive('1');
-    team2Btn.onclick = ()=> setTeamActive('2');
 
     function openDatePicker(pill, qty){
         pending = {pill, qty};
         dpQty.value = String(qty);
-        dpDays.innerHTML = '';
+        dpDays1.innerHTML = '';
+        dpDays2.innerHTML = '';
 
         const days = getAllDays();
+        
+        // Создаем кнопки для бригады 1
         days.forEach(d=>{
             const btn = document.createElement('button');
             btn.type='button'; 
-            btn.className = 'dayBtn ' + (lastTeam === '1' ? 'team1' : 'team2');
+            btn.className = 'dayBtn team1';
             btn.dataset.day = d;
-            btn.innerHTML = `<div class="dayHead" style="font-weight:600;font-size:13px">${d}</div><div class="daySub" style="font-size:11px;color:#6b7280"></div>`;
+            btn.dataset.team = '1';
+            const c1 = (countsByTeam.get(d)||{})['1'] || 0;
+            const h1 = (hoursByTeam.get(d)||{})['1']  || 0;
+            btn.innerHTML = `<div class="dayHead" style="font-weight:600;font-size:13px">${d}</div><div class="daySub" style="font-size:11px;color:#6b7280">${c1} шт · ${fmtH(h1)} ч</div>`;
             btn.onclick = ()=>{
-                addToDay(d, lastTeam, pending.pill, +dpQty.value || 1);
+                addToDay(d, '1', pending.pill, +dpQty.value || 1);
                 closeDatePicker();
             };
-            if (d===lastDay) btn.style.outline = '2px solid #2563eb';
-            dpDays.appendChild(btn);
+            if (d===lastDay && lastTeam==='1') btn.style.outline = '2px solid #2563eb';
+            dpDays1.appendChild(btn);
         });
+        
+        // Создаем кнопки для бригады 2
+        days.forEach(d=>{
+            const btn = document.createElement('button');
+            btn.type='button'; 
+            btn.className = 'dayBtn team2';
+            btn.dataset.day = d;
+            btn.dataset.team = '2';
+            const c2 = (countsByTeam.get(d)||{})['2'] || 0;
+            const h2 = (hoursByTeam.get(d)||{})['2']  || 0;
+            btn.innerHTML = `<div class="dayHead" style="font-weight:600;font-size:13px">${d}</div><div class="daySub" style="font-size:11px;color:#6b7280">${c2} шт · ${fmtH(h2)} ч</div>`;
+            btn.onclick = ()=>{
+                addToDay(d, '2', pending.pill, +dpQty.value || 1);
+                closeDatePicker();
+            };
+            if (d===lastDay && lastTeam==='2') btn.style.outline = '2px solid #2563eb';
+            dpDays2.appendChild(btn);
+        });
+        
         dpWrap.style.display='flex';
-        setTeamActive(lastTeam);
     }
     function closeDatePicker(){ dpWrap.style.display='none'; pending=null; }
     dpClose.onclick = closeDatePicker;
@@ -1691,11 +1847,18 @@ try{
         updateAvailForPill(pill, rest);
 
         lastDay = day;
+        lastTeam = team;
     }
 
     // пререндер сохранённого плана
     (function renderPre(){
-        Object.keys(prePlan||{}).forEach(day=>{
+        const prePlanKeys = Object.keys(prePlan||{});
+        const totalDays = prePlanKeys.length;
+        let processedDays = 0;
+        
+        updateLoadingProgress(30);
+        
+        prePlanKeys.forEach((day, index)=>{
             ensureDay(day);
             ['1','2'].forEach(team=>{
                 (prePlan[day][team]||[]).forEach(it=>{
@@ -1706,23 +1869,44 @@ try{
                 });
             });
             lastDay = day;
+            processedDays++;
+            
+            // Обновляем прогресс по мере обработки дней
+            if (totalDays > 0) {
+                const progress = 30 + Math.floor((processedDays / totalDays) * 20);
+                updateLoadingProgress(progress);
+            }
         });
         applyHeightColors();
         // Проверяем высоты для всех загруженных строк
         setTimeout(() => {
             updateAllRowHeights();
+            updateLoadingProgress(55);
         }, 100);
     })();
 
     // корректировка доступности после пререндеринга
     (function applyAvailAfterPre(){
+        updateLoadingProgress(60);
         const used = collectUsedFromPlan();
-        document.querySelectorAll('.pill').forEach(p=>{
+        const pills = document.querySelectorAll('.pill');
+        const totalPills = pills.length;
+        let processedPills = 0;
+        
+        pills.forEach(p=>{
             const base = +p.dataset.avail0 || 0;
             const key  = p.dataset.sourceDate + '|' + p.dataset.filter;
             const rest = Math.max(0, base - (used.get(key)||0));
             updateAvailForPill(p, rest);
+            processedPills++;
+            
+            // Обновляем прогресс по мере обработки плашек
+            if (totalPills > 0 && processedPills % 10 === 0) {
+                const progress = 60 + Math.floor((processedPills / totalPills) * 15);
+                updateLoadingProgress(progress);
+            }
         });
+        updateLoadingProgress(75);
     })();
 
     // подтянуть «другие часы/высоты»
@@ -1985,9 +2169,26 @@ try{
     
     // Проверяем высоты для всех плашек при загрузке
     setTimeout(() => {
-        document.querySelectorAll('#topGrid .pill').forEach(pill => {
+        updateLoadingProgress(80);
+        const pills = document.querySelectorAll('#topGrid .pill');
+        const totalPills = pills.length;
+        let processedPills = 0;
+        
+        pills.forEach(pill => {
             checkAndHidePillHeight(pill);
+            processedPills++;
+            
+            // Обновляем прогресс по мере обработки плашек
+            if (totalPills > 0 && processedPills % 5 === 0) {
+                const progress = 80 + Math.floor((processedPills / totalPills) * 15);
+                updateLoadingProgress(progress);
+            }
         });
+        updateLoadingProgress(95);
+        // Скрываем прогресс-бар после полной загрузки
+        setTimeout(() => {
+            hideLoadingProgress();
+        }, 300);
     }, 100);
     
     // ===== ФУНКЦИОНАЛ ПЛАВАЮЩЕЙ ПАНЕЛИ =====

@@ -285,6 +285,15 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
 
         /* <<< tiny save & qty */
 
+        /* Кнопка удаления последней позиции */
+        button.delete-last-btn:hover {
+            background: var(--accent-dark);
+        }
+
+        button.delete-last-btn:active {
+            transform: scale(0.98);
+        }
+
         .no-data {
             text-align: center;
             padding: 40px 20px;
@@ -694,11 +703,13 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
                         <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px;">Фильтр</th>
                         <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px;">Количество</th>
                         <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px;">Время</th>
+                        <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px; width: 1%; white-space: nowrap;"></th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php 
                     $total_count = 0;
+                    $is_first = true;
                     foreach ($manufactured_packages as $item): 
                         $total_count += (int)$item['count'];
                         $time = $item['timestamp'] ? date('H:i', strtotime($item['timestamp'])) : '-';
@@ -716,8 +727,22 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
                             <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; color: var(--gray-600); font-size: 12px;">
                                 <?= htmlspecialchars($time) ?>
                             </td>
+                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; width: 1%; white-space: nowrap;">
+                                <?php if ($is_first): ?>
+                                    <button class="delete-last-btn" 
+                                            onclick="deleteLastPackage('<?= htmlspecialchars($date) ?>')"
+                                            style="background: var(--accent-color); color: white; border: none; padding: 6px 10px; border-radius: var(--border-radius-sm); cursor: pointer; font-size: 14px; font-weight: 500; transition: var(--transition); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"
+                                            title="Удалить последнюю внесенную позицию">
+                                        ✕
+                                    </button>
+                                <?php else: ?>
+                                    <span style="color: var(--gray-400); font-size: 11px;">—</span>
+                                <?php endif; ?>
+                            </td>
                         </tr>
-                    <?php endforeach; ?>
+                    <?php 
+                        $is_first = false;
+                    endforeach; ?>
                     <tr style="background: var(--gray-50); font-weight: 600;">
                         <td colspan="2" style="border: 1px solid var(--gray-200); padding: 8px 12px; text-align: right;">
                             Итого:
@@ -726,6 +751,7 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
                             <?= $total_count ?>
                         </td>
                         <td style="border: 1px solid var(--gray-200); padding: 8px 12px;"></td>
+                        <td style="border: 1px solid var(--gray-200); padding: 8px 12px; width: 1%;"></td>
                     </tr>
                 </tbody>
             </table>
@@ -970,6 +996,38 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
                 this.focus();
             }
         });
+
+        // Функция удаления последней внесенной позиции
+        async function deleteLastPackage(date) {
+            if (!confirm('Вы уверены, что хотите удалить последнюю внесенную позицию?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('delete_last_manufactured_package.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams({
+                        date_of_production: date
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Последняя позиция успешно удалена');
+                    // Перезагружаем страницу для обновления таблицы
+                    window.location.reload();
+                } else {
+                    alert('Ошибка: ' + (data.message || 'Неизвестная ошибка'));
+                }
+            } catch (error) {
+                console.error('Ошибка:', error);
+                alert('Ошибка при удалении записи');
+            }
+        }
 
         // Обработка формы внесения изготовленной продукции
         document.getElementById('addProductionForm').addEventListener('submit', async function(e) {

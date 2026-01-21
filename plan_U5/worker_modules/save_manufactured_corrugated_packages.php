@@ -25,16 +25,40 @@ try {
     }
 
     // Проверяем, что фильтр есть в заявке
+    // Проверяем в таблице orders (основной источник)
     if (!empty($order_number)) {
+        $found = false;
+        
+        // Сначала проверяем в таблице orders
         $checkStmt = $pdo->prepare("
             SELECT 1 
-            FROM corrugation_plan 
+            FROM orders 
             WHERE order_number = ? 
-              AND filter_label = ?
+              AND `filter` = ?
+              AND COALESCE(hide, 0) != 1
             LIMIT 1
         ");
         $checkStmt->execute([$order_number, $filter_label]);
-        if (!$checkStmt->fetchColumn()) {
+        if ($checkStmt->fetchColumn()) {
+            $found = true;
+        }
+        
+        // Если не нашли в orders, проверяем в corrugation_plan
+        if (!$found) {
+            $checkStmt = $pdo->prepare("
+                SELECT 1 
+                FROM corrugation_plan 
+                WHERE order_number = ? 
+                  AND filter_label = ?
+                LIMIT 1
+            ");
+            $checkStmt->execute([$order_number, $filter_label]);
+            if ($checkStmt->fetchColumn()) {
+                $found = true;
+            }
+        }
+        
+        if (!$found) {
             echo json_encode([
                 'success' => false,
                 'message' => 'Этот фильтр не найден в выбранной заявке'

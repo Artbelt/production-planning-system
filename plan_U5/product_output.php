@@ -91,6 +91,45 @@ if (isset($_GET['check'])) {
     exit;
 }
 
+// ========= API: остатки по фильтру из всех активных заявок =========
+// GET ?filter_balance=1&filter=AF1600 → [{"order":"29-35-25","plan":100,"produced":50,"remaining":50}, ...]
+if (isset($_GET['filter_balance'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    $filter = $_GET['filter'] ?? '';
+    if ($filter === '') { echo json_encode([]); exit; }
+    try {
+        $pdo = pdo_u5();
+        $stmt = $pdo->prepare("
+            SELECT 
+                o.order_number,
+                o.`count` as plan_count,
+                COALESCE(SUM(mp.count_of_filters), 0) as produced_count,
+                (o.`count` - COALESCE(SUM(mp.count_of_filters), 0)) as remaining_count
+            FROM `orders` o
+            LEFT JOIN `manufactured_production` mp 
+                ON BINARY mp.name_of_order = BINARY o.order_number 
+                AND BINARY mp.name_of_filter = BINARY o.filter
+            WHERE BINARY o.filter = BINARY ?
+              AND (o.hide IS NULL OR o.hide = 0)
+            GROUP BY o.order_number, o.`count`
+            HAVING remaining_count > 0
+            ORDER BY o.order_number
+        ");
+        $stmt->execute([$filter]);
+        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        // Преобразуем в числовые типы
+        foreach ($result as &$row) {
+            $row['plan_count'] = (int)$row['plan_count'];
+            $row['produced_count'] = (int)$row['produced_count'];
+            $row['remaining_count'] = (int)$row['remaining_count'];
+        }
+        echo json_encode($result);
+    } catch (Throwable $e) {
+        echo json_encode([]);
+    }
+    exit;
+}
+
 // ========= API: сохранение смены =========
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json; charset=utf-8');
@@ -245,9 +284,21 @@ $today = date('Y-m-d');
                 <option value="">Сначала выберите заявку</option>
             </select>
 
+            <!-- Блок подсказок об остатках -->
+            <div id="filterBalanceHint" class="hidden mb-2 p-3 bg-blue-50 border border-blue-200 rounded text-sm">
+                <div class="font-semibold text-blue-800 mb-1">Остатки по этому фильтру в заявках:</div>
+                <div id="balanceList" class="space-y-1 text-blue-700"></div>
+            </div>
+
             <!-- Количество -->
             <label class="block text-sm">Изготовлено</label>
-            <input type="number" id="modalCount" class="w-full border px-3 py-2 rounded mb-4" placeholder="150" min="1">
+            <input type="number" id="modalCount" class="w-full border px-3 py-2 rounded mb-2" placeholder="150" min="1">
+            
+            <!-- Предупреждение о превышении остатка -->
+            <div id="countWarning" class="hidden mb-2 p-2 bg-yellow-50 border border-yellow-300 rounded text-sm text-yellow-800"></div>
+            
+            <!-- Предупреждение о других заявках -->
+            <div id="otherOrdersWarning" class="hidden mb-4 p-2 bg-orange-50 border border-orange-300 rounded text-sm text-orange-800"></div>
 
             <div class="flex justify-end gap-2">
                 <button onclick="closeModal()" class="px-4 py-2 bg-gray-300 rounded">Отмена</button>
@@ -280,12 +331,15 @@ $today = date('Y-m-d');
         sel.innerHTML = '<option value="">Сначала выберите заявку</option>';
         sel.disabled = true;
         document.getElementById('modalCount').value = '';
+        hideBalanceHints();
+        currentFilterBalance = [];
     }
 
     // Подгружаем точные строки filter для выбранной заявки
     async function loadFiltersForOrder(order){
         const sel = document.getElementById('modalName');
         sel.innerHTML=''; sel.disabled = true;
+        hideBalanceHints();
         if(!order){
             sel.innerHTML = '<option value="">Сначала выберите заявку</option>';
             return;
@@ -307,8 +361,132 @@ $today = date('Y-m-d');
             sel.innerHTML = '<option value="">Ошибка загрузки</option>';
         }
     }
-    document.getElementById('modalOrder').addEventListener('change', e=>{
-        loadFiltersForOrder(e.target.value);
+    document.getElementById('modalOrder').addEventListener('change', async e=>{
+        await loadFiltersForOrder(e.target.value);
+        // Если уже был выбран фильтр, обновляем подсказки
+        const selectedFilter = document.getElementById('modalName').value;
+        if(selectedFilter){
+            await loadFilterBalance(selectedFilter);
+        }
+    });
+
+    // Скрываем все подсказки
+    function hideBalanceHints(){
+        document.getElementById('filterBalanceHint').classList.add('hidden');
+        document.getElementById('countWarning').classList.add('hidden');
+        document.getElementById('otherOrdersWarning').classList.add('hidden');
+    }
+
+    // Загружаем остатки по фильтру из всех активных заявок
+    let currentFilterBalance = [];
+    async function loadFilterBalance(filter){
+        if(!filter){
+            hideBalanceHints();
+            currentFilterBalance = [];
+            return;
+        }
+        try{
+            const res = await fetch(`?filter_balance=1&filter=${encodeURIComponent(filter)}`);
+            const balance = await res.json();
+            currentFilterBalance = balance || [];
+            showFilterBalance();
+            checkCountWarning();
+        }catch(e){
+            hideBalanceHints();
+            currentFilterBalance = [];
+        }
+    }
+
+    // Показываем подсказки об остатках
+    function showFilterBalance(){
+        const hintDiv = document.getElementById('filterBalanceHint');
+        const balanceList = document.getElementById('balanceList');
+        
+        if(currentFilterBalance.length === 0){
+            hintDiv.classList.add('hidden');
+            return;
+        }
+        
+        const selectedOrder = document.getElementById('modalOrder').value;
+        let html = '';
+        let hasOtherOrders = false;
+        
+        for(const item of currentFilterBalance){
+            const order = item.order_number;
+            const remaining = item.remaining_count;
+            const plan = item.plan_count;
+            const produced = item.produced_count;
+            const isSelected = order === selectedOrder;
+            
+            if(!isSelected){
+                hasOtherOrders = true;
+            }
+            
+            const statusClass = isSelected ? 'font-semibold text-blue-900' : '';
+            const prefix = isSelected ? '' : '  ';
+            html += `<div class="${statusClass}">${prefix} ${escapeHtml(order)}: ост. ${remaining} из ${plan} (сделано ${produced})</div>`;
+        }
+        
+        balanceList.innerHTML = html;
+        hintDiv.classList.remove('hidden');
+        
+        // Предупреждение о других заявках
+        const otherWarning = document.getElementById('otherOrdersWarning');
+        if(hasOtherOrders && selectedOrder){
+            const otherCount = currentFilterBalance.filter(x => x.order_number !== selectedOrder).length;
+            const otherTotal = currentFilterBalance
+                .filter(x => x.order_number !== selectedOrder)
+                .reduce((sum, x) => sum + x.remaining_count, 0);
+            otherWarning.innerHTML = `⚠️ ВНИМАНИЕ: Этот фильтр есть еще в ${otherCount} активной заявке(ах) с остатком ${otherTotal} шт. Убедитесь, что правильно распределяете продукцию между заявками!`;
+            otherWarning.classList.remove('hidden');
+        }else{
+            otherWarning.classList.add('hidden');
+        }
+    }
+
+    // Проверяем введенное количество и показываем предупреждения
+    function checkCountWarning(){
+        const countInput = document.getElementById('modalCount');
+        const count = parseInt(countInput.value) || 0;
+        const warningDiv = document.getElementById('countWarning');
+        const selectedOrder = document.getElementById('modalOrder').value;
+        const selectedFilter = document.getElementById('modalName').value;
+        
+        if(count <= 0 || !selectedOrder || !selectedFilter){
+            warningDiv.classList.add('hidden');
+            return;
+        }
+        
+        // Находим остаток по выбранной заявке
+        const currentOrderBalance = currentFilterBalance.find(x => x.order_number === selectedOrder);
+        
+        if(!currentOrderBalance){
+            warningDiv.classList.add('hidden');
+            return;
+        }
+        
+        const remaining = currentOrderBalance.remaining_count;
+        
+        if(count > remaining){
+            warningDiv.innerHTML = `⚠️ Превышение остатка! По заявке ${escapeHtml(selectedOrder)} осталось только ${remaining} шт, а вы вводите ${count} шт. Проверьте правильность!`;
+            warningDiv.className = 'mb-2 p-2 bg-yellow-50 border border-yellow-300 rounded text-sm text-yellow-800';
+            warningDiv.classList.remove('hidden');
+        }else if(count === remaining){
+            warningDiv.innerHTML = `✅ Это закроет заявку ${escapeHtml(selectedOrder)} полностью (осталось ${remaining} шт)`;
+            warningDiv.className = 'mb-2 p-2 bg-green-50 border border-green-300 rounded text-sm text-green-800';
+            warningDiv.classList.remove('hidden');
+        }else{
+            warningDiv.classList.add('hidden');
+        }
+    }
+
+    // Подписываемся на изменения фильтра и количества
+    document.getElementById('modalName').addEventListener('change', function(e){
+        loadFilterBalance(e.target.value);
+    });
+    
+    document.getElementById('modalCount').addEventListener('input', function(){
+        checkCountWarning();
     });
 
     function addProduct(){
@@ -317,7 +495,19 @@ $today = date('Y-m-d');
         const count = document.getElementById('modalCount').value.trim();
 
         if(!order || !name || !count){ alert('Заполните все поля!'); return; }
-        if(parseInt(count) <= 0){ alert('Количество должно быть > 0'); return; }
+        const countNum = parseInt(count);
+        if(countNum <= 0){ alert('Количество должно быть > 0'); return; }
+
+        // Дополнительная проверка на превышение остатка
+        const currentOrderBalance = currentFilterBalance.find(x => x.order_number === order);
+        if(currentOrderBalance && countNum > currentOrderBalance.remaining_count){
+            const confirmMsg = `ВНИМАНИЕ! Вы вводите ${countNum} шт, а по заявке ${order} осталось только ${currentOrderBalance.remaining_count} шт.\n\n` +
+                              `Возможно, часть продукции нужно отнести к другой заявке?\n\n` +
+                              `Продолжить все равно?`;
+            if(!confirm(confirmMsg)){
+                return;
+            }
+        }
 
         const row = document.createElement('tr');
         row.setAttribute('data-valid','pending'); // pending|1|0
