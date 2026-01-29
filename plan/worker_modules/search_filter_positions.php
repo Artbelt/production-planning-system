@@ -21,16 +21,21 @@ try {
         exit;
     }
 
-    // Поиск позиций по названию фильтра только для активных заявок (отдельно по рулонам)
+    // Поиск позиций по названию фильтра; факт гофропакетов из manufactured_corrugated_packages
     $stmt = $pdo->prepare("
         SELECT 
             cp.id,
             cp.order_number,
             cp.filter_label,
             cp.plan_date,
-            cp.count as plan_sum,
-            cp.fact_count as fact_sum
+            cp.count AS plan_sum,
+            COALESCE(m.fact_sum, 0) AS fact_sum
         FROM corrugation_plan cp
+        LEFT JOIN (
+            SELECT order_number, filter_label, SUM(count) AS fact_sum
+            FROM manufactured_corrugated_packages
+            GROUP BY order_number, filter_label
+        ) m ON m.order_number = cp.order_number AND m.filter_label = cp.filter_label
         WHERE cp.filter_label LIKE :filter_name
           AND cp.order_number IN (
               SELECT order_number 

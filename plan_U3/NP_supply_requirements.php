@@ -6,21 +6,64 @@ $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_U3;charset=utf8mb4","root","",[
     PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION
 ]);
 
-/* ===== AJAX: экспорт в Excel ===== */
-if (isset($_GET['export']) && $_GET['export']=='excel') {
+// Создаем таблицу для снимков потребности, если её нет
+$pdo->exec("
+    CREATE TABLE IF NOT EXISTS supply_requirements_snapshots (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        order_number VARCHAR(64) NOT NULL,
+        component_type VARCHAR(32) NOT NULL DEFAULT 'caps',
+        snapshot_data JSON NOT NULL,
+        comment TEXT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_by VARCHAR(255) NULL,
+        INDEX idx_order_type (order_number, component_type),
+        INDEX idx_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+");
+
+/* ===== AJAX: список снимков ===== */
+if (isset($_GET['action']) && $_GET['action']=='list_snapshots') {
+    header('Content-Type: application/json; charset=utf-8');
     $order = $_GET['order'] ?? '';
     $ctype = $_GET['ctype'] ?? '';
     
     if ($order==='' || $ctype==='') {
         http_response_code(400);
-        echo "Не указана заявка или тип комплектующих.";
+        echo json_encode(['ok'=>false, 'error'=>'Не указана заявка или тип комплектующих']);
         exit;
     }
     
-    // Подключаем PHPExcel
-    require_once __DIR__ . '/PHPExcel.php';
+    $stmt = $pdo->prepare("
+        SELECT id, order_number, component_type, comment, created_at, created_by
+        FROM supply_requirements_snapshots
+        WHERE order_number = ? AND component_type = ?
+        ORDER BY created_at DESC
+    ");
+    $stmt->execute([$order, $ctype]);
+    $snapshots = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Получаем данные (та же логика, что и для отображения)
+    echo json_encode(['ok'=>true, 'snapshots'=>$snapshots]);
+    exit;
+}
+
+/* ===== AJAX: сохранить снимок ===== */
+if (isset($_GET['action']) && $_GET['action']=='save_snapshot') {
+    header('Content-Type: application/json; charset=utf-8');
+    
+    $raw = file_get_contents('php://input');
+    $payload = $raw ? json_decode($raw, true) : [];
+    
+    $order = $payload['order'] ?? '';
+    $ctype = $payload['ctype'] ?? '';
+    $comment = $payload['comment'] ?? '';
+    
+    if ($order==='' || $ctype==='') {
+        http_response_code(400);
+        echo json_encode(['ok'=>false, 'error'=>'Не указана заявка или тип комплектующих']);
+        exit;
+    }
+    
+    // Получаем текущие данные (та же логика, что и для отображения)
     $sql = "
     WITH bp AS (
       SELECT
@@ -68,7 +111,7 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
     
     if (!$rows) {
         http_response_code(404);
-        echo "По заявке ".htmlspecialchars($order)." для крышек данных нет.";
+        echo json_encode(['ok'=>false, 'error'=>'По заявке '.htmlspecialchars($order).' для крышек данных нет']);
         exit;
     }
     
@@ -105,6 +148,194 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
         }
     }
     
+    // Формируем данные для снимка
+    $snapshotData = [
+        'version' => '1.0',
+        'created_at' => date('Y-m-d H:i:s'),
+        'dates' => $dates,
+        'items' => $items,
+        'matrix' => $matrix,
+        'stock_map' => $stockMap
+    ];
+    
+    // Сохраняем снимок
+    $stmt = $pdo->prepare("
+        INSERT INTO supply_requirements_snapshots (order_number, component_type, snapshot_data, comment, created_by)
+        VALUES (?, ?, ?, ?, ?)
+    ");
+        // Получаем имя пользователя из сессии, если доступно
+        $userName = 'Система';
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        if (isset($_SESSION['user_name'])) {
+            $userName = $_SESSION['user_name'];
+        } elseif (isset($_SESSION['full_name'])) {
+            $userName = $_SESSION['full_name'];
+        }
+        
+        $stmt->execute([
+        $order,
+        $ctype,
+        json_encode($snapshotData, JSON_UNESCAPED_UNICODE),
+        $comment ?: null,
+        $userName
+    ]);
+    
+    $snapshotId = $pdo->lastInsertId();
+    echo json_encode(['ok'=>true, 'snapshot_id'=>$snapshotId]);
+    exit;
+}
+
+/* ===== AJAX: загрузить снимок ===== */
+if (isset($_GET['action']) && $_GET['action']=='load_snapshot') {
+    header('Content-Type: application/json; charset=utf-8');
+    $snapshotId = $_GET['snapshot_id'] ?? '';
+    
+    if ($snapshotId==='') {
+        http_response_code(400);
+        echo json_encode(['ok'=>false, 'error'=>'Не указан ID снимка']);
+        exit;
+    }
+    
+    $stmt = $pdo->prepare("SELECT snapshot_data FROM supply_requirements_snapshots WHERE id = ?");
+    $stmt->execute([$snapshotId]);
+    $snapshot = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$snapshot) {
+        http_response_code(404);
+        echo json_encode(['ok'=>false, 'error'=>'Снимок не найден']);
+        exit;
+    }
+    
+    $snapshotData = json_decode($snapshot['snapshot_data'], true);
+    echo json_encode(['ok'=>true, 'data'=>$snapshotData]);
+    exit;
+}
+
+/* ===== AJAX: экспорт в Excel ===== */
+if (isset($_GET['export']) && $_GET['export']=='excel') {
+    $order = $_GET['order'] ?? '';
+    $ctype = $_GET['ctype'] ?? '';
+    $snapshotId = $_GET['snapshot_id'] ?? '';
+    
+    if ($order==='' || $ctype==='') {
+        http_response_code(400);
+        echo "Не указана заявка или тип комплектующих.";
+        exit;
+    }
+    
+    // Подключаем PHPExcel
+    require_once __DIR__ . '/PHPExcel.php';
+    
+    // Если указан snapshot_id, загружаем данные из снимка
+    if ($snapshotId !== '') {
+        $stmt = $pdo->prepare("SELECT snapshot_data, comment, created_at FROM supply_requirements_snapshots WHERE id = ?");
+        $stmt->execute([$snapshotId]);
+        $snapshot = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$snapshot) {
+            http_response_code(404);
+            echo "Снимок не найден.";
+            exit;
+        }
+        
+        $snapshotData = json_decode($snapshot['snapshot_data'], true);
+        $dates = $snapshotData['dates'] ?? [];
+        $items = $snapshotData['items'] ?? [];
+        $matrix = $snapshotData['matrix'] ?? [];
+        $stockMap = $snapshotData['stock_map'] ?? [];
+        $snapshotDate = date('Y-m-d', strtotime($snapshot['created_at']));
+        $snapshotComment = $snapshot['comment'];
+    } else {
+        // Обычный запрос из базы данных
+        $sql = "
+        WITH bp AS (
+          SELECT
+            order_number,
+            filter AS base_filter,
+            filter,
+            day_date,
+            SUM(qty) AS qty
+          FROM build_plans
+          WHERE order_number = :ord
+          GROUP BY order_number, filter, day_date
+        ),
+        p AS (
+          SELECT b.order_number, b.base_filter, b.filter, b.day_date, b.qty,
+                 rfs.up_cap, rfs.down_cap
+          FROM bp b
+          JOIN round_filter_structure rfs ON rfs.filter = b.base_filter
+        )
+        SELECT
+          'caps' AS component_type,
+          p.up_cap AS component_name,
+          p.day_date AS need_by_date,
+          p.filter AS filter_label,
+          p.base_filter,
+          p.qty,
+          'верхняя' AS cap_type
+        FROM p
+        WHERE p.up_cap IS NOT NULL AND p.up_cap <> ''
+        UNION ALL
+        SELECT
+          'caps' AS component_type,
+          p.down_cap AS component_name,
+          p.day_date AS need_by_date,
+          p.filter AS filter_label,
+          p.base_filter,
+          p.qty,
+          'нижняя' AS cap_type
+        FROM p
+        WHERE p.down_cap IS NOT NULL AND p.down_cap <> ''
+        ORDER BY need_by_date, component_name, base_filter
+        ";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([':ord'=>$order]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        if (!$rows) {
+            http_response_code(404);
+            echo "По заявке ".htmlspecialchars($order)." для крышек данных нет.";
+            exit;
+        }
+        
+        // Пивот-структура
+        $dates  = [];
+        $items  = [];
+        $matrix = [];
+        foreach ($rows as $r) {
+            $d = $r['need_by_date'];
+            $name = $r['component_name'];
+            if ($name === null || $name === '') continue;
+            
+            $dates[$d] = true;
+            $items[$name] = true;
+            
+            if (!isset($matrix[$name])) $matrix[$name] = [];
+            if (!isset($matrix[$name][$d])) $matrix[$name][$d] = 0;
+            $matrix[$name][$d] += (float)$r['qty'];
+        }
+        $dates = array_keys($dates);
+        sort($dates);
+        $items = array_keys($items);
+        sort($items, SORT_NATURAL|SORT_FLAG_CASE);
+        
+        // Получаем остатки крышек на складе
+        $stockMap = [];
+        if (!empty($items)) {
+            $placeholders = str_repeat('?,', count($items) - 1) . '?';
+            $stmtStock = $pdo->prepare("SELECT cap_name, current_quantity FROM cap_stock WHERE cap_name IN ($placeholders)");
+            $stmtStock->execute($items);
+            $stockRows = $stmtStock->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($stockRows as $sr) {
+                $stockMap[$sr['cap_name']] = (int)$sr['current_quantity'];
+            }
+        }
+        $snapshotDate = null;
+        $snapshotComment = null;
+    }
+    
     // Предрасчёт накопленной потребности
     $cumulativeDemand = [];
     foreach ($items as $name) {
@@ -123,7 +354,14 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
     
     // Заголовок
     $lastCol = PHPExcel_Cell::stringFromColumnIndex(count($dates) + 3);
-    $sheet->setCellValue('A1', 'Заявка ' . $order . ': потребность — крышки');
+    $title = 'Заявка ' . $order . ': потребность — крышки';
+    if ($snapshotDate) {
+        $title .= ' (снимок от ' . $snapshotDate . ')';
+        if ($snapshotComment) {
+            $title .= ' — ' . $snapshotComment;
+        }
+    }
+    $sheet->setCellValue('A1', $title);
     $sheet->mergeCells('A1:' . $lastCol . '1');
     $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
     $sheet->getStyle('A1')->getAlignment()->setHorizontal(PHPExcel_Style_Alignment::HORIZONTAL_CENTER);
@@ -280,7 +518,13 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
     $sheet->getPageSetup()->setRowsToRepeatAtTopByStartAndEnd(1, 2);
     
     // Отправка файла
-    $filename = 'Потребность_' . $order . '_' . date('Y-m-d') . '.xlsx';
+    $filename = 'Потребность_' . $order;
+    if ($snapshotDate) {
+        $filename .= '_снимок_' . $snapshotDate;
+    } else {
+        $filename .= '_' . date('Y-m-d');
+    }
+    $filename .= '.xlsx';
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment;filename="' . $filename . '"');
     header('Cache-Control: max-age=0');
@@ -294,6 +538,7 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
 if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
     $order     = $_POST['order']  ?? '';
     $ctype     = $_POST['ctype']  ?? '';           // caps (крышки)
+    $snapshotId = $_POST['snapshot_id'] ?? '';
 
     if ($order==='' || $ctype==='') {
         http_response_code(400);
@@ -301,88 +546,112 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
         exit;
     }
 
-    // Единый запрос по выбранной заявке для У3 (верхние и нижние крышки вместе)
-    $sql = "
-    WITH bp AS (
-      SELECT
-        order_number,
-        filter AS base_filter,
-        filter,
-        day_date,
-        SUM(qty) AS qty
-      FROM build_plans
-      WHERE order_number = :ord
-      GROUP BY order_number, filter, day_date
-    ),
-    p AS (
-      SELECT b.order_number, b.base_filter, b.filter, b.day_date, b.qty,
-             rfs.up_cap, rfs.down_cap
-      FROM bp b
-      JOIN round_filter_structure rfs ON rfs.filter = b.base_filter
-    )
-    SELECT
-      'caps' AS component_type,
-      p.up_cap AS component_name,
-      p.day_date AS need_by_date,
-      p.filter AS filter_label,
-      p.base_filter,
-      p.qty,
-      'верхняя' AS cap_type
-    FROM p
-    WHERE p.up_cap IS NOT NULL AND p.up_cap <> ''
-    UNION ALL
-    SELECT
-      'caps' AS component_type,
-      p.down_cap AS component_name,
-      p.day_date AS need_by_date,
-      p.filter AS filter_label,
-      p.base_filter,
-      p.qty,
-      'нижняя' AS cap_type
-    FROM p
-    WHERE p.down_cap IS NOT NULL AND p.down_cap <> ''
-    ORDER BY need_by_date, component_name, base_filter
-    ";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([':ord'=>$order]);
-    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    if (!$rows) {
-        echo "<p>По заявке <b>".htmlspecialchars($order)."</b> для крышек данных нет.</p>";
-        exit;
-    }
-
-    // Пивот-структура
-    $dates  = [];      // список дат
-    $items  = [];      // строки (компоненты)
-    $matrix = [];      // matrix[item][date] = qty
-    foreach ($rows as $r) {
-        $d = $r['need_by_date'];
-        $name = $r['component_name'];
-        if ($name === null || $name === '') continue;
-
-        $dates[$d] = true;
-        $items[$name] = true;
-
-        if (!isset($matrix[$name])) $matrix[$name] = [];
-        if (!isset($matrix[$name][$d])) $matrix[$name][$d] = 0;
-        $matrix[$name][$d] += (float)$r['qty'];
-    }
-    $dates = array_keys($dates);
-    sort($dates);
-    $items = array_keys($items);
-    sort($items, SORT_NATURAL|SORT_FLAG_CASE);
-
-    // Получаем остатки крышек на складе
-    $stockMap = [];
-    if (!empty($items)) {
-        $placeholders = str_repeat('?,', count($items) - 1) . '?';
-        $stmtStock = $pdo->prepare("SELECT cap_name, current_quantity FROM cap_stock WHERE cap_name IN ($placeholders)");
-        $stmtStock->execute($items);
-        $stockRows = $stmtStock->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($stockRows as $sr) {
-            $stockMap[$sr['cap_name']] = (int)$sr['current_quantity'];
+    // Если указан snapshot_id, загружаем данные из снимка
+    if ($snapshotId !== '') {
+        $stmt = $pdo->prepare("SELECT snapshot_data, comment, created_at FROM supply_requirements_snapshots WHERE id = ?");
+        $stmt->execute([$snapshotId]);
+        $snapshot = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$snapshot) {
+            http_response_code(404);
+            echo "<p>Снимок не найден.</p>";
+            exit;
         }
+        
+        $snapshotData = json_decode($snapshot['snapshot_data'], true);
+        $dates = $snapshotData['dates'] ?? [];
+        $items = $snapshotData['items'] ?? [];
+        $matrix = $snapshotData['matrix'] ?? [];
+        $stockMap = $snapshotData['stock_map'] ?? [];
+        $snapshotInfo = [
+            'comment' => $snapshot['comment'],
+            'created_at' => $snapshot['created_at']
+        ];
+    } else {
+        // Обычный запрос из базы данных
+        $sql = "
+        WITH bp AS (
+          SELECT
+            order_number,
+            filter AS base_filter,
+            filter,
+            day_date,
+            SUM(qty) AS qty
+          FROM build_plans
+          WHERE order_number = :ord
+          GROUP BY order_number, filter, day_date
+        ),
+        p AS (
+          SELECT b.order_number, b.base_filter, b.filter, b.day_date, b.qty,
+                 rfs.up_cap, rfs.down_cap
+          FROM bp b
+          JOIN round_filter_structure rfs ON rfs.filter = b.base_filter
+        )
+        SELECT
+          'caps' AS component_type,
+          p.up_cap AS component_name,
+          p.day_date AS need_by_date,
+          p.filter AS filter_label,
+          p.base_filter,
+          p.qty,
+          'верхняя' AS cap_type
+        FROM p
+        WHERE p.up_cap IS NOT NULL AND p.up_cap <> ''
+        UNION ALL
+        SELECT
+          'caps' AS component_type,
+          p.down_cap AS component_name,
+          p.day_date AS need_by_date,
+          p.filter AS filter_label,
+          p.base_filter,
+          p.qty,
+          'нижняя' AS cap_type
+        FROM p
+        WHERE p.down_cap IS NOT NULL AND p.down_cap <> ''
+        ORDER BY need_by_date, component_name, base_filter
+        ";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([':ord'=>$order]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        if (!$rows) {
+            echo "<p>По заявке <b>".htmlspecialchars($order)."</b> для крышек данных нет.</p>";
+            exit;
+        }
+
+        // Пивот-структура
+        $dates  = [];      // список дат
+        $items  = [];      // строки (компоненты)
+        $matrix = [];      // matrix[item][date] = qty
+        foreach ($rows as $r) {
+            $d = $r['need_by_date'];
+            $name = $r['component_name'];
+            if ($name === null || $name === '') continue;
+
+            $dates[$d] = true;
+            $items[$name] = true;
+
+            if (!isset($matrix[$name])) $matrix[$name] = [];
+            if (!isset($matrix[$name][$d])) $matrix[$name][$d] = 0;
+            $matrix[$name][$d] += (float)$r['qty'];
+        }
+        $dates = array_keys($dates);
+        sort($dates);
+        $items = array_keys($items);
+        sort($items, SORT_NATURAL|SORT_FLAG_CASE);
+
+        // Получаем остатки крышек на складе
+        $stockMap = [];
+        if (!empty($items)) {
+            $placeholders = str_repeat('?,', count($items) - 1) . '?';
+            $stmtStock = $pdo->prepare("SELECT cap_name, current_quantity FROM cap_stock WHERE cap_name IN ($placeholders)");
+            $stmtStock->execute($items);
+            $stockRows = $stmtStock->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($stockRows as $sr) {
+                $stockMap[$sr['cap_name']] = (int)$sr['current_quantity'];
+            }
+        }
+        $snapshotInfo = null;
     }
 
     // Предрасчёт накопленной потребности для каждой позиции по датам (для определения заливки)
@@ -400,6 +669,16 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
     // Хелпер форматирования
     function fmt($x){ return rtrim(rtrim(number_format((float)$x,3,'.',''), '0'), '.'); }
 
+    // Если это снимок, показываем информацию о снимке
+    if ($snapshotInfo) {
+        $snapshotDate = date('d.m.Y H:i', strtotime($snapshotInfo['created_at']));
+        echo '<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:10px;margin-bottom:12px;max-width:1200px;margin-left:auto;margin-right:auto;">';
+        echo '<strong>📸 Просмотр снимка от '.htmlspecialchars($snapshotDate).'</strong>';
+        if ($snapshotInfo['comment']) {
+            echo '<br><em>Комментарий: '.htmlspecialchars($snapshotInfo['comment']).'</em>';
+        }
+        echo '</div>';
+    }
 
     // Создаем одну таблицу со всеми датами
         echo '<div class="table-wrap"><table class="pivot">';
@@ -732,6 +1011,48 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         .request-table tr:nth-child(even) {
             background: #fafafa;
         }
+        .snapshot-info {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 12px;
+            max-width: 1200px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .snapshot-info strong {
+            color: #856404;
+        }
+        .snapshot-info em {
+            color: #856404;
+            font-size: 12px;
+        }
+        textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: inherit;
+            font-size: 13px;
+            resize: vertical;
+            min-height: 80px;
+        }
+        .order-highlight {
+            background: #e3f2fd;
+            border: 2px solid #2196F3;
+            border-radius: 8px;
+            padding: 12px;
+            margin: 15px 0;
+            font-size: 16px;
+            font-weight: 600;
+            color: #1976D2;
+            text-align: center;
+        }
+        .order-highlight strong {
+            color: #0d47a1;
+            font-size: 18px;
+        }
     </style>
 </head>
 <body>
@@ -754,20 +1075,32 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         <option value="caps">Крышки</option>
     </select>
 
+    <label>Просмотр снимка:</label>
+    <select id="snapshotSelect" onchange="onSnapshotChange()">
+        <option value="">Текущие данные (без снимка)</option>
+    </select>
+
     <button class="btn-primary" onclick="loadPivot()">Показать потребность</button>
 
     <button class="btn-soft" onclick="exportToExcel()" id="exportExcelBtn" style="display:none;">Экспорт в Excel</button>
     <button class="btn-soft" onclick="openCreateRequestModal()" id="createRequestBtn" style="display:none;">Создать заявку</button>
+    <button class="btn-soft" onclick="openSaveSnapshotModal()" id="saveSnapshotBtn" style="display:none;">Сохранить снимок</button>
 </div>
 
 <div id="result"></div>
 
 <script>
+    let currentSnapshotId = '';
+
     function loadPivot(){
         const order    = document.getElementById('order').value;
         const ctype    = document.getElementById('ctype').value;
+        const snapshotId = document.getElementById('snapshotSelect').value;
+        
         if(!order){ alert('Выберите заявку'); return; }
         if(!ctype){ alert('Выберите тип комплектующих'); return; }
+
+        currentSnapshotId = snapshotId;
 
         const xhr = new XMLHttpRequest();
         xhr.onreadystatechange=function(){
@@ -777,6 +1110,8 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
                     // Показываем кнопки после загрузки данных
                     document.getElementById('createRequestBtn').style.display = 'inline-block';
                     document.getElementById('exportExcelBtn').style.display = 'inline-block';
+                    // Показываем кнопку сохранения только если не выбран снимок
+                    document.getElementById('saveSnapshotBtn').style.display = snapshotId ? 'none' : 'inline-block';
                 }else{
                     alert('Ошибка загрузки: '+this.status);
                 }
@@ -786,8 +1121,131 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         xhr.setRequestHeader('Content-Type','application/x-www-form-urlencoded');
         xhr.send(
             'order='+encodeURIComponent(order)+
-            '&ctype='+encodeURIComponent(ctype)
+            '&ctype='+encodeURIComponent(ctype)+
+            '&snapshot_id='+encodeURIComponent(snapshotId || '')
         );
+    }
+
+    function loadSnapshots() {
+        const order = document.getElementById('order').value;
+        const ctype = document.getElementById('ctype').value;
+        
+        if (!order || !ctype) {
+            document.getElementById('snapshotSelect').innerHTML = '<option value="">Текущие данные (без снимка)</option>';
+            return;
+        }
+
+        const xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState === 4) {
+                if (this.status === 200) {
+                    const response = JSON.parse(this.responseText);
+                    const select = document.getElementById('snapshotSelect');
+                    select.innerHTML = '<option value="">Текущие данные (без снимка)</option>';
+                    
+                    if (response.ok && response.snapshots) {
+                        response.snapshots.forEach(function(snapshot) {
+                            const orderNum = snapshot.order_number || order;
+                            const date = new Date(snapshot.created_at);
+                            const dateStr = date.toLocaleString('ru-RU', {
+                                day: '2-digit',
+                                month: '2-digit',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            });
+                            const comment = snapshot.comment ? ' — ' + snapshot.comment : '';
+                            const option = document.createElement('option');
+                            option.value = snapshot.id;
+                            option.textContent = orderNum + ' — ' + dateStr + comment;
+                            select.appendChild(option);
+                        });
+                    }
+                }
+            }
+        };
+        xhr.open('GET', '?action=list_snapshots&order=' + encodeURIComponent(order) + '&ctype=' + encodeURIComponent(ctype), true);
+        xhr.send();
+    }
+
+    function onSnapshotChange() {
+        loadPivot();
+    }
+
+    function openSaveSnapshotModal() {
+        const order = document.getElementById('order').value;
+        const ctype = document.getElementById('ctype').value;
+        
+        if (!order || !ctype) {
+            alert('Сначала выберите заявку и тип комплектующих');
+            return;
+        }
+
+        document.getElementById('snapshotOrder').textContent = order;
+        document.getElementById('snapshotCtype').textContent = ctype === 'caps' ? 'Крышки' : ctype;
+        document.getElementById('snapshotComment').value = '';
+        document.getElementById('saveSnapshotModal').style.display = 'block';
+    }
+
+    function closeSaveSnapshotModal() {
+        document.getElementById('saveSnapshotModal').style.display = 'none';
+    }
+
+    function saveSnapshot() {
+        const order = document.getElementById('order').value;
+        const ctype = document.getElementById('ctype').value;
+        const comment = document.getElementById('snapshotComment').value.trim();
+        
+        // Проверяем, что заявка указана
+        if (!order) {
+            alert('Ошибка: не указана заявка. Пожалуйста, выберите заявку перед сохранением снимка.');
+            return;
+        }
+        
+        if (!ctype) {
+            alert('Ошибка: не указан тип комплектующих. Пожалуйста, выберите тип комплектующих перед сохранением снимка.');
+            return;
+        }
+        
+        // Подтверждение сохранения с указанием заявки
+        const confirmMessage = 'Сохранить снимок потребности для заявки "' + order + '"?\n\n' +
+            'Тип комплектующих: ' + (ctype === 'caps' ? 'Крышки' : ctype) + '\n' +
+            (comment ? 'Комментарий: ' + comment + '\n\n' : '\n') +
+            'После сохранения вы сможете просмотреть этот снимок в любое время.';
+        
+        if (!confirm(confirmMessage)) {
+            return;
+        }
+
+        const xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (this.readyState === 4) {
+                if (this.status === 200) {
+                    const response = JSON.parse(this.responseText);
+                    if (response.ok) {
+                        alert('Снимок успешно сохранен для заявки "' + order + '"!');
+                        closeSaveSnapshotModal();
+                        loadSnapshots();
+                        // Автоматически выбираем только что созданный снимок
+                        setTimeout(function() {
+                            document.getElementById('snapshotSelect').value = response.snapshot_id;
+                            loadPivot();
+                        }, 100);
+                    } else {
+                        alert('Ошибка сохранения: ' + (response.error || 'Неизвестная ошибка'));
+                    }
+                } else {
+                    alert('Ошибка сохранения: ' + this.status);
+                }
+            }
+        };
+        xhr.open('POST', '?action=save_snapshot', true);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.send(JSON.stringify({
+            order: order,
+            ctype: ctype,
+            comment: comment
+        }));
     }
 
     function openCreateRequestModal() {
@@ -1004,11 +1462,40 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
     function exportToExcel() {
         const order = document.getElementById('order').value;
         const ctype = document.getElementById('ctype').value;
+        const snapshotId = document.getElementById('snapshotSelect').value;
         if(!order){ alert('Выберите заявку'); return; }
         if(!ctype){ alert('Выберите тип комплектующих'); return; }
         
-        window.location.href = '?export=excel&order=' + encodeURIComponent(order) + '&ctype=' + encodeURIComponent(ctype);
+        let url = '?export=excel&order=' + encodeURIComponent(order) + '&ctype=' + encodeURIComponent(ctype);
+        if (snapshotId) {
+            url += '&snapshot_id=' + encodeURIComponent(snapshotId);
+        }
+        window.location.href = url;
     }
+
+    // Загружаем список снимков при изменении заявки или типа
+    document.getElementById('order').addEventListener('change', function() {
+        const order = this.value;
+        const ctype = document.getElementById('ctype').value;
+        if (order && ctype) {
+            loadSnapshots();
+        } else {
+            document.getElementById('snapshotSelect').innerHTML = '<option value="">Текущие данные (без снимка)</option>';
+        }
+        currentSnapshotId = '';
+        document.getElementById('snapshotSelect').value = '';
+    });
+    document.getElementById('ctype').addEventListener('change', function() {
+        const order = document.getElementById('order').value;
+        const ctype = this.value;
+        if (order && ctype) {
+            loadSnapshots();
+        } else {
+            document.getElementById('snapshotSelect').innerHTML = '<option value="">Текущие данные (без снимка)</option>';
+        }
+        currentSnapshotId = '';
+        document.getElementById('snapshotSelect').value = '';
+    });
 
     function convertDateToInput(dateStr) {
         // Преобразуем формат dd-mm-yy в yyyy-mm-dd для input[type="date"]
@@ -1022,11 +1509,15 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
         return year + '-' + month + '-' + day;
     }
 
-    // Закрытие модального окна при клике вне его
+    // Закрытие модальных окон при клике вне их
     window.onclick = function(event) {
-        const modal = document.getElementById('createRequestModal');
-        if (event.target == modal) {
+        const createRequestModal = document.getElementById('createRequestModal');
+        const saveSnapshotModal = document.getElementById('saveSnapshotModal');
+        if (event.target == createRequestModal) {
             closeCreateRequestModal();
+        }
+        if (event.target == saveSnapshotModal) {
+            closeSaveSnapshotModal();
         }
     }
 </script>
@@ -1046,6 +1537,32 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
             <div style="margin-top: 20px; text-align: right;">
                 <button class="btn-soft" onclick="closeCreateRequestModal()" style="margin-right: 10px;">Закрыть</button>
                 <button class="btn-primary" onclick="printRequest()">Печать</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно сохранения снимка -->
+<div id="saveSnapshotModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <div class="modal-title">Сохранить снимок потребности</div>
+            <span class="close" onclick="closeSaveSnapshotModal()">&times;</span>
+        </div>
+        <div>
+            <div class="order-highlight">
+                <strong>Заявка:</strong> <span id="snapshotOrder"></span>
+            </div>
+            <p><strong>Тип комплектующих:</strong> <span id="snapshotCtype"></span></p>
+            <p><strong>Дата создания снимка:</strong> <?= date('d.m.Y H:i') ?></p>
+            <p style="margin-top: 15px; color: #666; font-size: 12px;">
+                <em>Снимок будет сохранен для указанной заявки. В дальнейшем вы сможете просмотреть потребность на момент создания этого снимка.</em>
+            </p>
+            <p style="margin-top: 15px;"><strong>Комментарий (необязательно):</strong></p>
+            <textarea id="snapshotComment" placeholder="Введите комментарий к снимку, например: 'Перед отправкой в производство', 'После корректировки плана' и т.д."></textarea>
+            <div style="margin-top: 20px; text-align: right;">
+                <button class="btn-soft" onclick="closeSaveSnapshotModal()" style="margin-right: 10px;">Отмена</button>
+                <button class="btn-primary" onclick="saveSnapshot()">Сохранить снимок</button>
             </div>
         </div>
     </div>

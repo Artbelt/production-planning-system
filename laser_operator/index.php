@@ -727,7 +727,7 @@ $allRequests = getAllLaserRequests($databases);
         <!-- Виджет статистики -->
         <div class="statistics-widget">
             <div class="statistics-header">
-                <h2 class="statistics-title">Статистика за последние 4 дня</h2>
+                <h2 class="statistics-title">Статистика за последние 6 дней</h2>
             </div>
             <div id="statistics-content" class="statistics-loading">
                 Загрузка статистики...

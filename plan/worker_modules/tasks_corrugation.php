@@ -2,15 +2,54 @@
 $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
 $date = $_GET['date'] ?? date('Y-m-d');
 
-// грузим строки (без группировки - каждый рулон отдельно)
+// убеждаемся, что таблица manufactured_corrugated_packages существует (как в У5)
+$pdo->exec("CREATE TABLE IF NOT EXISTS manufactured_corrugated_packages (
+    id INT(11) NOT NULL AUTO_INCREMENT,
+    date_of_production DATE NOT NULL,
+    order_number VARCHAR(50) NOT NULL DEFAULT '',
+    filter_label TEXT NOT NULL,
+    count INT(11) NOT NULL DEFAULT 0,
+    bale_id INT(11) DEFAULT NULL,
+    strip_no INT(11) DEFAULT NULL,
+    team VARCHAR(50) DEFAULT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    INDEX idx_date (date_of_production),
+    INDEX idx_order (order_number),
+    INDEX idx_date_order (date_of_production, order_number)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+// грузим сырые строки плана
 $stmt = $pdo->prepare("
-    SELECT id, order_number, plan_date, filter_label, `count`, fact_count
+    SELECT id, order_number, plan_date, filter_label, `count`
     FROM corrugation_plan
     WHERE plan_date = ?
-    ORDER BY order_number, filter_label, id
+    ORDER BY order_number, id
 ");
 $stmt->execute([$date]);
 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// группируем по (order_number, filter_label)
+$groups = [];
+foreach ($rows as $r) {
+    $key = $r['order_number'].'|'.$r['filter_label'];
+    if (!isset($groups[$key])) {
+        $groups[$key] = [
+            'order_number' => $r['order_number'],
+            'filter_label' => $r['filter_label'],
+            'ids'          => [],
+            'items'        => [],
+            'plan_sum'     => 0,
+        ];
+    }
+    $groups[$key]['ids'][] = (int)$r['id'];
+    $groups[$key]['items'][] = [
+        'id'         => (int)$r['id'],
+        'count'      => (int)$r['count'],
+    ];
+    $groups[$key]['plan_sum'] += (int)$r['count'];
+}
+$group_list = array_values($groups);
 
 // даты для стрелок
 $dt       = new DateTime($date);
@@ -18,28 +57,36 @@ $prevDate = $dt->modify('-1 day')->format('Y-m-d');
 $nextDate = (new DateTime($date))->modify('+1 day')->format('Y-m-d');
 $today    = date('Y-m-d');
 
-// Начальная заливка по плану/факту (зелёная шкала 80–100%+)
-function greenShadeStyle(int $plan, int $fact): string {
-    if ($plan <= 0) return '';
-    $ratio = $fact / $plan;
+// получаем список активных заявок (из corrugation_plan за последние 30 дней)
+$activeOrdersStmt = $pdo->prepare("
+    SELECT DISTINCT order_number 
+    FROM corrugation_plan 
+    WHERE plan_date >= DATE_SUB(?, INTERVAL 30 DAY)
+    ORDER BY order_number DESC
+");
+$activeOrdersStmt->execute([$date]);
+$active_orders = $activeOrdersStmt->fetchAll(PDO::FETCH_COLUMN);
 
-    $h = 120;     // оттенок зелёного
-    $s = 60;      // насыщенность
-    $L_dark  = 35; // тёмный (при >=100%)
-    $L_light = 85; // светлый (при 80%)
+// получаем список всех уникальных фильтров для автодополнения
+$filtersStmt = $pdo->prepare("
+    SELECT DISTINCT filter_label 
+    FROM corrugation_plan 
+    WHERE filter_label IS NOT NULL AND filter_label != ''
+    ORDER BY filter_label
+");
+$filtersStmt->execute();
+$all_filters = $filtersStmt->fetchAll(PDO::FETCH_COLUMN);
 
-    if ($ratio >= 1) {
-        $L = $L_dark;
-    } elseif ($ratio >= 0.8) {
-        $def = 1 - $ratio;         // 0..0.2
-        $t   = $def / 0.2;         // 0..1
-        $L   = $L_dark + ($L_light - $L_dark) * $t;
-    } else {
-        return '';
-    }
-    $L = max(0, min(100, $L));
-    return "style=\"background-color: hsl($h, {$s}%, {$L}%);\"";
-}
+// получаем выпущенные гофропакеты за день (из manufactured_corrugated_packages)
+$manufacturedStmt = $pdo->prepare("
+    SELECT id, order_number, filter_label, count, timestamp
+    FROM manufactured_corrugated_packages
+    WHERE date_of_production = ?
+    ORDER BY timestamp DESC, order_number, filter_label
+");
+$manufacturedStmt->execute([$date]);
+$manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
+
 ?>
 <!DOCTYPE html>
 <html>
@@ -51,12 +98,12 @@ function greenShadeStyle(int $plan, int $fact): string {
         :root {
             --primary-color: #2563eb;
             --primary-dark: #1d4ed8;
-            --secondary-color: #059669;
-            --secondary-dark: #047857;
+            --secondary-color:rgb(13, 209, 147);
+            --secondary-dark:rgb(37, 216, 165);
             --accent-color: #dc2626;
             --accent-dark: #b91c1c;
-            --success-color: #16a34a;
-            --success-dark: #15803d;
+            --success-color:rgb(33, 236, 108);
+            --success-dark:rgb(31, 32, 31);
             --warning-color: #d97706;
             --warning-dark: #b45309;
             --info-color: #0891b2;
@@ -106,32 +153,31 @@ function greenShadeStyle(int $plan, int $fact): string {
 
         h2 {
             text-align: center;
-            margin-bottom: 20px;
+            margin-bottom: 12px;
             color: var(--gray-800);
-            font-size: 1.5rem;
+            font-size: 1.25rem;
             font-weight: 600;
         }
 
         .section {
             background: white;
-            padding: 24px;
+            padding: 12px;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow);
-            margin-bottom: 20px;
+            margin-bottom: 16px;
             border: 1px solid var(--gray-200);
         }
 
-        /* NAV */
         .nav {
             max-width: 900px;
-            margin: 0 auto 30px;
+            margin: 0 auto 16px;
             display: flex;
             gap: 8px;
             align-items: center;
             justify-content: center;
             flex-wrap: wrap;
             background: white;
-            padding: 16px;
+            padding: 12px;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow);
             border: 1px solid var(--gray-200);
@@ -175,14 +221,14 @@ function greenShadeStyle(int $plan, int $fact): string {
         table {
             border-collapse: collapse;
             width: 100%;
-            font-size: 14px;
+            font-size: 13px;
             background: white;
             border: 1px solid var(--gray-200);
         }
 
         th, td {
             border: 1px solid var(--gray-200);
-            padding: 12px 8px;
+            padding: 6px 8px;
             text-align: center;
         }
 
@@ -190,7 +236,7 @@ function greenShadeStyle(int $plan, int $fact): string {
             background: var(--gray-100);
             font-weight: 600;
             color: var(--gray-700);
-            font-size: 13px;
+            font-size: 12px;
         }
 
         tbody tr:nth-child(even) {
@@ -201,65 +247,13 @@ function greenShadeStyle(int $plan, int $fact): string {
             background: var(--gray-100);
         }
 
-        /* выполнено — только оформление текста; фон задаём инлайном */
-        .is-done td {
-            text-decoration: line-through;
-            color: var(--success-dark);
-            font-weight: 600;
+        button.delete-last-btn:hover {
+            background: var(--accent-dark);
         }
 
-        /* >>> tiny save & qty */
-        /* узкое поле количества */
-        input[type="number"].qty {
-            width: 80px;
-            padding: 8px 12px;
-            text-align: center;
-            font-variant-numeric: tabular-nums;
-            border: 2px solid var(--gray-200);
-            border-radius: var(--border-radius-sm);
-            font-size: 14px;
-            font-weight: 600;
-            transition: var(--transition);
-            background: white;
+        button.delete-last-btn:active {
+            transform: scale(0.98);
         }
-
-        input[type="number"].qty:focus {
-            outline: none;
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-        }
-
-        /* убираем стрелки у number */
-        input[type="number"].qty::-webkit-outer-spin-button,
-        input[type="number"].qty::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
-        }
-
-        input[type="number"].qty {
-            -moz-appearance: textfield;
-        }
-
-        /* крошечная кнопка ✓ */
-        button.save {
-            padding: 6px 10px;
-            font-size: 13px;
-            line-height: 1;
-            cursor: pointer;
-            border: none;
-            background: var(--success-color);
-            color: white;
-            border-radius: var(--border-radius-sm);
-            min-width: 36px;
-            font-weight: 500;
-            transition: var(--transition);
-        }
-
-        button.save:hover {
-            background: var(--success-dark);
-        }
-
-        /* <<< tiny save & qty */
 
         .no-data {
             text-align: center;
@@ -269,274 +263,73 @@ function greenShadeStyle(int $plan, int $fact): string {
             font-weight: 400;
         }
 
-        /* Modal styles */
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.5);
-            backdrop-filter: blur(5px);
-        }
-
-        .modal-content {
-            background-color: white;
-            margin: 5% auto;
-            padding: 24px;
-            border-radius: var(--border-radius);
-            width: 90%;
-            max-width: 800px;
-            box-shadow: var(--shadow-lg);
-            position: relative;
-            border: 1px solid var(--gray-200);
-        }
-
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid var(--gray-200);
-        }
-
-        .modal-title {
-            font-size: 1.25rem;
-            font-weight: 600;
-            color: var(--gray-800);
-            margin: 0;
-        }
-
-        .close {
-            color: var(--gray-400);
-            font-size: 24px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: var(--transition);
-            width: 32px;
-            height: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: var(--border-radius-sm);
-        }
-
-        .close:hover {
-            color: var(--danger-color);
-            background-color: var(--gray-100);
-        }
-
-        .search-form {
-            margin-bottom: 20px;
-        }
-
-        .search-input {
-            width: 100%;
-            padding: 10px 12px;
-            border: 1px solid var(--gray-300);
-            border-radius: var(--border-radius-sm);
-            font-size: 14px;
-            transition: var(--transition);
-        }
-
-        .search-input:focus {
+        #filterInput:focus, #countInput:focus, #orderSelect:focus {
             outline: none;
             border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
         }
 
-        .search-results {
-            max-height: 400px;
-            overflow-y: auto;
-            border: 1px solid var(--gray-200);
-            border-radius: var(--border-radius-sm);
+        #filterSuggestions {
+            font-size: 14px;
         }
 
-        .search-result-item {
-            padding: 12px;
-            border-bottom: 1px solid var(--gray-100);
+        .filter-suggestion-item {
+            padding: 10px 12px;
             cursor: pointer;
+            border-bottom: 1px solid var(--gray-200);
             transition: var(--transition);
+            color: var(--gray-800);
         }
 
-        .search-result-item:hover {
-            background-color: var(--gray-50);
-        }
-
-        .search-result-item:last-child {
+        .filter-suggestion-item:last-child {
             border-bottom: none;
         }
 
-        .result-date {
-            font-weight: 600;
-            color: var(--primary-color);
-            font-size: 14px;
-        }
-
-        .result-details {
-            margin-top: 4px;
-            color: var(--gray-600);
-            font-size: 13px;
-        }
-
-        .result-order-number {
+        .filter-suggestion-item:hover,
+        .filter-suggestion-item.highlighted {
             background: var(--primary-color);
             color: white;
-            padding: 4px 8px;
-            border-radius: var(--border-radius-sm);
-            font-weight: 700;
-            font-size: 14px;
-            display: inline-block;
-            margin-right: 8px;
-            box-shadow: var(--shadow-sm);
         }
 
-        .result-plan {
-            color: var(--success-color);
-            font-weight: 500;
+        #addProductionForm button:hover {
+            background: var(--primary-dark);
         }
 
-        .result-fact {
-            color: var(--warning-color);
-            font-weight: 500;
+        .production-section {
+            max-width: 100%;
         }
 
-        .no-results {
-            text-align: center;
-            padding: 30px 20px;
-            color: var(--gray-500);
-            font-size: 14px;
+        @media (min-width: 769px) {
+            .production-section {
+                max-width: 1200px;
+                margin: 0 auto;
+            }
         }
 
         @media (max-width: 768px) {
-            body {
-                padding: 10px;
-            }
-
-            h2 {
-                font-size: 1.25rem;
-                margin-bottom: 16px;
-            }
-
-            .section {
-                padding: 16px;
-            }
-
-            .nav {
-                gap: 6px;
-                padding: 12px;
-                margin-bottom: 20px;
-            }
-
-            .nav a, .nav button {
-                padding: 8px 12px;
-                font-size: 12px;
-            }
-
-            table {
-                font-size: 13px;
-            }
-
-            th, td {
-                padding: 10px 6px;
-            }
-
-            input[type="number"].qty {
-                width: 60px;
-                padding: 6px 8px;
-                font-size: 13px;
-            }
-
-            button.save {
-                padding: 6px 10px;
-                font-size: 13px;
-                min-width: 35px;
-            }
+            body { padding: 10px; }
+            h2 { font-size: 1.25rem; margin-bottom: 16px; }
+            .section { padding: 16px; }
+            .nav { gap: 6px; padding: 12px; margin-bottom: 20px; }
+            .nav a, .nav button { padding: 8px 12px; font-size: 12px; }
+            table { font-size: 13px; }
+            th, td { padding: 6px 4px; }
         }
 
         @media (max-width: 600px) {
-            /* растягиваем таблицу на всю ширину */
-            .section {
-                padding: 12px;
-                margin: 0 -10px 20px -10px;
-                border-radius: 0;
-            }
-
-            table {
-                width: 100%;
-                table-layout: auto;
-                font-size: 12px;
-            }
-
-            th, td {
-                padding: 8px 4px;
-                word-wrap: break-word;
-            }
-
-            /* колонка "ID рулона" - минимальная ширина */
-            thead th:nth-child(1),
-            tbody td:nth-child(1) {
-                width: 12%;
-                min-width: 50px;
-            }
-
-            /* колонка "Заявка" - минимальная ширина */
-            thead th:nth-child(2),
-            tbody td:nth-child(2) {
-                width: 13%;
-                min-width: 55px;
-            }
-
-            /* колонка "Фильтр" - максимальная ширина */
-            thead th:nth-child(3),
-            tbody td:nth-child(3) {
-                width: 35%;
-                text-align: left;
-                padding-left: 8px;
-            }
-
-            /* колонка "План" - средняя ширина */
-            thead th:nth-child(4),
-            tbody td:nth-child(4) {
-                width: 15%;
-                min-width: 50px;
-            }
-
-            /* колонка "Факт" - фиксированная ширина */
-            thead th:nth-child(5),
-            tbody td:nth-child(5) {
-                width: 25%;
-                min-width: 100px;
-            }
-
-            /* внутри "Факт": одна строка, без переносов */
-            tbody td:nth-child(5) {
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                gap: 4px;
-                white-space: nowrap;
-            }
-
-            /* поле количества */
-            input[type="number"].qty {
-                width: 45px;
-                padding: 4px 6px;
-                font-size: 12px;
-            }
-
-            /* кнопка сохранения */
-            button.save {
-                padding: 4px 8px;
-                font-size: 11px;
-                min-width: 30px;
-            }
+            .section { padding: 12px; margin: 0 -10px 20px -10px; border-radius: 0; }
+            .section.production-section { margin-left: 10px; margin-right: 10px; }
+            table { width: 100%; font-size: 12px; }
+            th, td { padding: 5px 3px; }
+            #addProductionForm input { font-size: 13px; padding: 6px 10px; }
+            #addProductionForm button { padding: 8px 16px; font-size: 13px; }
+            #filterSuggestions { max-height: 150px; font-size: 13px; }
+            .filter-suggestion-item { padding: 12px; font-size: 14px; }
+            .production-section table { font-size: 12px; }
+            .production-section th, .production-section td { padding: 5px 4px; }
         }
     </style>
     <script>
-        // навигация по датам
         function setDateAndReload(dStr){
             if(!dStr) return;
             const url = new URL(window.location.href);
@@ -551,182 +344,19 @@ function greenShadeStyle(int $plan, int $fact): string {
             const y = d.getFullYear();
             const m = String(d.getMonth()+1).padStart(2,'0');
             const day = String(d.getDate()).padStart(2,'0');
-            setDateAndReload(`${y}-${m}-${day}`);
+            setDateAndReload(y+'-'+m+'-'+day);
         }
-        // автоперезагрузка при смене даты
         function onDateChange(e){ setDateAndReload(e.target.value); }
-        // стрелки с клавиатуры ← →
         document.addEventListener('keydown', (e)=>{
             const tag = (e.target && e.target.tagName || '').toLowerCase();
             if(tag === 'input' || tag === 'textarea') return;
-            if(e.key === 'ArrowLeft'){ shiftDate(-1); }
-            if(e.key === 'ArrowRight'){ shiftDate(1); }
+            if(e.key === 'ArrowLeft') shiftDate(-1);
+            if(e.key === 'ArrowRight') shiftDate(1);
         });
-
-        // заливка после сохранения
-        function applyShade(rowEl, plan, fact){
-            if (!rowEl || plan <= 0) return;
-            const ratio = fact / plan;
-
-            const H = 120, S = 60;
-            const L_dark = 35, L_light = 85;
-
-            rowEl.style.backgroundColor = '';
-            if (ratio >= 1){
-                rowEl.classList.add('is-done');
-                rowEl.style.backgroundColor = `hsl(${H}, ${S}%, ${L_dark}%)`;
-            } else if (ratio >= 0.8){
-                rowEl.classList.remove('is-done');
-                const def = 1 - ratio; // 0..0.2
-                const t   = def / 0.2; // 0..1
-                const L   = L_dark + (L_light - L_dark) * t;
-                rowEl.style.backgroundColor = `hsl(${H}, ${S}%, ${L}%)`;
-            } else {
-                rowEl.classList.remove('is-done');
-            }
-        }
-
-        async function saveRow(id, inputId, plan){
-            const inp = document.getElementById(inputId);
-            const val = Number((inp.value||'').trim());
-            if(isNaN(val) || val < 0){ alert('Введите корректное число'); return; }
-
-            // сохраняем факт для одной строки
-            const resp = await fetch('save_corr_fact.php',{
-                method:'POST',
-                headers:{'Content-Type':'application/x-www-form-urlencoded'},
-                body:'id='+id+'&fact='+val
-            }).then(r=>r.json()).catch(()=>null);
-            
-            if (!resp || !resp.success){
-                alert('Ошибка сохранения факта.');
-                return;
-            }
-
-            // применим подсветку
-            const row = document.getElementById('row-'+id);
-            applyShade(row, Number(plan), val);
-
-            alert('Сохранено');
-        }
-
-        // Enter в поле «Факт» = сохранить
-        function onQtyKey(e, id, inputId, plan){
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                saveRow(id, inputId, plan);
-            }
-        }
-
-        // навешиваем обработчик на date input после загрузки
         document.addEventListener('DOMContentLoaded', ()=>{
             const di = document.getElementById('date-input');
             if (di) di.addEventListener('change', onDateChange);
         });
-
-        // Функции для модального окна поиска
-        function openFilterSearch() {
-            document.getElementById('filterSearchModal').style.display = 'block';
-            document.getElementById('filterSearchInput').focus();
-        }
-
-        function closeFilterSearch() {
-            document.getElementById('filterSearchModal').style.display = 'none';
-            document.getElementById('filterSearchInput').value = '';
-            document.getElementById('searchResults').innerHTML = '<div class="no-results">Введите название фильтра для поиска</div>';
-        }
-
-        // Закрытие модального окна при клике вне его
-        window.onclick = function(event) {
-            const modal = document.getElementById('filterSearchModal');
-            if (event.target === modal) {
-                closeFilterSearch();
-            }
-        }
-
-        // Поиск фильтров
-        async function searchFilters() {
-            const searchTerm = document.getElementById('filterSearchInput').value.trim();
-            const resultsDiv = document.getElementById('searchResults');
-            
-            if (searchTerm.length < 2) {
-                resultsDiv.innerHTML = '<div class="no-results">Введите минимум 2 символа для поиска</div>';
-                return;
-            }
-
-            try {
-                const response = await fetch('search_filter_positions.php', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                    body: 'filter_name=' + encodeURIComponent(searchTerm)
-                });
-
-                const data = await response.json();
-                
-                if (data.success && data.results.length > 0) {
-                    displaySearchResults(data.results);
-                } else {
-                    resultsDiv.innerHTML = '<div class="no-results">Позиции с таким фильтром не найдены</div>';
-                }
-            } catch (error) {
-                console.error('Ошибка поиска:', error);
-                resultsDiv.innerHTML = '<div class="no-results">Ошибка при поиске. Попробуйте еще раз.</div>';
-            }
-        }
-
-        // Отображение результатов поиска
-        function displaySearchResults(results) {
-            const resultsDiv = document.getElementById('searchResults');
-            let html = '';
-
-            results.forEach(result => {
-                const planSum = result.plan_sum || 0;
-                const factSum = result.fact_sum || 0;
-                const ratio = planSum > 0 ? (factSum / planSum) : 0;
-                const ratioPercent = (ratio * 100).toFixed(1);
-                const rollId = result.id || '-';
-                
-                // Затенение для выполнения 90%+
-                let bgStyle = '';
-                if (ratio >= 0.9) {
-                    const H = 120;
-                    const L = 85; // светлость одинаковая
-                    // насыщенность от 20% (при 90%) до 60% (при 100%+)
-                    const S_min = 20, S_max = 60;
-                    let S;
-                    if (ratio >= 1) {
-                        S = S_max;
-                    } else {
-                        // ratio от 0.9 до 1.0
-                        const t = (ratio - 0.9) / 0.1; // 0..1
-                        S = S_min + (S_max - S_min) * t;
-                    }
-                    bgStyle = `background: hsl(${H}, ${S}%, ${L}%);`;
-                }
-                
-                html += `
-                    <div class="search-result-item" onclick="goToDate('${result.plan_date}')" style="${bgStyle}">
-                        <div class="result-date">${result.plan_date} [Рулон ID: ${rollId}]</div>
-                        <div class="result-details">
-                            <span class="result-order-number">${result.order_number}</span>${result.filter_label}<br>
-                            План: <span class="result-plan">${planSum} шт</span> | 
-                            Факт: <span class="result-fact">${factSum} шт</span> | 
-                            Выполнено: ${ratioPercent}%
-                        </div>
-                    </div>
-                `;
-            });
-
-            resultsDiv.innerHTML = html;
-        }
-
-        // Переход к найденной дате
-        function goToDate(date) {
-            closeFilterSearch();
-            setDateAndReload(date);
-        }
     </script>
 </head>
 <body>
@@ -734,218 +364,216 @@ function greenShadeStyle(int $plan, int $fact): string {
 <h2>Задания гофромашины на <?= htmlspecialchars($date) ?></h2>
 
 <div class="nav">
-            <a href="?date=<?= htmlspecialchars($prevDate) ?>" title="День назад">
-                ⬅️ 
-            </a>
+    <a href="?date=<?= htmlspecialchars($prevDate) ?>" title="День назад">⬅️</a>
     <input id="date-input" type="date" value="<?= htmlspecialchars($date) ?>" />
-            <a href="?date=<?= htmlspecialchars($nextDate) ?>" title="День вперёд">
-                ➡️
-            </a>
-            <a href="?date=<?= htmlspecialchars($today) ?>" title="Сегодня">
-                Сегодня
-            </a>
-            <button onclick="openFilterSearch()" title="Найти позицию по фильтру">
-                Найти позицию
-            </button>
+    <a href="?date=<?= htmlspecialchars($nextDate) ?>" title="День вперёд">➡️</a>
+    <a href="?date=<?= htmlspecialchars($today) ?>" title="Сегодня">Сегодня</a>
 </div>
 
 <div class="section">
-    <?php if ($rows): ?>
+    <?php if ($group_list): ?>
         <table>
             <thead>
-            <tr>
-                <th>ID рулона</th>
-                <th>Заявка</th>
-                <th>Фильтр</th>
-                <th>План</th>
-                <th>Факт</th>
-                <th>История</th>
-            </tr>
+            <tr><th>Заявка</th><th>Фильтр</th><th>План</th></tr>
             </thead>
             <tbody>
-            <?php foreach ($rows as $r):
-                $id       = (int)$r['id'];
-                $rowId    = 'row-'.$id;
-                $inputId  = 'fact-'.$id;
-                $plan     = (int)$r['count'];
-                $fact     = (int)$r['fact_count'];
-
-                $ratio  = ($plan > 0) ? $fact / $plan : 0;
-                $isDone = ($ratio >= 1);
-                $style  = greenShadeStyle($plan, $fact); // начальный фон
-                ?>
-                <tr id="<?= $rowId ?>" class="<?= $isDone ? 'is-done' : '' ?>" <?= $style ?>>
-                    <td>
-                        <span style="font-weight: 500; color: var(--gray-600);">
-                            <?= $id ?>
-                        </span>
-                    </td>
-                    <td>
-                        <strong><?= htmlspecialchars($r['order_number']) ?></strong>
-                    </td>
-                    <td>
-                        <?= htmlspecialchars($r['filter_label']) ?>
-                    </td>
-                    <td>
-                        <span style="font-weight: 600; color: var(--primary-color);">
-                            <?= $plan ?>
-                        </span>
-                    </td>
-                    <td>
-                        <input
-                            type="number" class="qty" id="<?= $inputId ?>"
-                            value="<?= $fact > 0 ? $fact : '' ?>" 
-                            placeholder="0"
-                            min="0"
-                            onkeydown="onQtyKey(event,<?= $id ?>,'<?= $inputId ?>',<?= $plan ?>)"
-                        >
-                        <button class="save" type="button" title="Сохранить"
-                                onclick="saveRow(<?= $id ?>,'<?= $inputId ?>',<?= $plan ?>)">
-                            ✓
-                        </button>
-                    </td>
-                    <td>
-                        <button class="save" type="button" title="История изготовления"
-                                onclick="showHistory(<?= $id ?>)"
-                                style="background: var(--info-color);">
-                            📋
-                        </button>
-                    </td>
+            <?php foreach ($group_list as $g): ?>
+                <tr>
+                    <td><strong><?= htmlspecialchars($g['order_number']) ?></strong></td>
+                    <td><?= htmlspecialchars($g['filter_label']) ?></td>
+                    <td><span style="font-weight: 600; color: var(--primary-color);"><?= (int)$g['plan_sum'] ?></span></td>
                 </tr>
             <?php endforeach; ?>
             </tbody>
         </table>
     <?php else: ?>
-        <div class="no-data">
-            Заданий на эту дату нет
-        </div>
+        <div class="no-data">Заданий на эту дату нет</div>
     <?php endif; ?>
 </div>
+
+<div class="section production-section">
+    <h3 style="margin-bottom: 16px; font-size: 1.1rem; font-weight: 600; color: var(--gray-800);">Изготовленные гофропакеты</h3>
+
+    <?php if (!empty($manufactured_packages)): ?>
+        <div style="margin-bottom: 24px;">
+            <table style="border-collapse: collapse; width: 100%; font-size: 13px; background: white; border: 1px solid var(--gray-200);">
+                <thead>
+                    <tr>
+                        <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px;">Заявка</th>
+                        <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px;">Фильтр</th>
+                        <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px;">Количество</th>
+                        <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px;">Время</th>
+                        <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px; width: 1%; white-space: nowrap;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php
+                    $total_count = 0;
+                    $is_first = true;
+                    foreach ($manufactured_packages as $item):
+                        $total_count += (int)$item['count'];
+                        $time = $item['timestamp'] ? date('H:i', strtotime($item['timestamp'])) : '-';
+                    ?>
+                        <tr style="border-bottom: 1px solid var(--gray-200);">
+                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center;"><strong><?= htmlspecialchars($item['order_number'] ?: '-') ?></strong></td>
+                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: left; padding-left: 12px;"><?= htmlspecialchars($item['filter_label']) ?></td>
+                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; font-weight: 600; color: var(--primary-color);"><?= (int)$item['count'] ?></td>
+                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; color: var(--gray-600); font-size: 12px;"><?= htmlspecialchars($time) ?></td>
+                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; width: 1%; white-space: nowrap;">
+                                <?php if ($is_first): ?>
+                                    <button class="delete-last-btn" onclick="deleteLastPackage('<?= htmlspecialchars($date) ?>')" style="background: var(--accent-color); color: white; border: none; padding: 6px 10px; border-radius: var(--border-radius-sm); cursor: pointer; font-size: 14px; font-weight: 500; transition: var(--transition); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;" title="Удалить последнюю внесенную позицию">✕</button>
+                                <?php else: ?>
+                                    <span style="color: var(--gray-400); font-size: 11px;">—</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php $is_first = false; endforeach; ?>
+                    <tr style="background: var(--gray-50); font-weight: 600;">
+                        <td colspan="2" style="border: 1px solid var(--gray-200); padding: 8px 12px; text-align: right;">Итого:</td>
+                        <td style="border: 1px solid var(--gray-200); padding: 8px 12px; text-align: center; color: var(--primary-color);"><?= $total_count ?></td>
+                        <td style="border: 1px solid var(--gray-200); padding: 8px 12px;"></td>
+                        <td style="border: 1px solid var(--gray-200); padding: 8px 12px; width: 1%;"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    <?php else: ?>
+        <div style="margin-bottom: 24px; text-align: center; color: var(--gray-500); font-size: 14px; padding: 20px;">Выпущенных гофропакетов за этот день нет</div>
+    <?php endif; ?>
+
+    <div style="padding-top: 24px; border-top: 1px solid var(--gray-200);">
+        <form id="addProductionForm" style="display: flex; flex-direction: column; gap: 12px; max-width: 100%;">
+            <div style="position: relative;">
+                <label for="filterInput" style="display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--gray-700);">Имя фильтра:</label>
+                <input type="text" id="filterInput" name="filter" required style="width: 100%; padding: 8px 12px; border: 1px solid var(--gray-300); border-radius: var(--border-radius-sm); font-size: 14px; transition: var(--transition);" placeholder="Введите имя фильтра" autocomplete="off">
+                <div id="filterSuggestions" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid var(--gray-300); border-top: none; border-radius: 0 0 var(--border-radius-sm) var(--border-radius-sm); max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: var(--shadow-md); margin-top: -1px;"></div>
+            </div>
+            <div>
+                <label for="orderSelect" style="display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--gray-700);">Заявка:</label>
+                <select id="orderSelect" name="order" required style="width: 100%; padding: 8px 12px; border: 1px solid var(--gray-300); border-radius: var(--border-radius-sm); font-size: 14px; transition: var(--transition); background: white;">
+                    <option value="">Выберите заявку</option>
+                </select>
+            </div>
+            <div>
+                <label for="countInput" style="display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--gray-700);">Количество:</label>
+                <input type="number" id="countInput" name="count" required min="1" style="width: 100%; padding: 8px 12px; border: 1px solid var(--gray-300); border-radius: var(--border-radius-sm); font-size: 14px; transition: var(--transition);" placeholder="Введите количество">
+            </div>
+            <button type="submit" style="background: var(--primary-color); color: white; border: none; padding: 10px 20px; border-radius: var(--border-radius-sm); cursor: pointer; font-size: 14px; font-weight: 500; transition: var(--transition); margin-top: 4px;">Внести</button>
+        </form>
+    </div>
 </div>
 
-    <!-- Modal для поиска позиций по фильтру -->
-    <div id="filterSearchModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 class="modal-title">Поиск позиций по фильтру</h2>
-                <span class="close" onclick="closeFilterSearch()">&times;</span>
-            </div>
-            <div class="search-form">
-                <input 
-                    type="text" 
-                    id="filterSearchInput" 
-                    class="search-input" 
-                    placeholder="Введите название фильтра для поиска..."
-                    onkeyup="searchFilters()"
-                >
-            </div>
-            <div id="searchResults" class="search-results">
-                <div class="no-results">
-                    Введите название фильтра для поиска
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Modal для просмотра истории изготовления -->
-    <div id="historyModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 class="modal-title">История изготовления позиции</h2>
-                <span class="close" onclick="closeHistory()">&times;</span>
-            </div>
-            <div id="historyContent" style="padding: 10px;">
-                <div class="no-results">Загрузка...</div>
-            </div>
-        </div>
-    </div>
-
     <script>
-        // Функции для модального окна истории
-        function showHistory(id) {
-            const modal = document.getElementById('historyModal');
-            const content = document.getElementById('historyContent');
-            
-            modal.style.display = 'block';
-            content.innerHTML = '<div class="no-results">Загрузка...</div>';
-            
-            // Загружаем историю
-            fetch('get_corr_history.php?id=' + id)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        displayHistory(data.data);
-                    } else {
-                        content.innerHTML = '<div class="no-results">Ошибка: ' + (data.message || 'Неизвестная ошибка') + '</div>';
-                    }
-                })
-                .catch(error => {
-                    console.error('Ошибка загрузки истории:', error);
-                    content.innerHTML = '<div class="no-results">Ошибка загрузки данных</div>';
-                });
-        }
+        const allFilters = <?= json_encode($all_filters, JSON_UNESCAPED_UNICODE) ?>;
+        let currentFilterOrders = [];
+        let filterSuggestionsTimeout = null;
+        let currentHighlightIndex = -1;
+        const filterInput = document.getElementById('filterInput');
+        const orderSelect = document.getElementById('orderSelect');
+        const filterSuggestions = document.getElementById('filterSuggestions');
 
-        function displayHistory(data) {
-            const content = document.getElementById('historyContent');
-            
-            let html = '<div style="margin-bottom: 20px;">';
-            html += '<p><strong>Заявка:</strong> ' + data.order_number + '</p>';
-            html += '<p><strong>Фильтр:</strong> ' + data.filter_label + '</p>';
-            html += '<p><strong>План:</strong> <span style="color: var(--primary-color); font-weight: 600;">' + data.plan_count + ' шт</span></p>';
-            html += '<p><strong>Факт (общий):</strong> <span style="color: var(--success-color); font-weight: 600;">' + data.fact_count + ' шт</span></p>';
-            html += '</div>';
-            
-            if (data.history && data.history.length > 0) {
-                html += '<h3 style="margin-bottom: 15px; font-size: 1.1rem;">История изготовления:</h3>';
-                html += '<table style="width: 100%; border-collapse: collapse;">';
-                html += '<thead><tr style="background: var(--gray-100);">';
-                html += '<th style="padding: 10px; border: 1px solid var(--gray-200);">Дата</th>';
-                html += '<th style="padding: 10px; border: 1px solid var(--gray-200);">Количество</th>';
-                html += '<th style="padding: 10px; border: 1px solid var(--gray-200);">Время</th>';
-                html += '</tr></thead><tbody>';
-                
-                data.history.forEach(entry => {
-                    html += '<tr>';
-                    html += '<td style="padding: 10px; border: 1px solid var(--gray-200); text-align: center;"><strong>' + entry.date + '</strong></td>';
-                    html += '<td style="padding: 10px; border: 1px solid var(--gray-200); text-align: center; font-weight: 600; color: var(--success-color);">' + entry.quantity + ' шт</td>';
-                    html += '<td style="padding: 10px; border: 1px solid var(--gray-200); text-align: center;">' + (entry.timestamp || '-') + '</td>';
-                    html += '</tr>';
-                });
-                
-                html += '</tbody></table>';
-                
-                html += '<div style="margin-top: 20px; padding: 15px; background: var(--gray-50); border-radius: var(--border-radius);">';
-                html += '<p><strong>Итого из истории:</strong> <span style="color: var(--info-color); font-weight: 600;">' + data.stats.total_from_history + ' шт</span></p>';
-                html += '<p><strong>Дней изготовления:</strong> ' + data.stats.production_days + '</p>';
-                
-                if (data.stats.is_match) {
-                    html += '<p style="color: var(--success-color); font-weight: 600;">✓ История совпадает с фактом</p>';
-                } else {
-                    html += '<p style="color: var(--warning-color); font-weight: 600;">⚠ История не совпадает с фактом</p>';
+        function searchFilters(query) {
+            const trimmedQuery = query.trim().toLowerCase();
+            if (trimmedQuery.length < 1) { hideFilterSuggestions(); return; }
+            const matched = allFilters.filter(f => f.toLowerCase().includes(trimmedQuery)).slice(0, 10);
+            if (matched.length > 0) showFilterSuggestions(matched); else hideFilterSuggestions();
+        }
+        function showFilterSuggestions(filters) {
+            filterSuggestions.innerHTML = '';
+            filters.forEach((filter, index) => {
+                const item = document.createElement('div');
+                item.className = 'filter-suggestion-item';
+                item.textContent = filter;
+                item.onclick = () => selectFilter(filter);
+                item.onmouseover = () => highlightSuggestion(index);
+                filterSuggestions.appendChild(item);
+            });
+            filterSuggestions.style.display = 'block';
+            currentHighlightIndex = -1;
+        }
+        function hideFilterSuggestions() { setTimeout(() => { filterSuggestions.style.display = 'none'; }, 200); }
+        function highlightSuggestion(index) {
+            const items = filterSuggestions.querySelectorAll('.filter-suggestion-item');
+            items.forEach((item, i) => item.classList.toggle('highlighted', i === index));
+            currentHighlightIndex = index;
+        }
+        function selectFilter(filterName) {
+            filterInput.value = filterName;
+            hideFilterSuggestions();
+            loadOrdersForFilter(filterName);
+        }
+        filterInput.addEventListener('input', function() {
+            if (filterSuggestionsTimeout) clearTimeout(filterSuggestionsTimeout);
+            filterSuggestionsTimeout = setTimeout(() => searchFilters(this.value), 150);
+        });
+        filterInput.addEventListener('focus', function() { if (this.value.trim().length > 0) searchFilters(this.value); });
+        document.addEventListener('click', function(e) {
+            if (e.target !== filterInput && !filterInput.contains(e.target) && e.target !== filterSuggestions && !filterSuggestions.contains(e.target)) hideFilterSuggestions();
+        });
+        filterInput.addEventListener('keydown', function(e) {
+            const items = filterSuggestions.querySelectorAll('.filter-suggestion-item');
+            if (filterSuggestions.style.display !== 'block' || items.length === 0) return;
+            if (e.key === 'ArrowDown') { e.preventDefault(); currentHighlightIndex = Math.min(currentHighlightIndex + 1, items.length - 1); highlightSuggestion(currentHighlightIndex); items[currentHighlightIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); currentHighlightIndex = Math.max(currentHighlightIndex - 1, -1); if (currentHighlightIndex === -1) items.forEach(item => item.classList.remove('highlighted')); else { highlightSuggestion(currentHighlightIndex); items[currentHighlightIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } }
+            else if (e.key === 'Enter') { e.preventDefault(); if (currentHighlightIndex >= 0 && items[currentHighlightIndex]) selectFilter(items[currentHighlightIndex].textContent); else if (items.length > 0) selectFilter(items[0].textContent); }
+            else if (e.key === 'Escape') hideFilterSuggestions();
+        });
+
+        async function loadOrdersForFilter(filter) {
+            const trimmedFilter = filter.trim();
+            orderSelect.innerHTML = '<option value="">Выберите заявку</option>';
+            orderSelect.value = '';
+            currentFilterOrders = [];
+            if (!trimmedFilter) return;
+            try {
+                const response = await fetch('get_orders_for_filter.php?filter=' + encodeURIComponent(trimmedFilter));
+                const data = await response.json();
+                if (data.success && data.orders && data.orders.length > 0) {
+                    currentFilterOrders = data.orders;
+                    data.orders.forEach(order => { const o = document.createElement('option'); o.value = order; o.textContent = order; orderSelect.appendChild(o); });
                 }
-                html += '</div>';
-            } else {
-                html += '<div class="no-results">История изготовления пока пуста</div>';
-            }
-            
-            content.innerHTML = html;
+            } catch (err) { console.error(err); }
+        }
+        filterInput.addEventListener('blur', function() {
+            setTimeout(() => { const v = this.value.trim(); if (v) loadOrdersForFilter(v); }, 300);
+        });
+        orderSelect.addEventListener('change', function() {
+            const order = this.value.trim(), filter = filterInput.value.trim();
+            if (!order || !filter) return;
+            if (!currentFilterOrders.some(o => o === order) && currentFilterOrders.length > 0) { alert('Эта заявка не найдена для выбранного фильтра. Выберите заявку из списка.'); this.focus(); }
+        });
+
+        async function deleteLastPackage(date) {
+            if (!confirm('Вы уверены, что хотите удалить последнюю внесенную позицию?')) return;
+            try {
+                const response = await fetch('delete_last_manufactured_package.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ date_of_production: date }) });
+                const data = await response.json();
+                if (data.success) { alert('Последняя позиция успешно удалена'); window.location.reload(); } else alert('Ошибка: ' + (data.message || 'Неизвестная ошибка'));
+            } catch (err) { console.error(err); alert('Ошибка при удалении записи'); }
         }
 
-        function closeHistory() {
-            document.getElementById('historyModal').style.display = 'none';
-        }
-
-        // Закрытие модального окна при клике вне его
-        window.addEventListener('click', function(event) {
-            const historyModal = document.getElementById('historyModal');
-            const filterModal = document.getElementById('filterSearchModal');
-            
-            if (event.target === historyModal) {
-                closeHistory();
-            }
-            if (event.target === filterModal) {
-                closeFilterSearch();
-            }
+        document.getElementById('addProductionForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const order = orderSelect.value.trim();
+            const filter = filterInput.value.trim();
+            const count = parseInt(document.getElementById('countInput').value, 10);
+            const date = '<?= htmlspecialchars($date) ?>';
+            if (!order || !filter || !count || count <= 0) { alert('Заполните все поля корректно'); return; }
+            if (currentFilterOrders.length > 0 && !currentFilterOrders.some(o => o === order)) { alert('Эта заявка не найдена для выбранного фильтра. Выберите заявку из списка.'); orderSelect.focus(); return; }
+            try {
+                const response = await fetch('save_manufactured_corrugated_packages.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ date_of_production: date, order_number: order, filter_label: filter, count: count }) });
+                const data = await response.json();
+                if (data.success) {
+                    alert('Продукция внесена успешно');
+                    filterInput.value = '';
+                    document.getElementById('countInput').value = '';
+                    orderSelect.innerHTML = '<option value="">Выберите заявку</option>';
+                    orderSelect.value = '';
+                    currentFilterOrders = [];
+                    filterInput.focus();
+                    window.location.reload();
+                } else alert('Ошибка: ' + (data.message || 'Неизвестная ошибка'));
+            } catch (err) { console.error(err); alert('Ошибка при сохранении данных'); }
         });
     </script>
 </body>

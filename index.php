@@ -59,6 +59,15 @@ $canViewRequests = in_array($userRole, ['worker', 'manager', 'supervisor', 'dire
 $canViewPlans = in_array($userRole, ['manager', 'supervisor', 'director', 'assembler', 'corr_operator']);
 $canAccessSystems = in_array($userRole, ['supervisor', 'director']);
 
+// Проверяем доступ к странице аналитики (только директоры)
+$canAccessAnalytics = false;
+foreach ($userDepartments as $dept) {
+    if ($dept['role_name'] === 'director') {
+        $canAccessAnalytics = true;
+        break;
+    }
+}
+
 // Проверяем права доступа к модулю лазерной резки по всем ролям пользователя
 $canAccessLaserOperator = false;
 foreach ($userDepartments as $dept) {
@@ -255,6 +264,10 @@ foreach ($userDepartments as $dept) {
 
 		.btn.calculation {
 			background-color: #795548;
+		}
+
+		.btn.analytics {
+			background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
 		}
 
 		.btn:disabled {
@@ -520,6 +533,11 @@ foreach ($userDepartments as $dept) {
 	<!-- Задачи (только для директоров) -->
 	<?php if ($userRole === 'director'): ?>
 	<button class="btn" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);" onclick="window.open('/tasks_manager/', '_blank')">Задачи</button>
+	<?php endif; ?>
+	
+	<!-- Кнопка аналитики (для пользователей с доступом) -->
+	<?php if ($canAccessAnalytics): ?>
+	<button class="btn analytics" onclick="window.open('/analytics/', '_blank')">Аналитика по участкам</button>
 	<?php endif; ?>
 	
 	<!-- Админ панель (только для директоров) -->

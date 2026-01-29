@@ -664,9 +664,24 @@ echo "<!-- Аккуратная панель авторизации -->
                                     <?php echo $priorityLabels[$priority]; ?>
                                 </span>
                             </div>
-                            <?php if ($task['description']): ?>
+                            <?php if ($task['description']): 
+                                $description = htmlspecialchars($task['description']);
+                                $isLong = mb_strlen($task['description']) > 80;
+                                $shortDescription = $isLong ? mb_substr($task['description'], 0, 80) : $task['description'];
+                            ?>
                             <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px; line-height: 1.4;">
-                                <?php echo nl2br(htmlspecialchars(mb_substr($task['description'], 0, 80) . (mb_strlen($task['description']) > 80 ? '...' : ''))); ?>
+                                <div id="task-desc-short-<?php echo $task['id']; ?>" style="<?php echo $isLong ? '' : 'display: none;'; ?>">
+                                    <?php echo nl2br(htmlspecialchars($shortDescription)); ?>
+                                    <?php if ($isLong): ?>
+                                    <button onclick="toggleTaskDescription(<?php echo $task['id']; ?>)" style="background: none; border: none; color: #667eea; cursor: pointer; padding: 0; margin-left: 4px; text-decoration: underline; font-size: 12px;">Развернуть</button>
+                                    <?php endif; ?>
+                                </div>
+                                <div id="task-desc-full-<?php echo $task['id']; ?>" style="<?php echo $isLong ? 'display: none;' : ''; ?>">
+                                    <?php echo nl2br($description); ?>
+                                    <?php if ($isLong): ?>
+                                    <button onclick="toggleTaskDescription(<?php echo $task['id']; ?>)" style="background: none; border: none; color: #667eea; cursor: pointer; padding: 0; margin-left: 4px; text-decoration: underline; font-size: 12px;">Свернуть</button>
+                                    <?php endif; ?>
+                                </div>
                             </div>
                             <?php endif; ?>
                             <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
@@ -688,6 +703,18 @@ echo "<!-- Аккуратная панель авторизации -->
                 </div>
                 
                 <script>
+                function toggleTaskDescription(taskId) {
+                    const shortDiv = document.getElementById('task-desc-short-' + taskId);
+                    const fullDiv = document.getElementById('task-desc-full-' + taskId);
+                    if (shortDiv.style.display === 'none') {
+                        shortDiv.style.display = 'block';
+                        fullDiv.style.display = 'none';
+                    } else {
+                        shortDiv.style.display = 'none';
+                        fullDiv.style.display = 'block';
+                    }
+                }
+                
                 async function updateTaskStatus(taskId, status) {
                     try {
                         const response = await fetch('/tasks_manager/tasks_api.php?action=update_status', {
@@ -885,7 +912,7 @@ echo "<!-- Аккуратная панель авторизации -->
                     
                     <div style="border-top: 1px dashed var(--border); margin: 8px 0;"></div>
                     
-                    <form action='NP_cut_index.php' method='post' target='_blank' class="stack"><input type='submit' value='Менеджер планирования (новый)'></form>
+                    <form action='NP_cut_index.php' method='post' target='_blank' class="stack"><input type='submit' value='Планирование'></form>
                 </section>
 
                 <?php $result->close(); $mysqli->close(); ?>

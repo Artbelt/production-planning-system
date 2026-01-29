@@ -492,6 +492,7 @@ echo "<!-- Аккуратная панель авторизации -->
 
                 <div class="section-title" style="margin-top:14px">Информация</div>
                 <div class="stack">
+                    <a href="cap_balance_chart.php" target="_blank" rel="noopener" class="stack"><button>Анализ</button></a>
                     <form action="summary_plan_U3.php" method="post" target="_blank" class="stack"><input type="submit" value="Сводный план У3"></form>
                     <form action="dimensions_report.php" method="post" target="_blank" class="stack"><input type="submit" value="Таблица размеров для участка"></form>
                     <form action="product_output_view.php" method="post" target="_blank" class="stack"><input type="submit" value="Обзор выпуска продукции"></form>
@@ -601,9 +602,24 @@ echo "<!-- Аккуратная панель авторизации -->
                                         <?php echo $priorityLabels[$priority]; ?>
                                     </span>
                                 </div>
-                                <?php if ($task['description']): ?>
+                                <?php if ($task['description']): 
+                                    $description = htmlspecialchars($task['description']);
+                                    $isLong = mb_strlen($task['description']) > 80;
+                                    $shortDescription = $isLong ? mb_substr($task['description'], 0, 80) : $task['description'];
+                                ?>
                                 <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px; line-height: 1.4;">
-                                    <?php echo nl2br(htmlspecialchars(mb_substr($task['description'], 0, 80) . (mb_strlen($task['description']) > 80 ? '...' : ''))); ?>
+                                    <div id="task-desc-short-<?php echo $task['id']; ?>" style="<?php echo $isLong ? '' : 'display: none;'; ?>">
+                                        <?php echo nl2br(htmlspecialchars($shortDescription)); ?>
+                                        <?php if ($isLong): ?>
+                                        <button onclick="toggleTaskDescription(<?php echo $task['id']; ?>)" style="background: none; border: none; color: #667eea; cursor: pointer; padding: 0; margin-left: 4px; text-decoration: underline; font-size: 12px;">Развернуть</button>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div id="task-desc-full-<?php echo $task['id']; ?>" style="<?php echo $isLong ? 'display: none;' : ''; ?>">
+                                        <?php echo nl2br($description); ?>
+                                        <?php if ($isLong): ?>
+                                        <button onclick="toggleTaskDescription(<?php echo $task['id']; ?>)" style="background: none; border: none; color: #667eea; cursor: pointer; padding: 0; margin-left: 4px; text-decoration: underline; font-size: 12px;">Свернуть</button>
+                                        <?php endif; ?>
+                                    </div>
                                 </div>
                                 <?php endif; ?>
                                 <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
@@ -631,6 +647,18 @@ echo "<!-- Аккуратная панель авторизации -->
                 </div>
                 
                 <script>
+                function toggleTaskDescription(taskId) {
+                    const shortDiv = document.getElementById('task-desc-short-' + taskId);
+                    const fullDiv = document.getElementById('task-desc-full-' + taskId);
+                    if (shortDiv.style.display === 'none') {
+                        shortDiv.style.display = 'block';
+                        fullDiv.style.display = 'none';
+                    } else {
+                        shortDiv.style.display = 'none';
+                        fullDiv.style.display = 'block';
+                    }
+                }
+                
                 async function updateTaskStatus(taskId, status) {
                     try {
                         const response = await fetch('tasks_api_u3.php?action=update_status', {
@@ -878,6 +906,11 @@ $mysqli->close();
             <a href="cap_history.php" class="cap-menu-card" target="_blank">
                 <h2>История операций</h2>
                 <p>Просмотр всех операций с крышками</p>
+            </a>
+            
+            <a href="cap_balance_analysis.php" class="cap-menu-card" target="_blank">
+                <h2>Анализ баланса потребления крышки</h2>
+                <p>Анализ прихода крышек и производства фильтров по дням</p>
             </a>
         </div>
     </div>

@@ -18,47 +18,42 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
         exit;
     }
 
-    // Единый запрос по выбранной заявке
+    // Единый запрос по выбранной заявке (точно как в У2)
     $sql = "
-    WITH bp AS (SELECT
-                order_number,
-                TRIM(SUBSTRING_INDEX(`filter`, ' [', 1)) AS base_filter,
-                `filter`           AS filter_label,
-                plan_date          AS need_by_date,
-                `count`
-              FROM build_plan
-              WHERE order_number = :ord
-            ),
-            p AS (
-                SELECT
-                b.order_number,
-                b.base_filter,
-                b.filter_label,
-                b.need_by_date,
-                b.`count`,
-                sfs.box,
-                sfs.g_box
-              FROM bp b
-              LEFT JOIN salon_filter_structure sfs
-                ON sfs.`filter` = b.base_filter
-            ),
-            o AS (
-                SELECT
-                order_number,
-                COALESCE(packaging_rate, 1) AS packaging_rate
-              FROM orders
-              WHERE order_number = :ord
-            )
-            SELECT
-            'box' AS component_type,
-              p.box AS component_name,
-              p.need_by_date AS need_by_date,
-              p.filter_label,
-              p.base_filter,
-              p.`count` AS qty
-            FROM p
-            WHERE p.box IS NOT NULL AND p.box <> ''
-            ORDER BY p.need_by_date, component_name, p.base_filter;";
+    WITH bp AS (
+      SELECT
+        order_number,
+        TRIM(SUBSTRING_INDEX(`filter`, ' [', 1)) AS base_filter,
+        `filter` AS filter_label,
+        plan_date AS need_by_date,
+        `count`
+      FROM build_plan
+      WHERE order_number = :ord
+    ),
+    p AS (
+      SELECT b.order_number, b.base_filter, b.filter_label, b.need_by_date, b.`count`,
+             COALESCE(sfs1.box, sfs2.box) AS box,
+             COALESCE(sfs1.g_box, sfs2.g_box) AS g_box
+      FROM bp b
+      LEFT JOIN salon_filter_structure sfs1 ON sfs1.`filter` = b.base_filter
+      LEFT JOIN salon_filter_structure sfs2 ON sfs2.`filter` = b.filter_label
+        AND (sfs1.box IS NULL OR sfs1.box = '')
+    ),
+    o AS (
+      SELECT order_number, COALESCE(packaging_rate, 1) AS packaging_rate
+      FROM orders WHERE order_number = :ord
+    )
+    SELECT
+      'box' AS component_type,
+      p.box AS component_name,
+      p.need_by_date AS need_by_date,
+      p.filter_label,
+      p.base_filter,
+      p.`count` AS qty
+    FROM p
+    WHERE p.box IS NOT NULL AND p.box <> ''
+    ORDER BY p.need_by_date, component_name, p.base_filter
+    ";
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute([':ord'=>$order]);

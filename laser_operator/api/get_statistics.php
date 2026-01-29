@@ -79,9 +79,9 @@ $databases = [
 
 header('Content-Type: application/json; charset=utf-8');
 
-// Генерируем массив дат за последние 4 дня
+// Генерируем массив дат за последние 6 дней
 $dates = [];
-for ($i = 0; $i < 4; $i++) {
+for ($i = 0; $i < 6; $i++) {
     $dates[] = date('Y-m-d', strtotime("-$i days"));
 }
 

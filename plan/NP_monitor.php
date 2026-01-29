@@ -76,36 +76,42 @@ try {
     }
     
     
-    // 2. ГОФРИРОВАНИЕ - план vs факт
-    $corrSql = "
-        SELECT 
-            SUM(cp.count) as total_packs,
-            SUM(cp.fact_count) as done_packs,
-            MIN(cp.plan_date) as start_date,
-            MAX(cp.plan_date) as end_date
-        FROM corrugation_plan cp
-        WHERE 1=1 " . ($order ? "AND cp.order_number = ?" : "");
-    
-    $stmt = $pdo->prepare($corrSql);
+    // 2. ГОФРИРОВАНИЕ - план из corrugation_plan, факт из manufactured_corrugated_packages
+    $corrPlanSql = "SELECT SUM(cp.count) as total_packs, MIN(cp.plan_date) as start_date, MAX(cp.plan_date) as end_date FROM corrugation_plan cp WHERE 1=1 " . ($order ? "AND cp.order_number = ?" : "");
+    $stmt = $pdo->prepare($corrPlanSql);
     $order ? $stmt->execute([$order]) : $stmt->execute();
-    $corrData = $stmt->fetch();
-    $corrData['current_date'] = date('Y-m-d');
-    
-    // Детальные данные по гофрированию с датами
+    $corrPlanRow = $stmt->fetch();
+    $corrFactSql = "SELECT COALESCE(SUM(count),0) as done_packs FROM manufactured_corrugated_packages WHERE 1=1 " . ($order ? "AND order_number = ?" : "");
+    $stmt = $pdo->prepare($corrFactSql);
+    $order ? $stmt->execute([$order]) : $stmt->execute();
+    $corrFactRow = $stmt->fetch();
+    $corrData = [
+        'total_packs' => (int)($corrPlanRow['total_packs'] ?? 0),
+        'done_packs' => (int)($corrFactRow['done_packs'] ?? 0),
+        'start_date' => $corrPlanRow['start_date'] ?? null,
+        'end_date' => $corrPlanRow['end_date'] ?? null,
+        'current_date' => date('Y-m-d'),
+    ];
+
+    // Детальные данные: план из corrugation_plan, факт из manufactured_corrugated_packages
     $corrDetailsSql = "
         SELECT 
             cp.plan_date,
             cp.filter_label,
             cp.count,
-            cp.fact_count,
+            COALESCE(m.fact_sum, 0) AS fact_count,
             cp.order_number,
-            ppp.p_p_height as height
+            ppp.p_p_height AS height
         FROM corrugation_plan cp
+        LEFT JOIN (
+            SELECT date_of_production, filter_label, order_number, SUM(count) AS fact_sum
+            FROM manufactured_corrugated_packages
+            GROUP BY date_of_production, filter_label, order_number
+        ) m ON m.date_of_production = cp.plan_date AND m.filter_label = cp.filter_label AND m.order_number = cp.order_number
         LEFT JOIN panel_filter_structure pfs ON TRIM(pfs.filter) = TRIM(cp.filter_label)
         LEFT JOIN paper_package_panel ppp ON ppp.p_p_name = pfs.paper_package
         WHERE 1=1 " . ($order ? "AND cp.order_number = ?" : "") . "
         ORDER BY cp.plan_date, cp.filter_label";
-    
     $stmt = $pdo->prepare($corrDetailsSql);
     $order ? $stmt->execute([$order]) : $stmt->execute();
     $corrDetails = $stmt->fetchAll();

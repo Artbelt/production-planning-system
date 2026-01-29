@@ -33,30 +33,45 @@ if ($hideDone) {
     $cutRows = array_values(array_filter($cutRows, fn($r)=> (int)$r['plan_bales'] > (int)$r['done_bales']));
 }
 
-// --- Гофрирование (corrugation_plan) ---
-// Предполагаем: добавили fact_count (INT) и status (TINYINT) ранее
-$corrTotals = $pdo->prepare("
-  SELECT 
-    COALESCE(SUM(`count`),0) AS plan_total,
-    COALESCE(SUM(fact_count),0) AS fact_total
-  FROM corrugation_plan
-  WHERE plan_date = ?
-");
-$corrTotals->execute([$date]);
-$corrKpi = $corrTotals->fetch(PDO::FETCH_ASSOC) ?: ['plan_total'=>0,'fact_total'=>0];
+// --- Гофрирование: план из corrugation_plan, факт из manufactured_corrugated_packages ---
+$corrPlanTotals = $pdo->prepare("SELECT COALESCE(SUM(`count`),0) AS plan_total FROM corrugation_plan WHERE plan_date = ?");
+$corrPlanTotals->execute([$date]);
+$planTotal = (int)($corrPlanTotals->fetch(PDO::FETCH_ASSOC)['plan_total'] ?? 0);
 
-// по заявкам
-$corrByOrder = $pdo->prepare("
-  SELECT order_number,
-         COALESCE(SUM(`count`),0) AS plan_count,
-         COALESCE(SUM(fact_count),0) AS fact_count
-  FROM corrugation_plan
-  WHERE plan_date = ?
-  GROUP BY order_number
-  ORDER BY order_number
+$corrFactTotals = $pdo->prepare("SELECT COALESCE(SUM(`count`),0) AS fact_total FROM manufactured_corrugated_packages WHERE date_of_production = ?");
+$corrFactTotals->execute([$date]);
+$factTotal = (int)($corrFactTotals->fetch(PDO::FETCH_ASSOC)['fact_total'] ?? 0);
+$corrKpi = ['plan_total' => $planTotal, 'fact_total' => $factTotal];
+
+// по заявкам: план из corrugation_plan, факт из manufactured_corrugated_packages
+$corrPlanByOrder = $pdo->prepare("
+  SELECT order_number, COALESCE(SUM(`count`),0) AS plan_count
+  FROM corrugation_plan WHERE plan_date = ? GROUP BY order_number ORDER BY order_number
 ");
-$corrByOrder->execute([$date]);
-$corrRows = $corrByOrder->fetchAll(PDO::FETCH_ASSOC);
+$corrPlanByOrder->execute([$date]);
+$planByOrder = [];
+while ($r = $corrPlanByOrder->fetch(PDO::FETCH_ASSOC)) {
+    $planByOrder[$r['order_number']] = (int)$r['plan_count'];
+}
+$corrFactByOrder = $pdo->prepare("
+  SELECT order_number, COALESCE(SUM(`count`),0) AS fact_count
+  FROM manufactured_corrugated_packages WHERE date_of_production = ? GROUP BY order_number ORDER BY order_number
+");
+$corrFactByOrder->execute([$date]);
+$factByOrder = [];
+while ($r = $corrFactByOrder->fetch(PDO::FETCH_ASSOC)) {
+    $factByOrder[$r['order_number']] = (int)$r['fact_count'];
+}
+$allOrders = array_unique(array_merge(array_keys($planByOrder), array_keys($factByOrder)));
+sort($allOrders);
+$corrRows = [];
+foreach ($allOrders as $ord) {
+    $corrRows[] = [
+        'order_number' => $ord,
+        'plan_count'   => $planByOrder[$ord] ?? 0,
+        'fact_count'   => $factByOrder[$ord] ?? 0,
+    ];
+}
 if ($hideDone) {
     $corrRows = array_values(array_filter($corrRows, fn($r)=> (int)$r['plan_count'] > (int)$r['fact_count']));
 }

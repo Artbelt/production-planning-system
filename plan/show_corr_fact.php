@@ -7,15 +7,14 @@ $date = $_POST['date'] ?? '';
 
 if (!$date) { echo "<p>Не передана дата</p>"; exit; }
 
-// Готовим нормализованное имя фильтра на стороне БД:
-// base_filter = TRIM(SUBSTRING_INDEX(filter_label,' [',1))
+// Факт гофропакетов из manufactured_corrugated_packages
 $sql = "
 SELECT
   order_number,
   TRIM(SUBSTRING_INDEX(filter_label,' [',1)) AS base_filter,
-  SUM(COALESCE(fact_count,0)) AS fact_sum
-FROM corrugation_plan
-WHERE plan_date = :d
+  SUM(COALESCE(count,0)) AS fact_sum
+FROM manufactured_corrugated_packages
+WHERE date_of_production = :d
 GROUP BY order_number, base_filter
 HAVING fact_sum > 0
 ORDER BY order_number, base_filter
@@ -34,13 +33,12 @@ if (!$rows){
 /* по каждой строке берём конкретные записи (если нужно) */
 function tooltipFor($pdo, $order, $baseFilter, $date){
     $q = $pdo->prepare("
-      SELECT filter_label, COALESCE(fact_count,0) AS qty
-      FROM corrugation_plan
-      WHERE plan_date = :d
-        AND order_number = :o
-        AND TRIM(SUBSTRING_INDEX(filter_label,' [',1)) = :f
-        AND COALESCE(fact_count,0) > 0
-      ORDER BY id
+      SELECT filter_label, SUM(COALESCE(count,0)) AS qty
+      FROM manufactured_corrugated_packages
+      WHERE date_of_production = :d AND order_number = :o
+        AND TRIM(SUBSTRING_INDEX(filter_label,' [',1)) = :f AND COALESCE(count,0) > 0
+      GROUP BY filter_label
+      ORDER BY filter_label
     ");
     $q->execute([':d'=>$date, ':o'=>$order, ':f'=>$baseFilter]);
     $items = $q->fetchAll(PDO::FETCH_ASSOC);

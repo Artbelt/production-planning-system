@@ -89,6 +89,7 @@ function get_buffer(PDO $pdo, array $opts = []): array {
 
     // --- объединение и расчёт буфера ---
     // берём LEFT JOIN, чтобы видеть даже то, что еще ни разу не собирали
+    // Фильтруем только активные заявки (hide IS NULL OR hide != 1)
     $sql = "
         SELECT
             c.order_number,
@@ -114,6 +115,7 @@ function get_buffer(PDO $pdo, array $opts = []): array {
         LEFT JOIN orders ord
           ON ord.order_number = c.order_number
          AND ord.filter = c.filter_label
+         AND (ord.hide IS NULL OR ord.hide != 1)
         LEFT JOIN salon_filter_structure sfs 
           ON sfs.filter = c.filter_label
         LEFT JOIN paper_package_salon pps 
@@ -132,6 +134,13 @@ function get_buffer(PDO $pdo, array $opts = []): array {
           ON bp.order_number = c.order_number
          AND bp.filter = c.filter_label
          AND bp.count > 0
+        WHERE EXISTS (
+            SELECT 1 
+            FROM orders o 
+            WHERE o.order_number = c.order_number 
+            AND (o.hide IS NULL OR o.hide != 1)
+            LIMIT 1
+        )
     ";
 
     $sql .= " GROUP BY c.order_number, c.filter_label";
@@ -867,6 +876,7 @@ try {
             <?php
             // Получаем список заявок для выпадающего списка
             // Только те заявки, у которых есть положительные остатки в буфере
+            // И только активные заявки (hide IS NULL OR hide != 1)
             $ordersList = [];
             try {
                 $ordersStmt = $pdo->query("
@@ -888,6 +898,13 @@ try {
                         GROUP BY m.name_of_order, m.name_of_filter
                     ) AS a ON a.order_number = c.order_number AND a.filter_label = c.filter_label
                     WHERE (c.corrugated - COALESCE(a.assembled, 0)) > 0
+                    AND EXISTS (
+                        SELECT 1 
+                        FROM orders o 
+                        WHERE o.order_number = c.order_number 
+                        AND (o.hide IS NULL OR o.hide != 1)
+                        LIMIT 1
+                    )
                     ORDER BY c.order_number ASC
                 ");
                 $ordersList = $ordersStmt->fetchAll(PDO::FETCH_COLUMN);

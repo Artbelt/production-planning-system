@@ -56,7 +56,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'full_replanning') {
         // 1. Переносим выполненные операции в план (факт → план)
         $factOperations = [
             'cut_plans' => "SELECT DISTINCT filter, SUM(fact_length) as total_fact FROM cut_plans WHERE order_number = ? AND fact_length > 0 GROUP BY filter",
-            'corrugation_plan' => "SELECT DISTINCT filter_label as filter, SUM(fact_count) as total_fact FROM corrugation_plan WHERE order_number = ? AND fact_count > 0 GROUP BY filter_label",
+            'corrugation_plan' => "SELECT DISTINCT filter_label as filter, SUM(count) as total_fact FROM manufactured_corrugated_packages WHERE order_number = ? AND count > 0 GROUP BY filter_label",
             'build_plan' => "SELECT DISTINCT filter_label as filter, SUM(fact_count) as total_fact FROM build_plan WHERE order_number = ? AND fact_count > 0 GROUP BY filter_label"
         ];
 
@@ -90,7 +90,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'full_replanning') {
         $remainingWork = $pdo->prepare("
             SELECT filter, count as total_planned, 
                    COALESCE((SELECT SUM(fact_length) FROM cut_plans WHERE order_number = o.order_number AND filter = o.filter), 0) as cut_fact,
-                   COALESCE((SELECT SUM(fact_count) FROM corrugation_plan WHERE order_number = o.order_number AND filter_label = o.filter), 0) as corr_fact,
+                   COALESCE((SELECT SUM(count) FROM manufactured_corrugated_packages WHERE order_number = o.order_number AND filter_label = o.filter), 0) as corr_fact,
                    COALESCE((SELECT SUM(fact_count) FROM build_plan WHERE order_number = o.order_number AND filter_label = o.filter), 0) as build_fact
             FROM orders o 
             WHERE o.order_number = ? AND (o.hide IS NULL OR o.hide != 1)

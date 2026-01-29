@@ -31,7 +31,7 @@ define('AUTH_DB_CONFIG', [
 // =====================================================
 define('AUTH_SECURITY', [
     // Сессии
-    'session_lifetime' => 8 * 3600, // 8 часов
+    'session_lifetime' => 24 * 3600, // 24 часа
     'session_name' => 'AUTH_SESSION_ID',
     'session_cookie_secure' => false, // true для HTTPS
     'session_cookie_httponly' => true,
@@ -298,6 +298,7 @@ spl_autoload_register(function ($class) {
  */
 function initAuthSystem() {
     // Настройка сессий
+    ini_set('session.gc_maxlifetime', AUTH_SECURITY['session_lifetime']);
     ini_set('session.cookie_lifetime', AUTH_SECURITY['session_lifetime']);
     ini_set('session.cookie_httponly', AUTH_SECURITY['session_cookie_httponly']);
     ini_set('session.cookie_secure', AUTH_SECURITY['session_cookie_secure']);
