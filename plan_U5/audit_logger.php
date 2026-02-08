@@ -11,44 +11,29 @@ class AuditLogger {
     
     /**
      * Записать операцию в аудит
-     * 
-     * @param string $table_name Название таблицы
-     * @param string $record_id ID записи
-     * @param string $operation Тип операции (INSERT, UPDATE, DELETE)
-     * @param array $old_values Старые значения
-     * @param array $new_values Новые значения
-     * @param array $changed_fields Список измененных полей
-     * @param string $additional_info Дополнительная информация
+     *
+     * @param string $user_name Имя пользователя (опционально)
      */
-    public function log($table_name, $record_id, $operation, $old_values = null, $new_values = null, $changed_fields = null, $additional_info = null) {
+    public function log($table_name, $record_id, $operation, $old_values = null, $new_values = null, $changed_fields = null, $additional_info = null, $user_name = null) {
         try {
-            // Получаем информацию о пользователе
+            $this->ensureUserColumn();
             $user_ip = $this->getUserIP();
             $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? null;
             $session_id = session_id();
-            
-            // Подготавливаем данные для записи
+            $user_name = $user_name !== null && $user_name !== '' ? (string) $user_name : null;
+
             $old_values_json = $old_values ? json_encode($old_values, JSON_UNESCAPED_UNICODE) : null;
             $new_values_json = $new_values ? json_encode($new_values, JSON_UNESCAPED_UNICODE) : null;
             $changed_fields_str = $changed_fields ? implode(',', $changed_fields) : null;
-            
-            // SQL запрос для вставки записи аудита
+
             $query = "INSERT INTO audit_log (
-                table_name, 
-                record_id, 
-                operation, 
-                old_values, 
-                new_values, 
-                changed_fields, 
-                user_ip, 
-                user_agent, 
-                session_id, 
-                additional_info
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-            
+                table_name, record_id, operation, old_values, new_values, changed_fields,
+                user_ip, user_agent, session_id, additional_info, user_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
             $stmt = $this->mysqli->prepare($query);
             $stmt->bind_param(
-                'ssssssssss',
+                'sssssssssss',
                 $table_name,
                 $record_id,
                 $operation,
@@ -58,40 +43,53 @@ class AuditLogger {
                 $user_ip,
                 $user_agent,
                 $session_id,
-                $additional_info
+                $additional_info,
+                $user_name
             );
-            
+
             $result = $stmt->execute();
             $stmt->close();
-            
             return $result;
-            
         } catch (Exception $e) {
-            // Логируем ошибку, но не прерываем выполнение основной операции
             error_log("Audit Logger Error: " . $e->getMessage());
             return false;
         }
+    }
+
+    /**
+     * Добавить колонку user_name в audit_log, если её ещё нет
+     */
+    private function ensureUserColumn() {
+        static $checked = false;
+        if ($checked) {
+            return;
+        }
+        $r = $this->mysqli->query("SHOW COLUMNS FROM audit_log LIKE 'user_name'");
+        if ($r && $r->num_rows === 0) {
+            $this->mysqli->query("ALTER TABLE audit_log ADD COLUMN user_name VARCHAR(255) DEFAULT NULL AFTER user_ip");
+        }
+        $checked = true;
     }
     
     /**
      * Записать операцию INSERT
      */
-    public function logInsert($table_name, $record_id, $new_values, $additional_info = null) {
-        return $this->log($table_name, $record_id, 'INSERT', null, $new_values, null, $additional_info);
+    public function logInsert($table_name, $record_id, $new_values, $additional_info = null, $user_name = null) {
+        return $this->log($table_name, $record_id, 'INSERT', null, $new_values, null, $additional_info, $user_name);
     }
-    
+
     /**
      * Записать операцию UPDATE
      */
-    public function logUpdate($table_name, $record_id, $old_values, $new_values, $changed_fields, $additional_info = null) {
-        return $this->log($table_name, $record_id, 'UPDATE', $old_values, $new_values, $changed_fields, $additional_info);
+    public function logUpdate($table_name, $record_id, $old_values, $new_values, $changed_fields, $additional_info = null, $user_name = null) {
+        return $this->log($table_name, $record_id, 'UPDATE', $old_values, $new_values, $changed_fields, $additional_info, $user_name);
     }
-    
+
     /**
      * Записать операцию DELETE
      */
-    public function logDelete($table_name, $record_id, $old_values, $additional_info = null) {
-        return $this->log($table_name, $record_id, 'DELETE', $old_values, null, null, $additional_info);
+    public function logDelete($table_name, $record_id, $old_values, $additional_info = null, $user_name = null) {
+        return $this->log($table_name, $record_id, 'DELETE', $old_values, null, null, $additional_info, $user_name);
     }
     
     /**

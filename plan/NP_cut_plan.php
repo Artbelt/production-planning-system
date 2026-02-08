@@ -970,13 +970,34 @@ else:
         }
     }
 
-    // Отдельный раскрой для 1000 м рулонов
-    //list($bales_1000, $left_1000) = packRollsByGroupedHeight($rolls_1000, 1200);
-    list($bales_1000, $left_1000) = cut_execute($rolls_1000, 1200, 35, 5);
-
-    // Отдельный раскрой для 500 м рулонов
-    //list($bales_500, $left_500) = packRollsByGroupedHeight($rolls_500, 1200);
-    list($bales_500, $left_500) = cut_execute($rolls_500, 1200, 35,5);
+    // Несколько попыток раскроя с разным порядком рулонов — выбираем результат с минимальным остатком
+    $CUT_ATTEMPTS = 8;
+    $best_left_1000_count = PHP_INT_MAX;
+    $bales_1000 = [];
+    $left_1000 = [];
+    for ($attempt = 0; $attempt < $CUT_ATTEMPTS; $attempt++) {
+        $rolls_1000_copy = array_map(function ($r) { return $r; }, $rolls_1000);
+        list($bales_1000_try, $left_1000_try) = cut_execute($rolls_1000_copy, 1200, 35, 5);
+        $n = count($left_1000_try);
+        if ($n < $best_left_1000_count) {
+            $best_left_1000_count = $n;
+            $bales_1000 = $bales_1000_try;
+            $left_1000 = $left_1000_try;
+        }
+    }
+    $best_left_500_count = PHP_INT_MAX;
+    $bales_500 = [];
+    $left_500 = [];
+    for ($attempt = 0; $attempt < $CUT_ATTEMPTS; $attempt++) {
+        $rolls_500_copy = array_map(function ($r) { return $r; }, $rolls_500);
+        list($bales_500_try, $left_500_try) = cut_execute($rolls_500_copy, 1200, 35, 5);
+        $n = count($left_500_try);
+        if ($n < $best_left_500_count) {
+            $best_left_500_count = $n;
+            $bales_500 = $bales_500_try;
+            $left_500 = $left_500_try;
+        }
+    }
 
     // Объединяем результаты
     $bales = array_merge($bales_1000, $bales_500);
@@ -994,6 +1015,7 @@ else:
     
     // Добавляем финальную информацию в отладку
     $debug_info[] = "=== ИТОГИ РАСКРОЯ ===";
+    $debug_info[] = "Попыток раскроя (выбрано лучшее по остаткам): {$CUT_ATTEMPTS}";
     $debug_info[] = "Рулонов 1000м создано: " . count($rolls_1000);
     $debug_info[] = "Рулонов 500м создано: " . count($rolls_500);
     $debug_info[] = "Бухт 1000м после раскроя: " . count($bales_1000);
@@ -1096,7 +1118,7 @@ else:
                 $roll['width'],
                 $roll['height'],
                 $roll['length'],
-                '1000', // Формат 1000
+                '1200', // У2: формат бухты 1200 мм (в У5 — 1000 мм)
                 $roll['waste'] ?? null,
                 $bale_id_counter
             ]);

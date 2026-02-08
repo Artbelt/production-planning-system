@@ -1,11 +1,13 @@
 <?php
+session_start();
 require_once('tools/tools.php');
 require_once('tools/backup_before_update.php');
+require_once('audit_logger.php');
 
-$filter_name = $_POST['filter_name'] ?? '';
+$filter_name = trim($_POST['filter_name'] ?? '');
 $category = $_POST['category'] ?? 'Салонный';
 
-if (empty($filter_name)) {
+if ($filter_name === '') {
     die("Ошибка: не указано имя фильтра");
 }
 
@@ -74,15 +76,35 @@ if ($mysqli->connect_errno) {
     die("Ошибка подключения к БД: " . $mysqli->connect_error);
 }
 
-// ЗАЩИТА: Создаем резервную копию перед обновлением
-backup_filter_before_update($mysqli, $filter_name);
+// ЗАЩИТА: проверяем, что в таблице ровно одна строка с таким filter (иначе UPDATE затронет не ту запись или несколько)
+$stmt_count = $mysqli->prepare("SELECT COUNT(*) AS cnt FROM salon_filter_structure WHERE filter = ?");
+$stmt_count->bind_param('s', $filter_name);
+$stmt_count->execute();
+$row_count = (int) $stmt_count->get_result()->fetch_assoc()['cnt'];
+$stmt_count->close();
+if ($row_count === 0) {
+    die("Ошибка: в таблице salon_filter_structure нет записи с фильтром «" . htmlspecialchars($filter_name) . "». Обновление отменено.");
+}
+if ($row_count > 1) {
+    die("Ошибка: в таблице salon_filter_structure найдено несколько записей (filter = «" . htmlspecialchars($filter_name) . "»). Обновление отменено — исправьте дубликаты в БД.");
+}
 
-// ЗАЩИТА: Получаем текущие значения перед обновлением
-$stmt_current = $mysqli->prepare("SELECT box, insertion_count, g_box, side_type FROM salon_filter_structure WHERE filter = ?");
-$stmt_current->bind_param('s', $filter_name);
-$stmt_current->execute();
-$current_data = $stmt_current->get_result()->fetch_assoc();
-$stmt_current->close();
+// Транзакция: при любой ошибке откатываем изменения
+$mysqli->begin_transaction();
+try {
+    // ЗАЩИТА: Создаем резервную копию перед обновлением
+    backup_filter_before_update($mysqli, $filter_name);
+} catch (Throwable $e) {
+    $mysqli->rollback();
+    die("Ошибка при создании резервной копии: " . $e->getMessage());
+}
+
+// Полная строка до изменений — для аудита (old_values)
+$stmt_old = $mysqli->prepare("SELECT * FROM salon_filter_structure WHERE filter = ?");
+$stmt_old->bind_param('s', $filter_name);
+$stmt_old->execute();
+$old_values_for_audit = $stmt_old->get_result()->fetch_assoc();
+$stmt_old->close();
 
 // ЗАЩИТА: Используем COALESCE - обновляем только если новое значение не пустое, иначе оставляем старое
 // Это предотвращает случайную очистку данных
@@ -111,7 +133,8 @@ $g_box_safe = $g_box ?? '';
 $remark_safe = $remark ?? '';
 $side_type_safe = $side_type ?? '';
 
-$stmt->bind_param('ssssssssssi', 
+// 10 строк (s) + 1 целое (i, has_edge_cuts) + 1 строка (s, filter_name для WHERE)
+$stmt->bind_param('sssssssssis',
     $category,
     $insertion_count_safe,
     $box_safe,
@@ -126,6 +149,8 @@ $stmt->bind_param('ssssssssssi',
 );
 
 if (!$stmt->execute()) {
+    $mysqli->rollback();
+    $stmt->close();
     die("Ошибка обновления фильтра: " . $stmt->error);
 }
 
@@ -136,13 +161,19 @@ if ($tariff_id !== null) {
     $sql_tariff = "UPDATE salon_filter_structure SET tariff_id = ? WHERE filter = ?";
     $stmt_tariff = $mysqli->prepare($sql_tariff);
     $stmt_tariff->bind_param('is', $tariff_id, $filter_name);
-    $stmt_tariff->execute();
+    if (!$stmt_tariff->execute()) {
+        $mysqli->rollback();
+        die("Ошибка обновления тарифа: " . $stmt_tariff->error);
+    }
     $stmt_tariff->close();
 } else {
     $sql_tariff = "UPDATE salon_filter_structure SET tariff_id = NULL WHERE filter = ?";
     $stmt_tariff = $mysqli->prepare($sql_tariff);
     $stmt_tariff->bind_param('s', $filter_name);
-    $stmt_tariff->execute();
+    if (!$stmt_tariff->execute()) {
+        $mysqli->rollback();
+        die("Ошибка обновления тарифа: " . $stmt_tariff->error);
+    }
     $stmt_tariff->close();
 }
 
@@ -150,13 +181,19 @@ if ($build_complexity !== null) {
     $sql_complexity = "UPDATE salon_filter_structure SET build_complexity = ? WHERE filter = ?";
     $stmt_complexity = $mysqli->prepare($sql_complexity);
     $stmt_complexity->bind_param('ds', $build_complexity, $filter_name);
-    $stmt_complexity->execute();
+    if (!$stmt_complexity->execute()) {
+        $mysqli->rollback();
+        die("Ошибка обновления сложности: " . $stmt_complexity->error);
+    }
     $stmt_complexity->close();
 } else {
     $sql_complexity = "UPDATE salon_filter_structure SET build_complexity = NULL WHERE filter = ?";
     $stmt_complexity = $mysqli->prepare($sql_complexity);
     $stmt_complexity->bind_param('s', $filter_name);
-    $stmt_complexity->execute();
+    if (!$stmt_complexity->execute()) {
+        $mysqli->rollback();
+        die("Ошибка обновления сложности: " . $stmt_complexity->error);
+    }
     $stmt_complexity->close();
 }
 
@@ -187,10 +224,59 @@ $stmt_paper->bind_param('sssssss',
 );
 
 if (!$stmt_paper->execute()) {
+    $mysqli->rollback();
+    $stmt_paper->close();
     die("Ошибка обновления гофропакета: " . $stmt_paper->error);
 }
 
 $stmt_paper->close();
+$mysqli->commit();
+
+// Аудит: запись в audit_log для просмотра в audit_viewer.php
+$new_values_for_audit = [
+    'category' => $category,
+    'insertion_count' => $insertion_count_safe,
+    'box' => $box_safe,
+    'g_box' => $g_box_safe,
+    'comment' => $remark_safe,
+    'foam_rubber' => $foam_rubber,
+    'form_factor' => $form_factor,
+    'tail' => $tail,
+    'side_type' => $side_type_safe,
+    'has_edge_cuts' => $has_edge_cuts,
+    'tariff_id' => $tariff_id,
+    'build_complexity' => $build_complexity
+];
+$changed_fields = [];
+foreach (array_keys($new_values_for_audit) as $k) {
+    $o = isset($old_values_for_audit[$k]) ? (string)$old_values_for_audit[$k] : '';
+    $n = isset($new_values_for_audit[$k]) ? (string)$new_values_for_audit[$k] : '';
+    if ($o !== $n) {
+        $changed_fields[] = $k;
+    }
+}
+// Имя пользователя для аудита (из сессии авторизации, если есть)
+$audit_user_name = null;
+if (!empty($_SESSION['auth_user_id']) && is_file(__DIR__ . '/../auth/includes/config.php')) {
+    require_once __DIR__ . '/../auth/includes/config.php';
+    require_once __DIR__ . '/../auth/includes/database.php';
+    $authDb = Database::getInstance();
+    $authUsers = $authDb->select('SELECT full_name FROM auth_users WHERE id = ?', [$_SESSION['auth_user_id']]);
+    if (!empty($authUsers[0]['full_name'])) {
+        $audit_user_name = trim($authUsers[0]['full_name']);
+    }
+}
+$auditLogger = new AuditLogger($mysqli);
+$auditLogger->logUpdate(
+    'salon_filter_structure',
+    $filter_name,
+    $old_values_for_audit,
+    $new_values_for_audit,
+    $changed_fields,
+    'Редактирование параметров фильтра (add_filter_properties_into_db.php)',
+    $audit_user_name
+);
+
 $mysqli->close();
 
 ?>
@@ -255,7 +341,7 @@ $mysqli->close();
         <p>Фильтр <strong><?php echo htmlspecialchars($filter_name); ?></strong> был успешно обновлен в базе данных.</p>
         <a href="add_filter_properties_into_db.php?workshop=U5" class="btn">Редактировать другой фильтр</a>
         <br>
-        <a href="main.php" class="btn" style="background: #6b7280; margin-top: 8px;">Вернуться на главную</a>
+        
     </div>
 </body>
 </html>

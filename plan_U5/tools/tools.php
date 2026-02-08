@@ -1381,12 +1381,13 @@ function get_salon_filter_data($target_filter){
     /** ГОФРОПАКЕТ */
     $result_array['paper_package_name'] = 'гофропакет '.$target_filter;
 
-    /** Выполняем запрос SQL */
-    $sql = "SELECT * FROM paper_package_salon WHERE p_p_name = '".$result_array['paper_package_name']."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $paper_package_data = $result->fetch_assoc();
+    /** Выполняем запрос SQL (подготовленный — защита от SQL-инъекций) */
+    $stmt = $mysqli->prepare("SELECT * FROM paper_package_salon WHERE p_p_name = ?");
+    $stmt->bind_param('s', $result_array['paper_package_name']);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $paper_package_data = $result ? $result->fetch_assoc() : null;
+    $stmt->close();
 
     if (isset($paper_package_data['p_p_width'])){$result_array['paper_package_width'] = $paper_package_data['p_p_width'];}else{$result_array['paper_package_width'] ='';}
     if (isset( $paper_package_data['p_p_height'])){$result_array['paper_package_height'] = $paper_package_data['p_p_height'];}else{$result_array['paper_package_height'] ='';}
@@ -1396,12 +1397,16 @@ function get_salon_filter_data($target_filter){
     if (isset( $paper_package_data['p_p_material'])){$result_array['paper_package_material'] = $paper_package_data['p_p_material'];}else{$result_array['paper_package_material'] ='';}
 
 
-    /** Получаем все данные из salon_filter_structure одним запросом */
-    $sql = "SELECT * FROM salon_filter_structure WHERE filter = '".$target_filter."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-   /** Разбор массива значений */
-    $salon_filter_data = $result->fetch_assoc();
+    /** Получаем все данные из salon_filter_structure одним запросом (подготовленный — защита от SQL-инъекций) */
+    $stmt = $mysqli->prepare("SELECT * FROM salon_filter_structure WHERE filter = ?");
+    $stmt->bind_param('s', $target_filter);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $salon_filter_data = $result ? $result->fetch_assoc() : null;
+    $stmt->close();
+    if ($salon_filter_data === null) {
+        $salon_filter_data = [];
+    }
 
     /** Вставка */
     if (isset($salon_filter_data['insertion_count'])){$result_array['insertion_count'] = $salon_filter_data['insertion_count'];}else{$result_array['insertion_count'] = '';}

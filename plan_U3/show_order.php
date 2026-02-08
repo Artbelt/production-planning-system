@@ -113,7 +113,7 @@ echo "<table id='order_table' style='border: 1px solid black; border-collapse: c
             <th> Примечание</th>     
             <th> Изготовлено, шт</th>  
             <th> Остаток, шт</th>
-            <th> Крышки в наличии, шт</th>                                                       
+            <th> Изготовленные крышки, шт</th>                                                       
             <th> Изготовленные гофропакеты, шт</th>                                                       
         </tr>";
 
@@ -130,6 +130,9 @@ $filter_count_produced = 0;
 
 /** Переменная для подсчета количества изготовленных гофропакетов */
 $gofro_packages_produced = 0;
+
+/** Переменная для подсчета количества изготовленных крышек по заявке */
+$caps_produced = 0;
 
 /** strings counter */
 $count =0;
@@ -189,8 +192,14 @@ while ($row = $result->fetch_assoc()){
     }else{
         echo "<td>".$difference."</td>";
     }
-    // Убраны ссылки на старые таблицы list_of_caps, list_of_filled_caps
-    echo "<td>-</td>";
+    // Изготовленные крышки по заявке (из cap_movements, списание по производству)
+    $cap_count = (int)manufactured_caps_count_by_order_filter($order_number, $row['filter']);
+    $caps_produced += $cap_count;
+    if ($cap_count > 0) {
+        echo "<td>".$cap_count."</td>";
+    } else {
+        echo "<td>-</td>";
+    }
     // Выводим количество изготовленных гофропакетов
     if ($gofro_package_count > 0) {
         echo "<td>".$gofro_package_count."</td></tr>";
@@ -218,7 +227,7 @@ echo "<tr style='hov'>"
     ."<td></td>"
     ."<td>".$filter_count_produced."</td>"
     ."<td>".$summ_difference.'*'."</td>"
-    ."<td></td>"
+    ."<td>".$caps_produced."</td>"
     ."<td>".$gofro_packages_produced."</td>"
     ."</tr>";
 

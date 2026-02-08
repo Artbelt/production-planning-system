@@ -72,12 +72,14 @@ try {
             $date = trim($_POST['date'] ?? '');
             $status = trim($_POST['status'] ?? '');
             $comment = trim($_POST['comment'] ?? '');
-            
+            // #region agent log
+            file_put_contents('c:\\xampp\\htdocs\\.cursor\\debug.log', json_encode(['hypothesisId'=>'E','location'=>'knives_api.php:set_status','message'=>'received status','data'=>['knife_id'=>$knife_id,'date'=>$date,'status'=>$status,'status_len'=>strlen($status)],'timestamp'=>round(microtime(true)*1000)], JSON_UNESCAPED_UNICODE)."\n", FILE_APPEND | LOCK_EX);
+            // #endregion
             if (!$knife_id || !$date || !$status) {
                 throw new Exception('Не указаны обязательные параметры');
             }
             
-            if (!in_array($status, ['in_stock', 'in_sharpening', 'in_work'])) {
+            if (!in_array($status, ['in_stock', 'in_sharpening', 'out_to_sharpening', 'in_work'])) {
                 throw new Exception('Некорректный статус');
             }
             

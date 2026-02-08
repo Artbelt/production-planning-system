@@ -70,7 +70,7 @@ if (isset($_GET['filters']) && isset($_GET['order'])) {
     exit;
 }
 
-// ========= API: строгая проверка "фильтр есть в этой заявке" =========
+// ========= API: строгая проверка "фильтр есть в этой заявке" (активная или архивная) =========
 // GET ?check=1&order=29-35-25&filter=...
 if (isset($_GET['check'])) {
     header('Content-Type: application/json; charset=utf-8');
@@ -84,7 +84,6 @@ if (isset($_GET['check'])) {
             FROM `orders`
             WHERE BINARY `order_number` = BINARY ?
               AND BINARY `filter`       = BINARY ?
-              AND (`hide` IS NULL OR `hide` = 0)
             LIMIT 1
         ");
         $stmt->execute([$order, $filter]);
@@ -111,6 +110,25 @@ if (isset($_GET['filters_with_balance'])) {
             GROUP BY o.order_number, o.filter, o.`count`
             HAVING (o.`count` - COALESCE(SUM(mp.count_of_filters), 0)) > 0
             ORDER BY o.filter
+        ");
+        echo json_encode($stmt->fetchAll(PDO::FETCH_COLUMN));
+    } catch (Throwable $e) {
+        echo json_encode([]);
+    }
+    exit;
+}
+
+// ========= API: все фильтры (весь ассортимент, для кнопки "Нет фильтра?") =========
+// GET ?all_filters=1 → ["AF1600", "Panther AirMax...", ...]
+if (isset($_GET['all_filters'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        $pdo = pdo_u5();
+        $stmt = $pdo->query("
+            SELECT DISTINCT `filter`
+            FROM `orders`
+            WHERE `filter` IS NOT NULL AND TRIM(`filter`) != ''
+            ORDER BY `filter`
         ");
         echo json_encode($stmt->fetchAll(PDO::FETCH_COLUMN));
     } catch (Throwable $e) {
@@ -158,6 +176,51 @@ if (isset($_GET['filter_balance'])) {
     exit;
 }
 
+// ========= API: архивные заявки по фильтру (последние 5 по свежести, для внесения остатка) =========
+// Номер заявки: XX(неделя старт)-XX(неделя финиш)-XX(год). Формат XX-XX — древние, в конец.
+// GET ?filter_balance_archived=1&filter=AF1600 → [{"order_number":"...","plan_count":100,"produced_count":100,"remaining_count":0}, ...]
+if (isset($_GET['filter_balance_archived'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    $filter = $_GET['filter'] ?? '';
+    if ($filter === '') { echo json_encode([]); exit; }
+    try {
+        $pdo = pdo_u5();
+        $stmt = $pdo->prepare("
+            SELECT 
+                o.order_number,
+                o.`count` as plan_count,
+                COALESCE(SUM(mp.count_of_filters), 0) as produced_count,
+                (o.`count` - COALESCE(SUM(mp.count_of_filters), 0)) as remaining_count
+            FROM `orders` o
+            LEFT JOIN `manufactured_production` mp 
+                ON BINARY mp.name_of_order = BINARY o.order_number 
+                AND BINARY mp.name_of_filter = BINARY o.filter
+            WHERE BINARY o.filter = BINARY ?
+              AND (o.hide = 1)
+            GROUP BY o.order_number, o.`count`
+            ORDER BY (
+                CASE WHEN (LENGTH(o.order_number) - LENGTH(REPLACE(o.order_number, '-', ''))) >= 2
+                     THEN CAST(SUBSTRING_INDEX(o.order_number, '-', -1) AS UNSIGNED) * 100
+                          + CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(o.order_number, '-', 2), '-', -1) AS UNSIGNED)
+                     ELSE 0
+                END
+            ) DESC
+            LIMIT 5
+        ");
+        $stmt->execute([$filter]);
+        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($result as &$row) {
+            $row['plan_count'] = (int)$row['plan_count'];
+            $row['produced_count'] = (int)$row['produced_count'];
+            $row['remaining_count'] = (int)$row['remaining_count'];
+        }
+        echo json_encode($result);
+    } catch (Throwable $e) {
+        echo json_encode([]);
+    }
+    exit;
+}
+
 // ========= API: сохранение смены =========
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json; charset=utf-8');
@@ -173,12 +236,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['status'=>'error','message'=>'Пустые данные']); exit;
         }
 
-        // Строгая серверная валидация каждой пары (order, filter)
+        // Строгая серверная валидация каждой пары (order, filter) — разрешаем и архивные заявки
         $chk = $pdo->prepare("
             SELECT 1 FROM `orders`
             WHERE BINARY `order_number` = BINARY ?
               AND BINARY `filter`       = BINARY ?
-              AND (`hide` IS NULL OR `hide` = 0)
             LIMIT 1
         ");
         $invalid = [];
@@ -287,13 +349,14 @@ $today = date('Y-m-d');
 
             <!-- 1. Фильтр -->
             <label class="block text-sm font-medium">1. Наименование (фильтр)</label>
-            <select id="modalName" class="w-full border px-3 py-2 rounded mb-3">
+            <select id="modalName" class="w-full border px-3 py-2 rounded mb-1">
                 <option value="">— Выберите фильтр —</option>
             </select>
+            <button type="button" id="btnAllFilters" class="text-sm text-blue-600 hover:underline mb-3" onclick="loadAllFilters()">Нет фильтра? Показать весь ассортимент</button>
 
-            <!-- 2. Заявки с остатками по выбранному фильтру -->
+            <!-- 2. Заявки с остатками по выбранному фильтру (активные или архивные) -->
             <div id="ordersBlock" class="hidden mb-3">
-                <label class="block text-sm font-medium mb-1">2. Активные заявки с остатком по этому фильтру</label>
+                <label id="ordersBlockLabel" class="block text-sm font-medium mb-1">2. Активные заявки с остатком по этому фильтру</label>
                 <div id="ordersList" class="border rounded p-2 bg-gray-50 max-h-40 overflow-y-auto space-y-1 text-sm"></div>
                 <input type="hidden" id="modalOrder" value="">
             </div>
@@ -327,6 +390,7 @@ $today = date('Y-m-d');
     }
 
     let currentFilterBalance = [];
+    let currentFilterIsArchived = false;
 
     async function openModal() {
         document.getElementById('modal').classList.remove('hidden');
@@ -336,6 +400,7 @@ $today = date('Y-m-d');
         document.getElementById('modalOrder').value = '';
         document.getElementById('modalCount').value = '';
         currentFilterBalance = [];
+        currentFilterIsArchived = false;
         await loadFiltersWithBalance();
         setTimeout(() => document.getElementById('modalName')?.focus(), 50);
     }
@@ -349,6 +414,29 @@ $today = date('Y-m-d');
         document.getElementById('countBlock').classList.add('hidden');
         document.getElementById('correctnessBlock').classList.add('hidden');
         currentFilterBalance = [];
+        currentFilterIsArchived = false;
+    }
+
+    async function loadAllFilters() {
+        const sel = document.getElementById('modalName');
+        const currentVal = sel.value;
+        sel.innerHTML = '<option value="">— Загрузка… —</option>';
+        try {
+            const res = await fetch('?all_filters=1');
+            const arr = await res.json();
+            sel.innerHTML = '<option value="">— Выберите фильтр —</option>';
+            if (arr && arr.length) {
+                for (const f of arr) {
+                    const o = document.createElement('option');
+                    o.value = f;
+                    o.textContent = f;
+                    sel.appendChild(o);
+                }
+            }
+            if (currentVal) sel.value = currentVal;
+        } catch (e) {
+            sel.innerHTML = '<option value="">Ошибка загрузки</option>';
+        }
     }
 
     async function loadFiltersWithBalance() {
@@ -391,6 +479,8 @@ $today = date('Y-m-d');
 
         ordersList.innerHTML = 'Загрузка…';
         ordersBlock.classList.remove('hidden');
+        document.getElementById('ordersBlockLabel').textContent = '2. Активные заявки с остатком по этому фильтру';
+        currentFilterIsArchived = false;
         try {
             const res = await fetch(`?filter_balance=1&filter=${encodeURIComponent(filter)}`);
             const balance = await res.json();
@@ -400,7 +490,19 @@ $today = date('Y-m-d');
         }
 
         if (currentFilterBalance.length === 0) {
-            ordersList.innerHTML = '<span class="text-gray-500">Нет активных заявок с остатком по этому фильтру</span>';
+            try {
+                const resArch = await fetch(`?filter_balance_archived=1&filter=${encodeURIComponent(filter)}`);
+                const archived = await resArch.json();
+                if (archived && archived.length > 0) {
+                    currentFilterBalance = archived;
+                    currentFilterIsArchived = true;
+                    document.getElementById('ordersBlockLabel').textContent = '2. Архивные заявки с этим фильтром (выберите заявку для внесения остатка)';
+                }
+            } catch (e) {}
+        }
+
+        if (currentFilterBalance.length === 0) {
+            ordersList.innerHTML = '<span class="text-gray-500">Нет активных и архивных заявок по этому фильтру</span>';
             return;
         }
 
@@ -414,7 +516,9 @@ $today = date('Y-m-d');
             div.type = 'button';
             div.className = 'w-full text-left px-2 py-1.5 rounded border border-transparent hover:bg-blue-100 hover:border-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-400 order-item';
             div.dataset.order = order;
-            div.textContent = `Заявка ${order} — осталось ${rem} из ${plan} (сделано ${produced})`;
+            div.textContent = currentFilterIsArchived
+                ? `Заявка ${order} (архив) — план ${plan}, сделано ${produced}, остаток ${rem}`
+                : `Заявка ${order} — осталось ${rem} из ${plan} (сделано ${produced})`;
             div.addEventListener('click', () => selectOrder(order));
             ordersList.appendChild(div);
         }
@@ -462,6 +566,12 @@ $today = date('Y-m-d');
         if (count <= 0) {
             block.textContent = userName + ', введите количество изготовленных шт.';
             block.classList.add('bg-gray-100', 'text-gray-700');
+            return;
+        }
+
+        if (currentFilterIsArchived) {
+            block.classList.add('bg-amber-50', 'border', 'border-amber-300', 'text-amber-900');
+            block.textContent = 'Внесение в архивную заявку ' + order + '. Будет внесено ' + count + ' шт.';
             return;
         }
 
@@ -520,7 +630,7 @@ $today = date('Y-m-d');
         }
 
         const item = currentFilterBalance.find(x => x.order_number === order);
-        if (item && countNum > item.remaining_count) {
+        if (item && countNum > item.remaining_count && !currentFilterIsArchived) {
             const multi = currentFilterBalance.length > 1;
             let msg;
             if (multi) {
@@ -530,6 +640,7 @@ $today = date('Y-m-d');
             }
             if (!confirm(msg)) return;
         }
+        if (currentFilterIsArchived && item && !confirm('Внести ' + countNum + ' шт. в архивную заявку ' + order + '?')) return;
 
         const row = document.createElement('tr');
         row.setAttribute('data-valid', 'pending');

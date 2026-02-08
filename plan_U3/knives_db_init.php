@@ -39,7 +39,7 @@ $sql = "CREATE TABLE IF NOT EXISTS knives_calendar (
     id INT AUTO_INCREMENT PRIMARY KEY,
     knife_id INT NOT NULL,
     date DATE NOT NULL,
-    status ENUM('in_stock', 'in_sharpening', 'in_work') NOT NULL,
+    status ENUM('in_stock', 'in_sharpening', 'out_to_sharpening', 'in_work') NOT NULL,
     user_id INT NULL,
     user_name VARCHAR(255) NULL,
     comment TEXT NULL,
@@ -54,6 +54,9 @@ $sql = "CREATE TABLE IF NOT EXISTS knives_calendar (
 if (!$mysqli->query($sql)) {
     die('Ошибка создания таблицы knives_calendar: ' . $mysqli->error);
 }
+
+// Добавляем значение 'out_to_sharpening' в ENUM, если таблица уже существовала со старым определением
+$mysqli->query("ALTER TABLE knives_calendar MODIFY status ENUM('in_stock', 'in_sharpening', 'out_to_sharpening', 'in_work') NOT NULL");
 
 // Закрываем соединение только если мы его создали
 if (isset($close_connection) && $close_connection) {

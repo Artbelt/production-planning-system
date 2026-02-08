@@ -31,8 +31,16 @@ if (!$isDirector) {
     showAccessDenied('Доступ к странице аналитики имеют только директоры');
 }
 
-// Вчерашняя дата для отчёта
-$yesterday = date('Y-m-d', strtotime('-1 day'));
+// Дата для отчёта: из GET или вчера по умолчанию
+$reportDate = isset($_GET['date']) ? trim($_GET['date']) : date('Y-m-d', strtotime('-1 day'));
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $reportDate)) {
+    $reportDate = date('Y-m-d', strtotime('-1 day'));
+} else {
+    $dt = DateTime::createFromFormat('Y-m-d', $reportDate);
+    if (!$dt || $dt->format('Y-m-d') !== $reportDate) {
+        $reportDate = date('Y-m-d', strtotime('-1 day'));
+    }
+}
 
 // Подключения к БД участков: код участка => путь к settings.php
 $planSettingsPaths = [
@@ -63,7 +71,7 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
 
         $stmt = $mysqli->prepare("SELECT COALESCE(SUM(count_of_filters), 0) AS total FROM manufactured_production WHERE date_of_production = ?");
         if ($stmt) {
-            $stmt->bind_param('s', $yesterday);
+            $stmt->bind_param('s', $reportDate);
             $stmt->execute();
             $res = $stmt->get_result();
             if ($row = $res->fetch_assoc()) {
@@ -78,7 +86,7 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
             if ($check && $check->num_rows > 0) {
                 $stmt = $mysqli->prepare("SELECT COALESCE(SUM(count_of_filters), 0) AS total FROM manufactured_production WHERE date_of_production = ? AND team IN (1, 2)");
                 if ($stmt) {
-                    $stmt->bind_param('s', $yesterday);
+                    $stmt->bind_param('s', $reportDate);
                     $stmt->execute();
                     $res = $stmt->get_result();
                     if ($row = $res->fetch_assoc()) {
@@ -88,7 +96,7 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
                 }
                 $stmt = $mysqli->prepare("SELECT COALESCE(SUM(count_of_filters), 0) AS total FROM manufactured_production WHERE date_of_production = ? AND team IN (3, 4)");
                 if ($stmt) {
-                    $stmt->bind_param('s', $yesterday);
+                    $stmt->bind_param('s', $reportDate);
                     $stmt->execute();
                     $res = $stmt->get_result();
                     if ($row = $res->fetch_assoc()) {
@@ -107,7 +115,7 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
                     GROUP BY mp.team, mp.name_of_filter, mp.name_of_order
                 ");
                 if ($stmt) {
-                    $stmt->bind_param('s', $yesterday);
+                    $stmt->bind_param('s', $reportDate);
                     $stmt->execute();
                     $res = $stmt->get_result();
                     $norms_m1 = 0.0;
@@ -132,7 +140,7 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
         if ($code === 'U2' || $code === 'U5') {
             $stmt = $mysqli->prepare("SELECT COALESCE(SUM(`count`), 0) AS total FROM manufactured_corrugated_packages WHERE date_of_production = ?");
             if ($stmt) {
-                $stmt->bind_param('s', $yesterday);
+                $stmt->bind_param('s', $reportDate);
                 $stmt->execute();
                 $res = $stmt->get_result();
                 if ($row = $res->fetch_assoc()) {
@@ -143,7 +151,7 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
         } else {
             $stmt = $mysqli->prepare("SELECT COALESCE(SUM(count_of_parts), 0) AS total FROM manufactured_parts WHERE date_of_production = ?");
             if ($stmt) {
-                $stmt->bind_param('s', $yesterday);
+                $stmt->bind_param('s', $reportDate);
                 $stmt->execute();
                 $res = $stmt->get_result();
                 if ($row = $res->fetch_assoc()) {
@@ -176,7 +184,7 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
                   )
             ");
             if ($stmt) {
-                $stmt->bind_param('s', $yesterday);
+                $stmt->bind_param('s', $reportDate);
                 $stmt->execute();
                 $res = $stmt->get_result();
                 if ($row = $res->fetch_assoc()) {
@@ -185,8 +193,8 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
                 $stmt->close();
             }
             // Данные для графика «Накопленный баланс крышек» (как в cap_balance_chart.php)
-            $chart_date_from = date('Y-m-d', strtotime('-30 days'));
-            $chart_date_to = date('Y-m-d', strtotime('-1 day'));
+            $chart_date_from = date('Y-m-d', strtotime($reportDate . ' -30 days'));
+            $chart_date_to = $reportDate;
             $income_by_date = [];
             $stmt = $mysqli->prepare("
                 SELECT date, SUM(quantity) AS total_pieces
@@ -334,6 +342,27 @@ $departments = [
             display: flex;
             justify-content: space-between;
             align-items: center;
+        }
+        .analytics-date-form {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .analytics-date-label {
+            font-size: 14px;
+            color: var(--gray-600);
+            font-weight: 500;
+        }
+        .analytics-date-input {
+            font-size: 14px;
+            padding: 8px 12px;
+            border: 1px solid var(--gray-300);
+            border-radius: 6px;
+            color: var(--gray-800);
+        }
+        .analytics-date-input:focus {
+            outline: none;
+            border-color: var(--primary, #2563eb);
         }
         .analytics-grid {
             display: grid;
@@ -483,6 +512,10 @@ $departments = [
                 </div>
                 <h1 style="margin: 0; font-size: 22px;">Аналитика по участкам</h1>
             </div>
+            <form method="get" action="" class="analytics-date-form" id="analyticsDateForm">
+                <label for="analyticsDate" class="analytics-date-label">Дата:</label>
+                <input type="date" id="analyticsDate" name="date" value="<?= htmlspecialchars($reportDate) ?>" class="analytics-date-input" max="<?= date('Y-m-d') ?>" onchange="document.getElementById('analyticsDateForm').submit()">
+            </form>
         </div>
 
         <div class="analytics-grid">
@@ -685,8 +718,8 @@ $departments = [
     </style>
     <script>
     (function() {
-        var yesterday = <?= json_encode($yesterday) ?>;
-        var dateDisplay = <?= json_encode(date('d.m.Y', strtotime($yesterday))) ?>;
+        var reportDate = <?= json_encode($reportDate) ?>;
+        var dateDisplay = <?= json_encode(date('d.m.Y', strtotime($reportDate))) ?>;
         var modal = document.getElementById('productionDetailModal');
         var titleEl = document.getElementById('productionModalTitle');
         var contentEl = document.getElementById('productionModalContent');
@@ -706,7 +739,7 @@ $departments = [
                 titleEl.textContent = 'Выпуск продукции — Машина ' + machine + ' (' + dateDisplay + ')';
                 contentEl.innerHTML = '<div style="text-align:center; padding:24px;">Загрузка...</div>';
                 openModal();
-                fetch('/plan_U5/get_team_percentage_details.php?date=' + encodeURIComponent(yesterday) + '&teams=' + encodeURIComponent(teams))
+                fetch('/plan_U5/get_team_percentage_details.php?date=' + encodeURIComponent(reportDate) + '&teams=' + encodeURIComponent(teams))
                     .then(function(r) { return r.ok ? r.json() : Promise.reject(new Error(r.status)); })
                     .then(function(data) {
                         if (data.error) {

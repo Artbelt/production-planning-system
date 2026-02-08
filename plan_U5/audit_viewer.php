@@ -434,6 +434,7 @@
                         <th>Новые</th>
                         <th>Поля</th>
                         <th>IP</th>
+                        <th>Пользователь</th>
                         <th>Инфо</th>
                     </tr>
                 </thead>
@@ -455,6 +456,7 @@
         <label><input type="checkbox" checked onchange="toggleColumn('new')"> Новые</label>
         <label><input type="checkbox" checked onchange="toggleColumn('fields')"> Поля</label>
         <label><input type="checkbox" checked onchange="toggleColumn('ip')"> IP</label>
+        <label><input type="checkbox" checked onchange="toggleColumn('user')"> Пользователь</label>
         <label><input type="checkbox" checked onchange="toggleColumn('info')"> Инфо</label>
     </div>
 
@@ -538,6 +540,7 @@
                 const newValues = log.new_values ? JSON.stringify(log.new_values, null, 2) : '';
                 const changedFields = log.changed_fields ? log.changed_fields.join(', ') : '';
                 
+                const userName = (log.user_name && log.user_name.trim()) ? log.user_name.trim() : '-';
                 row.innerHTML = `
                     <td>${log.id}</td>
                     <td class="time-cell">${new Date(log.created_at).toLocaleString('ru-RU')}</td>
@@ -548,6 +551,7 @@
                     <td><div class="json-data" title="${newValues}">${newValues || '-'}</div></td>
                     <td>${changedFields || '-'}</td>
                     <td>${log.user_ip || '-'}</td>
+                    <td>${userName}</td>
                     <td><div class="additional-info" title="${log.additional_info || '-'}">${log.additional_info || '-'}</div></td>
                 `;
                 
@@ -580,7 +584,8 @@
                 'new': 6,
                 'fields': 7,
                 'ip': 8,
-                'info': 9
+                'user': 9,
+                'info': 10
             };
 
             const index = columnIndex[columnName];

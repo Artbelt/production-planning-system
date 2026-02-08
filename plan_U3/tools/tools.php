@@ -1382,6 +1382,29 @@ function manufactured_part_count($part,$order) {
     return $count;
 }
 
+/** Возвращает количество изготовленных (списанных по производству) крышек по заявке и фильтру из cap_movements */
+function manufactured_caps_count_by_order_filter($order_number, $filter_name) {
+    global $mysql_host, $mysql_user, $mysql_user_pass, $mysql_database;
+    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+    if ($mysqli->connect_errno) {
+        return 0;
+    }
+    $mysqli->set_charset("utf8mb4");
+    $stmt = $mysqli->prepare("SELECT COALESCE(SUM(quantity), 0) AS total FROM cap_movements WHERE order_number = ? AND filter_name = ? AND operation_type = 'PRODUCTION_OUT'");
+    if (!$stmt) {
+        $mysqli->close();
+        return 0;
+    }
+    $stmt->bind_param("ss", $order_number, $filter_name);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result ? $result->fetch_assoc() : null;
+    $total = $row ? (int)$row['total'] : 0;
+    $stmt->close();
+    $mysqli->close();
+    return $total;
+}
+
 /** Функция выполняет запрос к БД и возвращает количество комплектующих определенного изделия на складе */
 function count_of_manufactured_parts_in_the_storage($part) {
 

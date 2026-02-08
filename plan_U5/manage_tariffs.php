@@ -1,12 +1,15 @@
 <?php
 require_once('tools/tools.php');
 require_once('settings.php');
+require_once('tools/ensure_salary_warehouse_tables.php');
 require_once('audit_logger.php');
 
 $action = $_GET['action'] ?? 'list';
 $tariff_id = $_GET['id'] ?? null;
 $addition_action = $_GET['addition_action'] ?? null;
 $addition_code = $_GET['addition_code'] ?? null;
+$hourly_action = $_GET['hourly_action'] ?? null;
+$hourly_id = isset($_GET['hourly_id']) ? intval($_GET['hourly_id']) : null;
 
 // Обработка действий
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -364,6 +367,135 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
+    
+    // Обработка действий с почасовыми тарифами для рабочих
+    if (isset($_POST['hourly_action'])) {
+        $hourly_action = $_POST['hourly_action'];
+        
+        if ($hourly_action === 'add' || $hourly_action === 'edit') {
+            $hourly_name = trim($_POST['hourly_name'] ?? '');
+            $rate_per_hour = floatval($_POST['rate_per_hour'] ?? 0);
+            $sort_order = isset($_POST['sort_order']) && $_POST['sort_order'] !== '' ? intval($_POST['sort_order']) : 0;
+            
+            if (empty($hourly_name)) {
+                $error = 'Название почасового тарифа не может быть пустым';
+            } else {
+                global $mysql_host, $mysql_user, $mysql_user_pass, $mysql_database;
+                $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+                
+                if ($mysqli->connect_errno) {
+                    $error = 'Ошибка подключения к БД: ' . $mysqli->connect_error;
+                } else {
+                    $auditLogger = new AuditLogger($mysqli);
+                    
+                    if ($hourly_action === 'add') {
+                        $stmt = $mysqli->prepare("INSERT INTO salary_hourly_worker_rates (name, rate_per_hour, sort_order) VALUES (?, ?, ?)");
+                        $stmt->bind_param('sdi', $hourly_name, $rate_per_hour, $sort_order);
+                    } else {
+                        $hid = intval($_POST['hourly_id'] ?? 0);
+                        $old_values = null;
+                        $old_stmt = $mysqli->prepare("SELECT * FROM salary_hourly_worker_rates WHERE id = ?");
+                        $old_stmt->bind_param('i', $hid);
+                        $old_stmt->execute();
+                        $old_result = $old_stmt->get_result();
+                        if ($old_row = $old_result->fetch_assoc()) {
+                            $old_values = $old_row;
+                        }
+                        $old_stmt->close();
+                        
+                        $stmt = $mysqli->prepare("UPDATE salary_hourly_worker_rates SET name = ?, rate_per_hour = ?, sort_order = ? WHERE id = ?");
+                        $stmt->bind_param('sdii', $hourly_name, $rate_per_hour, $sort_order, $hid);
+                    }
+                    
+                    if ($stmt->execute()) {
+                        if ($hourly_action === 'add') {
+                            $new_id = $mysqli->insert_id;
+                            $new_values = [
+                                'id' => $new_id,
+                                'name' => $hourly_name,
+                                'rate_per_hour' => $rate_per_hour,
+                                'sort_order' => $sort_order
+                            ];
+                            $auditLogger->logInsert(
+                                'salary_hourly_worker_rates',
+                                (string)$new_id,
+                                $new_values,
+                                'Добавление почасового тарифа через manage_tariffs.php'
+                            );
+                        } else {
+                            $hid = intval($_POST['hourly_id'] ?? 0);
+                            $new_stmt = $mysqli->prepare("SELECT * FROM salary_hourly_worker_rates WHERE id = ?");
+                            $new_stmt->bind_param('i', $hid);
+                            $new_stmt->execute();
+                            $new_result = $new_stmt->get_result();
+                            $new_values = $new_result->fetch_assoc();
+                            $new_stmt->close();
+                            if ($new_values && isset($old_values)) {
+                                $changed_fields = [];
+                                foreach ($new_values as $k => $v) {
+                                    if (isset($old_values[$k]) && $old_values[$k] != $v) {
+                                        $changed_fields[] = $k;
+                                    }
+                                }
+                                $auditLogger->logUpdate(
+                                    'salary_hourly_worker_rates',
+                                    (string)$hid,
+                                    $old_values,
+                                    $new_values,
+                                    $changed_fields,
+                                    'Изменение почасового тарифа через manage_tariffs.php'
+                                );
+                            }
+                        }
+                        header('Location: manage_tariffs.php?success=hourly_' . ($hourly_action === 'add' ? 'added' : 'updated'));
+                        exit;
+                    } else {
+                        $error = 'Ошибка сохранения почасового тарифа: ' . $stmt->error;
+                    }
+                    $stmt->close();
+                    $mysqli->close();
+                }
+            }
+        } elseif ($hourly_action === 'delete') {
+            $hid = intval($_POST['hourly_id'] ?? 0);
+            if ($hid > 0) {
+                global $mysql_host, $mysql_user, $mysql_user_pass, $mysql_database;
+                $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+                
+                if ($mysqli->connect_errno) {
+                    $error = 'Ошибка подключения к БД: ' . $mysqli->connect_error;
+                } else {
+                    $auditLogger = new AuditLogger($mysqli);
+                    $old_stmt = $mysqli->prepare("SELECT * FROM salary_hourly_worker_rates WHERE id = ?");
+                    $old_stmt->bind_param('i', $hid);
+                    $old_stmt->execute();
+                    $old_result = $old_stmt->get_result();
+                    $old_values = $old_result->fetch_assoc();
+                    $old_stmt->close();
+                    
+                    $stmt = $mysqli->prepare("DELETE FROM salary_hourly_worker_rates WHERE id = ?");
+                    $stmt->bind_param('i', $hid);
+                    
+                    if ($stmt->execute()) {
+                        if ($old_values) {
+                            $auditLogger->logDelete(
+                                'salary_hourly_worker_rates',
+                                (string)$hid,
+                                $old_values,
+                                'Удаление почасового тарифа через manage_tariffs.php'
+                            );
+                        }
+                        header('Location: manage_tariffs.php?success=hourly_deleted');
+                        exit;
+                    } else {
+                        $error = 'Ошибка удаления почасового тарифа: ' . $stmt->error;
+                    }
+                    $stmt->close();
+                    $mysqli->close();
+                }
+            }
+        }
+    }
 }
 
 // Загружаем данные тарифа для редактирования
@@ -436,6 +568,36 @@ while ($row = $result->fetch_assoc()) {
     $additions_list[] = $row;
 }
 
+// Загружаем список почасовых тарифов для рабочих
+$hourly_rates_list = [];
+try {
+    $result = mysql_execute("SELECT * FROM salary_hourly_worker_rates ORDER BY sort_order, name");
+    while ($row = $result->fetch_assoc()) {
+        $hourly_rates_list[] = $row;
+    }
+} catch (Exception $e) {
+    // Таблица может отсутствовать до первого запуска ensure_salary_warehouse_tables
+}
+
+// Загружаем данные почасового тарифа для редактирования
+$hourly_data = null;
+if ($hourly_action === 'edit' && $hourly_id) {
+    try {
+        $result = mysql_execute("SELECT * FROM salary_hourly_worker_rates WHERE id = " . intval($hourly_id));
+        $rows = [];
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
+        }
+        if (!empty($rows)) {
+            $hourly_data = $rows[0];
+        } else {
+            $hourly_action = null;
+        }
+    } catch (Exception $e) {
+        $hourly_action = null;
+    }
+}
+
 $success_message = '';
 if (isset($_GET['success'])) {
     $messages = [
@@ -444,7 +606,10 @@ if (isset($_GET['success'])) {
         'deleted' => 'Тариф успешно удален',
         'addition_added' => 'Доплата успешно добавлена',
         'addition_updated' => 'Доплата успешно обновлена',
-        'addition_deleted' => 'Доплата успешно удалена'
+        'addition_deleted' => 'Доплата успешно удалена',
+        'hourly_added' => 'Почасовой тариф успешно добавлен',
+        'hourly_updated' => 'Почасовой тариф успешно обновлен',
+        'hourly_deleted' => 'Почасовой тариф успешно удален'
     ];
     $success_message = $messages[$_GET['success']] ?? '';
 }
@@ -560,7 +725,7 @@ if (isset($_GET['success'])) {
         <div class="alert error"><?php echo htmlspecialchars($error); ?></div>
     <?php endif; ?>
 
-    <?php if ($action === 'list' && !$addition_action): ?>
+    <?php if ($action === 'list' && !$addition_action && $hourly_action !== 'add' && $hourly_action !== 'edit'): ?>
         <!-- Кнопка показа справочной информации -->
         <div class="card" style="margin-bottom: 16px;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -744,6 +909,50 @@ if (isset($_GET['success'])) {
         </div>
         <?php endif; ?>
 
+        <!-- Почасовые тарифы для рабочих -->
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+                <h3 style="margin:0">Почасовые тарифы для рабочих</h3>
+                <a href="?hourly_action=add" class="btn success">+ Добавить почасовой тариф</a>
+            </div>
+            <p style="color:var(--muted); font-size:13px; margin:0 0 12px;">Тарифы за час работы (для почасовой оплаты смен).</p>
+            <?php if (empty($hourly_rates_list)): ?>
+                <p style="color:var(--muted); text-align:center; padding:40px">Почасовые тарифы не добавлены</p>
+            <?php else: ?>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Название</th>
+                            <th>Ставка за час (грн)</th>
+                            <th>Порядок</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($hourly_rates_list as $hr): ?>
+                            <tr>
+                                <td><?php echo htmlspecialchars($hr['id']); ?></td>
+                                <td><strong><?php echo htmlspecialchars($hr['name']); ?></strong></td>
+                                <td><?php echo number_format($hr['rate_per_hour'], 2, '.', ' '); ?></td>
+                                <td><?php echo (int)$hr['sort_order']; ?></td>
+                                <td>
+                                    <div style="display:flex; gap:8px">
+                                        <a href="?hourly_action=edit&hourly_id=<?php echo (int)$hr['id']; ?>" class="btn secondary" style="padding:6px 12px; font-size:12px">Редактировать</a>
+                                        <form method="post" style="display:inline" onsubmit="return confirm('Удалить этот почасовой тариф?');">
+                                            <input type="hidden" name="hourly_action" value="delete">
+                                            <input type="hidden" name="hourly_id" value="<?php echo (int)$hr['id']; ?>">
+                                            <button type="submit" class="btn danger" style="padding:6px 12px; font-size:12px">Удалить</button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+
     <?php elseif ($action === 'add' || $action === 'edit'): ?>
         <!-- Форма добавления/редактирования -->
         <div class="card">
@@ -829,6 +1038,44 @@ if (isset($_GET['success'])) {
                 
                 <div style="background:#f9fafb; padding:12px; border-radius:8px; margin-top:16px; font-size:12px; color:var(--muted);">
                     <strong>Примечание:</strong> Доплаты применяются автоматически при расчете заработной платы в зависимости от характеристик фильтра и типа тарифа.
+                </div>
+                
+                <div class="actions">
+                    <button type="submit" class="btn success">Сохранить</button>
+                    <a href="manage_tariffs.php" class="btn secondary">Отмена</a>
+                </div>
+            </form>
+        </div>
+    <?php elseif ($hourly_action === 'add' || $hourly_action === 'edit'): ?>
+        <!-- Форма добавления/редактирования почасового тарифа -->
+        <div class="card">
+            <h3><?php echo $hourly_action === 'add' ? 'Добавить почасовой тариф' : 'Редактировать почасовой тариф'; ?></h3>
+            
+            <form method="post">
+                <input type="hidden" name="hourly_action" value="<?php echo $hourly_action; ?>">
+                <?php if ($hourly_action === 'edit' && $hourly_data): ?>
+                    <input type="hidden" name="hourly_id" value="<?php echo (int)$hourly_data['id']; ?>">
+                <?php endif; ?>
+                
+                <div class="row-3">
+                    <div>
+                        <label>Название *</label>
+                        <input type="text" name="hourly_name" required 
+                               value="<?php echo htmlspecialchars($hourly_data['name'] ?? ''); ?>" 
+                               placeholder="Например: Сборщик">
+                    </div>
+                    <div>
+                        <label>Ставка за час (грн) *</label>
+                        <input type="number" name="rate_per_hour" step="0.01" min="0" required 
+                               value="<?php echo htmlspecialchars($hourly_data['rate_per_hour'] ?? '0'); ?>" 
+                               placeholder="0.00">
+                    </div>
+                    <div>
+                        <label>Порядок сортировки</label>
+                        <input type="number" name="sort_order" min="0" 
+                               value="<?php echo htmlspecialchars($hourly_data['sort_order'] ?? '0'); ?>" 
+                               placeholder="0">
+                    </div>
                 </div>
                 
                 <div class="actions">

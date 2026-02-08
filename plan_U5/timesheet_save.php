@@ -42,6 +42,8 @@ try {
     $user_id = isset($_POST['employee_id']) ? (int)$_POST['employee_id'] : null;
     $date = isset($_POST['date']) ? $_POST['date'] : null;
     $hours_worked = isset($_POST['hours_worked']) ? (float)$_POST['hours_worked'] : 0;
+    $team_id = isset($_POST['team_id']) ? ($_POST['team_id'] === '' || $_POST['team_id'] === '0' ? null : (int)$_POST['team_id']) : null;
+    $hourly_rate_id = isset($_POST['hourly_rate_id']) && $_POST['hourly_rate_id'] !== '' ? (int)$_POST['hourly_rate_id'] : null;
     $comments = isset($_POST['comments']) ? trim($_POST['comments']) : '';
 
     if (!$user_id || !$date) {
@@ -105,13 +107,17 @@ try {
                 user_id INT NOT NULL COMMENT 'ID пользователя из auth_users',
                 date DATE NOT NULL,
                 hours_worked DECIMAL(5,2) DEFAULT 0.00,
+                team_id INT NULL COMMENT 'Бригада в смену (NULL = индивидуально)',
+                hourly_rate_id INT NULL COMMENT 'Почасовой тариф при работе индивидуально',
                 comments TEXT DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 UNIQUE KEY unique_user_date (user_id, date),
                 INDEX idx_date (date),
                 INDEX idx_user_date (user_id, date),
-                INDEX idx_user_id (user_id)
+                INDEX idx_user_id (user_id),
+                INDEX idx_team_id (team_id),
+                INDEX idx_hourly_rate_id (hourly_rate_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
     } else {
@@ -153,6 +159,16 @@ try {
                     // Игнорируем, если индекс уже существует
                 }
             }
+            // Добавляем team_id, если колонки нет (работа в бригаде в смену)
+            $colTeam = $pdo->query("SHOW COLUMNS FROM timesheet_hours LIKE 'team_id'");
+            if ($colTeam->rowCount() == 0) {
+                $pdo->exec("ALTER TABLE timesheet_hours ADD COLUMN team_id INT NULL COMMENT 'Бригада в смену (NULL = индивидуально)' AFTER hours_worked, ADD INDEX idx_team_id (team_id)");
+            }
+            // Добавляем hourly_rate_id, если колонки нет (почасовой тариф при индивидуальной работе)
+            $colHourlyRate = $pdo->query("SHOW COLUMNS FROM timesheet_hours LIKE 'hourly_rate_id'");
+            if ($colHourlyRate->rowCount() == 0) {
+                $pdo->exec("ALTER TABLE timesheet_hours ADD COLUMN hourly_rate_id INT NULL COMMENT 'Почасовой тариф при работе индивидуально' AFTER team_id, ADD INDEX idx_hourly_rate_id (hourly_rate_id)");
+            }
         } catch (PDOException $e) {
             // Логируем, но продолжаем работу
             error_log('Table structure check error: ' . $e->getMessage());
@@ -175,6 +191,15 @@ try {
 
     $fieldName = $hasUserId ? 'user_id' : ($hasEmployeeId ? 'employee_id' : 'user_id');
 
+    // Проверяем наличие колонки team_id и hourly_rate_id
+    $hasTeamId = false;
+    $hasHourlyRateId = false;
+    try {
+        $cols = $pdo->query("SHOW COLUMNS FROM timesheet_hours")->fetchAll(PDO::FETCH_COLUMN);
+        $hasTeamId = in_array('team_id', $cols);
+        $hasHourlyRateId = in_array('hourly_rate_id', $cols);
+    } catch (PDOException $e) { /* ignore */ }
+
     // Если часы = 0 и нет комментариев, удаляем запись
     if ($hours_worked == 0 && empty($comments)) {
         $stmt = $pdo->prepare("DELETE FROM timesheet_hours WHERE {$fieldName} = ? AND date = ?");
@@ -189,14 +214,33 @@ try {
     $stmt->execute([$user_id, $date]);
     $existing = $stmt->fetch(PDO::FETCH_ASSOC);
 
+    $hourlyRateForDb = ($hasHourlyRateId && $team_id === null) ? $hourly_rate_id : null;
+    if (!$hasHourlyRateId) {
+        $hourlyRateForDb = null;
+    }
+
     if ($existing) {
-        // Обновляем запись
-        $stmt = $pdo->prepare("UPDATE timesheet_hours SET hours_worked = ?, comments = ? WHERE id = ?");
-        $stmt->execute([$hours_worked, $comments, $existing['id']]);
+        if ($hasTeamId && $hasHourlyRateId) {
+            $stmt = $pdo->prepare("UPDATE timesheet_hours SET hours_worked = ?, team_id = ?, hourly_rate_id = ?, comments = ? WHERE id = ?");
+            $stmt->execute([$hours_worked, $team_id, $hourlyRateForDb, $comments, $existing['id']]);
+        } elseif ($hasTeamId) {
+            $stmt = $pdo->prepare("UPDATE timesheet_hours SET hours_worked = ?, team_id = ?, comments = ? WHERE id = ?");
+            $stmt->execute([$hours_worked, $team_id, $comments, $existing['id']]);
+        } else {
+            $stmt = $pdo->prepare("UPDATE timesheet_hours SET hours_worked = ?, comments = ? WHERE id = ?");
+            $stmt->execute([$hours_worked, $comments, $existing['id']]);
+        }
     } else {
-        // Создаем новую запись
-        $stmt = $pdo->prepare("INSERT INTO timesheet_hours ({$fieldName}, date, hours_worked, comments) VALUES (?, ?, ?, ?)");
-        $stmt->execute([$user_id, $date, $hours_worked, $comments]);
+        if ($hasTeamId && $hasHourlyRateId) {
+            $stmt = $pdo->prepare("INSERT INTO timesheet_hours ({$fieldName}, date, hours_worked, team_id, hourly_rate_id, comments) VALUES (?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$user_id, $date, $hours_worked, $team_id, $hourlyRateForDb, $comments]);
+        } elseif ($hasTeamId) {
+            $stmt = $pdo->prepare("INSERT INTO timesheet_hours ({$fieldName}, date, hours_worked, team_id, comments) VALUES (?, ?, ?, ?, ?)");
+            $stmt->execute([$user_id, $date, $hours_worked, $team_id, $comments]);
+        } else {
+            $stmt = $pdo->prepare("INSERT INTO timesheet_hours ({$fieldName}, date, hours_worked, comments) VALUES (?, ?, ?, ?)");
+            $stmt->execute([$user_id, $date, $hours_worked, $comments]);
+        }
     }
 
     ob_clean();

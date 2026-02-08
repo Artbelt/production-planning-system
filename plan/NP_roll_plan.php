@@ -185,12 +185,14 @@ foreach ($rows as $r) {
     $bid = (int)$r['bale_id'];
     if (!isset($bales[$bid])) {
         $bales[$bid] = [
-            'bale_id' => $bid, 
+            'bale_id' => $bid,
             'strips' => [],
             'format' => $r['format'] ?? '1000', // Формат бухты
-            'total_packages' => 0 // Общее количество гофропакетов в бухте
+            'total_packages' => 0, // Общее количество гофропакетов в бухте
+            'lengths' => [] // длины полос в бухте (1000, 500) — для отображения раскроев 500м
         ];
     }
+    $bales[$bid]['lengths'][(int)$r['length']] = true; // учитываем длину полосы (500 или 1000)
     
     // Получаем данные о гофропакете через panel_filter_structure
     $filter_key = trim($r['filter']);
@@ -372,6 +374,7 @@ foreach ($rows as $r) {
         
         /* Подсветка при поиске (красный цвет) */
         .bale-name.bale-search-highlight{background:#fee2e2 !important;color:#991b1b !important;padding:2px 6px;border-radius:4px;border:1px solid #dc2626;box-shadow:0 0 8px rgba(220,38,38,0.4)}
+        .bale-500-hint{ font-size:10px; color:#059669; font-weight:600; margin-left:4px; }
 
         @media (max-width:768px){
             form{ flex-direction:column; align-items:flex-start; }
@@ -495,7 +498,7 @@ foreach ($rows as $r) {
 <body>
 <div class="container">
     <h2>Планирование раскроя для заявки <?= htmlspecialchars($order) ?></h2>
-    <p><b>Норматив:</b> 1 бухта формата 1000 = <b>40 минут</b> (0.67 ч), формата 199 = <b>30 минут</b> (0.5 ч)</p>
+    <p><b>Норматив:</b> по ширине бухты: 1200 мм = <b>40 минут</b> (0.67 ч), 199 мм = <b>30 минут</b> (0.5 ч). В названии в скобках указана <b>длина рулона</b> (1000 м или 500 м). Ширина бухты (1200 мм, 199 мм) учитывается при раскрое.</p>
 
     <form onsubmit="event.preventDefault(); drawTable();">
         <label>Дата начала: <input type="date" id="startDate" required></label>
@@ -779,11 +782,14 @@ foreach ($rows as $r) {
             const td0 = document.createElement('td');
             td0.className = 'left-label';
             td0.dataset.baleId = b.bale_id;
-            const formatLabel = b.format ? `[${b.format}]` : '[1000]';
+            // В скобках — длина рулона (1000 м или 500 м). В одной бухте только одна длина. Ширина бухты (1200/199) учитывается при раскрое.
+            const lengthKeys = b.lengths ? Object.keys(b.lengths).map(Number).filter(n => n === 500 || n === 1000).sort((a,b) => a - b) : [];
+            const rollLength = lengthKeys.length ? lengthKeys[0] : 1000; // в бухте только одна длина рулона
+            const lengthLabel = `[${rollLength}]`;
             const packagesCount = b.total_packages || 0;
             // Всегда показываем бейдж, даже если 0 (для отладки можно временно)
             const packagesBadge = `<span class="bale-packages-count" title="Количество гофропакетов в бухте">${packagesCount}</span>`;
-            td0.innerHTML = packagesBadge + `<strong class="bale-name" data-bale-id="${b.bale_id}">Бухта ${b.bale_id} ${formatLabel}</strong><div class="bale-label">`
+            td0.innerHTML = packagesBadge + `<strong class="bale-name" data-bale-id="${b.bale_id}">Бухта ${b.bale_id} ${lengthLabel}</strong><div class="bale-label">`
                 + uniqHeights.map(h=>`<span class="hval" data-h="${h}">[${h}]</span>`).join(' ')
                 + '</div>';
             td0.title = tooltip;
@@ -1022,9 +1028,11 @@ foreach ($rows as $r) {
             });
             
             if (matchingFilters.length > 0) {
+                const lengthKeys = bale.lengths ? Object.keys(bale.lengths).map(Number).filter(n => n === 500 || n === 1000).sort((a,b) => a - b) : [];
+                const rollLength = lengthKeys.length ? lengthKeys[0] : 1000; // в бухте только одна длина
                 results.push({
                     bale_id: bale.bale_id,
-                    format: bale.format || '1000',
+                    lengthLabel: String(rollLength),
                     filters: matchingFilters,
                     isPlanned: isBalePlanned(bale.bale_id)
                 });
@@ -1051,7 +1059,7 @@ foreach ($rows as $r) {
             return `
                 <div class="search-result-item" onclick="scrollToBale(${result.bale_id})">
                     <div class="search-result-item__bale">
-                        <span>Бухта #${result.bale_id} [${result.format}]</span>
+                        <span>Бухта #${result.bale_id} [${result.lengthLabel}]</span>
                         ${statusIcon}
                     </div>
                     <div class="search-result-item__filters">

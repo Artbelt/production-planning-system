@@ -1,5 +1,6 @@
 <?php
 require_once('tools/tools.php');
+require_once('tools/ensure_salary_warehouse_tables.php');
 
 // Получаем выбранный месяц (формат: YYYY-MM)
 $month = $_POST['month'] ?? date('Y-m');
@@ -79,6 +80,7 @@ $sql = "
     ) pps ON pps.p_p_name = sfs.paper_package
     LEFT JOIN salary_tariffs st ON st.id = sfs.tariff_id
     WHERE mp.date_of_production BETWEEN '$first_day' AND '$last_day'
+    AND (mp.handed_to_warehouse_at IS NOT NULL OR mp.salary_closed_advance = 1)
     ORDER BY mp.date_of_production, mp.team
 ";
 

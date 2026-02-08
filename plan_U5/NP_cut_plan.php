@@ -1084,7 +1084,8 @@ try{
     function saveBale(){
         if(!baleStrips.length) return;
         let totalLen=baleStrips.reduce((s,x)=>s+x.len,0);
-        bales.push({w:baleWidth, len:round3(totalLen), mat:baleMaterial, fact:baleFactLen||null, strips:[...baleStrips]});
+        const nextNo = bales.length === 0 ? 1 : (Math.max(...bales.map(b => b.baleNo || 0)) + 1);
+        bales.push({ baleNo: nextNo, w:baleWidth, len:round3(totalLen), mat:baleMaterial, fact:baleFactLen||null, strips:[...baleStrips]});
         renderBales(); baleStrips=[]; baleWidth=0; baleMaterial=null; baleFactLen=0; baleFactManual=false; updBaleUI();
     }
 
@@ -1137,9 +1138,10 @@ try{
                 const b = bales[idx];
                 const leftover = Math.max(0, Math.round(BALE_WIDTH - b.w));
                 const rows=b.strips.map(s=>`<tr><td>${s.filter}</td><td>${fmt1(s.w)} мм</td><td>${s.h} мм</td><td>${fmt0(s.len)} м</td></tr>`).join('');
+                const baleNum = b.baleNo != null ? b.baleNo : (idx+1);
                 return `<div class="card">
           <div class="cardHead">
-            <div><b>Бухта #${idx+1}</b> · Материал: <b>${b.mat}</b> · Остаток: <b>${leftover} мм</b> · Формат: <b>1000 мм</b>${b.fact?` · Факт: <b>${fmt0(b.fact)} м</b>`:''}</div>
+            <div><b>Бухта #${baleNum}</b> · Материал: <b>${b.mat}</b> · Остаток: <b>${leftover} мм</b> · Формат: <b>1000 мм</b>${b.fact?` · Факт: <b>${fmt0(b.fact)} м</b>`:''}</div>
             <button class="delBaleBtn" data-idx="${idx}" title="Удалить бухту">×</button>
           </div>
           <table class="baleTbl"><colgroup><col class="bcol-pos"><col class="bcol-w"><col class="bcol-h"><col class="bcol-l"></colgroup>
@@ -1174,7 +1176,7 @@ try{
             // Берем фактическую длину рулона (b.fact), если нет - стандартную длину
             const baleLen = parseFloat(b.fact) || (isCarbon ? 300 : 400);
             
-            console.log(`Бухта #${idx+1}: материал=${b.mat}, fact=${b.fact}м, использую=${baleLen}м, isCarbon=${isCarbon}`);
+            console.log(`Бухта #${b.baleNo != null ? b.baleNo : (idx+1)}: материал=${b.mat}, fact=${b.fact}м, использую=${baleLen}м, isCarbon=${isCarbon}`);
             
             if (isCarbon) {
                 carbonCount++;
@@ -1255,10 +1257,10 @@ try{
             if(!data.exists){ alert('Сохранённый раскрой не найден.'); return; }
 
             clearBale(); bales=[];
-            for(const b of data.bales){
-                bales.push({ w:b.w, len:b.len, mat:b.mat, fact:(b.fact ?? null),
+            data.bales.forEach((b, i)=>{
+                bales.push({ baleNo: i+1, w:b.w, len:b.len, mat:b.mat, fact:(b.fact ?? null),
                     strips: b.strips.map(s=>({...s, rowEl:null})) });
-            }
+            });
 
             const sums=new Map();
             for(const b of bales){ for(const s of b.strips){

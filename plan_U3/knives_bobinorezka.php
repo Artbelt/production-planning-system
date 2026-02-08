@@ -129,6 +129,11 @@ if (!empty($knives)) {
         $result = $stmt->get_result();
         
         while ($row = $result->fetch_assoc()) {
+            // #region agent log
+            if (strpos($row['status'], 'sharpening') !== false || $row['status'] === 'out_to_sharpening') {
+                file_put_contents('c:\\xampp\\htdocs\\.cursor\\debug.log', json_encode(['hypothesisId'=>'A','location'=>'knives_bobinorezka.php:calendar_data','message'=>'DB row status','data'=>['knife_id'=>$row['knife_id'],'date'=>$date,'status'=>$row['status'],'status_raw_len'=>strlen($row['status'])],'timestamp'=>round(microtime(true)*1000)], JSON_UNESCAPED_UNICODE)."\n", FILE_APPEND | LOCK_EX);
+            }
+            // #endregion
             if (!isset($calendar_data[$row['knife_id']])) {
                 $calendar_data[$row['knife_id']] = [];
             }
@@ -136,40 +141,79 @@ if (!empty($knives)) {
         }
         $stmt->close();
     }
+    // #region agent log
+    $all_statuses = [];
+    foreach ($calendar_data as $by_date) {
+        foreach ($by_date as $s) { $all_statuses[$s] = true; }
+    }
+    file_put_contents('c:\\xampp\\htdocs\\.cursor\\debug.log', json_encode(['hypothesisId'=>'D','location'=>'knives_bobinorezka.php:after_calendar','message'=>'unique statuses in calendar_data','data'=>['unique_statuses'=>array_keys($all_statuses)],'timestamp'=>round(microtime(true)*1000)], JSON_UNESCAPED_UNICODE)."\n", FILE_APPEND | LOCK_EX);
+    // #endregion
+    // Загружаем все записи календаря для расчёта статистики за всё время (с начала учёта)
+    $all_time_rows = [];
+    $placeholders_at = implode(',', array_fill(0, count($knife_ids), '?'));
+    $types_at = str_repeat('i', count($knife_ids));
+    $stmt = $mysqli->prepare("SELECT knife_id, date, status FROM knives_calendar WHERE knife_id IN ($placeholders_at) ORDER BY knife_id, date");
+    $stmt->bind_param($types_at, ...$knife_ids);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    while ($row = $result->fetch_assoc()) {
+        $all_time_rows[] = $row;
+    }
+    $stmt->close();
+} else {
+    $all_time_rows = [];
 }
 
 $mysqli->close();
 
-// Вычисляем статистику для каждого ножа
+// Вычисляем статистику за всё время для каждого ножа (с начала учёта до сегодня)
 $statistics = [];
 $todayStr = (new DateTime())->format('Y-m-d');
+$todayDt = new DateTime($todayStr);
 
 foreach ($knives as $knife_id => $knife) {
     $stats = [
         'in_stock' => 0,
         'in_sharpening' => 0,
+        'out_to_sharpening' => 0,
         'in_work' => 0,
         'total_days' => 0,
         'last_status' => null,
         'last_status_date' => null
     ];
     
-    // Подсчитываем дни в каждом статусе за период
-    foreach ($dates as $date) {
-        $status = $calendar_data[$knife_id][$date] ?? null;
-        if ($status) {
-            $stats[$status]++;
-            $stats['total_days']++;
-            // Обновляем последний статус (берем максимальную дату)
-            if (!$stats['last_status_date'] || $date > $stats['last_status_date']) {
-                $stats['last_status'] = $status;
-                $stats['last_status_date'] = $date;
-            }
-        }
+    $knife_rows = array_filter($all_time_rows, function ($r) use ($knife_id) { return (int)$r['knife_id'] === (int)$knife_id; });
+    $knife_rows = array_values($knife_rows);
+    
+    if (empty($knife_rows)) {
+        $stats['percent_in_stock'] = 0;
+        $stats['percent_in_sharpening'] = 0;
+        $stats['percent_in_work'] = 0;
+        $statistics[$knife_id] = $stats;
+        continue;
     }
     
-    // Вычисляем проценты от общего количества дней в периоде
-    $total = count($dates);
+    $first_date = $knife_rows[0]['date'];
+    $last_status = $knife_rows[count($knife_rows) - 1]['status'];
+    $last_status_date = $knife_rows[count($knife_rows) - 1]['date'];
+    $stats['last_status'] = $last_status;
+    $stats['last_status_date'] = $last_status_date;
+    
+    for ($i = 0; $i < count($knife_rows); $i++) {
+        $d1 = $knife_rows[$i]['date'];
+        $s1 = $knife_rows[$i]['status'];
+        if ($i + 1 < count($knife_rows)) {
+            $d2 = $knife_rows[$i + 1]['date'];
+            $days = (new DateTime($d2))->diff(new DateTime($d1))->days;
+        } else {
+            $end = $todayDt > new DateTime($d1) ? $todayDt : new DateTime($d1);
+            $days = (new DateTime($d1))->diff($end)->days + 1;
+        }
+        $stats[$s1] += $days;
+        $stats['total_days'] += $days;
+    }
+    
+    $total = $stats['total_days'];
     $stats['percent_in_stock'] = $total > 0 ? round(($stats['in_stock'] / $total) * 100, 1) : 0;
     $stats['percent_in_sharpening'] = $total > 0 ? round(($stats['in_sharpening'] / $total) * 100, 1) : 0;
     $stats['percent_in_work'] = $total > 0 ? round(($stats['in_work'] / $total) * 100, 1) : 0;
@@ -196,9 +240,16 @@ function getStatusClass($status) {
     $classes = [
         'in_stock' => 'status-in-stock',
         'in_sharpening' => 'status-in-sharpening',
+        'out_to_sharpening' => 'status-out-to-sharpening',
         'in_work' => 'status-in-work'
     ];
-    return $classes[$status] ?? '';
+    $result = $classes[$status] ?? '';
+    // #region agent log
+    if ($status !== null && (strpos((string)$status, 'out_to') !== false || $result === '')) {
+        file_put_contents('c:\\xampp\\htdocs\\.cursor\\debug.log', json_encode(['hypothesisId'=>'B','location'=>'knives_bobinorezka.php:getStatusClass','message'=>'getStatusClass in/out','data'=>['status'=>$status,'result'=>$result,'has_key'=>isset($classes[$status])],'timestamp'=>round(microtime(true)*1000)], JSON_UNESCAPED_UNICODE)."\n", FILE_APPEND | LOCK_EX);
+    }
+    // #endregion
+    return $result;
 }
 
 // Функция получения названия статуса
@@ -206,6 +257,7 @@ function getStatusName($status) {
     $names = [
         'in_stock' => 'В запасе',
         'in_sharpening' => 'В заточке',
+        'out_to_sharpening' => 'Выведен в заточку',
         'in_work' => 'В работе'
     ];
     return $names[$status] ?? '';
@@ -349,6 +401,10 @@ function getStatusName($status) {
         .status-in-sharpening {
             background: #f59e0b;
             color: white;
+        }
+        .status-out-to-sharpening {
+            background: #facc15;
+            color: #713f12;
         }
         .status-in-work {
             background: #3b82f6;
@@ -616,6 +672,15 @@ function getStatusName($status) {
                                     $status = $calendar_data[$knife_id][$date] ?? null;
                                     $statusClass = $status ? getStatusClass($status) : 'status-empty';
                                     $statusText = $status ? getStatusName($status) : '';
+                                    // #region agent log
+                                    if ($status !== null && $status !== '') {
+                                        static $_logOutCount = 0;
+                                        if (strpos($status, 'out_to') !== false || $_logOutCount < 2) {
+                                            $_logOutCount++;
+                                            file_put_contents('c:\\xampp\\htdocs\\.cursor\\debug.log', json_encode(['hypothesisId'=>'D','location'=>'knives_bobinorezka.php:render_td','message'=>'cell status and class','data'=>['knife_id'=>$knife_id,'date'=>$date,'status'=>$status,'statusClass'=>$statusClass],'timestamp'=>round(microtime(true)*1000)], JSON_UNESCAPED_UNICODE)."\n", FILE_APPEND | LOCK_EX);
+                                        }
+                                    }
+                                    // #endregion
                                 ?>
                                     <td class="status-cell <?php echo $statusClass; ?>" 
                                         onclick="openStatusModal(<?php echo $knife_id; ?>, '<?php echo htmlspecialchars($knife['knife_name'], ENT_QUOTES); ?>', '<?php echo $date; ?>', '<?php echo $status ?? ''; ?>')"
@@ -623,7 +688,10 @@ function getStatusName($status) {
                                         <?php 
                                         // Показываем только иконку или короткий текст
                                         if ($status) {
-                                            echo $status === 'in_stock' ? '✓' : ($status === 'in_sharpening' ? '⚙' : '●');
+                                            if ($status === 'in_stock') echo '✓';
+                                            elseif ($status === 'in_sharpening') echo '⚙';
+                                            elseif ($status === 'out_to_sharpening') echo '→';
+                                            else echo '●';
                                         }
                                         ?>
                                     </td>
@@ -638,7 +706,7 @@ function getStatusName($status) {
         <!-- Блок статистики -->
         <?php if (!empty($knives)): ?>
         <div class="statistics-section">
-            <h3 style="margin: 20px 0 10px 0; color: #374151; font-size: 16px; font-weight: 600;">Статистика за период</h3>
+            <h3 style="margin: 20px 0 10px 0; color: #374151; font-size: 16px; font-weight: 600;">Статистика с начала учёта</h3>
             <div class="statistics-grid">
                 <?php foreach ($knives as $knife_id => $knife): 
                     $stats = $statistics[$knife_id] ?? [];
@@ -710,6 +778,7 @@ function getStatusName($status) {
                         <option value="">-- Выберите статус --</option>
                         <option value="in_stock">В запасе</option>
                         <option value="in_sharpening">В заточке</option>
+                        <option value="out_to_sharpening">Выведен в заточку</option>
                         <option value="in_work">В работе</option>
                     </select>
                 </div>
@@ -891,6 +960,7 @@ function getStatusName($status) {
                             const statusNames = {
                                 'in_stock': 'В запасе',
                                 'in_sharpening': 'В заточке',
+                                'out_to_sharpening': 'Выведен в заточку',
                                 'in_work': 'В работе'
                             };
                             html += `<tr>

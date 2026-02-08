@@ -26,9 +26,9 @@ foreach ($auto_bales as $bale) {
     foreach ($bale as $roll) {
         if (isset($roll['width'])) {
             $width = (float)$roll['width'];
-            // Если хотя бы один рулон НЕ формата 199, то вся бухта формата 1000
+            // Если хотя бы один рулон НЕ формата 199, то вся бухта формата 1200 (У2; в У5 — 1000)
             if (!($width == 199 || ($width >= 175 && $width <= 190))) {
-                $bale_format = '1000';
+                $bale_format = '1200';
                 break;
             }
         }
@@ -61,9 +61,9 @@ foreach ($manual_bales as $bale) {
     foreach ($bale as $roll) {
         if (isset($roll['width'])) {
             $width = (float)$roll['width'];
-            // Если хотя бы один рулон НЕ формата 199, то вся бухта формата 1000
+            // Если хотя бы один рулон НЕ формата 199, то вся бухта формата 1200 (У2; в У5 — 1000)
             if (!($width == 199 || ($width >= 175 && $width <= 190))) {
-                $bale_format = '1000';
+                $bale_format = '1200';
                 break;
             }
         }

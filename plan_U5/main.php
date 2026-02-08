@@ -16,6 +16,7 @@ profile_mark('Auth includes loaded');
 // Подключаем файлы настроек/инструментов
 require_once('settings.php');
 require_once('tools/tools.php');
+require_once('tools/ensure_salary_warehouse_tables.php');
 profile_mark('Settings & tools loaded');
 
 // Инициализация системы авторизации
@@ -533,6 +534,30 @@ echo "<!-- Аккуратная панель авторизации -->
         <tr class="content-row">
             <!-- Левая панель -->
             <td class="panel panel--left" style="width:30%;">
+                <?php
+                // Напоминание: продукция, закрытая в ЗП авансом, но ещё не сданная на склад
+                $salary_reminder_list = [];
+                try {
+                    $pdo_mp = new PDO("mysql:host={$mysql_host};dbname={$mysql_database};charset=utf8mb4", $mysql_user, $mysql_user_pass);
+                    $pdo_mp->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+                    $cols = $pdo_mp->query("SHOW COLUMNS FROM manufactured_production")->fetchAll(PDO::FETCH_COLUMN);
+                    if (in_array('salary_closed_advance', $cols) && in_array('handed_to_warehouse_at', $cols)) {
+                        $stmt = $pdo_mp->query("SELECT date_of_production, name_of_filter, name_of_order, team, count_of_filters FROM manufactured_production WHERE salary_closed_advance = 1 AND handed_to_warehouse_at IS NULL ORDER BY date_of_production DESC LIMIT 20");
+                        $salary_reminder_list = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+                    }
+                } catch (PDOException $e) { /* ignore */ }
+                if (!empty($salary_reminder_list)): ?>
+                <div class="panel" style="background:#fef3c7; border:1px solid #f59e0b; border-radius:8px; padding:10px; margin-bottom:12px;">
+                    <div class="section-title" style="color:#92400e;">Напоминание: продукция в ЗП авансом, не сдана на склад</div>
+                    <p style="font-size:12px; color:#92400e; margin:0 0 8px 0;">Следующая продукция закрыта в зарплату авансом и ещё не сдана на склад.</p>
+                    <ul style="font-size:11px; margin:0 0 8px 0; padding-left:16px;">
+                        <?php foreach (array_slice($salary_reminder_list, 0, 5) as $row): ?>
+                        <li><?= htmlspecialchars($row['date_of_production']) ?> — <?= htmlspecialchars($row['name_of_filter']) ?> (заявка <?= htmlspecialchars($row['name_of_order']) ?>, бр. <?= (int)$row['team'] ?>, <?= (int)$row['count_of_filters'] ?> шт)</li>
+                        <?php endforeach; ?>
+                    </ul>
+                    <?php if (count($salary_reminder_list) > 5): ?><p style="font-size:11px; margin:0;">… и ещё <?= count($salary_reminder_list) - 5 ?> записей.</p><?php endif; ?>
+                </div>
+                <?php endif; ?>
                 <div class="section-title">Операции</div>
                 <div class="stack">
                     <a href="product_output.php" target="_blank" rel="noopener" class="stack"><button>Выпуск продукции</button></a>
@@ -569,7 +594,6 @@ echo "<!-- Аккуратная панель авторизации -->
                 <div class="stack">
                     <a href="timesheet.php" target="_blank" rel="noopener" class="stack"><button type="button">Табель У5</button></a>
                     <a href="salary_report_monthly.php" target="_blank" rel="noopener" class="stack"><button>Отчет по ЗП за месяц</button></a>
-                    
                 </div>
 
                 <div class="section-title" style="margin-top:14px">Управление данными</div>
