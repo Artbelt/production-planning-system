@@ -28,28 +28,30 @@ try {
     if (!empty($order_number)) {
         $found = false;
 
+        $filter_alt = preg_replace('/\[(\d+)\]/', '[h$1]', $filter_label);
         $checkStmt = $pdo->prepare("
             SELECT 1 
             FROM orders 
             WHERE order_number = ? 
-              AND `filter` = ?
+              AND (`filter` = ? OR `filter` = ?)
               AND COALESCE(hide, 0) != 1
             LIMIT 1
         ");
-        $checkStmt->execute([$order_number, $filter_label]);
+        $checkStmt->execute([$order_number, $filter_label, $filter_alt]);
         if ($checkStmt->fetchColumn()) {
             $found = true;
         }
 
         if (!$found) {
+            // В плане может быть [48] или [h48] — проверяем оба варианта
             $checkStmt = $pdo->prepare("
                 SELECT 1 
                 FROM corrugation_plan 
                 WHERE order_number = ? 
-                  AND filter_label = ?
+                  AND (filter_label = ? OR filter_label = ?)
                 LIMIT 1
             ");
-            $checkStmt->execute([$order_number, $filter_label]);
+            $checkStmt->execute([$order_number, $filter_label, $filter_alt]);
             if ($checkStmt->fetchColumn()) {
                 $found = true;
             }

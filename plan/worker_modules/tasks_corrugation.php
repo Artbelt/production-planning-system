@@ -75,7 +75,17 @@ $filtersStmt = $pdo->prepare("
     ORDER BY filter_label
 ");
 $filtersStmt->execute();
-$all_filters = $filtersStmt->fetchAll(PDO::FETCH_COLUMN);
+$raw_filters = $filtersStmt->fetchAll(PDO::FETCH_COLUMN);
+// Убираем дубли: "1601 [48] 199" и "1601 [h48] 199" показываем как одну позицию (без буквы h)
+$normalized_seen = [];
+$all_filters = [];
+foreach ($raw_filters as $f) {
+    $n = preg_replace('/\[h(\d+)\]/', '[$1]', $f);
+    if (!in_array($n, $normalized_seen)) {
+        $normalized_seen[] = $n;
+        $all_filters[] = $n;
+    }
+}
 
 // получаем выпущенные гофропакеты за день (из manufactured_corrugated_packages)
 $manufacturedStmt = $pdo->prepare("

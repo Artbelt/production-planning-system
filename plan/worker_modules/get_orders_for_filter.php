@@ -28,16 +28,18 @@ try {
     $stmt->execute([$filter]);
     $ordersFromOrders = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
+    // В плане может быть [48] или [h48] — ищем оба варианта
+    $filter_alt = preg_replace('/\[(\d+)\]/', '[h$1]', $filter);
     $stmt = $pdo->prepare("
         SELECT DISTINCT order_number 
         FROM corrugation_plan 
-        WHERE filter_label = ? 
+        WHERE (filter_label = ? OR filter_label = ?)
           AND order_number IS NOT NULL 
           AND order_number != ''
           AND plan_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
         ORDER BY order_number DESC
     ");
-    $stmt->execute([$filter]);
+    $stmt->execute([$filter, $filter_alt]);
     $ordersFromPlan = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
     $orders = array_unique(array_merge($ordersFromOrders, $ordersFromPlan));

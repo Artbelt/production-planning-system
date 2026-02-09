@@ -182,7 +182,7 @@ foreach ($positions as $p) {
 
     $height = floatval($p['height'] ?? 0);
     $width = floatval($p['width'] ?? 0);
-    $label = htmlspecialchars($p['filter']) . " [h{$height}] {$width}{$icons}";
+    $label = htmlspecialchars($p['filter']) . " [{$height}] {$width}{$icons}";
     
     $pleats = intval($p['p_p_pleats_count'] ?? 0);
     $pleat_height = floatval($p['p_p_height'] ?? 0);
@@ -217,7 +217,7 @@ foreach ($positions as $p) {
 $heights = [];
 foreach ($by_date as $date_items) {
     foreach ($date_items as $item) {
-        if (preg_match('/\[h(\d+)\]/', $item['label'], $m)) {
+        if (preg_match('/\[h?(\d+)\]/', $item['label'], $m)) {
             $heights[] = (int)$m[1];
         }
     }
@@ -638,17 +638,20 @@ try {
             return; // Если ничего не выбрано, просто убираем подсветку
         }
 
+        // Выбранные высоты как числа (кнопки дают "h48" -> 48)
+        const selectedHeightNums = new Set(Array.from(selectedHeights).map(h => {
+            const m = String(h).match(/^h?(\d+)$/);
+            return m ? parseInt(m[1], 10) : 0;
+        }));
+
         // Подсвечиваем позиции в верхней таблице
         document.querySelectorAll('.position-cell').forEach(cell => {
-            const cellText = cell.textContent.toLowerCase();
-            const hasSelectedHeight = Array.from(selectedHeights).some(height => 
-                cellText.includes(height.toLowerCase())
-            );
+            const filterName = cell.dataset.filter || '';
+            const heightMatch = filterName.match(/\[h?(\d+)\]/);
+            const height = heightMatch ? parseInt(heightMatch[1], 10) : 0;
+            const hasSelectedHeight = height > 0 && selectedHeightNums.has(height);
             
             if (hasSelectedHeight) {
-                const filterName = cell.dataset.filter || '';
-                const heightMatch = filterName.match(/\[h(\d+)\]/);
-                const height = heightMatch ? parseInt(heightMatch[1]) : 0;
                 let colorIndex = height % baleColors.length;
                 if (height === 60) colorIndex = 6; // оранжевый
                 if (height === 40) colorIndex = 1; // зеленый
@@ -661,15 +664,12 @@ try {
 
         // Подсвечиваем строки в нижней таблице
         document.querySelectorAll('.assigned-item').forEach(item => {
-            const itemText = item.textContent.toLowerCase();
-            const hasSelectedHeight = Array.from(selectedHeights).some(height => 
-                itemText.includes(height.toLowerCase())
-            );
+            const filterName = item.dataset.label || '';
+            const heightMatch = filterName.match(/\[h?(\d+)\]/);
+            const height = heightMatch ? parseInt(heightMatch[1], 10) : 0;
+            const hasSelectedHeight = height > 0 && selectedHeightNums.has(height);
             
             if (hasSelectedHeight) {
-                const filterName = item.dataset.label || '';
-                const heightMatch = filterName.match(/\[h(\d+)\]/);
-                const height = heightMatch ? parseInt(heightMatch[1]) : 0;
                 let colorIndex = height % baleColors.length;
                 if (height === 60) colorIndex = 6; // оранжевый
                 if (height === 40) colorIndex = 1; // зеленый
@@ -942,7 +942,7 @@ try {
             
             if (!filterName) return;
             
-            const heightMatch = filterName.match(/\[h(\d+)\]/);
+            const heightMatch = filterName.match(/\[h?(\d+)\]/);
             const height = heightMatch ? parseInt(heightMatch[1]) : 0;
             let colorIndex = height % baleColors.length;
             if (height === 60) colorIndex = 6; // оранжевый

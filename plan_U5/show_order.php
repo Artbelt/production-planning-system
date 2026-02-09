@@ -214,6 +214,108 @@ $page_title = $order_number ? $order_number : "Заявка";
             font-size: 0.75rem;
         }
 
+        /* Кнопка и столбец диаграммы Ганта */
+        .gantt-col {
+            white-space: nowrap;
+            text-align: center;
+        }
+        .gantt-btn {
+            padding: 0.25rem 0.5rem;
+            min-width: 32px;
+        }
+        .gantt-icon {
+            display: inline-block;
+            vertical-align: middle;
+        }
+        .btn-toggle-gantt-active {
+            background: var(--accent) !important;
+            color: #fff !important;
+            border-color: var(--accent) !important;
+        }
+
+        /* Индикаторы план/факт в столбце Ганта */
+        .gantt-indicators {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+        .gantt-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            cursor: help;
+        }
+        .gantt-indicator.dev-green { background: var(--success); }
+        .gantt-indicator.dev-yellow { background: var(--warning); }
+        .gantt-indicator.dev-red { background: #dc2626; }
+        .gantt-indicator.dev-none { background: var(--muted); opacity: 0.7; }
+
+        /* Строгий дизайн модального окна диаграммы Ганта */
+        #ganttModal.modal {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 1.5rem;
+        }
+        #ganttModal .gantt-modal-content {
+            background: #fff;
+            border: 1px solid #374151;
+            border-radius: 2px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
+            min-width: 600px;
+            max-width: 95vw;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #ganttModal .gantt-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #374151;
+            background: #f9fafb;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            color: #111827;
+            letter-spacing: 0.02em;
+        }
+        #ganttModal .gantt-modal-header h3 {
+            margin: 0;
+            font-size: 0.8125rem;
+            font-weight: 600;
+        }
+        #ganttModal .gantt-modal-close {
+            background: transparent;
+            border: 1px solid #374151;
+            border-radius: 0;
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            font-size: 1.25rem;
+            line-height: 1;
+            color: #374151;
+            cursor: pointer;
+        }
+        #ganttModal .gantt-modal-close:hover {
+            background: #e5e7eb;
+            color: #111827;
+        }
+        #ganttModal .gantt-modal-body {
+            flex: 1;
+            min-height: 0;
+            padding: 0;
+            background: #fff;
+        }
+        #ganttModal .gantt-modal-body iframe {
+            display: block;
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
         .button-group {
             display: flex;
             gap: 0.5rem;
@@ -629,6 +731,78 @@ $page_title = $order_number ? $order_number : "Заявка";
         }
     }
 
+    /**
+     * Расхождение в днях между первой плановой и первой фактической датой по операции.
+     * Возвращает ['cut' => days|null, 'corr' => days|null, 'build' => days|null].
+     * null = нет факта или нет плана.
+     */
+    function get_gantt_deviations(PDO $pdo, string $order_number, string $filter_label): array {
+        $filter_base = normalize_filter_label($filter_label);
+        $out = ['cut' => null, 'corr' => null, 'build' => null];
+
+        // Порезка: план — min(work_date), факт — min(work_date) где done=1
+        try {
+            $st = $pdo->prepare("
+                SELECT MIN(rp.work_date) AS d
+                FROM roll_plans rp
+                JOIN cut_plans cp ON cp.order_number = rp.order_number AND cp.bale_id = rp.bale_id
+                WHERE rp.order_number = ? AND TRIM(SUBSTRING_INDEX(cp.filter, ' [', 1)) = ?
+            ");
+            $st->execute([$order_number, $filter_base]);
+            $plan_cut = $st->fetchColumn();
+            $st = $pdo->prepare("
+                SELECT MIN(rp.work_date) AS d
+                FROM roll_plans rp
+                JOIN cut_plans cp ON cp.order_number = rp.order_number AND cp.bale_id = rp.bale_id
+                WHERE rp.order_number = ? AND TRIM(SUBSTRING_INDEX(cp.filter, ' [', 1)) = ?
+                  AND rp.done = 1
+            ");
+            $st->execute([$order_number, $filter_base]);
+            $fact_cut = $st->fetchColumn();
+            if ($plan_cut && $fact_cut) {
+                $out['cut'] = abs((new DateTime($plan_cut))->diff(new DateTime($fact_cut))->days);
+            }
+        } catch (PDOException $e) {
+            if (strpos($e->getMessage(), 'done') === false) throw $e;
+        }
+
+        // Гофрирование: план — min(plan_date), факт — min(date_of_production)
+        $st = $pdo->prepare("
+            SELECT MIN(plan_date) FROM corrugation_plan
+            WHERE order_number = ? AND TRIM(SUBSTRING_INDEX(COALESCE(filter_label,''), ' [', 1)) = ?
+        ");
+        $st->execute([$order_number, $filter_base]);
+        $plan_corr = $st->fetchColumn();
+        $st = $pdo->prepare("
+            SELECT MIN(date_of_production) FROM manufactured_corrugated_packages
+            WHERE order_number = ? AND TRIM(SUBSTRING_INDEX(COALESCE(filter_label,''), ' [', 1)) = ? AND COALESCE(count,0) > 0
+        ");
+        $st->execute([$order_number, $filter_base]);
+        $fact_corr = $st->fetchColumn();
+        if ($plan_corr && $fact_corr) {
+            $out['corr'] = abs((new DateTime($plan_corr))->diff(new DateTime($fact_corr))->days);
+        }
+
+        // Сборка: план — min(plan_date), факт — min(date_of_production)
+        $st = $pdo->prepare("
+            SELECT MIN(plan_date) FROM build_plan
+            WHERE order_number = ? AND TRIM(SUBSTRING_INDEX(COALESCE(filter,''), ' [', 1)) = ?
+        ");
+        $st->execute([$order_number, $filter_base]);
+        $plan_build = $st->fetchColumn();
+        $st = $pdo->prepare("
+            SELECT MIN(date_of_production) FROM manufactured_production
+            WHERE name_of_order = ? AND TRIM(SUBSTRING_INDEX(COALESCE(name_of_filter,''), ' [', 1)) = ? AND COALESCE(count_of_filters,0) > 0
+        ");
+        $st->execute([$order_number, $filter_base]);
+        $fact_build = $st->fetchColumn();
+        if ($plan_build && $fact_build) {
+            $out['build'] = abs((new DateTime($plan_build))->diff(new DateTime($fact_build))->days);
+        }
+
+        return $out;
+    }
+
     // Номер заявки уже получен в начале файла
 
     // Подключим отдельный PDO для выборок из manufactured_corrugated_packages (факт гофропакетов)
@@ -653,6 +827,7 @@ $page_title = $order_number ? $order_number : "Заявка";
     echo "<div class='button-group'>";
     echo "<button onclick='showZeroProductionPositions()' class='btn-secondary btn-sm'>Позиции выпуск которых = 0</button>";
     echo "<button onclick='checkGofraPackages()' class='btn-secondary btn-sm'>Проверка гофропакетов</button>";
+    echo "<button id='btnToggleGantt' onclick='toggleGanttColumn()' class='btn-secondary btn-sm'>Диаграмма Ганта</button>";
     echo "<button onclick='openWorkersSpecification()' class='btn-secondary btn-sm'>Спецификация для рабочих</button>";
     
     // Кнопка отправки в архив - только для мастеров и директоров
@@ -685,6 +860,7 @@ $page_title = $order_number ? $order_number : "Заявка";
         <th>Изготовлено, шт</th>
         <th>Остаток, шт</th>
         <th>Изготовленные гофропакеты, шт</th>
+        <th class=\"gantt-col\" style=\"display:none;\" title=\"Три индикатора: порезка, гофрирование, сборка. Зелёный — расхождение ≤3 дн., жёлтый — ≤5 дн., красный — &gt;5 дн.\">Диаграмма Ганта</th>
       </tr>";
 
     while ($row = $result->fetch_assoc()) {
@@ -735,6 +911,34 @@ $page_title = $order_number ? $order_number : "Заявка";
         // Логика «Изготовленные гофропакеты, шт» — из manufactured_corrugated_packages (+ тултип по date_of_production)
         echo renderTooltipCell($corr_date_list, (int)$corr_total);
 
+        // Индикаторы план/факт и кнопка диаграммы Ганта
+        $deviations = get_gantt_deviations($pdo_corr, $order_number, $row['filter'] ?? '');
+        $labels = ['cut' => 'Порезка', 'corr' => 'Гофрирование', 'build' => 'Сборка'];
+        $indicator_html = '<span class="gantt-indicators">';
+        foreach (['cut', 'corr', 'build'] as $op) {
+            $d = $deviations[$op];
+            if ($d === null) {
+                $cls = 'dev-none';
+                $title = $labels[$op] . ': нет данных';
+            } elseif ($d <= 3) {
+                $cls = 'dev-green';
+                $title = $labels[$op] . ': расхождение ' . $d . ' дн. (норма)';
+            } elseif ($d <= 5) {
+                $cls = 'dev-yellow';
+                $title = $labels[$op] . ': расхождение ' . $d . ' дн.';
+            } else {
+                $cls = 'dev-red';
+                $title = $labels[$op] . ': расхождение ' . $d . ' дн.';
+            }
+            $indicator_html .= '<span class="gantt-indicator ' . $cls . '" title="' . htmlspecialchars($title) . '"></span>';
+        }
+        $indicator_html .= '</span>';
+        $filter_esc = htmlspecialchars($row['filter'] ?? '', ENT_QUOTES, 'UTF-8');
+        $order_esc = htmlspecialchars($order_number, ENT_QUOTES, 'UTF-8');
+        echo "<td class='gantt-col' style='display:none;'>" . $indicator_html . "<button type='button' onclick=\"openGanttForPosition('{$order_esc}', '{$filter_esc}')\" class='btn-secondary btn-sm gantt-btn' title='Диаграмма Ганта план–факт'>" .
+            "<svg class='gantt-icon' xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round'><rect x='3' y='6' width='6' height='4' rx='1'/><rect x='3' y='14' width='10' height='4' rx='1'/><rect x='3' y='22' width='14' height='4' rx='1'/></svg>" .
+            "</button></td>";
+
         echo "</tr>";
     }
 
@@ -749,6 +953,7 @@ $page_title = $order_number ? $order_number : "Заявка";
         <td>".(int)$filter_count_produced."</td>
         <td>".(int)$summ_difference."*</td>
         <td>".(int)$corr_fact_summ."*</td>
+        <td class='gantt-col' style='display:none;'></td>
       </tr>";
 
     echo "</table>";
@@ -817,6 +1022,19 @@ $page_title = $order_number ? $order_number : "Заявка";
             <p style="color: #9ca3af; text-align: center; padding: 20px;">
                 Загрузка данных...
             </p>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно: диаграмма Ганта план/факт (строгий дизайн) -->
+<div id="ganttModal" class="modal" style="display: none;">
+    <div class="gantt-modal-content">
+        <div class="gantt-modal-header">
+            <h3 id="ganttModalTitle">Диаграмма Ганта план/факт</h3>
+            <button type="button" class="gantt-modal-close" onclick="closeGanttModal()" title="Закрыть">&times;</button>
+        </div>
+        <div class="gantt-modal-body">
+            <iframe id="ganttModalIframe"></iframe>
         </div>
     </div>
 </div>
@@ -1220,6 +1438,72 @@ $page_title = $order_number ? $order_number : "Заявка";
         }
     }
 
+    // Переключение видимости столбца «Диаграмма Ганта»
+    function toggleGanttColumn() {
+        const col = document.querySelectorAll('.gantt-col');
+        if (!col.length) return;
+        const isHidden = col[0].style.display === 'none';
+        col.forEach(function(el) {
+            el.style.display = isHidden ? '' : 'none';
+        });
+        const btn = document.getElementById('btnToggleGantt');
+        if (btn) {
+            if (isHidden) {
+                btn.classList.add('btn-toggle-gantt-active');
+            } else {
+                btn.classList.remove('btn-toggle-gantt-active');
+            }
+        }
+    }
+
+    // Открытие диаграммы Ганта для позиции (план–факт) в модальном окне
+    function openGanttForPosition(orderNumber, filter) {
+        const modal = document.getElementById('ganttModal');
+        const titleEl = document.getElementById('ganttModalTitle');
+        const iframe = document.getElementById('ganttModalIframe');
+        const contentEl = modal.querySelector('.gantt-modal-content');
+        titleEl.textContent = 'Диаграмма Ганта план/факт — ' + orderNumber + ' · ' + filter;
+        contentEl.style.width = '';
+        contentEl.style.height = '';
+        iframe.style.width = '1200px';
+        iframe.style.height = '700px';
+        iframe.src = 'gantt_plan_fact.php?order_number=' + encodeURIComponent(orderNumber) + '&filter=' + encodeURIComponent(filter);
+        modal.style.display = 'flex';
+    }
+
+    function closeGanttModal() {
+        const modal = document.getElementById('ganttModal');
+        const iframe = document.getElementById('ganttModalIframe');
+        const contentEl = modal.querySelector('.gantt-modal-content');
+        modal.style.display = 'none';
+        iframe.src = 'about:blank';
+        contentEl.style.width = '';
+        contentEl.style.height = '';
+        iframe.style.width = '';
+        iframe.style.height = '';
+    }
+
+    // Подгонка размера модального окна под контент iframe (таблицы Ганта)
+    window.addEventListener('message', function(event) {
+        if (event.data && event.data.type === 'gantt-resize') {
+            var w = event.data.width;
+            var h = event.data.height;
+            if (typeof w !== 'number' || typeof h !== 'number' || w <= 0 || h <= 0) return;
+            var contentEl = document.querySelector('#ganttModal .gantt-modal-content');
+            var iframe = document.getElementById('ganttModalIframe');
+            if (!contentEl || !iframe) return;
+            var headerH = 52;
+            var pad = 19;
+            var maxW = window.innerWidth * 0.95;
+            var maxH = window.innerHeight * 0.9;
+            contentEl.style.width = Math.max(600, Math.min(w + pad * 2, maxW)) + 'px';
+            contentEl.style.height = Math.min(headerH + h + pad, maxH) + 'px';
+            contentEl.style.overflow = 'hidden';
+            iframe.style.width = '';
+            iframe.style.height = '';
+        }
+    });
+
     // Функция для показа информации о фильтре
     function showFilterInfo(filterName) {
         const modal = document.getElementById('filterInfoModal');
@@ -1268,6 +1552,7 @@ $page_title = $order_number ? $order_number : "Заявка";
         const zeroModal = document.getElementById('zeroProductionModal');
         const gofraModal = document.getElementById('gofraCheckModal');
         const filterModal = document.getElementById('filterInfoModal');
+        const ganttModal = document.getElementById('ganttModal');
         
         if (event.target === zeroModal) {
             closeZeroProductionModal();
@@ -1277,6 +1562,9 @@ $page_title = $order_number ? $order_number : "Заявка";
         }
         if (event.target === filterModal) {
             closeFilterInfoModal();
+        }
+        if (event.target === ganttModal) {
+            closeGanttModal();
         }
     }
 </script>
