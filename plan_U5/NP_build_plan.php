@@ -823,6 +823,15 @@ try{
         background: #bfdbfe;
         border-color: #3b82f6;
     }
+    .modalWrap .dayBtn:disabled,
+    .modalWrap .dayBtn.disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+        pointer-events: none;
+        background: #e5e7eb !important;
+        border-color: #d1d5db !important;
+        color: #9ca3af;
+    }
     
     /* Прогресс-бар загрузки */
     #loadingProgress {
@@ -1716,8 +1725,10 @@ try{
 
         const newDay = days[j];
         const team   = row.dataset.team;
+        const src = row.dataset.sourceDate || '';
 
-        const src = row.dataset.sourceDate;
+        // Нельзя перенести на день раньше даты гофрирования
+        if (src && newDay < src) return;
         const flt = row.dataset.filter;
         const cnt = +row.dataset.count || 0;
         const r   = +row.dataset.rate  || 0;
@@ -1766,6 +1777,12 @@ try{
         dpDays2.innerHTML = '';
 
         const days = getAllDays();
+        const sourceDate = (pill.dataset.sourceDate || '').trim(); // дата гофрирования выбранной позиции
+        
+        // Кнопка неактивна, если дата сборки меньше даты гофрирования
+        function isDateDisabled(day) {
+            return sourceDate && day < sourceDate;
+        }
         
         // Создаем кнопки для бригады 1
         days.forEach(d=>{
@@ -1777,7 +1794,13 @@ try{
             const c1 = (countsByTeam.get(d)||{})['1'] || 0;
             const h1 = (hoursByTeam.get(d)||{})['1']  || 0;
             btn.innerHTML = `<div class="dayHead" style="font-weight:600;font-size:13px">${d}</div><div class="daySub" style="font-size:11px;color:#6b7280">${c1} шт · ${fmtH(h1)} ч</div>`;
+            if (isDateDisabled(d)) {
+                btn.disabled = true;
+                btn.classList.add('disabled');
+                btn.title = 'Дата сборки не может быть раньше даты гофрирования (' + sourceDate + ')';
+            }
             btn.onclick = ()=>{
+                if (btn.disabled) return;
                 addToDay(d, '1', pending.pill, +dpQty.value || 1);
                 closeDatePicker();
             };
@@ -1795,7 +1818,13 @@ try{
             const c2 = (countsByTeam.get(d)||{})['2'] || 0;
             const h2 = (hoursByTeam.get(d)||{})['2']  || 0;
             btn.innerHTML = `<div class="dayHead" style="font-weight:600;font-size:13px">${d}</div><div class="daySub" style="font-size:11px;color:#6b7280">${c2} шт · ${fmtH(h2)} ч</div>`;
+            if (isDateDisabled(d)) {
+                btn.disabled = true;
+                btn.classList.add('disabled');
+                btn.title = 'Дата сборки не может быть раньше даты гофрирования (' + sourceDate + ')';
+            }
             btn.onclick = ()=>{
+                if (btn.disabled) return;
                 addToDay(d, '2', pending.pill, +dpQty.value || 1);
                 closeDatePicker();
             };
@@ -1834,9 +1863,14 @@ try{
     function addToDay(day, team, pill, qty){
         const avail = +pill.dataset.avail || 0;
         if (qty<=0 || avail<=0) return;
+        const src  = pill.dataset.sourceDate || '';
+        // Нельзя добавить в день раньше даты гофрирования
+        if (src && day < src) {
+            alert('Нельзя добавить в день ' + day + ': дата сборки должна быть не раньше даты гофрирования (' + src + ').');
+            return;
+        }
         const take = Math.min(qty, avail);
 
-        const src  = pill.dataset.sourceDate;
         const flt  = pill.dataset.filter;
         const rate = parseInt(pill.dataset.rate || '0', 10) || 0;
         const height = pill.dataset.height || '';
