@@ -24,12 +24,14 @@ if (!$hasPlanReadyCol) {
     $pdo->exec("ALTER TABLE orders ADD plan_ready TINYINT(1) NOT NULL DEFAULT 0");
 }
 
-/* Бухты из cut_plans с complexity и данными для расчета фильтров */
+/* Бухты из cut_plans с complexity и данными для расчета фильтров.
+   Подзапрос для pleats_count, т.к. в paper_package_salon могут быть дубликаты p_p_name. */
 $stmt = $pdo->prepare("SELECT cp.bale_id, cp.filter, cp.height, cp.width, cp.fact_length, cp.length, 
-                              sfs.build_complexity, pps.p_p_pleats_count AS pleats_count
+                              sfs.build_complexity,
+                              (SELECT pps.p_p_pleats_count FROM paper_package_salon pps 
+                               WHERE pps.p_p_name = sfs.paper_package LIMIT 1) AS pleats_count
                        FROM cut_plans cp
                        LEFT JOIN salon_filter_structure sfs ON TRIM(cp.filter) = TRIM(sfs.filter)
-                       LEFT JOIN paper_package_salon pps ON pps.p_p_name = sfs.paper_package
                        WHERE cp.order_number = ?
                        ORDER BY cp.bale_id, cp.strip_no");
 $stmt->execute([$order]);

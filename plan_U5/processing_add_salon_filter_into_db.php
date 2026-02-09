@@ -123,10 +123,28 @@ if (!$stmt->execute()) {
 $stmt->close();
 $mysqli->close();
 
-/** Запись информации о гофропакете в БД */
-$sql = "INSERT INTO paper_package_salon(p_p_name, p_p_height, p_p_width, p_p_pleats_count, p_p_supplier, p_p_remark, p_p_material) 
-        VALUES ('$p_p_name','$p_p_height','$p_p_width','$p_p_pleats_count','$p_p_supplier','$p_p_remark','$p_p_material');";
-$result = mysql_execute($sql);
+/** Запись информации о гофропакете в БД.
+ * ON DUPLICATE KEY UPDATE предотвращает дубликаты при наличии UNIQUE(p_p_name). */
+$mysqli2 = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+if (!$mysqli2->connect_errno) {
+    $stmt = $mysqli2->prepare("
+        INSERT INTO paper_package_salon(p_p_name, p_p_height, p_p_width, p_p_pleats_count, p_p_supplier, p_p_remark, p_p_material)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            p_p_height = VALUES(p_p_height),
+            p_p_width = VALUES(p_p_width),
+            p_p_pleats_count = VALUES(p_p_pleats_count),
+            p_p_supplier = VALUES(p_p_supplier),
+            p_p_remark = VALUES(p_p_remark),
+            p_p_material = VALUES(p_p_material)
+    ");
+    if ($stmt) {
+        $stmt->bind_param('sssssss', $p_p_name, $p_p_height, $p_p_width, $p_p_pleats_count, $p_p_supplier, $p_p_remark, $p_p_material);
+        $stmt->execute();
+        $stmt->close();
+    }
+    $mysqli2->close();
+}
 
 
 
