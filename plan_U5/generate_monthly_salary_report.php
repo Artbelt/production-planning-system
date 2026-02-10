@@ -2,6 +2,14 @@
 require_once('tools/tools.php');
 require_once('tools/ensure_salary_warehouse_tables.php');
 
+// #region agent log
+$debug_log = function ($location, $message, $data, $hypothesisId) {
+    $path = __DIR__ . '/../.cursor/debug.log';
+    $line = json_encode(['id' => 'log_' . uniqid(), 'timestamp' => round(microtime(true) * 1000), 'location' => $location, 'message' => $message, 'data' => $data, 'hypothesisId' => $hypothesisId]) . "\n";
+    @file_put_contents($path, $line, FILE_APPEND | LOCK_EX);
+};
+// #endregion
+
 // Получаем выбранный месяц (формат: YYYY-MM)
 $month = $_POST['month'] ?? date('Y-m');
 $period = $_POST['period'] ?? 'full';
@@ -34,8 +42,9 @@ foreach ($addition_rows as $a) {
 $hours_raw = mysql_execute("SELECT filter, order_number, date_of_work, hours FROM hourly_work_log WHERE date_of_work BETWEEN '$first_day' AND '$last_day'");
 $hours_map = [];
 foreach ($hours_raw as $h) {
-    // Используем составной ключ: фильтр_заказ_дата
-    $key = $h['filter'] . '_' . $h['order_number'] . '_' . $h['date_of_work'];
+    // Используем составной ключ: фильтр_заказ_дата (дата в Y-m-d для совпадения с отображением)
+    $date_work = date('Y-m-d', strtotime($h['date_of_work']));
+    $key = $h['filter'] . '_' . $h['order_number'] . '_' . $date_work;
     $hours_map[$key] = $h['hours'];
 }
 
@@ -85,6 +94,21 @@ $sql = "
 ";
 
 $result = mysql_execute($sql);
+if ($result instanceof mysqli_result) {
+    $result = iterator_to_array($result);
+}
+
+// #region agent log
+$raw_dates = array_slice(array_column($result, 'date_of_production'), 0, 10);
+$debug_log('generate_monthly_salary_report.php:after_sql', 'result and period', [
+    'result_count' => count($result),
+    'first_day' => $first_day,
+    'last_day' => $last_day,
+    'month' => $month,
+    'period' => $period,
+    'raw_dates_sample' => $raw_dates,
+], 'H1');
+// #endregion
 
 // Структура данных: [бригада][тариф][день] = ['count' => количество, 'rate' => тариф]
 $brigade_data = [
@@ -138,7 +162,8 @@ foreach ($result as $row) {
     
     $tariff_key = $tariff_id . '|' . $full_tariff_name;
     
-    $date = $row['date_of_production'];
+    // Нормализуем дату до Y-m-d (БД может вернуть DATE как "Y-m-d" или DATETIME как "Y-m-d H:i:s")
+    $date = date('Y-m-d', strtotime($row['date_of_production']));
     $count = (int)$row['count_of_filters'];
     
     // Для почасовых работ используем часы, для остальных - количество фильтров
@@ -179,8 +204,40 @@ for ($d = $start_day; $d <= $end_day; $d++) {
     $all_days[] = sprintf('%s-%02d', $month, $d);
 }
 
+// #region agent log
+$days_in_brigade = [];
+foreach (['1-2', '3-4'] as $b) {
+    $first_tariff = array_key_first($brigade_data[$b] ?? []);
+    if ($first_tariff !== null) {
+        $days_in_brigade[$b] = array_keys($brigade_data[$b][$first_tariff] ?? []);
+    }
+}
+$debug_log('generate_monthly_salary_report.php:all_days_built', 'all_days vs brigade_data date keys', [
+    'all_days_count' => count($all_days),
+    'all_days_first5' => array_slice($all_days, 0, 5),
+    'all_days_last3' => array_slice($all_days, -3),
+    'month_var' => $month,
+    'start_day' => $start_day,
+    'end_day' => $end_day,
+    'brigade_12_date_keys_sample' => $days_in_brigade['1-2'] ?? null,
+    'brigade_34_date_keys_sample' => $days_in_brigade['3-4'] ?? null,
+], 'H2');
+// #endregion
+
 // Функция для отрисовки таблицы бригады
 function renderBrigadeTable($brigade_name, $brigade_data, $all_days, $all_tariffs, $month) {
+    // #region agent log
+    $path = dirname(__DIR__) . '/.cursor/debug.log';
+    $sample_tariff = array_key_first($brigade_data);
+    $sample_dates = $sample_tariff ? array_slice($all_days, 0, 3) : [];
+    $lookups = [];
+    foreach ($sample_dates as $d) {
+        $lookups[$d] = isset($brigade_data[$sample_tariff][$d]) ? $brigade_data[$sample_tariff][$d]['count'] : 'MISSING';
+        $lookups[$d . '_key_exists'] = array_key_exists($d, $brigade_data[$sample_tariff] ?? []);
+    }
+    $line = json_encode(['id' => 'log_' . uniqid(), 'timestamp' => round(microtime(true) * 1000), 'location' => 'generate_monthly_salary_report.php:renderBrigadeTable', 'message' => 'lookup by date', 'data' => ['brigade_name' => $brigade_name, 'sample_tariff' => $sample_tariff, 'all_days_first3' => $sample_dates, 'lookups' => $lookups], 'hypothesisId' => 'H3']) . "\n";
+    @file_put_contents($path, $line, FILE_APPEND | LOCK_EX);
+    // #endregion
     $month_name_ru = [
         '01' => 'Январь', '02' => 'Февраль', '03' => 'Март', '04' => 'Апрель',
         '05' => 'Май', '06' => 'Июнь', '07' => 'Июль', '08' => 'Август',

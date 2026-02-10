@@ -530,7 +530,7 @@ function show_weekly_production(){
                     html += '</div>';
                     
                     html += '<table>';
-                    html += '<thead><tr><th>Фильтр</th><th>Заявка</th><th>Изготовлено</th><th>Норма (шт/смену)</th><th>Норм</th><th>% выполнения</th><th>Изготовлено по заявке:</th></tr></thead>';
+                    html += '<thead><tr><th>Фильтр</th><th>Заявка</th><th>Изготовлено</th><th>Норма (шт/смену)</th><th>Норм</th><th>% выполнения</th><th>Изготовлено по заявке:</th><th>Плановая дата</th></tr></thead>';
                     html += '<tbody>';
                     
                     data.items.forEach(function(item) {
@@ -541,9 +541,9 @@ function show_weekly_production(){
                         html += '<td>' + (item.build_complexity > 0 ? item.build_complexity.toFixed(2) : '-') + '</td>';
                         html += '<td>' + (item.norms > 0 ? item.norms.toFixed(3) : '-') + '</td>';
                         html += '<td>' + (item.item_percentage > 0 ? item.item_percentage + '%' : '-') + '</td>';
-                        // Столбец "Изготовлено по заявке:"
                         const orderInfo = (item.produced_in_order || 0) + ' из ' + (item.ordered_in_order || 0);
                         html += '<td>' + orderInfo + '</td>';
+                        html += '<td>' + escapeHtml(item.planned_dates || '-') + '</td>';
                         html += '</tr>';
                     });
                     
@@ -807,7 +807,7 @@ function show_weekly_corrugation(){
                     html += '</div>';
                     
                     html += '<table>';
-                    html += '<thead><tr><th>Заявка</th><th>Фильтр</th><th>Количество</th></tr></thead>';
+                    html += '<thead><tr><th>Заявка</th><th>Фильтр</th><th>Количество</th><th>Плановая дата</th></tr></thead>';
                     html += '<tbody>';
                     
                     data.items.forEach(function(item) {
@@ -815,6 +815,7 @@ function show_weekly_corrugation(){
                         html += '<td>' + escapeHtml(item.order_number || '-') + '</td>';
                         html += '<td>' + escapeHtml(item.filter_label || '-') + '</td>';
                         html += '<td>' + item.count + ' шт</td>';
+                        html += '<td>' + escapeHtml(item.planned_dates || '-') + '</td>';
                         html += '</tr>';
                     });
                     
