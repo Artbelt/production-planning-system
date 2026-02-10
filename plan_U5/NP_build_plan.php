@@ -449,7 +449,7 @@ try{
     /* верхние плашки */
     .pill{border:1px solid #dbe3f0;background:#eef6ff;border-radius:10px;padding:8px;margin:6px 0;display:flex;flex-direction:column;gap:6px;position:relative}
     .pillTop{display:flex;align-items:center;gap:10px;justify-content:space-between}
-    .qty{width:72px;padding:6px;border:1px solid #c9d4ea;border-radius:8px}
+    .qty{display:inline-block;min-width:1.5em;padding:4px 6px;font-weight:600;color:#1e40af;text-align:center}
     .pillName{font-weight:600;display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden}
     .pillNameContainer{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden}
     .pillNameText{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:1;min-width:0}
@@ -515,8 +515,7 @@ try{
         white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
     }
     #topGrid .pillSub{ font-size:11px; }
-    #topGrid .qty{ width:40px; padding:4px 6px; font-size:12px; }
-    #topGrid .qty::-webkit-outer-spin-button, #topGrid .qty::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+    #topGrid .qty{ min-width:2em; padding:2px 4px; font-size:12px; }
 
     /* компактный режим — змейка */
     .snakeGrid{
@@ -985,10 +984,7 @@ try{
                                             <?= $p['is_corrugated'] ? '<br><span class="muted">✓ Сгофрировано: ' . $p['fact_count'] . ' шт</span>' : '' ?>
                                         </div>
                                     </div>
-                                    <input class="qty" type="number" min="1" step="1"
-                                           value="<?=max(1, (int)$p['available'])?>"
-                                           max="<?=$p['available']?>"
-                                           title="Количество">
+                                    <span class="qty" title="Доступно к добавлению"><?=max(1, (int)$p['available'])?></span>
                                 </div>
                             </div>
                         <?php endforeach; endif; ?>
@@ -1591,7 +1587,7 @@ try{
         const avEl = pill.querySelector('.av');
         if (avEl) avEl.textContent = String(newAvail);
         const qty = pill.querySelector('.qty');
-        if (qty){ qty.max = String(newAvail); qty.value = String(newAvail>0 ? newAvail : 1); }
+        if (qty) qty.textContent = String(newAvail > 0 ? newAvail : 1);
         pill.dataset.avail = String(newAvail);
         pill.classList.toggle('disabled', newAvail<=0);
         updatePillTime(pill);
@@ -1612,15 +1608,13 @@ try{
 
     function updatePillTime(pill){
         const rate = +pill.dataset.rate || 0;
-        const qty  = +(pill.querySelector('.qty')?.value || 0);
+        const qty  = +(pill.dataset.avail || 0);
         const hours = rate>0 ? (qty / rate) * SHIFT_HOURS : 0;
         const tEl = pill.querySelector('.time');
         if (tEl) tEl.textContent = fmtH(hours);
     }
     document.querySelectorAll('.pill').forEach(p=>{
-        const q = p.querySelector('.qty');
         updatePillTime(p);
-        if (q) q.addEventListener('input', ()=> updatePillTime(p));
     });
 
     // ===== строки внизу =====
@@ -1833,14 +1827,10 @@ try{
     // клики по верхним плашкам
     document.querySelectorAll('.pill').forEach(pill=>{
         pill.addEventListener('click', (e)=>{
-            if (e.target.closest('.qty')) return;
             const avail = +pill.dataset.avail || 0;
             if (avail <= 0) return;
 
-            const qtyEl = pill.querySelector('.qty');
-            let qty = parseInt(qtyEl?.value ?? avail, 10);
-            if (!Number.isFinite(qty) || qty <= 0) qty = avail;
-            qty = Math.min(qty, avail);
+            const qty = avail;
 
             if (e.shiftKey && lastDay){
                 addToDay(lastDay, lastTeam, pill, qty);
@@ -2141,21 +2131,15 @@ try{
                 topGrid.querySelectorAll('.pill').forEach(pill=>{
                     updatePillTime(pill);
                     pill.addEventListener('click', (e)=>{
-                        if (e.target.closest('.qty')) return;
                         const avail = +pill.dataset.avail || 0;
                         if (avail <= 0) return;
-                        const qtyEl = pill.querySelector('.qty');
-                        let qty = parseInt(qtyEl?.value ?? avail, 10);
-                        if (!Number.isFinite(qty) || qty <= 0) qty = avail;
-                        qty = Math.min(qty, avail);
+                        const qty = avail;
                         if (e.shiftKey && lastDay){
                             addToDay(lastDay, lastTeam, pill, qty);
                         } else {
                             openDatePicker(pill, qty);
                         }
                     });
-                    const q = pill.querySelector('.qty');
-                    if (q) q.addEventListener('input', ()=> updatePillTime(pill));
                 });
                 applyHeightColors();
             }
