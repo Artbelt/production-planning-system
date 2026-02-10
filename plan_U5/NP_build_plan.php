@@ -456,7 +456,7 @@ try{
     .pillHeightBadge{flex-shrink:0;white-space:nowrap}
     .pillSub{font-size:12px;color:#374151}
     .pill.disabled{opacity:.45;filter:grayscale(.15);pointer-events:none}
-    .pill.corrugated{border-color:#22c55e;background:#f0fdf4;box-shadow:0 1px 3px rgba(34,197,94,0.2)}
+    .pill.corrugated{border-color:#22c55e;background:#f0fdf4}
     
     /* Индикатор сложности */
     .complexity-indicator {
@@ -466,7 +466,6 @@ try{
         border-radius:50%;
         flex-shrink:0;
         border:1px solid rgba(0,0,0,0.1);
-        box-shadow:0 1px 2px rgba(0,0,0,0.1);
     }
     /* Индикатор сложности в плавающем окне (меньше) */
     .floating-panel .complexity-indicator {
@@ -557,9 +556,6 @@ try{
     .dense .totB, .dense .hrsB, .dense .hrsHeights{ font-weight:600 }
     .dense .hrsHeights{ font-size:11px }
 
-    /* плавная смена фона при подсветке */
-    #topGrid .pill, #daysGrid .rowItem{ transition: background-color .15s ease, border-color .15s ease; }
-    
     /* Плавающая панель для нижней таблицы */
     .floating-panel {
         position: fixed;
@@ -572,7 +568,7 @@ try{
         max-height: 57vh;
         background: white;
         border-radius: 12px;
-        box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         z-index: 1000;
         display: flex;
         flex-direction: column;
@@ -580,7 +576,7 @@ try{
     }
     
     .floating-panel-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: #667eea;
         color: white;
         padding: 6px 12px;
         display: flex;
@@ -800,7 +796,7 @@ try{
         background: #f8fafc;
         cursor: pointer;
         font-size: 13px;
-        transition: all 0.2s;
+        transition: background-color .15s ease, border-color .15s ease;
         text-align: center;
     }
     .modalWrap .dayBtn:hover {
@@ -861,13 +857,8 @@ try{
         left: 0;
         height: 100%;
         width: var(--progress-width, 0%);
-        background: linear-gradient(90deg, #2563eb, #3b82f6, #60a5fa);
-        transition: width 0.3s ease;
-        animation: loadingPulse 1.5s ease-in-out infinite;
-    }
-    @keyframes loadingPulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.7; }
+        background: #3b82f6;
+        transition: width 0.2s ease;
     }
     #loadingProgress.hidden {
         opacity: 0;
