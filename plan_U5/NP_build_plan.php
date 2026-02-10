@@ -431,32 +431,31 @@ try{
     .muted{color:var(--muted)}
     .sub{font-size:12px;color:var(--muted)}
 
-    .grid{display:grid;grid-template-columns:repeat(<?=count($srcDates)?:1?>,minmax(120px,1fr));gap:10px}
+    .grid{display:grid;grid-template-columns:repeat(<?=count($srcDates)?:1?>,minmax(86px,1fr));gap:4px}
     .gridDays{
         display: flex;
         flex-wrap: nowrap;
-        gap: 10px;
+        gap: 8px;
     }
     .gridDays .col {
-        min-width: 280px;
+        min-width: 200px;
         flex-shrink: 0;
     }
 
     .col{border-left:1px solid var(--line);padding-left:8px;min-height:200px}
     .col h4{margin:0 0 8px;font-weight:600;color:#111827}
-    #topGrid .col h4{color:#ffffff;background:#374151;padding:4px 8px;border-radius:6px;margin-bottom:8px;text-align:center}
+    #topGrid .col h4{color:#ffffff;background:#374151;padding:4px 8px;border-radius:6px;margin-bottom:4px;text-align:center}
 
     /* верхние плашки */
-    .pill{border:1px solid #dbe3f0;background:#eef6ff;border-radius:10px;padding:8px;margin:6px 0;display:flex;flex-direction:column;gap:6px;position:relative}
+    .pill{border:1px solid #93c5fd;background:#dbeafe;border-radius:10px;padding:8px;margin:4px 0;display:flex;flex-direction:column;gap:6px;position:relative}
     .pillTop{display:flex;align-items:center;gap:10px;justify-content:space-between}
-    .qty{display:inline-block;min-width:1.5em;padding:4px 6px;font-weight:600;color:#1e40af;text-align:center}
     .pillName{font-weight:600;display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden}
     .pillNameContainer{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden}
     .pillNameText{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:1;min-width:0}
     .pillHeightBadge{flex-shrink:0;white-space:nowrap}
     .pillSub{font-size:12px;color:#374151}
-    .pill.disabled{opacity:.45;filter:grayscale(.15);pointer-events:none}
-    .pill.corrugated{border-color:#22c55e;background:#f0fdf4}
+    .pill.disabled{opacity:.5;background:#f8fafc;border-color:#e2e8f0;filter:grayscale(.2);pointer-events:none}
+    .pill.corrugated{border-color:#16a34a;background:#dcfce7}
     
     /* Индикатор сложности */
     .complexity-indicator {
@@ -467,6 +466,16 @@ try{
         flex-shrink:0;
         border:1px solid rgba(0,0,0,0.1);
     }
+    /* В верхней таблице индикатор не занимает место в потоке — ширина плашек не растёт */
+    #topGrid .pill{ position:relative; }
+    #topGrid .pill .complexity-indicator {
+        position:absolute;
+        right:4px;
+        top:50%;
+        transform:translateY(-50%);
+        margin:0;
+    }
+    #topGrid .pill.has-complexity-indicator .pillNameContainer{ padding-right:14px; }
     /* Индикатор сложности в плавающем окне (меньше) */
     .floating-panel .complexity-indicator {
         width:7px;
@@ -493,36 +502,36 @@ try{
     .tot,.hrsB,.hrs{font-weight:700}
     .hrsHeights{color:#6b7280;font-weight:600;margin-left:4px}
 
-    /* скроллы */
-    .scrollX{ overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; padding-bottom:4px; }
-    .scrollX > .grid{ width:max-content; display:grid; }
+    /* скроллы — слой GPU и ограничение перерисовки для плавности */
+    .scrollX{ overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; padding-bottom:4px; contain:paint; }
+    .scrollX > .grid{ width:max-content; display:grid; transform:translateZ(0); backface-visibility:hidden; }
+    #topGrid .col{ content-visibility:auto; contain-intrinsic-size:86px 200px; contain:paint; }
     .scrollX::-webkit-scrollbar{height:10px}
     .scrollX::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:6px}
     .vscroll::-webkit-scrollbar{width:10px}
     .vscroll::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:6px}
 
-    /* компактный вид плашек ТОЛЬКО вверху */
-    #topGrid .pill{ padding:6px 8px; border-radius:8px; }
-    #topGrid .pillTop{ gap:6px; }
+    /* компактный вид плашек ТОЛЬКО вверху (меньший border-radius — дешевле при скролле) */
+    #topGrid .pill{ padding:4px 6px; border-radius:4px; margin:2px 0; }
+    #topGrid .pillTop{ gap:4px; }
     #topGrid .pillName{
         font-family:"Arial Narrow", Arial, "Nimbus Sans Narrow", system-ui, sans-serif;
         font-size:12px; line-height:1.2;
     }
     #topGrid .pillNameContainer{
-        max-width:130px;
+        max-width:94px;
     }
     #topGrid .pillNameText{
         white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
     }
     #topGrid .pillSub{ font-size:11px; }
-    #topGrid .qty{ min-width:2em; padding:2px 4px; font-size:12px; }
 
     /* компактный режим — змейка */
     .snakeGrid{
         display:grid;
         grid-auto-flow:column;
         grid-template-rows:repeat(15, min-content);
-        grid-auto-columns:minmax(200px, 1fr);
+        grid-auto-columns:minmax(144px, 1fr);
         gap:4px;
     }
     .snakeGrid .pill{ margin:0; padding:4px 6px; }
@@ -551,7 +560,7 @@ try{
     .dense .rowLeft b{ font-weight:600 }
     .dense .rowLeft .sub{ font-size:11px }
     .dense .rowCtrls .mv, .dense .rowCtrls .rm{ width:22px; height:22px; padding:0; display:flex; align-items:center; justify-content:center; }
-    .dense .gridDays{ grid-template-columns:repeat(<?=count($buildDays)?:1?>, minmax(200px,1fr)); }
+    .dense .gridDays{ grid-template-columns:repeat(<?=count($buildDays)?:1?>, minmax(144px,1fr)); }
     .dense .totB, .dense .hrsB, .dense .hrsHeights{ font-weight:600 }
     .dense .hrsHeights{ font-size:11px }
 
@@ -673,7 +682,7 @@ try{
     }
     
     .floating-panel .col {
-        min-width: 120px !important;
+        min-width: 86px !important;
     }
     
     .floating-panel .col h4 {
@@ -984,7 +993,6 @@ try{
                                             <?= $p['is_corrugated'] ? '<br><span class="muted">✓ Сгофрировано: ' . $p['fact_count'] . ' шт</span>' : '' ?>
                                         </div>
                                     </div>
-                                    <span class="qty" title="Доступно к добавлению"><?=max(1, (int)$p['available'])?></span>
                                 </div>
                             </div>
                         <?php endforeach; endif; ?>
@@ -1182,18 +1190,19 @@ try{
     }
 
     /* ===== ПОДСВЕТКА ПО ВЫСОТЕ + ПЕРЕКЛЮЧАТЕЛЬ ===== */
+    /* txt — тёмный цвет шрифта маркера высоты для читаемости */
     const HEIGHT_COLORS_FIXED = {
-        '20':{bg:'#DCFCE7',bd:'#86EFAC'}, '25':{bg:'#E0F2FE',bd:'#93C5FD'},
-        '27':{bg:'#DBEAFE',bd:'#93C5FD'}, '30':{bg:'#FEF9C3',bd:'#FDE68A'},
-        '32':{bg:'#F3E8FF',bd:'#D8B4FE'}, '35':{bg:'#FFE4E6',bd:'#FDA4AF'},
-        '40':{bg:'#E2E8F0',bd:'#CBD5E1'},
+        '20':{bg:'#DCFCE7',bd:'#86EFAC',txt:'#15803d'}, '25':{bg:'#E0F2FE',bd:'#93C5FD',txt:'#1d4ed8'},
+        '27':{bg:'#DBEAFE',bd:'#93C5FD',txt:'#1d4ed8'}, '30':{bg:'#FEF9C3',bd:'#FDE68A',txt:'#a16207'},
+        '32':{bg:'#F3E8FF',bd:'#D8B4FE',txt:'#6b21a8'}, '35':{bg:'#FFE4E6',bd:'#FDA4AF',txt:'#b91c1c'},
+        '40':{bg:'#E2E8F0',bd:'#CBD5E1',txt:'#475569'},
     };
     const PALETTE = [
-        ['#E0F2FE','#93C5FD'], ['#DCFCE7','#86EFAC'], ['#FCE7F3','#F9A8D4'],
-        ['#FEF3C7','#FCD34D'], ['#F3E8FF','#D8B4FE'], ['#FFE4E6','#FDA4AF'],
-        ['#DDD6FE','#C4B5FD'], ['#CCFBF1','#5EEAD4']
+        ['#E0F2FE','#93C5FD','#1d4ed8'], ['#DCFCE7','#86EFAC','#15803d'], ['#FCE7F3','#F9A8D4','#9d174d'],
+        ['#FEF3C7','#FCD34D','#a16207'], ['#F3E8FF','#D8B4FE','#6b21a8'], ['#FFE4E6','#FDA4AF','#b91c1c'],
+        ['#DDD6FE','#C4B5FD','#5b21b6'], ['#CCFBF1','#5EEAD4','#0f766e']
     ];
-    function hashToTheme(s){ let h=0; for(let i=0;i<s.length;i++) h=(h*31 + s.charCodeAt(i))>>>0; const [bg,bd]=PALETTE[h%PALETTE.length]; return {bg,bd}; }
+    function hashToTheme(s){ let h=0; for(let i=0;i<s.length;i++) h=(h*31 + s.charCodeAt(i))>>>0; const [bg,bd,txt]=PALETTE[h%PALETTE.length]; return {bg,bd,txt:txt||bd}; }
     function themeForHeight(raw){
         if (raw==null) return null;
         const txt = String(raw).trim(); if (!txt) return null;
@@ -1225,15 +1234,18 @@ try{
             return;
         }
         topPills.forEach(el=>{
+            if (el.classList.contains('disabled')) {
+                el.style.backgroundColor = '';
+                el.style.borderColor = '';
+                return;
+            }
             const t = themeForHeight(el.dataset.height);
             if (t){ el.style.backgroundColor=t.bg; el.style.borderColor=t.bd; }
-            // Проверяем высоту после применения цветов
             checkAndHidePillHeight(el);
         });
         rows.forEach(el=>{
             const t = themeForHeight(el.dataset.height);
             if (t){ el.style.backgroundColor=t.bg; el.style.borderColor=t.bd; }
-            // Проверяем высоту после применения цветов
             checkAndHideHeight(el);
         });
     }
@@ -1285,16 +1297,17 @@ try{
             let indicator = pill.querySelector('.complexity-indicator');
             
             if (complexityIndicatorOn && complexity > 0) {
-                // Показываем индикатор
+                // Показываем индикатор (абсолютное позиционирование — ширина плашки не меняется)
                 if (indicator) {
                     const color = getComplexityColor(complexity);
                     indicator.style.display = 'inline-block';
                     indicator.style.backgroundColor = color;
+                    pill.classList.add('has-complexity-indicator');
                 }
             } else {
-                // Скрываем индикатор
                 if (indicator) {
                     indicator.style.display = 'none';
+                    pill.classList.remove('has-complexity-indicator');
                 }
             }
         });
@@ -1586,8 +1599,6 @@ try{
     function updateAvailForPill(pill, newAvail){
         const avEl = pill.querySelector('.av');
         if (avEl) avEl.textContent = String(newAvail);
-        const qty = pill.querySelector('.qty');
-        if (qty) qty.textContent = String(newAvail > 0 ? newAvail : 1);
         pill.dataset.avail = String(newAvail);
         pill.classList.toggle('disabled', newAvail<=0);
         updatePillTime(pill);
