@@ -249,6 +249,136 @@ $canAccessLaser = canAccessLaserRequests($userDepartments, 'U5');
         .close:hover {
             color: var(--ink);
         }
+
+        /* Компактное модальное окно «Редактор выпущенной продукции» */
+        #productEditorModal .modal-content {
+            max-width: 720px;
+            margin: 2% auto;
+            padding: 12px 16px;
+            max-height: 88vh;
+        }
+        #productEditorModal .modal-header {
+            margin-bottom: 10px;
+            padding-bottom: 6px;
+        }
+        #productEditorModal .modal-title {
+            font-size: 15px;
+        }
+        #productEditorModal #productEditorContent > div:first-child {
+            margin-bottom: 12px;
+            padding: 10px 12px;
+        }
+        #productEditorModal #productEditorContent h4 {
+            margin: 0 0 8px 0;
+            font-size: 13px;
+        }
+        #productEditorModal #productEditorContent input[type="date"],
+        #productEditorModal #productEditorContent button {
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+        #productEditorModal #dataTableContainer > div[style*="margin-bottom: 20px"] {
+            margin-bottom: 12px !important;
+        }
+        #productEditorModal #dataTableContainer h3 {
+            font-size: 14px !important;
+        }
+        #productEditorModal #dataTableContainer table {
+            font-size: 12px !important;
+        }
+        #productEditorModal #dataTableContainer th,
+        #productEditorModal #dataTableContainer td {
+            padding: 5px 6px !important;
+        }
+        #productEditorModal #dataTableContainer div[style*="margin-bottom: 30px"] {
+            margin-bottom: 16px !important;
+            padding: 10px 12px !important;
+        }
+        #productEditorModal #dataTableContainer div[style*="margin-bottom: 30px"] h4 {
+            margin-bottom: 10px !important;
+            font-size: 13px !important;
+        }
+
+        /* Модальное окно «Рейтинг фильтров» — как Редактор выпущенной продукции */
+        #filterRatingModal .modal-content {
+            max-width: 720px;
+            margin: 2% auto;
+            padding: 12px 16px;
+            max-height: 88vh;
+        }
+        #filterRatingModal .modal-header {
+            margin-bottom: 10px;
+            padding-bottom: 6px;
+        }
+        #filterRatingModal .modal-title {
+            font-size: 15px;
+        }
+        #filterRatingModal #filterRatingTableWrap table {
+            font-size: 12px;
+            width: 100%;
+            border-collapse: collapse;
+        }
+        #filterRatingModal #filterRatingTableWrap th,
+        #filterRatingModal #filterRatingTableWrap td {
+            padding: 5px 6px;
+            border: 1px solid var(--border);
+        }
+        #filterRatingModal #filterRatingTableWrap th {
+            background: #f8f9fa;
+            font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+        }
+        #filterRatingModal #filterRatingTableWrap th:hover {
+            background: #e9ecef;
+        }
+
+        /* Модальное окно «Поиск по размерам» — как Рейтинг фильтров */
+        #searchByDimensionsModal .modal-content {
+            max-width: 720px;
+            margin: 2% auto;
+            padding: 12px 16px;
+            max-height: 88vh;
+        }
+        #searchByDimensionsModal .modal-header {
+            margin-bottom: 10px;
+            padding-bottom: 6px;
+        }
+        #searchByDimensionsModal .modal-title {
+            font-size: 15px;
+        }
+        #searchByDimensionsModal .search-dimensions-toolbar {
+            margin-bottom: 12px;
+            padding: 10px 12px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+        }
+        #searchByDimensionsModal .search-dimensions-toolbar label {
+            font-weight: 600;
+            color: var(--ink);
+        }
+        #searchByDimensionsModal .search-dimensions-toolbar input {
+            padding: 6px 8px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        #searchByDimensionsModal #searchByDimensionsTableWrap table {
+            font-size: 12px;
+            width: 100%;
+            border-collapse: collapse;
+        }
+        #searchByDimensionsModal #searchByDimensionsTableWrap th,
+        #searchByDimensionsModal #searchByDimensionsTableWrap td {
+            padding: 5px 6px;
+            border: 1px solid var(--border);
+        }
+        #searchByDimensionsModal #searchByDimensionsTableWrap th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+
         .modal-buttons {
             display: flex;
             flex-direction: column;
@@ -562,17 +692,10 @@ echo "<!-- Аккуратная панель авторизации -->
                 <div class="stack">
                     <a href="product_output.php" target="_blank" rel="noopener" class="stack"><button>Выпуск продукции</button></a>
                     <form action="product_output_view.php" method="post" class="stack" target="_blank"><input type="submit" value="Обзор выпуска продукции"></form>
-                    <button onclick="openDataEditor()">Редактор данных</button>
                     <a href="NP_supply_requirements.php" target="_blank" rel="noopener" class="stack"><button>Потребность комплектующих</button></a>
                     <?php if ($canAccessLaser): ?>
                     <a href="laser_request.php" target="_blank" rel="noopener" class="stack"><button type="button">Заявка на лазер</button></a>
                     <?php endif; ?>
-                </div>
-
-                <div class="section-title" style="margin-top:14px">Дополнения</div>
-                <div class="stack">
-                    <form action="BOX_CREATOR.htm" method="post" class="stack" target="_blank"><input type="submit" value="Расчет коробок"></form>
-                    <form action="BOX_CREATOR_2.htm" method="post" class="stack" target="_blank"><input type="submit" value="Максимальное количество"></form>
                 </div>
 
                 <div class="section-title" style="margin-top:14px">Мониторинг</div>
@@ -598,6 +721,7 @@ echo "<!-- Аккуратная панель авторизации -->
 
                 <div class="section-title" style="margin-top:14px">Управление данными</div>
                 <div class="stack">
+                    <button onclick="openDataEditor()">Редактор данных</button>
                     <form action='add_salon_filter_into_db.php' method='post' target='_blank' class="stack">
                         <input type='hidden' name='workshop' value='<?php echo htmlspecialchars($workshop); ?>'>
                         <input type='submit' value='Добавить фильтр в БД(full)'>
@@ -615,6 +739,14 @@ echo "<!-- Аккуратная панель авторизации -->
                 <div class="section-title" style="margin-top:14px">Объявление</div>
                 <div class="stack">
                     <button onclick="openCreateAdModal()">Создать объявление</button>
+                </div>
+
+                <div class="section-title" style="margin-top:14px">Дополнения</div>
+                <div class="stack">
+                    <form action="BOX_CREATOR.htm" method="post" class="stack" target="_blank"><input type="submit" value="Расчет коробок"></form>
+                    <form action="BOX_CREATOR_2.htm" method="post" class="stack" target="_blank"><input type="submit" value="Максимальное количество"></form>
+                    <button type="button" onclick="openSearchByDimensionsModal()" class="stack" style="width:100%;">Поиск по размерам</button>
+                    <button type="button" onclick="openFilterRatingModal()" class="stack" style="width:100%;">Рейтинг фильтров</button>
                 </div>
             </td>
 
@@ -962,30 +1094,30 @@ echo "<!-- Аккуратная панель авторизации -->
 
 <!-- Модальное окно редактора продукции -->
 <div id="productEditorModal" class="modal">
-    <div class="modal-content" style="max-width: 1200px;">
+    <div class="modal-content" style="max-width: 720px;">
         <div class="modal-header">
             <h2 class="modal-title">Редактор выпущенной продукции</h2>
-            <div style="display: flex; gap: 10px; align-items: center;">
-                <button onclick="openAuditLogs()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <button onclick="openAuditLogs()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 11px;">
                     📋 Логи аудита
                 </button>
                 <span class="close" onclick="closeProductEditor()">&times;</span>
             </div>
         </div>
-            <div id="productEditorContent">
-                <div style="margin-bottom: 20px; padding: 16px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;">
-                    <h4 style="margin: 0 0 12px 0; color: #495057;">📅 Выберите дату для редактирования</h4>
-                    <div style="display: flex; gap: 12px; align-items: center;">
-                        <input type="date" id="editDate" style="padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
-                        <button onclick="loadDataForDate()" style="background: #3b82f6; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px;">
-                            🔍 Загрузить данные
-                        </button>
-                    </div>
-                </div>
-                <div id="dataTableContainer" style="display: none;">
-                    <!-- Здесь будет таблица с данными -->
+        <div id="productEditorContent">
+            <div style="margin-bottom: 12px; padding: 10px 12px; background: #f8f9fa; border-radius: 6px; border: 1px solid #e9ecef;">
+                <h4 style="margin: 0 0 8px 0; color: #495057; font-size: 13px;">📅 Выберите дату для редактирования</h4>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="date" id="editDate" style="padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px;">
+                    <button onclick="loadDataForDate()" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;">
+                        🔍 Загрузить данные
+                    </button>
                 </div>
             </div>
+            <div id="dataTableContainer" style="display: none;">
+                <!-- Здесь будет таблица с данными -->
+            </div>
+        </div>
     </div>
 </div>
 
@@ -1864,15 +1996,166 @@ function submitAd(event) {
     });
 }
 
+// Поиск гофропакетов по размерам: один раз грузим все, фильтруем по вводу каждого символа
+var searchByDimensionsAllItems = null;
+function openSearchByDimensionsModal() {
+    document.getElementById('searchByDimensionsModal').style.display = 'block';
+    document.getElementById('searchDimWidth').value = '';
+    document.getElementById('searchDimHeight').value = '';
+    document.getElementById('searchDimPleats').value = '';
+    var container = document.getElementById('searchByDimensionsTableWrap');
+    container.innerHTML = '<div style="text-align:center; padding:24px; color: var(--muted);">Загрузка...</div>';
+    searchByDimensionsAllItems = null;
+    fetch('get_paper_packages_by_dimensions.php')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.ok) {
+                container.innerHTML = '<p style="color: var(--danger); padding: 12px;">' + (data.error || 'Ошибка загрузки') + '</p>';
+                return;
+            }
+            searchByDimensionsAllItems = data.items || [];
+            filterAndRenderSearchByDimensions();
+        })
+        .catch(function(err) {
+            container.innerHTML = '<p style="color: var(--danger); padding: 12px;">Ошибка: ' + escapeHtml(err.message) + '</p>';
+        });
+}
+function closeSearchByDimensionsModal() {
+    document.getElementById('searchByDimensionsModal').style.display = 'none';
+}
+function filterAndRenderSearchByDimensions() {
+    if (searchByDimensionsAllItems == null) return;
+    var width = document.getElementById('searchDimWidth').value.trim();
+    var height = document.getElementById('searchDimHeight').value.trim();
+    var pleats = document.getElementById('searchDimPleats').value.trim();
+    var filtered = searchByDimensionsAllItems.filter(function(row) {
+        var w = (row.width !== undefined && row.width !== null && row.width !== '') ? String(row.width) : '';
+        var h = (row.height !== undefined && row.height !== null && row.height !== '') ? String(row.height) : '';
+        var p = (row.pleats !== undefined && row.pleats !== null && row.pleats !== '') ? String(row.pleats) : '';
+        if (width && w.indexOf(width) < 0) return false;
+        if (height && h.indexOf(height) < 0) return false;
+        if (pleats && p.indexOf(pleats) < 0) return false;
+        return true;
+    });
+    renderSearchByDimensionsTable(filtered);
+}
+function renderSearchByDimensionsTable(items) {
+    var container = document.getElementById('searchByDimensionsTableWrap');
+    var html = '<table><thead><tr><th>Гофропакет</th><th style="text-align: center;">Ширина, мм</th><th style="text-align: center;">Высота, мм</th><th style="text-align: center;">Кол-во ребер</th></tr></thead><tbody>';
+    if (items.length === 0) {
+        html += '<tr><td colspan="4" style="text-align: center; color: var(--muted);">Нет данных по заданным размерам</td></tr>';
+    } else {
+        items.forEach(function(row) {
+            html += '<tr><td>' + (row.name ? escapeHtml(row.name) : '—') + '</td><td style="text-align: center;">' + (row.width !== undefined && row.width !== '' ? escapeHtml(String(row.width)) : '—') + '</td><td style="text-align: center;">' + (row.height !== undefined && row.height !== '' ? escapeHtml(String(row.height)) : '—') + '</td><td style="text-align: center;">' + (row.pleats !== undefined && row.pleats !== '' ? escapeHtml(String(row.pleats)) : '—') + '</td></tr>';
+        });
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+function escapeHtml(s) {
+    if (s == null) return '';
+    var div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+}
+
+// Рейтинг фильтров
+var filterRatingItems = [];
+var filterRatingSortBy = 'total_pieces';
+var filterRatingSortDir = 'desc';
+
+function openFilterRatingModal() {
+    document.getElementById('filterRatingModal').style.display = 'block';
+    loadFilterRating();
+}
+function closeFilterRatingModal() {
+    document.getElementById('filterRatingModal').style.display = 'none';
+}
+function loadFilterRating() {
+    var container = document.getElementById('filterRatingTableWrap');
+    container.innerHTML = '<div style="text-align:center; padding:24px; color: var(--muted);">Загрузка...</div>';
+    fetch('get_filter_rating.php')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.ok) {
+                container.innerHTML = '<p style="color: #b91c1c; padding: 12px;">' + escapeHtml(data.error || 'Ошибка загрузки') + '</p>';
+                return;
+            }
+            filterRatingItems = data.items || [];
+            filterRatingSortBy = 'total_pieces';
+            filterRatingSortDir = 'desc';
+            renderFilterRatingTable();
+        })
+        .catch(function(err) {
+            container.innerHTML = '<p style="color: #b91c1c; padding: 12px;">Ошибка: ' + escapeHtml(err.message) + '</p>';
+        });
+}
+function sortFilterRating(col) {
+    if (filterRatingSortBy === col) {
+        filterRatingSortDir = filterRatingSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        filterRatingSortBy = col;
+        filterRatingSortDir = (col === 'filter' ? 'asc' : 'desc');
+    }
+    renderFilterRatingTable();
+}
+function renderFilterRatingTable() {
+    var items = filterRatingItems.slice();
+    var key = filterRatingSortBy;
+    var dir = filterRatingSortDir === 'asc' ? 1 : -1;
+    items.sort(function(a, b) {
+        var va, vb;
+        if (key === 'filter') {
+            va = a.filter || '';
+            vb = b.filter || '';
+        } else if (key === 'order_numbers') {
+            va = a.order_numbers || '';
+            vb = b.order_numbers || '';
+        } else {
+            va = Number(a[key]) || 0;
+            vb = Number(b[key]) || 0;
+        }
+        if (va < vb) return -1 * dir;
+        if (va > vb) return 1 * dir;
+        return 0;
+    });
+    var arrow = function(col) {
+        if (filterRatingSortBy !== col) return '';
+        return filterRatingSortDir === 'asc' ? ' \u25b2' : ' \u25bc';
+    };
+    var html = '<p style="margin: 0 0 10px 0; font-size: 12px; color: var(--muted);">Все данные из БД</p>';
+    html += '<table><thead><tr>';
+    html += '<th onclick="sortFilterRating(\'filter\')" title="Сортировать">Фильтр' + arrow('filter') + '</th>';
+    html += '<th style="text-align: right;" onclick="sortFilterRating(\'total_pieces\')" title="Сортировать">Штук в заказах' + arrow('total_pieces') + '</th>';
+    html += '<th style="text-align: right;" onclick="sortFilterRating(\'orders_count\')" title="Сортировать">Кол-во заказов' + arrow('orders_count') + '</th>';
+    html += '<th onclick="sortFilterRating(\'order_numbers\')" title="Сортировать">Номера заявок' + arrow('order_numbers') + '</th>';
+    html += '</tr></thead><tbody>';
+    if (items.length === 0) {
+        html += '<tr><td colspan="4" style="text-align: center; color: var(--muted);">Нет данных за выбранный период</td></tr>';
+    } else {
+        items.forEach(function(row) {
+            html += '<tr><td>' + escapeHtml(row.filter || '—') + '</td><td style="text-align: right;">' + (row.total_pieces != null ? row.total_pieces : '—') + '</td><td style="text-align: right;">' + (row.orders_count != null ? row.orders_count : '—') + '</td><td style="font-size: 11px;">' + escapeHtml(row.order_numbers || '—') + '</td></tr>';
+        });
+    }
+    html += '</tbody></table>';
+    document.getElementById('filterRatingTableWrap').innerHTML = html;
+}
+
 // Закрытие модальных окон при клике вне их
 window.onclick = function(event) {
     const filterModal = document.getElementById('filterParamsModal');
     const adModal = document.getElementById('createAdModal');
+    const searchDimModal = document.getElementById('searchByDimensionsModal');
+    const filterRatingModal = document.getElementById('filterRatingModal');
     
     if (event.target === filterModal) {
         closeFilterParamsModal();
     } else if (event.target === adModal) {
         closeCreateAdModal();
+    } else if (event.target === searchDimModal) {
+        closeSearchByDimensionsModal();
+    } else if (event.target === filterRatingModal) {
+        closeFilterRatingModal();
     }
 }
 </script>
@@ -1902,6 +2185,50 @@ window.onclick = function(event) {
             </div>
         </div>
     </div>
+    </div>
+
+    <!-- Модальное окно: поиск по размерам (гофропакеты) — оформление как Рейтинг фильтров -->
+    <div id="searchByDimensionsModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Поиск по размерам (гофропакеты)</h2>
+                <span class="close" onclick="closeSearchByDimensionsModal()">&times;</span>
+            </div>
+            <div>
+                <div class="search-dimensions-toolbar" style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="display: flex; align-items: center; gap: 8px;">
+                        <span style="min-width: 52px;">Ширина, мм:</span>
+                        <input type="text" id="searchDimWidth" placeholder="мм" style="width: 80px; box-sizing: border-box;" oninput="filterAndRenderSearchByDimensions()">
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px;">
+                        <span style="min-width: 52px;">Высота, мм:</span>
+                        <input type="text" id="searchDimHeight" placeholder="мм" style="width: 80px; box-sizing: border-box;" oninput="filterAndRenderSearchByDimensions()">
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px;">
+                        <span style="min-width: 44px;">Ребер:</span>
+                        <input type="text" id="searchDimPleats" placeholder="число" style="width: 80px; box-sizing: border-box;" oninput="filterAndRenderSearchByDimensions()">
+                    </label>
+                </div>
+                <div id="searchByDimensionsTableWrap" style="min-height: 120px;">
+                    <div style="text-align: center; padding: 24px; color: var(--muted);">Загрузка списка гофропакетов...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно: рейтинг фильтров за период (оформление как Редактор выпущенной продукции) -->
+    <div id="filterRatingModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Рейтинг фильтров</h2>
+                <span class="close" onclick="closeFilterRatingModal()">&times;</span>
+            </div>
+            <div>
+                <div id="filterRatingTableWrap" style="min-height: 120px;">
+                    <div style="text-align: center; padding: 24px; color: var(--muted);">Загрузка...</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Модальное окно для создания объявления -->

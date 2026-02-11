@@ -1,13 +1,20 @@
 <?php
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
-$order = $_POST['order'] ?? '';
-$raw = $_POST['plan_data'] ?? '';
+$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "", [
+    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
+]);
+$order = isset($_POST['order']) ? trim((string)$_POST['order']) : '';
+$raw = isset($_POST['plan_data']) ? (string)$_POST['plan_data'] : '';
 
-if (!$order || !$raw) {
-    die("Ошибка: отсутствуют данные");
+if ($order === '' || $raw === '') {
+    header('Content-Type: text/plain; charset=utf-8');
+    die("Ошибка: отсутствуют данные (order или plan_data)");
 }
 
 $data = json_decode($raw, true);
+if (!is_array($data)) {
+    header('Content-Type: text/plain; charset=utf-8');
+    die("Ошибка: неверный формат данных плана (ожидался JSON-объект)");
+}
 
 // Удалим предыдущий план для этой заявки
 $stmt = $pdo->prepare("DELETE FROM corrugation_plan WHERE order_number = ?");

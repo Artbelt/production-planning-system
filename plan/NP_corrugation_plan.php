@@ -603,7 +603,7 @@ try {
     </tr>
 </table>
 
-<form method="post" action="NP/save_corrugation_plan.php" style="display: none;">
+<form id="saveCorrugationForm" method="post" action="NP/save_corrugation_plan.php" style="display: none;">
     <input type="hidden" name="order" value="<?= htmlspecialchars($order) ?>">
     <input type="hidden" name="plan_data" id="plan_data">
 </form>
@@ -1155,6 +1155,8 @@ try {
         document.addEventListener('mouseup', dragEnd);
 
         function dragStart(e) {
+            // Не начинать перетаскивание при клике по кнопкам выбора высоты
+            if (e.target.closest('.height-btn') || e.target.closest('.height-buttons')) return;
             // Перетаскивание начинается только если клик на саму плашку или её содержимое
             if (e.target.closest('#active-day-info')) {
                 initialX = e.clientX - xOffset;
@@ -1407,20 +1409,20 @@ try {
 
     function savePlan(shouldRedirect = false) {
         const data = {};
-        document.querySelectorAll('.drop-target').forEach(td => {
+        // Собираем только из области планирования (плавающая панель по дням)
+        const container = document.getElementById('planning-days-list');
+        const dropTargets = container ? container.querySelectorAll('.drop-target') : document.querySelectorAll('.drop-target');
+        dropTargets.forEach(td => {
             const date = td.getAttribute('data-date');
-            const items = Array.from(td.querySelectorAll('div')).map(d => d.innerText);
-
+            if (!date) return;
+            const items = Array.from(td.querySelectorAll('.assigned-item')).map(d => (d.innerText || d.textContent || '').trim()).filter(Boolean);
             if (items.length > 0) data[date] = items;
         });
 
-
-
-
         if (shouldRedirect) {
-            // Для кнопки "Завершить" - используем обычную отправку формы
-        document.getElementById('plan_data').value = JSON.stringify(data);
-            document.querySelector('form').submit();
+            // Для кнопки "Завершить" - отправляем форму сохранения (не форму с датой/днями)
+            document.getElementById('plan_data').value = JSON.stringify(data);
+            document.getElementById('saveCorrugationForm').submit();
             return;
         }
 
@@ -1430,21 +1432,26 @@ try {
         formData.append('order', order);
         formData.append('plan_data', JSON.stringify(data));
 
-        fetch('NP/save_corrugation_plan_ajax.php', {
-            method: 'POST',
-            body: formData
+        const saveUrl = 'NP/save_corrugation_plan_ajax.php';
+        fetch(saveUrl, { method: 'POST', body: formData })
+        .then(response => {
+            const ct = response.headers.get('content-type') || '';
+            if (!response.ok) {
+                return response.text().then(t => { throw new Error('Сервер вернул ' + response.status + (t ? ': ' + t.slice(0, 200) : '')); });
+            }
+            if (ct.indexOf('application/json') !== -1) return response.json();
+            return response.text().then(t => { throw new Error('Неверный ответ сервера (ожидался JSON)'); });
         })
-        .then(response => response.json())
         .then(result => {
-            if (result.success) {
-                alert(result.message);
-                location.reload(); // Перезагружаем страницу, чтобы загрузить обновленный план
+            if (result && result.success) {
+                alert(result.message || 'План сохранён.');
+                location.reload();
             } else {
-                alert('Ошибка: ' + result.message);
+                alert('Ошибка: ' + (result && result.message ? result.message : 'неизвестная ошибка'));
             }
         })
         .catch(error => {
-            alert('Ошибка при сохранении: ' + error.message);
+            alert('Ошибка при сохранении: ' + (error && error.message ? error.message : String(error)));
         });
     }
 
