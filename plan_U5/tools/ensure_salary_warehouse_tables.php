@@ -25,6 +25,8 @@ try {
         // Существующие записи считаем уже сданными на склад, чтобы не терять их в отчёте ЗП
         $pdo_salary->exec("UPDATE manufactured_production SET handed_to_warehouse_at = CONCAT(date_of_production, ' 00:00:00') WHERE handed_to_warehouse_at IS NULL");
     }
+    // Заливка handed_to_warehouse_at для записей с пустым полем (новые или старые)
+    $pdo_salary->exec("UPDATE manufactured_production SET handed_to_warehouse_at = CONCAT(date_of_production, ' 00:00:00') WHERE handed_to_warehouse_at IS NULL AND date_of_production IS NOT NULL");
 } catch (PDOException $e) {
     // игнорируем, таблица может иметь другую структуру
 }

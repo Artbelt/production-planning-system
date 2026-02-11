@@ -169,6 +169,9 @@ function fmt1($v) { return number_format((float)$v, 1, '.', ' '); }
 
 <div class="panel">
     <button class="btn" onclick="window.print()">Печать</button>
+    <?php if (!empty($bales)): ?>
+    <a href="NP_view_cut_labels.php?order=<?= urlencode($order) ?>" class="btn" target="_blank" rel="noopener">Печать этикеток</a>
+    <?php endif; ?>
     <div class="stats">
         <span>Угольный: <b><?= fmt0($carbonMeters) ?></b> м (<b><?= $carbonCount ?></b> раскроев) <b><?= $carbonBalesEquiv ?></b> бухты</span>
         <span>Белый: <b><?= fmt0($whiteMeters) ?></b> м (<b><?= $whiteCount ?></b> раскроев) <b><?= $whiteBalesEquiv ?></b> бухты</span>

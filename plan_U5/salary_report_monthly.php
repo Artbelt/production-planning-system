@@ -369,7 +369,7 @@
                 <option value="second">16-31 числа</option>
             </select>
         </div>
-        <p style="font-size: 11px; color: var(--muted); margin: 4px 0 0 0;">В отчёт попадает только выпуск, сданный на склад или закрытый в ЗП авансом.</p>
+        <p style="font-size: 11px; color: var(--muted); margin: 4px 0 0 0;">В отчёт попадает весь выпуск по дате производства за выбранный период.</p>
     </div>
     
     <div id="report_container" class="report-container"></div>

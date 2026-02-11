@@ -433,6 +433,10 @@ function show_weekly_production(){
         #percentageDetailModal tr:nth-child(even) {
             background-color: #f9fafb;
         }
+        #percentageDetailModal th:nth-child(2),
+        #percentageDetailModal td:nth-child(2) {
+            white-space: nowrap;
+        }
         .percentage-summary {
             background-color: #eff6ff;
             padding: 10px;
@@ -722,6 +726,10 @@ function show_weekly_corrugation(){
         }
         #corrugationDetailModal tr:nth-child(even) {
             background-color: #f9fafb;
+        }
+        #corrugationDetailModal th:nth-child(1),
+        #corrugationDetailModal td:nth-child(1) {
+            white-space: nowrap;
         }
         .corrugation-summary {
             background-color: #eff6ff;

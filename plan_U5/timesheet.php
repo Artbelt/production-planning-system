@@ -6,6 +6,21 @@ require_once('settings.php');
 require_once('tools/tools.php');
 require_once('tools/ensure_salary_warehouse_tables.php');
 
+// #region agent log
+$debug_log = function ($location, $message, $data, $hypothesisId) {
+    $path = __DIR__ . '/../.cursor/debug.log';
+    $line = json_encode([
+        'id' => 'log_' . uniqid(),
+        'timestamp' => round(microtime(true) * 1000),
+        'location' => $location,
+        'message' => $message,
+        'data' => $data,
+        'hypothesisId' => $hypothesisId,
+    ]) . "\n";
+    @file_put_contents($path, $line, FILE_APPEND | LOCK_EX);
+};
+// #endregion
+
 // Инициализация системы авторизации
 initAuthSystem();
 
@@ -55,6 +70,18 @@ $display_days_count = $day_end - $day_start + 1;
 $first_day = sprintf("%04d-%02d-%02d", $year, $month, $day_start);
 $last_day = sprintf("%04d-%02d-%02d", $year, $month, $day_end);
 
+// #region agent log
+$debug_log('timesheet.php:period', 'timesheet period bounds', [
+    'year' => $year,
+    'month' => $month,
+    'period' => $period,
+    'day_start' => $day_start,
+    'day_end' => $day_end,
+    'first_day' => $first_day,
+    'last_day' => $last_day,
+], 'TH_period');
+// #endregion
+
 // Заработок бригады за смену — расчёт как в generate_monthly_salary_report.php
 $brigade_earnings = [1 => [], 2 => [], 3 => [], 4 => []];
 foreach ([1,2,3,4] as $t) {
@@ -87,11 +114,24 @@ try {
         ORDER BY mp.date_of_production, mp.team
     ";
     $result = mysql_execute($sql);
+    $raw_dates = is_array($result) ? array_slice(array_column($result, 'date_of_production'), 0, 10) : [];
+    $debug_log('timesheet.php:after_sql', 'brigade earnings source rows', [
+        'first_day' => $first_day,
+        'last_day' => $last_day,
+        'result_count' => is_array($result) ? count($result) : null,
+        'raw_dates_sample' => $raw_dates,
+    ], 'TH1');
+
+    $total_rows = is_array($result) ? count($result) : 0;
+    $skipped_rows = 0;
     foreach ($result as $row) {
         $team = (int)$row['team'];
         if ($team < 1 || $team > 4) continue;
         $date = $row['date_of_production'];
-        if (!isset($brigade_earnings[$team][$date])) continue;
+        if (!isset($brigade_earnings[$team][$date])) {
+            $skipped_rows++;
+            continue;
+        }
         $base_rate = (float)($row['rate_per_unit'] ?? 0);
         $tail = mb_strtolower(trim($row['tail'] ?? ''));
         $form = mb_strtolower(trim($row['form_factor'] ?? ''));
@@ -112,6 +152,11 @@ try {
         $amount = $display_count * $final_rate;
         $brigade_earnings[$team][$date] += $amount;
     }
+
+    $debug_log('timesheet.php:brigade_earnings_summary', 'brigade earnings fill summary', [
+        'total_rows' => $total_rows,
+        'skipped_rows' => $skipped_rows,
+    ], 'TH2');
 } catch (Throwable $e) {
     // при ошибке оставляем нули
 }
