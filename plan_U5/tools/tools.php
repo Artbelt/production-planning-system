@@ -1,7 +1,7 @@
 <?php /** tools.php в файле прописаны разные функции */
 
 /** ПОдключаем функции */
-require_once('C:/xampp/htdocs/plan_U5/settings.php') ;
+require_once(__DIR__ . '/../settings.php');
 
 
 /** Вывод массива в удобном виде

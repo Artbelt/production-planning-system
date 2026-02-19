@@ -1,19 +1,13 @@
 <?php
 // NP_build_plan.php — план сборки салонных фильтров (2 бригады)
-
-$dsn  = "mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4";
-$user = "root";
-$pass = "";
+require_once __DIR__ . '/../auth/includes/db.php';
 $SHIFT_HOURS = 11.5;
 
 /* ===================== AJAX save/load/busy ===================== */
 if (isset($_GET['action']) && in_array($_GET['action'], ['save','load','busy','meta','orders','progress'], true)) {
     header('Content-Type: application/json; charset=utf-8');
     try{
-        $pdo = new PDO($dsn,$user,$pass,[
-            PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC
-        ]);
+        $pdo = getPdo('plan_u5');
 
         // auto-migrate: build_plan (+ brigade)
         $pdo->exec("CREATE TABLE IF NOT EXISTS build_plan (
@@ -261,10 +255,7 @@ function fmt_mm($v){
 }
 
 try{
-    $pdo = new PDO($dsn,$user,$pass,[
-        PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC
-    ]);
+    $pdo = getPdo('plan_u5');
 
     // источник: corrugation_plan + норма смены + высота бумаги + факт выполнения
     $src = $pdo->prepare("

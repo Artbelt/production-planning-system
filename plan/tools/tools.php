@@ -1,7 +1,7 @@
 <?php /** tools.php в файле прописаны разные функции */
 
 /** ПОдключаем функции */
-require_once('C:/xampp/htdocs/plan/settings.php') ;
+require_once(__DIR__ . '/../settings.php');
 
 
 function show_ads(){

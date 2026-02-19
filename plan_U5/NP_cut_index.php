@@ -1,7 +1,6 @@
 <?php
 // NP_cut_index.php
-$dsn = "mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4";
-$user = "root"; $pass = "";
+require_once __DIR__ . '/../auth/includes/db.php';
 
 /* ================= AJAX: CHANGE STATUS ================= */
 if (isset($_GET['action']) && $_GET['action'] === 'change_status') {
@@ -18,10 +17,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'change_status') {
             exit; 
         }
 
-        $pdo = new PDO($dsn,$user,$pass,[
-            PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC
-        ]);
+        $pdo = getPdo('plan_u5');
 
         $stmt = $pdo->prepare("UPDATE orders SET status = ? WHERE order_number = ?");
         $stmt->execute([$status, $order]);
@@ -44,10 +40,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'full_replanning') {
         $order = $in['order'] ?? ($_POST['order'] ?? '');
         if ($order === '') { http_response_code(400); echo json_encode(['ok'=>false,'error'=>'no order']); exit; }
 
-        $pdo = new PDO($dsn,$user,$pass,[
-            PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC
-        ]);
+        $pdo = getPdo('plan_u5');
         $pdo->beginTransaction();
 
         $currentDate = date('Y-m-d');
@@ -132,10 +125,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'clear') {
         $order = $in['order'] ?? ($_POST['order'] ?? '');
         if ($order === '') { http_response_code(400); echo json_encode(['ok'=>false,'error'=>'no order']); exit; }
 
-        $pdo = new PDO($dsn,$user,$pass,[
-            PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC
-        ]);
+        $pdo = getPdo('plan_u5');
         $pdo->beginTransaction();
 
         $aff = ['cut_plans'=>0,'roll_plans'=>0,'corr'=>0,'build'=>0,'orders'=>0];
@@ -178,10 +168,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'clear') {
 
 /* ================= PAGE ================= */
 try{
-    $pdo = new PDO($dsn,$user,$pass,[
-        PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC
-    ]);
+    $pdo = getPdo('plan_u5');
 
     // Статусы заявок
     $orders = $pdo->query("

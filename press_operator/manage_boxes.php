@@ -46,8 +46,14 @@ if (!$hasAccess) {
     die("У вас нет доступа к управлению справочником");
 }
 
-// Подключение к БД
-$mysqli = new mysqli('127.0.0.1', 'root', '', 'press_module');
+// Подключение к БД (из env.php)
+if (file_exists(__DIR__ . '/../env.php')) require __DIR__ . '/../env.php';
+$mysqli = new mysqli(
+    defined('DB_HOST') ? DB_HOST : '127.0.0.1',
+    defined('DB_USER') ? DB_USER : 'root',
+    defined('DB_PASS') ? DB_PASS : '',
+    'press_module'
+);
 
 if ($mysqli->connect_errno) {
     die("Ошибка подключения к БД");

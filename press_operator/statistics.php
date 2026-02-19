@@ -46,11 +46,12 @@ if (!$hasPressOperatorAccess) {
     die("У вас нет доступа к модулю оператора тигельного пресса");
 }
 
-// Подключение к БД пресса
+// Подключение к БД пресса (из env.php)
+if (file_exists(__DIR__ . '/../env.php')) require __DIR__ . '/../env.php';
 $pressDbConfig = [
-    'host' => '127.0.0.1',
-    'user' => 'root',
-    'pass' => '',
+    'host' => defined('DB_HOST') ? DB_HOST : '127.0.0.1',
+    'user' => defined('DB_USER') ? DB_USER : 'root',
+    'pass' => defined('DB_PASS') ? DB_PASS : '',
     'name' => 'press_module'
 ];
 

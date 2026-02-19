@@ -1,0 +1,13 @@
+# На сервере 49.13.143.76 после загрузки файлов выполнить:
+# 1. Создать env.php в корне приложения (рядом с index.php):
+#    cd /var/www/html
+#    cp env.php.example env.php
+#    nano env.php
+# Задать: DB_HOST=127.0.0.1, DB_USER=plan_user, DB_PASS=p4vxasd2 (ваш пароль)
+#
+# 2. Импорт БД (если ещё не сделан):
+#    mysql -u plan_user -p < /root/dbs_backup.sql
+#
+# 3. Права:
+#    chown -R www-data:www-data /var/www/html
+#    chmod 755 auth/logs auth/uploads 2>/dev/null || true

@@ -90,32 +90,16 @@ try {
     error_log("Ошибка сохранения оператора на день: " . $e->getMessage());
 }
 
-// Настройки подключений к базам данных всех участков
+// Настройки подключений к базам данных всех участков (из env.php)
+if (file_exists(__DIR__ . '/../env.php')) require __DIR__ . '/../env.php';
+$dbHost = defined('DB_HOST') ? DB_HOST : '127.0.0.1';
+$dbUser = defined('DB_USER') ? DB_USER : 'root';
+$dbPass = defined('DB_PASS') ? DB_PASS : '';
 $databases = [
-    'U2' => [
-        'host' => '127.0.0.1',
-        'user' => 'root',
-        'pass' => '',
-        'name' => 'plan'
-    ],
-    'U3' => [
-        'host' => '127.0.0.1',
-        'user' => 'root',
-        'pass' => '',
-        'name' => 'plan_u3'
-    ],
-    'U4' => [
-        'host' => '127.0.0.1',
-        'user' => 'root',
-        'pass' => '',
-        'name' => 'plan_u4'
-    ],
-    'U5' => [
-        'host' => '127.0.0.1',
-        'user' => 'root',
-        'pass' => '',
-        'name' => 'plan_u5'
-    ]
+    'U2' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan'],
+    'U3' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan_u3'],
+    'U4' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan_u4'],
+    'U5' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan_u5']
 ];
 
 // === Автомиграция: добавляем необходимые поля во все БД ===
