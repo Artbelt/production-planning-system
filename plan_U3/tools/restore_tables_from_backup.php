@@ -143,7 +143,8 @@ if ($action === 'restore' && !empty($selected_tables) && is_array($selected_tabl
     if (!is_file($backup_path)) {
         echo '<div class="card"><div class="msg err">Файл бэкапа не найден: ' . h($backup_path) . '</div></div>';
     } else {
-        $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+        require_once __DIR__ . '/../../auth/includes/db.php';
+        $mysqli = new mysqli(DB_HOST, DB_USER, DB_PASS, 'plan_u3');
         if ($mysqli->connect_errno) {
             echo '<div class="card"><div class="msg err">Ошибка подключения к БД: ' . h($mysqli->connect_error) . '</div></div>';
         } else {

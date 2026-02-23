@@ -46,27 +46,18 @@ $workshop = $_POST['workshop'];
 
 <?php
 /** Создаем список фильтров уже внесенных в базу */
-/** Подключаемся к БД */
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan');
 
-/** Если не получилось подключиться */
-if ($mysqli->connect_errno) {  echo "Номер ошибки: " . $mysqli->connect_errno . "\n". "Ошибка: " . $mysqli->connect_error . "\n";
-    exit;
-}
+$sql = "SELECT * FROM filters WHERE workshop = ? ORDER BY filter ASC";
+$stmt = $pdo->prepare($sql);
+$stmt->execute([$workshop]);
+$rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-/** Выполняем запрос SQL */
-
-$sql = "SELECT * FROM filters WHERE workshop = '$workshop' ORDER BY filter ASC;";
-
-/** Если запрос вернет ошибку */
-if (!$result = $mysqli->query($sql)) {  echo "Номер ошибки: " . $mysqli->errno . "\n" . "Ошибка: " . $mysqli->error . "\n";
-    exit;
-}
-echo "<div style=\"text-align: center;\"> Фильтры которые производятся на ".$workshop."<br>";
+echo "<div style=\"text-align: center;\"> Фильтры которые производятся на ".htmlspecialchars($workshop)."<br>";
 echo "<select size='30' style='width: 375px'>";
 /** разбираем результат */
-/** извлечение ассоциативного массива */
-while ($row = mysqli_fetch_assoc($result)) {
+foreach ($rows as $row) {
    // printf ($row['filter']."<br>");
     $out_text = "<option>".$row['filter']."</option>";
      echo $out_text;

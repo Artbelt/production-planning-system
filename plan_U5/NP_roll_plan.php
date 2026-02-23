@@ -1,6 +1,7 @@
 <?php
 // NP_roll_plan.php
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4", "root", "", [
+require_once __DIR__ . '/settings.php';
+$pdo = new PDO($dsn, $user, $pass, [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
 ]);
 

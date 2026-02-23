@@ -55,15 +55,8 @@ if (!$hasAccessToU3) {
     </div>');
 }
 
-$dsn = 'mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4';
-$user = 'root';
-$pass = '';
-
-try {
-    $pdo = new PDO($dsn, $user, $pass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-} catch (PDOException $e) {
-    die("Ошибка подключения: " . $e->getMessage());
-}
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 
 /* ========== ОПРЕДЕЛЕНИЕ ДАТЫ НАЧАЛА НЕДЕЛИ ========== */
 // Получаем параметр смещения (в неделях относительно текущей)

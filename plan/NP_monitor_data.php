@@ -1,8 +1,7 @@
 <?php
 header('Content-Type: application/json; charset=utf-8');
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4","root","",[
-    PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION
-]);
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan');
 $date = $_GET['date'] ?? date('Y-m-d');
 $hideDone = isset($_GET['hideDone']) && $_GET['hideDone']=='1';
 

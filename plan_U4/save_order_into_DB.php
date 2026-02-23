@@ -16,7 +16,8 @@ if ($_POST['order_str']) {
     //print_r_my($order);
 
     $workshop = $_POST['workshop'];
-    $mysqli = new mysqli('127.0.0.1','root','','plan_u4');
+    if (file_exists(__DIR__ . '/../env.php')) require __DIR__ . '/../env.php';
+    $mysqli = new mysqli(defined('DB_HOST') ? DB_HOST : '127.0.0.1', defined('DB_USER') ? DB_USER : 'root', defined('DB_PASS') ? DB_PASS : '', 'plan_u4');
     if($mysqli->connect_errno){ /** Соединение с БД не удалось */
         echo 'соединение с БД не удалось';
         echo "Номер ошибки: " . $mysqli->connect_errno . "\n";

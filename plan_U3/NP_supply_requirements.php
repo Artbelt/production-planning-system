@@ -1,10 +1,6 @@
 <?php
-// NP_supply_requirements.php — потребность по конкретной заявке для У3
-// Все данные отображаются в одной таблице без разбиения на страницы
-
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_U3;charset=utf8mb4","root","",[
-    PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION
-]);
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 
 // Создаем таблицу для снимков потребности, если её нет
 $pdo->exec("

@@ -1,6 +1,7 @@
 <?php
 // NP_view_cut.php — просмотр раскроя (подготовка) по заявке в формате "Собранные бухты"
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4","root","",[
+require_once __DIR__ . '/settings.php';
+$pdo = new PDO($dsn, $user, $pass, [
     PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION
 ]);
 

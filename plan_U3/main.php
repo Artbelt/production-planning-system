@@ -528,15 +528,8 @@ echo "<!-- Аккуратная панель авторизации -->
     
     try {
         // Все задачи централизованно лежат в БД plan_u5, фильтруем по цеху
-        $pdo_tasks = new PDO(
-            "mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4",
-            "root",
-            "",
-            [
-                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            ]
-        );
+        require_once __DIR__ . '/../auth/includes/db.php';
+        $pdo_tasks = getPdo('plan_u5');
         
         // Для страницы main.php всегда используем цех U3
         $taskDepartment = 'U3';
@@ -746,60 +739,38 @@ echo "<!-- Аккуратная панель авторизации -->
             <td class="panel panel--right" style="width:30%;">
                 <?php
                 /* ОПТИМИЗИРОВАННАЯ загрузка заявок */
-                $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-                if ($mysqli->connect_errno) { 
-                    echo 'Возникла проблема на сайте'; 
-                    exit; 
-                }
-                
+                $pdo = _planPdo();
+                $result = $pdo->query("SELECT DISTINCT order_number, workshop, hide FROM orders");
+                if (!$result) { echo 'Ошибка загрузки заявок'; exit; }
+
                 echo '<div class="section-title">Сохраненные заявки</div>';
                 echo '<div class="saved-orders">';
 
-/** Выполняем запрос SQL для загрузки заявок*/
-$sql = "SELECT DISTINCT order_number, workshop, hide FROM orders;";
-if (!$result = $mysqli->query($sql)){
-    echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"
-        ."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-    exit;
-}
-/** Разбираем результат запроса */
-if ($result->num_rows === 0) { echo "<div class='muted'>В базе нет ни одной заявки</div>";}
+                $orders_list = [];
+                while ($orders_data = $result->fetch(PDO::FETCH_ASSOC)){
+                    if (($orders_data['hide'] ?? 0) != 1){
+                        $order_num = $orders_data['order_number'];
+                        if (!isset($orders_list[$order_num])) {
+                            $orders_list[$order_num] = $orders_data;
+                        }
+                    }
+                }
+                if (empty($orders_list)) { echo "<div class='muted'>В базе нет ни одной заявки</div>"; }
 
-/** Разбор массива значений  */
-echo '<form action="show_order.php" method="post" target="_blank" style="display:flex; flex-wrap:wrap; gap:6px; width:100%;">';
+                echo '<form action="show_order.php" method="post" target="_blank" style="display:flex; flex-wrap:wrap; gap:6px; width:100%;">';
 
-// Группируем заявки для отображения
-$orders_list = [];
-while ($orders_data = $result->fetch_assoc()){
-    if ($orders_data['hide'] != 1){
-        $order_num = $orders_data['order_number'];
-        if (!isset($orders_list[$order_num])) {
-            $orders_list[$order_num] = $orders_data;
-        }
-    }
-}
+                $st_total = $pdo->prepare("SELECT SUM(count) as total FROM orders WHERE order_number = ?");
+                $st_produced = $pdo->prepare("SELECT SUM(count_of_filters) as produced FROM manufactured_production WHERE name_of_order = ?");
 
-// Выводим уникальные заявки с прогрессом
-foreach ($orders_list as $order_num => $orders_data){
-    // Расчет прогресса для заявки
-    $total_planned = 0;
-    $total_produced = 0;
-    
-    // Получаем общее количество по заявке
-    $sql_total = "SELECT SUM(count) as total FROM orders WHERE order_number = '$order_num'";
-    if ($res_total = $mysqli->query($sql_total)) {
-        if ($row_total = $res_total->fetch_assoc()) {
-            $total_planned = (int)$row_total['total'];
-        }
-    }
-    
-    // Получаем произведенное количество
-    $sql_produced = "SELECT SUM(count_of_filters) as produced FROM manufactured_production WHERE name_of_order = '$order_num'";
-    if ($res_produced = $mysqli->query($sql_produced)) {
-        if ($row_produced = $res_produced->fetch_assoc()) {
-            $total_produced = (int)$row_produced['produced'];
-        }
-    }
+                foreach ($orders_list as $order_num => $orders_data){
+                    $total_planned = 0;
+                    $total_produced = 0;
+                    $st_total->execute([$order_num]);
+                    $row_total = $st_total->fetch(PDO::FETCH_ASSOC);
+                    if ($row_total && $row_total['total'] !== null) $total_planned = (int)$row_total['total'];
+                    $st_produced->execute([$order_num]);
+                    $row_produced = $st_produced->fetch(PDO::FETCH_ASSOC);
+                    if ($row_produced && $row_produced['produced'] !== null) $total_produced = (int)$row_produced['produced'];
     
     // Вычисляем процент
     $progress = 0;
@@ -854,30 +825,18 @@ foreach ($orders_list as $order_num => $orders_data){
 </div>
 
 <?php
-// Получаем список заявок для модального окна управления крышками (используем тот же алгоритм, что и для основного списка)
 $cap_orders_list = [];
-$sql_orders_modal = "SELECT DISTINCT order_number, workshop, hide FROM orders";
-if ($result_orders_modal = $mysqli->query($sql_orders_modal)) {
-    // Группируем заявки для отображения (как на main.php)
+$res_modal = $pdo->query("SELECT DISTINCT order_number, workshop, hide FROM orders");
+if ($res_modal) {
     $orders_temp_modal = [];
-    while ($orders_data_modal = $result_orders_modal->fetch_assoc()) {
-        if ($orders_data_modal['hide'] != 1) {
-            $order_num = $orders_data_modal['order_number'];
-            if (!isset($orders_temp_modal[$order_num])) {
-                $orders_temp_modal[$order_num] = $orders_data_modal;
-            }
+    while ($r = $res_modal->fetch(PDO::FETCH_ASSOC)) {
+        if (($r['hide'] ?? 0) != 1 && !isset($orders_temp_modal[$r['order_number']])) {
+            $orders_temp_modal[$r['order_number']] = true;
         }
     }
-    // Преобразуем в простой массив и сортируем по убыванию
-    foreach ($orders_temp_modal as $order_num => $order_data) {
-        $cap_orders_list[] = $order_num;
-    }
-    // Сортируем по убыванию (новые заявки сверху)
+    $cap_orders_list = array_keys($orders_temp_modal);
     rsort($cap_orders_list);
-    $result_orders_modal->close();
 }
-// Закрываем соединение с БД
-$mysqli->close();
 ?>
 
 

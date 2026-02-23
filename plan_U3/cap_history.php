@@ -33,14 +33,9 @@ if (empty($userDepartments)) {
 
 require_once('tools/tools.php');
 require_once('settings.php');
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 require_once('cap_db_init.php');
-
-// Подключаемся к БД
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    die('Ошибка подключения к БД: ' . $mysqli->connect_error);
-}
-$mysqli->set_charset("utf8mb4");
 
 // Параметры фильтрации
 $date_from = $_GET['date_from'] ?? date('Y-m-d', strtotime('-30 days'));
@@ -66,38 +61,27 @@ if (!empty($cap_name_filter)) {
 }
 
 $where_clause = implode(" AND ", $where_conditions);
-
 $sql = "SELECT date, cap_name, operation_type, quantity, order_number, user_name, created_at
         FROM cap_movements
         WHERE $where_clause
         ORDER BY date DESC, id DESC
         LIMIT 500";
 
-$stmt = $mysqli->prepare($sql);
-if ($stmt) {
-    $stmt->bind_param($param_types, ...$params);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    $movements = [];
-    while ($row = $result->fetch_assoc()) {
+$movements = [];
+$stmt = $pdo->prepare($sql);
+if ($stmt && $stmt->execute($params)) {
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
         $movements[] = $row;
     }
-    
-    $stmt->close();
 }
 
-// Получаем список всех крышек для фильтра
 $caps_list = [];
-$sql_caps = "SELECT DISTINCT cap_name FROM cap_stock ORDER BY cap_name";
-if ($result_caps = $mysqli->query($sql_caps)) {
-    while ($row = $result_caps->fetch_assoc()) {
+$st = $pdo->query("SELECT DISTINCT cap_name FROM cap_stock ORDER BY cap_name");
+if ($st) {
+    while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
         $caps_list[] = $row['cap_name'];
     }
-    $result_caps->close();
 }
-
-$mysqli->close();
 
 ?>
 <!DOCTYPE html>

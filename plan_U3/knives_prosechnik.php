@@ -36,6 +36,8 @@ if (empty($userDepartments)) {
 
 require_once('tools/tools.php');
 require_once('settings.php');
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 require_once('knives_db_init.php');
 
 $user_id = $session['user_id'];
@@ -62,25 +64,14 @@ while ($currentDate <= $endDateClone) {
     $currentDate->modify('+1 day');
 }
 
-// Подключаемся к БД
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    die('Ошибка подключения к БД: ' . $mysqli->connect_error);
-}
-$mysqli->set_charset("utf8mb4");
-
-// Получаем все ножи просечников
 $knife_type = 'prosechnik';
-$stmt = $mysqli->prepare("SELECT id, knife_name FROM knives WHERE knife_type = ? ORDER BY knife_name");
-$stmt->bind_param("s", $knife_type);
-$stmt->execute();
-$result = $stmt->get_result();
+$stmt = $pdo->prepare("SELECT id, knife_name FROM knives WHERE knife_type = ? ORDER BY knife_name");
+$stmt->execute([$knife_type]);
 
 $knives = [];
-while ($row = $result->fetch_assoc()) {
+while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $knives[$row['id']] = $row;
 }
-$stmt->close();
 
 // Получаем данные календаря для всех ножей
 $calendar_data = [];
@@ -96,8 +87,7 @@ if (!empty($knives)) {
         $isFuture = ($date > $todayStr);
         
         if ($isFuture) {
-            // Для будущих дат показываем статус только если он был явно установлен на эту конкретную дату
-            $stmt = $mysqli->prepare("
+            $stmt = $pdo->prepare("
                 SELECT knife_id, status
                 FROM knives_calendar
                 WHERE knife_id IN ($placeholders) 
@@ -105,10 +95,8 @@ if (!empty($knives)) {
             ");
             
             $params = array_merge($knife_ids, [$date]);
-            $types_full = $types . 's';
         } else {
-            // Для прошедших и сегодняшних дат показываем последний установленный статус
-            $stmt = $mysqli->prepare("
+            $stmt = $pdo->prepare("
                 SELECT kc1.knife_id, kc1.status
                 FROM knives_calendar kc1
                 WHERE kc1.knife_id IN ($placeholders) 
@@ -121,24 +109,18 @@ if (!empty($knives)) {
             ");
             
             $params = array_merge($knife_ids, [$date, $date]);
-            $types_full = $types . 'ss';
         }
         
-        $stmt->bind_param($types_full, ...$params);
-        $stmt->execute();
-        $result = $stmt->get_result();
+        $stmt->execute($params);
         
-        while ($row = $result->fetch_assoc()) {
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             if (!isset($calendar_data[$row['knife_id']])) {
                 $calendar_data[$row['knife_id']] = [];
             }
             $calendar_data[$row['knife_id']][$date] = $row['status'];
         }
-        $stmt->close();
     }
 }
-
-$mysqli->close();
 
 // Вычисляем статистику для каждого ножа
 $statistics = [];

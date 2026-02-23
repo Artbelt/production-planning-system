@@ -5,8 +5,7 @@
    Скролл по двум таблицам синхронный (X/Y).
 */
 
-$dsn='mysql:host=127.0.0.1;dbname=plan_U3;charset=utf8mb4';
-$user='root'; $pass='';
+require_once __DIR__ . '/../auth/includes/db.php';
 
 $action = $_GET['action'] ?? '';
 
@@ -17,10 +16,7 @@ if (in_array($action, [
 ], true)) {
     header('Content-Type: application/json; charset=utf-8');
     try{
-        $pdo = new PDO($dsn,$user,$pass,[
-            PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,
-        ]);
+        $pdo = getPdo('plan_u3');
 
         // Таблицы
         $pdo->exec("
@@ -197,10 +193,7 @@ $orderNumber = $_GET['order_number'] ?? '';
 if ($orderNumber===''){ http_response_code(400); exit('Укажите ?order_number=...'); }
 
 try{
-    $pdo=new PDO($dsn,$user,$pass,[
-        PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC
-    ]);
+    $pdo = getPdo('plan_u3');
     $st = $pdo->prepare("
         SELECT o.filter, SUM(o.count) AS ordered_qty
         FROM orders o WHERE o.order_number=:order GROUP BY o.filter ORDER BY o.filter

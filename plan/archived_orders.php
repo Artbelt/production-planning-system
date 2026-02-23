@@ -49,31 +49,16 @@ require_once ('style/table_1.txt');
         }
     </style>
 <?php
-
 /** Подключаемся к БД */
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    /** Если не получилось подключиться */
-    echo 'Возникла проблема на сайте'
-        . "Номер ошибки: " . $mysqli->connect_errno . "\n"
-        . "Ошибка: " . $mysqli->connect_error . "\n";
-    exit;
-}
-
-/** Выполняем запрос SQL для загрузки заявок*/
-$sql = "SELECT DISTINCT order_number, workshop, hide FROM orders;";
-//$sql = 'SELECT order_number FROM orders;';
-if (!$result = $mysqli->query($sql)){
-    echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"
-        ."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-    exit;
-}
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan');
+$rows = $pdo->query("SELECT DISTINCT order_number, workshop, hide FROM orders")->fetchAll(PDO::FETCH_ASSOC);
 /** Разбираем результат запроса */
-if ($result->num_rows === 0) { echo "В базе нет ни одной заявки";}
+if (count($rows) === 0) { echo "В базе нет ни одной заявки";}
 
 /** Разбор массива значений  */
 echo '<form action="show_order.php" method="post" target="_blank" >';
-while ($orders_data = $result->fetch_assoc()){
+foreach ($rows as $orders_data) {
     if ( $orders_data['hide'] != 1) {
         if (str_contains($orders_data['order_number'], '[!]')) {
             echo "<input type='submit' class='alert-button' name='order_number' value=" . $orders_data['order_number'] . " style='background-color: orange;>";

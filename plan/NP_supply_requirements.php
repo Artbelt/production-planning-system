@@ -1,11 +1,6 @@
 <?php
-// NP_supply_by_order.php — потребность по конкретной заявке
-// Печать: таблица разбивается на несколько страниц по N дат (по умолчанию 20)
-// Режим: "Недельные итоги" — после каждого воскресенья добавляется столбец с суммой за неделю (ISO: пн–вс)
-
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4","root","",[
-    PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION
-]);
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan');
 
 /* ===== AJAX: отрисовать только таблицы ===== */
 if (isset($_GET['ajax']) && $_GET['ajax']=='1') {

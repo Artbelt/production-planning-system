@@ -1,6 +1,7 @@
 <?php
 // show_corr_fact_range.php
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4","root","");
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan');
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 $start = $_POST['start'] ?? '';

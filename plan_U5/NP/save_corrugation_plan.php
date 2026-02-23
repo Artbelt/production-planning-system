@@ -5,11 +5,12 @@ header('Content-Type: application/json; charset=utf-8');
 ini_set('display_errors', '0');
 error_reporting(E_ALL);
 
+if (file_exists(__DIR__ . '/../../env.php')) require __DIR__ . '/../../env.php';
+require_once __DIR__ . '/../../auth/includes/db.php';
+
+$pdo = null;
 try{
-    $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4","root","",[
-        PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC
-    ]);
+    $pdo = getPdo('plan_u5');
 
     // Создать таблицу, если её нет (из вашего дампа)
     $pdo->exec("CREATE TABLE IF NOT EXISTS corrugation_plan (
@@ -22,17 +23,7 @@ try{
       PRIMARY KEY (id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
-    // Утилита: проверить, есть ли столбец
-    $colExists = function(string $col){
-        $st = $this->pdo->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='corrugation_plan' AND COLUMN_NAME=?");
-        $st->execute([$col]); return (bool)$st->fetchColumn();
-    };
-} catch (Throwable $e) {
-    // из-за замыкания проще без $colExists в виде closure — перепишем чуть ниже
-}
-try{
-    // Проверка столбцов безопаснее без замыкания:
+    // Проверка столбцов:
     $hasCol = function(PDO $pdo, string $col): bool {
         $st = $pdo->prepare("SELECT COUNT(*) FROM information_schema.COLUMNS
             WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='corrugation_plan' AND COLUMN_NAME=?");
@@ -148,7 +139,7 @@ try{
     $pdo->commit();
     echo json_encode(['ok'=>true]);
 }catch(Throwable $e){
-    if (isset($pdo) && $pdo->inTransaction()) $pdo->rollBack();
+    if ($pdo instanceof PDO && $pdo->inTransaction()) $pdo->rollBack();
     http_response_code(500);
     echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
 }

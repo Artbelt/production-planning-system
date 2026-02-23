@@ -1,32 +1,19 @@
 <?php
 
 if(isset($_GET['part'])){
-    $mysqli = new mysqli('127.0.0.1','root','','plan_U3');
-    if ($mysqli->connect_errno){/** Если не получилось подключиться */
-        echo 'Возникла проблема на сайте'."Номер ошибки: " . $mysqli->connect_errno . "\n"."Ошибка: " . $mysqli->connect_error . "\n";
-        exit;
-    }
+    if (file_exists(__DIR__ . '/../env.php')) require __DIR__ . '/../env.php';
+    require_once __DIR__ . '/../auth/includes/db.php';
+    $pdo = getPdo('plan_u3');
     if (strlen($_GET['part'])<2) die();
 
-    $sql = "SELECT p_p_name FROM paper_package_round WHERE p_p_name LIKE '%".$_GET['part']."%'";
-    /** Выполняем запрос SQL */
-    if (!$result = $mysqli->query($sql)) {
-        echo "Ошибка: Наш запрос не удался и вот почему: \n"
-            . "Запрос: " . $sql . "\n"
-            . "Номер ошибки: " . $mysqli->errno . "\n"
-            . "Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-    /** извлечение ассоциативного массива */
+    $stmt = $pdo->prepare("SELECT p_p_name FROM paper_package_round WHERE p_p_name LIKE ?");
+    $stmt->execute(['%'.$_GET['part'].'%']);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-
-
-    echo "<select id='select_filter' size=".$result->num_rows.">";
-    while ($row = $result->fetch_assoc()) {
-        echo "<option>".$row['p_p_name']."</option><br>";
+    echo "<select id='select_filter' size=".count($rows).">";
+    foreach ($rows as $row) {
+        echo "<option>".htmlspecialchars($row['p_p_name'])."</option><br>";
     }
     echo "</select>";
-    /* удаление выборки */
-    $result->free();
 }
 ?>

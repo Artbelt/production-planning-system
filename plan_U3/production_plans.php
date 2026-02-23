@@ -1,16 +1,6 @@
 <?php
-// Подключение к базе данных
-$dsn = 'mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4';
-$user = 'root'; // укажите своего пользователя
-$pass = '';     // укажите пароль
-
-try {
-    $pdo = new PDO($dsn, $user, $pass, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
-    ]);
-} catch (PDOException $e) {
-    die("Ошибка подключения: " . $e->getMessage());
-}
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 
 // Получаем список активных планов (только те, которые связаны с активными заявками)
 $stmt = $pdo->query("

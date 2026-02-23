@@ -32,10 +32,10 @@ $user = $users[0] ?? null;
 
 // Настройки подключений к базам данных всех участков
 $databases = [
-    'U2' => ['host' => '127.0.0.1', 'user' => 'root', 'pass' => '', 'name' => 'plan'],
-    'U3' => ['host' => '127.0.0.1', 'user' => 'root', 'pass' => '', 'name' => 'plan_u3'],
-    'U4' => ['host' => '127.0.0.1', 'user' => 'root', 'pass' => '', 'name' => 'plan_u4'],
-    'U5' => ['host' => '127.0.0.1', 'user' => 'root', 'pass' => '', 'name' => 'plan_u5']
+    'U2' => ['host' => (defined('DB_HOST') ? DB_HOST : '127.0.0.1'), 'user' => (defined('DB_USER') ? DB_USER : 'root'), 'pass' => (defined('DB_PASS') ? DB_PASS : ''), 'name' => 'plan'],
+    'U3' => ['host' => (defined('DB_HOST') ? DB_HOST : '127.0.0.1'), 'user' => (defined('DB_USER') ? DB_USER : 'root'), 'pass' => (defined('DB_PASS') ? DB_PASS : ''), 'name' => 'plan_u3'],
+    'U4' => ['host' => (defined('DB_HOST') ? DB_HOST : '127.0.0.1'), 'user' => (defined('DB_USER') ? DB_USER : 'root'), 'pass' => (defined('DB_PASS') ? DB_PASS : ''), 'name' => 'plan_u4'],
+    'U5' => ['host' => (defined('DB_HOST') ? DB_HOST : '127.0.0.1'), 'user' => (defined('DB_USER') ? DB_USER : 'root'), 'pass' => (defined('DB_PASS') ? DB_PASS : ''), 'name' => 'plan_u5']
 ];
 
 // Вчерашний день
@@ -313,7 +313,7 @@ function getLaserData($pdo, $date) {
 // Получаем данные по работе тигельного пресса
 function getPressData($date) {
     try {
-        $pressDbConfig = ['host' => '127.0.0.1', 'user' => 'root', 'pass' => '', 'name' => 'press_module'];
+        $pressDbConfig = ['host' => (defined('DB_HOST') ? DB_HOST : '127.0.0.1'), 'user' => (defined('DB_USER') ? DB_USER : 'root'), 'pass' => (defined('DB_PASS') ? DB_PASS : ''), 'name' => 'press_module'];
         $pdo = getConnection($pressDbConfig);
         
         if (!$pdo) return ['die_cut' => 0, 'glued' => 0, 'details' => []];

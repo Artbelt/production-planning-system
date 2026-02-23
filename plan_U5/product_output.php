@@ -36,16 +36,9 @@ $userFirstName = $fullName ? trim(explode(' ', $fullName)[0]) : 'Пользов�
 if ($userFirstName === '') $userFirstName = 'Пользователь';
 
 // ========= DB =========
+require_once __DIR__ . '/../auth/includes/db.php';
 function pdo_u5(): PDO {
-    return new PDO(
-        "mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4",
-        "root",
-        "",
-        [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        ]
-    );
+    return getPdo('plan_u5');
 }
 
 // ========= API: список фильтров по заявке =========

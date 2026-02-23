@@ -5,8 +5,7 @@
    В списке фильтров: Название [высота валов × ширина бумаги мм] + строкой H×W шторы.
 */
 
-$dsn='mysql:host=127.0.0.1;dbname=plan_U3;charset=utf8mb4';
-$user='root'; $pass='';
+require_once __DIR__ . '/../auth/includes/db.php';
 
 $action = $_GET['action'] ?? '';
 
@@ -14,10 +13,7 @@ $action = $_GET['action'] ?? '';
 if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_orders','load_left_rows','plan_bounds','load_native_forms','load_covers_data'], true)) {
     header('Content-Type: application/json; charset=utf-8');
     try{
-        $pdo = new PDO($dsn,$user,$pass,[
-            PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,
-        ]);
+        $pdo = getPdo('plan_u3');
 
         // Таблица плана (дневные смены)
         $pdo->exec("
@@ -286,10 +282,7 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
                ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
         WHERE rfs.filter IN ($in)
     ";
-            $pdo = new PDO($dsn,$user,$pass,[
-                PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,
-            ]);
+            $pdo = getPdo('plan_u3');
             $st = $pdo->prepare($sql);
             $st->execute($filtersIn);
 
@@ -515,10 +508,7 @@ $orderNumber = $_GET['order_number'] ?? '';
 if ($orderNumber===''){ http_response_code(400); exit('Укажите ?order_number=...'); }
 
 try{
-    $pdo=new PDO($dsn,$user,$pass,[
-        PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC
-    ]);
+    $pdo = getPdo('plan_u3');
     $st = $pdo->prepare("
                     SELECT TRIM(REPLACE(o.filter, CHAR(160), ' ')) AS filter,
                            SUM(o.count) AS ordered_qty

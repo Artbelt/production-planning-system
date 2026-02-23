@@ -3,13 +3,9 @@ header('Content-Type: application/json; charset=utf-8');
 
 try {
     // Подключение к БД
-    $mysqli = new mysqli('127.0.0.1', 'root', '', 'plan_u3');
-    
-    if ($mysqli->connect_errno) {
-        throw new Exception('Ошибка подключения к БД: ' . $mysqli->connect_error);
-    }
-    
-    $mysqli->set_charset('utf8mb4');
+    if (file_exists(__DIR__ . '/../env.php')) require __DIR__ . '/../env.php';
+    require_once __DIR__ . '/../auth/includes/db.php';
+    $pdo = getPdo('plan_u3');
     
     // Получение данных
     $gb_name = $_POST['gb_name'] ?? '';
@@ -28,31 +24,14 @@ try {
         throw new Exception('Длина, ширина и высота должны быть числами');
     }
     
-    // Проверка, не существует ли уже ящик с таким номером
-    $stmt = $mysqli->prepare("SELECT gb_name FROM g_box WHERE gb_name = ?");
-    $stmt->bind_param('s', $gb_name);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    if ($result->num_rows > 0) {
+    $st = $pdo->prepare("SELECT gb_name FROM g_box WHERE gb_name = ?");
+    $st->execute([$gb_name]);
+    if ($st->fetch()) {
         throw new Exception('Ящик с номером "' . htmlspecialchars($gb_name) . '" уже существует');
     }
-    $stmt->close();
     
-    // Вставка нового ящика
-    $stmt = $mysqli->prepare("
-        INSERT INTO g_box (gb_name, gb_length, gb_width, gb_heght, gb_supplier) 
-        VALUES (?, ?, ?, ?, ?)
-    ");
-    
-    $stmt->bind_param('sddds', $gb_name, $gb_length, $gb_width, $gb_heght, $gb_supplier);
-    
-    if (!$stmt->execute()) {
-        throw new Exception('Ошибка при сохранении: ' . $stmt->error);
-    }
-    
-    $stmt->close();
-    $mysqli->close();
+    $ins = $pdo->prepare("INSERT INTO g_box (gb_name, gb_length, gb_width, gb_heght, gb_supplier) VALUES (?, ?, ?, ?, ?)");
+    $ins->execute([$gb_name, $gb_length, $gb_width, $gb_heght, $gb_supplier]);
     
     echo json_encode([
         'success' => true,

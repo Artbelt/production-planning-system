@@ -4,7 +4,8 @@ require_once('tools/tools.php');
 require_once('settings.php');
 
 if(isset($_GET['filter'])){
-    $mysqli = new mysqli('127.0.0.1','root','','plan_U5');
+    if (file_exists(__DIR__ . '/../env.php')) require __DIR__ . '/../env.php';
+    $mysqli = new mysqli(defined('DB_HOST') ? DB_HOST : '127.0.0.1', defined('DB_USER') ? DB_USER : 'root', defined('DB_PASS') ? DB_PASS : '', 'plan_u5');
     if ($mysqli->connect_errno){/** Если не получилось подключиться */
         echo 'Возникла проблема на сайте'."Номер ошибки: " . $mysqli->connect_errno . "\n"."Ошибка: " . $mysqli->connect_error . "\n";
         exit;

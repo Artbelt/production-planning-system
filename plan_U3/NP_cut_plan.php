@@ -1,5 +1,6 @@
 <?php
-$dsn='mysql:host=127.0.0.1;dbname=plan_U3;charset=utf8mb4'; $user='root'; $pass='';
+require_once __DIR__ . '/settings.php';
+require_once __DIR__ . '/../auth/includes/db.php';
 
 const HALF_BALE_LEN = 600;   // м (0.5 бухты)
 const FULL_BALE_LEN = 1200;  // м (1 бухта)
@@ -10,10 +11,7 @@ $action = $_GET['action'] ?? '';
 if ($action==='save_stocks' || $action==='load_stocks') {
     header('Content-Type: application/json; charset=utf-8');
     try{
-        $pdo = new PDO($dsn,$user,$pass,[
-            PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,
-        ]);
+        $pdo = getPdo('plan_u3');
         
         // Создаем таблицу если её нет
         $pdo->exec("CREATE TABLE IF NOT EXISTS workshop_stocks (
@@ -75,10 +73,7 @@ if ($action==='save_stocks' || $action==='load_stocks') {
 if ($action==='save_cut' || $action==='load_cut') {
     header('Content-Type: application/json; charset=utf-8');
     try{
-        $pdo = new PDO($dsn,$user,$pass,[
-            PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC,
-        ]);
+        $pdo = getPdo('plan_u3');
 
         /* --- SAVE: кладём полосы построчно в cut_plans --- */
         if ($action==='save_cut'){
@@ -190,7 +185,7 @@ if ($orderNumber===''){ http_response_code(400); exit('Укажите ?order_num
 
 /* === обычная страница === */
 try{
-    $pdo=new PDO($dsn,$user,$pass,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
+    $pdo = getPdo('plan_u3');
 
     // позиции заявки (считаем потребность в полубухтах)
     $sql="

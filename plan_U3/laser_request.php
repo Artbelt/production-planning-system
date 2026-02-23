@@ -56,11 +56,8 @@ if (!$canAccessLaser) {
     exit;
 }
 
-// Подключение к БД для работы с заявками
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    die("Ошибка подключения к БД: " . $mysqli->connect_error);
-}
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 
 // Создание таблицы для заявок на лазер, если её нет
 $create_table_sql = "
@@ -76,27 +73,19 @@ CREATE TABLE IF NOT EXISTS laser_requests (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
-$mysqli->query($create_table_sql);
+$pdo->exec($create_table_sql);
 
-// Добавляем поле completed_at, если оно не существует
-$check_completed_at = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS 
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'completed_at'");
-if ($check_completed_at && $check_completed_at->fetch_row()[0] == 0) {
-    $mysqli->query("ALTER TABLE laser_requests ADD COLUMN completed_at TIMESTAMP NULL AFTER is_completed");
+$chk = $pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'completed_at'");
+if ($chk && (int)$chk->fetchColumn() == 0) {
+    $pdo->exec("ALTER TABLE laser_requests ADD COLUMN completed_at TIMESTAMP NULL AFTER is_completed");
 }
-
-// Добавляем поле is_cancelled, если оно не существует
-$check_cancelled = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS 
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'is_cancelled'");
-if ($check_cancelled && $check_cancelled->fetch_row()[0] == 0) {
-    $mysqli->query("ALTER TABLE laser_requests ADD COLUMN is_cancelled BOOLEAN DEFAULT FALSE AFTER is_completed");
+$chk = $pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'is_cancelled'");
+if ($chk && (int)$chk->fetchColumn() == 0) {
+    $pdo->exec("ALTER TABLE laser_requests ADD COLUMN is_cancelled BOOLEAN DEFAULT FALSE AFTER is_completed");
 }
-
-// Добавляем поле cancelled_at, если оно не существует
-$check_cancelled_at = $mysqli->query("SELECT COUNT(*) FROM information_schema.COLUMNS 
-    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'cancelled_at'");
-if ($check_cancelled_at && $check_cancelled_at->fetch_row()[0] == 0) {
-    $mysqli->query("ALTER TABLE laser_requests ADD COLUMN cancelled_at TIMESTAMP NULL AFTER is_cancelled");
+$chk = $pdo->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'laser_requests' AND COLUMN_NAME = 'cancelled_at'");
+if ($chk && (int)$chk->fetchColumn() == 0) {
+    $pdo->exec("ALTER TABLE laser_requests ADD COLUMN cancelled_at TIMESTAMP NULL AFTER is_cancelled");
 }
 
 // Создание таблицы для справочника комплектующих
@@ -109,7 +98,7 @@ CREATE TABLE IF NOT EXISTS laser_components (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     created_by VARCHAR(255) NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
-$mysqli->query($create_components_table_sql);
+$pdo->exec($create_components_table_sql);
 
 // Проверяем, является ли пользователь мастером (supervisor)
 $isSupervisor = false;
@@ -126,29 +115,24 @@ if (isset($_POST['action']) && $_POST['action'] === 'add_component' && $isSuperv
     $component_description = trim($_POST['component_description'] ?? '');
     
     if ($component_name) {
-        $insert_component_sql = "INSERT INTO laser_components (name, description, created_by) VALUES (?, ?, ?)";
-        $stmt = $mysqli->prepare($insert_component_sql);
-        $stmt->bind_param("sss", $component_name, $component_description, $user['full_name']);
-        
-        if ($stmt->execute()) {
+        $stmt = $pdo->prepare("INSERT INTO laser_components (name, description, created_by) VALUES (?, ?, ?)");
+        if ($stmt->execute([$component_name, $component_description, $user['full_name'] ?? ''])) {
             $success_message = "Комплектующее успешно добавлено!";
         } else {
-            if ($mysqli->errno === 1062) { // Duplicate entry
+            $err = $stmt->errorInfo();
+            if (isset($err[1]) && $err[1] == 1062) {
                 $error_message = "Комплектующее с таким названием уже существует!";
             } else {
                 $error_message = "Ошибка при добавлении комплектующего!";
             }
         }
-        $stmt->close();
     }
 }
 
-// Получение списка комплектующих для автодополнения
-$components_query = "SELECT DISTINCT component_name FROM laser_requests ORDER BY component_name";
-$components_result = $mysqli->query($components_query);
 $components_list = [];
-if ($components_result) {
-    while ($row = $components_result->fetch_assoc()) {
+$st = $pdo->query("SELECT DISTINCT component_name FROM laser_requests ORDER BY component_name");
+if ($st) {
+    while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
         $components_list[] = $row['component_name'];
     }
 }
@@ -161,19 +145,9 @@ if (isset($_POST['action']) && $_POST['action'] === 'submit_request') {
     $desired_delivery_hour = $_POST['desired_delivery_hour'] ?? '';
     
     if ($component_name && $quantity > 0) {
-        $insert_sql = "INSERT INTO laser_requests (user_name, department, component_name, quantity, desired_delivery_time) VALUES (?, ?, ?, ?, ?)";
-        $stmt = $mysqli->prepare($insert_sql);
-        
-        // Формируем datetime из отдельной даты и часа
-        $datetime = null;
-        if ($desired_delivery_date && $desired_delivery_hour) {
-            $datetime = $desired_delivery_date . ' ' . $desired_delivery_hour . ':00:00';
-        }
-        
-        $stmt->bind_param("sssis", $user['full_name'], $currentDepartment, $component_name, $quantity, $datetime);
-        $stmt->execute();
-        $stmt->close();
-        
+        $datetime = ($desired_delivery_date && $desired_delivery_hour) ? $desired_delivery_date . ' ' . $desired_delivery_hour . ':00:00' : null;
+        $stmt = $pdo->prepare("INSERT INTO laser_requests (user_name, department, component_name, quantity, desired_delivery_time) VALUES (?, ?, ?, ?, ?)");
+        $stmt->execute([$user['full_name'] ?? '', $currentDepartment, $component_name, $quantity, $datetime]);
         $success_message = "Заявка успешно отправлена!";
     }
 }
@@ -182,20 +156,12 @@ if (isset($_POST['action']) && $_POST['action'] === 'submit_request') {
 if (isset($_POST['action']) && $_POST['action'] === 'mark_completed' && isset($_POST['request_id'])) {
     $request_id = (int)$_POST['request_id'];
     
-    // Проверяем, что заявка принадлежит пользователю
-    $check_sql = "SELECT id FROM laser_requests WHERE id = ? AND user_name = ? AND department = ?";
-    $stmt = $mysqli->prepare($check_sql);
-    $stmt->bind_param("iss", $request_id, $user['full_name'], $currentDepartment);
-    $stmt->execute();
-    $result = $stmt->get_result();
+    $chk = $pdo->prepare("SELECT id FROM laser_requests WHERE id = ? AND user_name = ? AND department = ?");
+    $chk->execute([$request_id, $user['full_name'] ?? '', $currentDepartment]);
     
-    if ($result->num_rows > 0) {
-        // Отмечаем как выполненную и записываем время выполнения
-        $update_sql = "UPDATE laser_requests SET is_completed = TRUE, completed_at = NOW() WHERE id = ?";
-        $stmt = $mysqli->prepare($update_sql);
-        $stmt->bind_param("i", $request_id);
-        $stmt->execute();
-        $stmt->close();
+    if ($chk->rowCount() > 0) {
+        $stmt = $pdo->prepare("UPDATE laser_requests SET is_completed = TRUE, completed_at = NOW() WHERE id = ?");
+        $stmt->execute([$request_id]);
         
         $success_message = "Заявка отмечена как выполненная!";
     }
@@ -205,21 +171,13 @@ if (isset($_POST['action']) && $_POST['action'] === 'mark_completed' && isset($_
 if (isset($_POST['action']) && $_POST['action'] === 'cancel_request' && isset($_POST['request_id'])) {
     $request_id = (int)$_POST['request_id'];
     
-    // Проверяем, что заявка принадлежит пользователю и не выполнена
-    $check_sql = "SELECT id, is_completed, is_cancelled FROM laser_requests WHERE id = ? AND user_name = ? AND department = ?";
-    $stmt = $mysqli->prepare($check_sql);
-    $stmt->bind_param("iss", $request_id, $user['full_name'], $currentDepartment);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $request = $result->fetch_assoc();
+    $chk = $pdo->prepare("SELECT id, is_completed, is_cancelled FROM laser_requests WHERE id = ? AND user_name = ? AND department = ?");
+    $chk->execute([$request_id, $user['full_name'] ?? '', $currentDepartment]);
+    $request = $chk->fetch(PDO::FETCH_ASSOC);
     
     if ($request && !$request['is_completed'] && !$request['is_cancelled']) {
-        // Отмечаем как отмененную и записываем время отмены
-        $update_sql = "UPDATE laser_requests SET is_cancelled = TRUE, cancelled_at = NOW() WHERE id = ?";
-        $stmt = $mysqli->prepare($update_sql);
-        $stmt->bind_param("i", $request_id);
-        $stmt->execute();
-        $stmt->close();
+        $stmt = $pdo->prepare("UPDATE laser_requests SET is_cancelled = TRUE, cancelled_at = NOW() WHERE id = ?");
+        $stmt->execute([$request_id]);
         
         $success_message = "Заявка успешно отменена!";
     } else {
@@ -233,14 +191,9 @@ if (isset($_POST['action']) && $_POST['action'] === 'cancel_request' && isset($_
     }
 }
 
-// Получение заявок пользователя
-$user_requests_query = "SELECT * FROM laser_requests WHERE user_name = ? AND department = ? ORDER BY created_at DESC LIMIT 10";
-$stmt = $mysqli->prepare($user_requests_query);
-$stmt->bind_param("ss", $user['full_name'], $currentDepartment);
-$stmt->execute();
-$user_requests_result = $stmt->get_result();
-$user_requests = $user_requests_result->fetch_all(MYSQLI_ASSOC);
-$stmt->close();
+$stmt = $pdo->prepare("SELECT * FROM laser_requests WHERE user_name = ? AND department = ? ORDER BY created_at DESC LIMIT 10");
+$stmt->execute([$user['full_name'] ?? '', $currentDepartment]);
+$user_requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!doctype html>
 <html lang="ru">
@@ -810,5 +763,4 @@ $stmt->close();
 </html>
 <?php
 // Закрываем соединение с БД после вывода
-$mysqli->close();
 ?>

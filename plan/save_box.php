@@ -16,9 +16,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
     
-    // Подключение к БД plan
-    $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    require_once __DIR__ . '/../auth/includes/db.php';
+    $pdo = getPdo('plan');
     
     try {
         // Вставка в таблицу box

@@ -7,27 +7,18 @@ require_once('tools/tools.php');
 $workshop = 'U3';
 
 /** Подключаемся к БД */
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    echo '<div class="error">Возникла проблема на сайте. Код ошибки: ' . $mysqli->connect_errno . '</div>';
-    exit;
-}
-
-/** Выполняем запрос SQL для загрузки заявок */
-$sql = "SELECT DISTINCT order_number, workshop, hide FROM orders;";
-if (!$result = $mysqli->query($sql)) {
-    echo '<div class="error">Ошибка запроса: ' . $mysqli->error . '</div>';
-    exit;
-}
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
+$rows = $pdo->query("SELECT DISTINCT order_number, workshop, hide FROM orders")->fetchAll(PDO::FETCH_ASSOC);
 
 echo '<div class="container">';
 echo '<h2>Сохраненные заявки</h2>';
 
-if ($result->num_rows === 0) {
+if (count($rows) === 0) {
     echo '<p>В базе нет ни одной заявки</p>';
 } else {
     echo '<form action="show_order.php" method="post" target="_blank" class="order-form">';
-    while ($orders_data = $result->fetch_assoc()) {
+    foreach ($rows as $orders_data) {
         if ($orders_data['hide'] != 1) {
             $color = str_contains($orders_data['order_number'], '[!]') ? 'green' : 'black';
             $bgColor = str_contains($orders_data['order_number'], '[!]') ? 'white' : 'lightgreen';
@@ -42,8 +33,6 @@ if ($result->num_rows === 0) {
     }
     echo '</form>';
 }
-$result->close();
-$mysqli->close();
 
 echo '<div class="actions">';
 echo "<form action='search_filter_in_the_orders.php' method='post'>

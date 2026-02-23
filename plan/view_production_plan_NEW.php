@@ -1,15 +1,8 @@
 <?php
 // view_production_plan.php — план vs факт + переносы по сменам для выбранной заявки
 
-$dsn = 'mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4';
-$user = 'root';
-$pass = '';
-
-try {
-    $pdo = new PDO($dsn, $user, $pass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-} catch (PDOException $e) {
-    die("Ошибка подключения: " . $e->getMessage());
-}
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan');
 
 $order = $_GET['order'] ?? '';
 if (!$order) die("Не указан номер заявки.");

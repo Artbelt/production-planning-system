@@ -1,9 +1,6 @@
 <?php
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "", [
-    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-    PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4"
-]);
-$pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan');
 
 $order = $_GET['order'] ?? '';
 $days = intval($_GET['days'] ?? 9);

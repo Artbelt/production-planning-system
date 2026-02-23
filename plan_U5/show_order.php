@@ -806,8 +806,8 @@ $page_title = $order_number ? $order_number : "Заявка";
     // Номер заявки уже получен в начале файла
 
     // Подключим отдельный PDO для выборок из manufactured_corrugated_packages (факт гофропакетов)
-    $pdo_corr = new PDO("mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4", "root", "");
-    $pdo_corr->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    require_once __DIR__ . '/../auth/includes/db.php';
+    $pdo_corr = getPdo('plan_u5');
 
     // Загружаем заявку (как и раньше)
     $result = show_order($order_number);

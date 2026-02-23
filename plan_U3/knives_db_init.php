@@ -1,23 +1,9 @@
 <?php
 /**
  * Инициализация таблиц для системы управления ножами
- * Создает таблицы если их нет
- * Если соединение передано как параметр, использует его, иначе создает новое
  */
-
-require_once('settings.php');
-
-// Если соединение уже передано, используем его
-if (!isset($mysqli) || !$mysqli instanceof mysqli) {
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        die('Ошибка подключения к БД: ' . $mysqli->connect_error);
-    }
-    $mysqli->set_charset("utf8mb4");
-    $close_connection = true; // Помечаем, что нужно закрыть соединение
-} else {
-    $close_connection = false; // Не закрываем, т.к. соединение используется дальше
-}
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = isset($pdo) && $pdo instanceof PDO ? $pdo : getPdo('plan_u3');
 
 // Создаем таблицу knives (справочник комплектов ножей)
 $sql = "CREATE TABLE IF NOT EXISTS knives (
@@ -29,10 +15,7 @@ $sql = "CREATE TABLE IF NOT EXISTS knives (
     UNIQUE KEY unique_knife_name (knife_name),
     INDEX idx_knife_type (knife_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
-
-if (!$mysqli->query($sql)) {
-    die('Ошибка создания таблицы knives: ' . $mysqli->error);
-}
+$pdo->exec($sql);
 
 // Создаем таблицу knives_calendar (календарная таблица состояний)
 $sql = "CREATE TABLE IF NOT EXISTS knives_calendar (
@@ -51,14 +34,5 @@ $sql = "CREATE TABLE IF NOT EXISTS knives_calendar (
     FOREIGN KEY (knife_id) REFERENCES knives(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
 
-if (!$mysqli->query($sql)) {
-    die('Ошибка создания таблицы knives_calendar: ' . $mysqli->error);
-}
-
-// Добавляем значение 'out_to_sharpening' в ENUM, если таблица уже существовала со старым определением
-$mysqli->query("ALTER TABLE knives_calendar MODIFY status ENUM('in_stock', 'in_sharpening', 'out_to_sharpening', 'in_work') NOT NULL");
-
-// Закрываем соединение только если мы его создали
-if (isset($close_connection) && $close_connection) {
-    $mysqli->close();
-}
+$pdo->exec($sql);
+$pdo->exec("ALTER TABLE knives_calendar MODIFY status ENUM('in_stock', 'in_sharpening', 'out_to_sharpening', 'in_work') NOT NULL");

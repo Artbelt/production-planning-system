@@ -31,11 +31,13 @@ if (empty($userDepartments)) {
     die('У вас нет доступа к цеху U2');
 }
 
+require_once __DIR__ . '/../auth/includes/db.php';
+
 // === АВТОДОПОЛНЕНИЕ ===
 if (isset($_GET['q'])) {
     header('Content-Type: application/json');
     try {
-        $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
+        $pdo = getPdo('plan');
         $query = $_GET['q'];
         $stmt = $pdo->prepare("SELECT DISTINCT filter FROM panel_filter_structure WHERE filter LIKE ? LIMIT 10");
         $stmt->execute(["%$query%"]);
@@ -48,7 +50,7 @@ if (isset($_GET['q'])) {
 
 // === СОХРАНЕНИЕ В БД ===
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
+    $pdo = getPdo('plan');
     $data = json_decode(file_get_contents("php://input"), true);
 
     $date = $data['date'] ?? null;
@@ -76,7 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // === ПОЛУЧЕНИЕ СПИСКА ЗАЯВОК ===
 try {
-    $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
+    $pdo = getPdo('plan');
     $orders = $pdo->query("SELECT DISTINCT order_number FROM orders WHERE hide IS NULL OR hide = 0")->fetchAll(PDO::FETCH_COLUMN);
 } catch (Exception $e) {
     $orders = [];

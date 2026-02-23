@@ -140,17 +140,11 @@ $count =0;
 //echo '<form action="filter_parameters.php" method="post">';
 
 /** Подключение к БД для получения гофропакетов */
-global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    echo 'Возникла проблема на сайте'
-        . "Номер ошибки: " . $mysqli->connect_errno . "\n"
-        . "Ошибка: " . $mysqli->connect_error . "\n";
-    exit;
-}
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo_gofro = getPdo('plan_u3');
 
 /** Разбор массива значений по подключению */
-while ($row = $result->fetch_assoc()){
+while ($row = $result->fetch(PDO::FETCH_ASSOC)){
     $difference = (int)$row['count']-(int)select_produced_filters_by_order($row['filter'],$order_number)[1];
     $filter_count_in_order = $filter_count_in_order + (int)$row['count'] ;
     $filter_count_produced = $filter_count_produced + (int)select_produced_filters_by_order($row['filter'],$order_number)[1];
@@ -158,17 +152,13 @@ while ($row = $result->fetch_assoc()){
     // Получаем гофропакет для фильтра из round_filter_structure
     $gofro_package = '';
     $gofro_package_count = 0;
-    $sql_gofro = "SELECT filter_package FROM round_filter_structure WHERE filter = '".$mysqli->real_escape_string($row['filter'])."'";
-    if ($result_gofro = $mysqli->query($sql_gofro)) {
-        if ($row_gofro = $result_gofro->fetch_assoc()) {
-            if (!empty($row_gofro['filter_package'])) {
-                $gofro_package = $row_gofro['filter_package'];
-                // Подсчитываем количество изготовленных гофропакетов
-                $gofro_package_count = (int)manufactured_part_count($gofro_package, $order_number);
-                $gofro_packages_produced += $gofro_package_count;
-            }
-        }
-        $result_gofro->free();
+    $st_gofro = $pdo_gofro->prepare("SELECT filter_package FROM round_filter_structure WHERE filter = ?");
+    $st_gofro->execute([$row['filter']]);
+    $row_gofro = $st_gofro->fetch(PDO::FETCH_ASSOC);
+    if ($row_gofro && !empty($row_gofro['filter_package'])) {
+        $gofro_package = $row_gofro['filter_package'];
+        $gofro_package_count = (int)manufactured_part_count($gofro_package, $order_number);
+        $gofro_packages_produced += $gofro_package_count;
     }
 
     $count += 1;
@@ -209,8 +199,6 @@ while ($row = $result->fetch_assoc()){
 
 }
 
-/** Закрываем соединение с БД */
-$mysqli->close();
 
 /** @var расчет оставшегося количества продукции для производства $summ_difference */
 $summ_difference = $filter_count_in_order - $filter_count_produced;

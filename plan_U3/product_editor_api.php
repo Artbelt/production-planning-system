@@ -9,21 +9,15 @@ header('Content-Type: application/json; charset=utf-8');
 session_start();
 
 try {
-    // Подключение к базе данных
-    require_once('settings.php');
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-
-    if ($mysqli->connect_error) {
-        throw new Exception('Ошибка подключения к базе данных: ' . $mysqli->connect_error);
-    }
+    require_once __DIR__ . '/../auth/includes/db.php';
+    $pdo = getPdo('plan_u3');
 } catch (Exception $e) {
     echo json_encode(['error' => $e->getMessage()]);
     exit;
 }
 
-// Подключаем аудит логгер
-require_once 'audit_logger.php';
-$auditLogger = new AuditLogger($mysqli);
+require_once __DIR__ . '/audit_logger.php';
+$auditLogger = new AuditLogger($pdo);
 
 $action = $_POST['action'] ?? '';
 
@@ -61,19 +55,15 @@ switch ($action) {
 }
 
 function loadProductData() {
-    global $mysqli;
+    global $pdo;
     
     try {
-        // Простой запрос для проверки таблицы manufactured_production
-        $query = "SELECT * FROM manufactured_production LIMIT 10";
-        $result = $mysqli->query($query);
-        
-        if (!$result) {
-            throw new Exception('Ошибка запроса к таблице manufactured_production: ' . $mysqli->error);
+        $stmt = $pdo->query("SELECT * FROM manufactured_production LIMIT 10");
+        if (!$stmt) {
+            throw new Exception('Ошибка запроса к таблице manufactured_production');
         }
-        
         $data = [];
-        while ($row = $result->fetch_assoc()) {
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             // Создаем виртуальный ID
             $virtual_id = $row['name_of_order'] . '_' . $row['name_of_filter'] . '_' . $row['date_of_production'];
             
@@ -99,7 +89,7 @@ function loadProductData() {
 }
 
 function loadDataByDate() {
-    global $mysqli;
+    global $pdo;
     
     try {
         $selectedDate = $_POST['date'] ?? '';
@@ -108,10 +98,8 @@ function loadDataByDate() {
             throw new Exception('Дата не указана');
         }
         
-        // Загружаем данные за выбранную дату
-        // Проверяем наличие колонки team
-        $check_team = $mysqli->query("SHOW COLUMNS FROM manufactured_production LIKE 'team'");
-        $has_team = $check_team && $check_team->num_rows > 0;
+        $check = $pdo->query("SHOW COLUMNS FROM manufactured_production LIKE 'team'");
+        $has_team = $check && $check->rowCount() > 0;
         
         if ($has_team) {
             $query = "SELECT * FROM manufactured_production WHERE date_of_production = ? ORDER BY team, name_of_filter";
@@ -119,17 +107,10 @@ function loadDataByDate() {
             $query = "SELECT * FROM manufactured_production WHERE date_of_production = ? ORDER BY name_of_filter";
         }
         
-        $stmt = $mysqli->prepare($query);
-        $stmt->bind_param("s", $selectedDate);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        
-        if (!$result) {
-            throw new Exception('Ошибка запроса к таблице manufactured_production: ' . $mysqli->error);
-        }
-        
+        $stmt = $pdo->prepare($query);
+        $stmt->execute([$selectedDate]);
         $data = [];
-        while ($row = $result->fetch_assoc()) {
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             // Создаем виртуальный ID
             $virtual_id = $row['name_of_order'] . '_' . $row['name_of_filter'] . '_' . $row['date_of_production'];
             
@@ -156,18 +137,15 @@ function loadDataByDate() {
 }
 
 function loadFilters() {
-    global $mysqli;
+    global $pdo;
     
     try {
-        $query = "SELECT DISTINCT filter FROM round_filter_structure ORDER BY filter";
-        $result = $mysqli->query($query);
-        
-        if (!$result) {
-            throw new Exception('Ошибка загрузки фильтров: ' . $mysqli->error);
+        $stmt = $pdo->query("SELECT DISTINCT filter FROM round_filter_structure ORDER BY filter");
+        if (!$stmt) {
+            throw new Exception('Ошибка загрузки фильтров');
         }
-        
         $filters = [];
-        while ($row = $result->fetch_assoc()) {
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $filters[] = $row['filter'];
         }
         
@@ -183,18 +161,15 @@ function loadFilters() {
 }
 
 function loadOrders() {
-    global $mysqli;
+    global $pdo;
     
     try {
-        $query = "SELECT DISTINCT order_number FROM orders WHERE hide != 1 OR hide IS NULL ORDER BY order_number DESC";
-        $result = $mysqli->query($query);
-        
-        if (!$result) {
-            throw new Exception('Ошибка загрузки заявок: ' . $mysqli->error);
+        $stmt = $pdo->query("SELECT DISTINCT order_number FROM orders WHERE hide != 1 OR hide IS NULL ORDER BY order_number DESC");
+        if (!$stmt) {
+            throw new Exception('Ошибка загрузки заявок');
         }
-        
         $orders = [];
-        while ($row = $result->fetch_assoc()) {
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $orders[] = $row['order_number'];
         }
         
@@ -210,19 +185,15 @@ function loadOrders() {
 }
 
 function loadOrdersForDropdown() {
-    global $mysqli;
+    global $pdo;
     
     try {
-        // Загружаем только активные заявки, отсортированные по номеру заявки (новые сверху)
-        $query = "SELECT DISTINCT order_number FROM orders WHERE hide != 1 OR hide IS NULL ORDER BY order_number DESC";
-        $result = $mysqli->query($query);
-        
-        if (!$result) {
-            throw new Exception('Ошибка загрузки заявок: ' . $mysqli->error);
+        $stmt = $pdo->query("SELECT DISTINCT order_number FROM orders WHERE hide != 1 OR hide IS NULL ORDER BY order_number DESC");
+        if (!$stmt) {
+            throw new Exception('Ошибка загрузки заявок');
         }
-        
         $orders = [];
-        while ($row = $result->fetch_assoc()) {
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $orders[] = $row['order_number'];
         }
         
@@ -238,7 +209,7 @@ function loadOrdersForDropdown() {
 }
 
 function updateQuantity() {
-    global $mysqli, $auditLogger;
+    global $pdo, $auditLogger;
     
     $virtual_id = $_POST['id'];
     $quantity = intval($_POST['quantity']);
@@ -260,22 +231,12 @@ function updateQuantity() {
     $production_date = $parts[2];
     
     try {
-        // Получаем старые значения для аудита
-        $old_query = "SELECT * FROM manufactured_production 
-                     WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?";
-        $old_stmt = $mysqli->prepare($old_query);
-        $old_stmt->bind_param('sss', $order_name, $filter_name, $production_date);
-        $old_stmt->execute();
-        $old_result = $old_stmt->get_result();
-        $old_values = $old_result->fetch_assoc();
-        $old_stmt->close();
+        $old_stmt = $pdo->prepare("SELECT * FROM manufactured_production WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?");
+        $old_stmt->execute([$order_name, $filter_name, $production_date]);
+        $old_values = $old_stmt->fetch(PDO::FETCH_ASSOC);
         
-        // Обновляем количество в таблице manufactured_production
-        $query = "UPDATE manufactured_production SET count_of_filters = ? WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?";
-        $stmt = $mysqli->prepare($query);
-        $stmt->bind_param("isss", $quantity, $order_name, $filter_name, $production_date);
-        
-        if ($stmt->execute()) {
+        $stmt = $pdo->prepare("UPDATE manufactured_production SET count_of_filters = ? WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?");
+        if ($stmt->execute([$quantity, $order_name, $filter_name, $production_date])) {
             // Записываем в аудит
             $new_values = $old_values;
             $new_values['count_of_filters'] = $quantity;
@@ -291,18 +252,15 @@ function updateQuantity() {
             
             echo json_encode(['success' => true]);
         } else {
-            echo json_encode(['error' => 'Ошибка обновления: ' . $stmt->error]);
+            echo json_encode(['error' => 'Ошибка обновления']);
         }
-        
-        $stmt->close();
-        
     } catch (Exception $e) {
         echo json_encode(['error' => $e->getMessage()]);
     }
 }
 
 function moveToOrder() {
-    global $mysqli, $auditLogger;
+    global $pdo, $auditLogger;
     
     $virtual_id = $_POST['id'];
     $new_order_name = $_POST['new_order_id'];
@@ -324,22 +282,12 @@ function moveToOrder() {
     $production_date = $parts[2];
     
     try {
-        // Получаем старые значения для аудита
-        $old_query = "SELECT * FROM manufactured_production 
-                     WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?";
-        $old_stmt = $mysqli->prepare($old_query);
-        $old_stmt->bind_param('sss', $old_order_name, $filter_name, $production_date);
-        $old_stmt->execute();
-        $old_result = $old_stmt->get_result();
-        $old_values = $old_result->fetch_assoc();
-        $old_stmt->close();
+        $old_stmt = $pdo->prepare("SELECT * FROM manufactured_production WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?");
+        $old_stmt->execute([$old_order_name, $filter_name, $production_date]);
+        $old_values = $old_stmt->fetch(PDO::FETCH_ASSOC);
         
-        // Обновляем название заявки в таблице manufactured_production
-        $query = "UPDATE manufactured_production SET name_of_order = ? WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?";
-        $stmt = $mysqli->prepare($query);
-        $stmt->bind_param("ssss", $new_order_name, $old_order_name, $filter_name, $production_date);
-        
-        if ($stmt->execute()) {
+        $stmt = $pdo->prepare("UPDATE manufactured_production SET name_of_order = ? WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?");
+        if ($stmt->execute([$new_order_name, $old_order_name, $filter_name, $production_date])) {
             // Записываем в аудит
             $new_values = $old_values;
             $new_values['name_of_order'] = $new_order_name;
@@ -355,18 +303,15 @@ function moveToOrder() {
             
             echo json_encode(['success' => true]);
         } else {
-            echo json_encode(['error' => 'Ошибка обновления: ' . $stmt->error]);
+            echo json_encode(['error' => 'Ошибка обновления']);
         }
-        
-        $stmt->close();
-        
     } catch (Exception $e) {
         echo json_encode(['error' => $e->getMessage()]);
     }
 }
 
 function addPosition() {
-    global $mysqli, $auditLogger;
+    global $pdo, $auditLogger;
     
     $filter_name = $_POST['filter_name'] ?? '';
     $quantity = intval($_POST['quantity']);
@@ -379,35 +324,27 @@ function addPosition() {
         return;
     }
     
-    // Проверяем наличие колонки team
-    $check_team = $mysqli->query("SHOW COLUMNS FROM manufactured_production LIKE 'team'");
-    $has_team = $check_team && $check_team->num_rows > 0;
+    $check = $pdo->query("SHOW COLUMNS FROM manufactured_production LIKE 'team'");
+    $has_team = $check && $check->rowCount() > 0;
     
-    // Проверяем, не существует ли уже такая запись
-    $check_query = "SELECT COUNT(*) as count FROM manufactured_production WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?";
-    $check_stmt = $mysqli->prepare($check_query);
-    $check_stmt->bind_param("sss", $order_name, $filter_name, $production_date);
-    $check_stmt->execute();
-    $check_result = $check_stmt->get_result();
-    $check_row = $check_result->fetch_assoc();
+    $check_stmt = $pdo->prepare("SELECT COUNT(*) as cnt FROM manufactured_production WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?");
+    $check_stmt->execute([$order_name, $filter_name, $production_date]);
+    $check_row = $check_stmt->fetch(PDO::FETCH_ASSOC);
     
-    if ($check_row['count'] > 0) {
+    if (($check_row['cnt'] ?? 0) > 0) {
         echo json_encode(['error' => 'Запись с такими параметрами уже существует']);
         return;
     }
     
-    // Добавляем новую позицию в таблицу manufactured_production
     if ($has_team && $team > 0) {
-        $query = "INSERT INTO manufactured_production (name_of_filter, count_of_filters, name_of_order, team, date_of_production) VALUES (?, ?, ?, ?, ?)";
-        $stmt = $mysqli->prepare($query);
-        $stmt->bind_param("sisis", $filter_name, $quantity, $order_name, $team, $production_date);
+        $stmt = $pdo->prepare("INSERT INTO manufactured_production (name_of_filter, count_of_filters, name_of_order, team, date_of_production) VALUES (?, ?, ?, ?, ?)");
+        $ok = $stmt->execute([$filter_name, $quantity, $order_name, $team, $production_date]);
     } else {
-        $query = "INSERT INTO manufactured_production (name_of_filter, count_of_filters, name_of_order, date_of_production) VALUES (?, ?, ?, ?)";
-        $stmt = $mysqli->prepare($query);
-        $stmt->bind_param("siss", $filter_name, $quantity, $order_name, $production_date);
+        $stmt = $pdo->prepare("INSERT INTO manufactured_production (name_of_filter, count_of_filters, name_of_order, date_of_production) VALUES (?, ?, ?, ?)");
+        $ok = $stmt->execute([$filter_name, $quantity, $order_name, $production_date]);
     }
     
-    if ($stmt->execute()) {
+    if ($ok) {
         // Записываем в аудит
         $virtual_id = $order_name . '_' . $filter_name . '_' . $production_date;
         $new_values = [
@@ -425,14 +362,14 @@ function addPosition() {
             "Добавлена новая позиция: фильтр {$filter_name}, количество {$quantity}, заявка {$order_name}, бригада {$team}"
         );
         
-        echo json_encode(['success' => true, 'new_id' => $mysqli->insert_id]);
+        echo json_encode(['success' => true, 'new_id' => $pdo->lastInsertId()]);
     } else {
-        echo json_encode(['error' => 'Ошибка добавления: ' . $stmt->error]);
+        echo json_encode(['error' => 'Ошибка добавления']);
     }
 }
 
 function removePosition() {
-    global $mysqli, $auditLogger;
+    global $pdo, $auditLogger;
     
     $virtual_id = $_POST['id'];
     
@@ -453,22 +390,12 @@ function removePosition() {
     $production_date = $parts[2];
     
     try {
-        // Получаем старые значения для аудита
-        $old_query = "SELECT * FROM manufactured_production 
-                     WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?";
-        $old_stmt = $mysqli->prepare($old_query);
-        $old_stmt->bind_param('sss', $order_name, $filter_name, $production_date);
-        $old_stmt->execute();
-        $old_result = $old_stmt->get_result();
-        $old_values = $old_result->fetch_assoc();
-        $old_stmt->close();
+        $old_stmt = $pdo->prepare("SELECT * FROM manufactured_production WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?");
+        $old_stmt->execute([$order_name, $filter_name, $production_date]);
+        $old_values = $old_stmt->fetch(PDO::FETCH_ASSOC);
         
-        // Удаляем запись из таблицы manufactured_production
-        $query = "DELETE FROM manufactured_production WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?";
-        $stmt = $mysqli->prepare($query);
-        $stmt->bind_param("sss", $order_name, $filter_name, $production_date);
-        
-        if ($stmt->execute()) {
+        $stmt = $pdo->prepare("DELETE FROM manufactured_production WHERE name_of_order = ? AND name_of_filter = ? AND date_of_production = ?");
+        if ($stmt->execute([$order_name, $filter_name, $production_date])) {
             // Записываем в аудит
             $auditLogger->logDelete(
                 'manufactured_production',
@@ -479,16 +406,11 @@ function removePosition() {
             
             echo json_encode(['success' => true]);
         } else {
-            echo json_encode(['error' => 'Ошибка удаления: ' . $stmt->error]);
+            echo json_encode(['error' => 'Ошибка удаления']);
         }
-        
-        $stmt->close();
-        
     } catch (Exception $e) {
         echo json_encode(['error' => $e->getMessage()]);
     }
 }
-
-$mysqli->close();
 ?>
 

@@ -1,9 +1,7 @@
 <?php
 // NP_view_corrugation_plan.php — просмотр/печать плана гофрирования по дням
 // GET: ?order=XXXX
-
-$dsn = "mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4";
-$user = "root"; $pass = "";
+require_once __DIR__ . '/settings.php';
 
 $order = $_GET['order'] ?? '';
 if ($order === '') { http_response_code(400); exit('Укажите ?order=...'); }

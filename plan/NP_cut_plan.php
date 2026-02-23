@@ -4,8 +4,9 @@ session_start(); // Запускаем сессию в начале файла
 require_once('NP/cut.php');
 
 // Подключение к базе данных
-$pdo1 = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
-$pdo2 = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo1 = getPdo('plan');
+$pdo2 = getPdo('plan');
 
 
 // Получаем номер заявки из GET параметров (может быть 'order' или 'order_number')

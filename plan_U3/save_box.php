@@ -16,33 +16,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
     
-    // Подключение к БД
-    $mysqli = new mysqli($host, $username, $password, $dbname_U3);
-    $mysqli->set_charset("utf8mb4");
-    
-    if ($mysqli->connect_error) {
-        echo json_encode(['success' => false, 'error' => 'Ошибка подключения к БД']);
-        exit;
-    }
-    
-    // Вставка в таблицу box
-    $stmt = $mysqli->prepare("INSERT INTO box (b_name, b_length, b_width, b_heght, b_supplier) VALUES (?, ?, ?, ?, ?)");
-    if (!$stmt) {
-        echo json_encode(['success' => false, 'error' => 'Ошибка подготовки запроса: ' . $mysqli->error]);
-        $mysqli->close();
-        exit;
-    }
-    
-    $stmt->bind_param("sddds", $b_name, $b_length, $b_width, $b_heght, $b_supplier);
-    
-    if ($stmt->execute()) {
-        echo json_encode(['success' => true]);
-    } else {
-        echo json_encode(['success' => false, 'error' => $mysqli->error]);
-    }
-    
-    $stmt->close();
-    $mysqli->close();
+    require_once __DIR__ . '/../auth/includes/db.php';
+    $pdo = getPdo('plan_u3');
+    $stmt = $pdo->prepare("INSERT INTO box (b_name, b_length, b_width, b_heght, b_supplier) VALUES (?, ?, ?, ?, ?)");
+    $stmt->execute([$b_name, $b_length, $b_width, $b_heght, $b_supplier]);
+    echo json_encode(['success' => true]);
 } else {
     echo json_encode(['success' => false, 'error' => 'Неверный метод запроса']);
 }

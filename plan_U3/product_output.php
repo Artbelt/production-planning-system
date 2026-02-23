@@ -31,11 +31,13 @@ if (empty($userDepartments)) {
     die('У вас нет доступа к цеху U3');
 }
 
+require_once __DIR__ . '/../auth/includes/db.php';
+
 // === АВТОДОПОЛНЕНИЕ ===
 if (isset($_GET['q'])) {
     header('Content-Type: application/json');
     try {
-        $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4", "root", "");
+        $pdo = getPdo('plan_u3');
         $query = $_GET['q'];
         $stmt = $pdo->prepare("SELECT DISTINCT filter FROM round_filter_structure WHERE filter LIKE ? LIMIT 10");
         $stmt->execute(["%$query%"]);
@@ -50,7 +52,7 @@ if (isset($_GET['q'])) {
 if (isset($_GET['orders']) && isset($_GET['filter'])) {
     header('Content-Type: application/json');
     try {
-        $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4", "root", "");
+        $pdo = getPdo('plan_u3');
         $filter = $_GET['filter'];
         $stmt = $pdo->prepare("
             SELECT DISTINCT order_number 
@@ -69,9 +71,7 @@ if (isset($_GET['orders']) && isset($_GET['filter'])) {
 
 // === СОХРАНЕНИЕ В БД ===
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4", "root", "", [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
-    ]);
+    $pdo = getPdo('plan_u3');
     $data = json_decode(file_get_contents("php://input"), true);
 
     $date = $data['date'] ?? null;
@@ -209,7 +209,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // === ПОЛУЧЕНИЕ СПИСКА ЗАЯВОК ===
 try {
-    $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4", "root", "");
+    $pdo = getPdo('plan_u3');
     $orders = $pdo->query("SELECT DISTINCT order_number FROM orders WHERE hide IS NULL OR hide = 0")->fetchAll(PDO::FETCH_COLUMN);
 } catch (Exception $e) {
     $orders = [];

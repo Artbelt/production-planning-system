@@ -3,9 +3,7 @@
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-$dsn = "mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4";
-$user = "root";
-$pass = "";
+require_once __DIR__ . '/settings.php';
 
 $order = $_GET['order'] ?? '';
 $showFact = isset($_GET['fact']) && $_GET['fact'] !== '' && $_GET['fact'] !== '0';

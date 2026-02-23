@@ -2,22 +2,9 @@
 /**
  * Инициализация таблиц для системы управления крышками
  * Создает таблицы если их нет
- * Если соединение передано как параметр, использует его, иначе создает новое
  */
-
-require_once('settings.php');
-
-// Если соединение уже передано, используем его
-if (!isset($mysqli) || !$mysqli instanceof mysqli) {
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        die('Ошибка подключения к БД: ' . $mysqli->connect_error);
-    }
-    $mysqli->set_charset("utf8mb4");
-    $close_connection = true; // Помечаем, что нужно закрыть соединение
-} else {
-    $close_connection = false; // Не закрываем, т.к. соединение используется дальше
-}
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = isset($pdo) && $pdo instanceof PDO ? $pdo : getPdo('plan_u3');
 
 // Создаем таблицу cap_movements (движение крышек)
 $sql = "CREATE TABLE IF NOT EXISTS cap_movements (
@@ -38,10 +25,7 @@ $sql = "CREATE TABLE IF NOT EXISTS cap_movements (
     INDEX idx_order_number (order_number),
     INDEX idx_operation_type (operation_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
-
-if (!$mysqli->query($sql)) {
-    die('Ошибка создания таблицы cap_movements: ' . $mysqli->error);
-}
+$pdo->exec($sql);
 
 // Создаем таблицу cap_stock (текущие остатки)
 $sql = "CREATE TABLE IF NOT EXISTS cap_stock (
@@ -50,30 +34,20 @@ $sql = "CREATE TABLE IF NOT EXISTS cap_stock (
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_current_quantity (current_quantity)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
-
-if (!$mysqli->query($sql)) {
-    die('Ошибка создания таблицы cap_stock: ' . $mysqli->error);
-}
+$pdo->exec($sql);
 
 // Миграция данных из старой таблицы list_of_caps в новую систему (если таблица существует)
-$sql_check = "SELECT COUNT(*) as cnt FROM cap_stock";
-$result = $mysqli->query($sql_check);
-$row = $result->fetch_assoc();
+$row = $pdo->query("SELECT COUNT(*) as cnt FROM cap_stock")->fetch(PDO::FETCH_ASSOC);
 if ($row['cnt'] == 0) {
-    // Проверяем существование старой таблицы перед миграцией
-    $table_exists = $mysqli->query("SHOW TABLES LIKE 'list_of_caps'");
-    if ($table_exists && $table_exists->num_rows > 0) {
-        // Если новая таблица пуста, пытаемся мигрировать данные из старой
-        $sql_migrate = "INSERT INTO cap_stock (cap_name, current_quantity)
+    $table_check = $pdo->query("SHOW TABLES LIKE 'list_of_caps'");
+    if ($table_check && $table_check->rowCount() > 0) {
+        $pdo->exec("INSERT INTO cap_stock (cap_name, current_quantity)
                          SELECT name_of_cap, cap_count 
                          FROM list_of_caps 
                          WHERE name_of_cap NOT IN (SELECT cap_name FROM cap_stock)
-                         ON DUPLICATE KEY UPDATE current_quantity = VALUES(current_quantity)";
-        $mysqli->query($sql_migrate);
+                         ON DUPLICATE KEY UPDATE current_quantity = VALUES(current_quantity)");
     }
-    
-    // Мигрируем историю поступлений из cap_log
-    $sql_history = "INSERT INTO cap_movements (date, cap_name, operation_type, quantity, user_name, comment)
+    $pdo->exec("INSERT INTO cap_movements (date, cap_name, operation_type, quantity, user_name, comment)
                     SELECT date_of_operation, name_of_cap_field, 
                            CASE cap_action 
                                WHEN 'IN' THEN 'INCOME'
@@ -88,12 +62,6 @@ if ($row['cnt'] == 0) {
                         WHERE cm.date = cap_log.date_of_operation 
                         AND cm.cap_name = cap_log.name_of_cap_field
                         AND cm.quantity = cap_log.count_of_caps
-                    )";
-    $mysqli->query($sql_history);
-}
-
-// Закрываем соединение только если мы его создали
-if (isset($close_connection) && $close_connection) {
-    $mysqli->close();
+                    )");
 }
 

@@ -4,8 +4,6 @@ require_once('settings.php') ;
 require_once('tools/tools.php') ;
 require_once ('style/table_1.txt');
 
-global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
 $date_of_production = $_POST['date_of_production'];
 $name_of_parts = $_POST['name_of_parts'];
 $count_of_parts = $_POST['count_of_parts'];

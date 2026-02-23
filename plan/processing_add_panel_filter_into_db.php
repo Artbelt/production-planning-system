@@ -1,50 +1,62 @@
 <?php
 require_once('tools/tools.php');
-$filter_name = $_POST['filter_name'];
-$category    = $_POST['category'];
+
+/** Скрипт принимает только POST-запросы */
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(400);
+    die('Неверный метод запроса. Используйте форму добавления фильтра.');
+}
+
+$filter_name = $_POST['filter_name'] ?? '';
+$category    = $_POST['category'] ?? '';
 
 /** ГОФРОПАКЕТ */
 $p_p_name          = "гофропакет " . $filter_name;
-$p_p_length        = $_POST['p_p_length'];
-$p_p_width         = $_POST['p_p_width'];
-$p_p_height        = $_POST['p_p_height'];
-$p_p_pleats_count  = $_POST['p_p_pleats_count'];
-$p_p_amplifier     = $_POST['p_p_amplifier'];
-$p_p_supplier      = $_POST['p_p_supplier'];
+$p_p_length        = $_POST['p_p_length'] ?? '';
+$p_p_width         = $_POST['p_p_width'] ?? '';
+$p_p_height        = $_POST['p_p_height'] ?? '';
+$p_p_pleats_count  = $_POST['p_p_pleats_count'] ?? '';
+$p_p_amplifier     = $_POST['p_p_amplifier'] ?? '';
+$p_p_supplier      = $_POST['p_p_supplier'] ?? '';
 $p_p_material      = $_POST['p_p_material'] ?? '';
-$p_p_remark        = $_POST['p_p_remark'];
+$p_p_remark        = $_POST['p_p_remark'] ?? '';
 
 /** КАРКАС */
-$wf_length   = $_POST['wf_length'];
-$wf_width    = $_POST['wf_width'];
-$wf_material = $_POST['wf_material'];
-$wf_supplier = $_POST['wf_supplier'];
+$wf_length   = $_POST['wf_length'] ?? '';
+$wf_width    = $_POST['wf_width'] ?? '';
+$wf_material = $_POST['wf_material'] ?? '';
+$wf_supplier = $_POST['wf_supplier'] ?? '';
 $wf_name     = ($wf_length && $wf_width && $wf_material && $wf_supplier) ? "каркас " . $filter_name : "";
 
 /** ПРЕДФИЛЬТР */
-$pf_length   = $_POST['pf_length'];
-$pf_width    = $_POST['pf_width'];
-$pf_material = $_POST['pf_material'];
-$pf_supplier = $_POST['pf_supplier'];
-$pf_remark   = $_POST['pf_remark'];
+$pf_length   = $_POST['pf_length'] ?? '';
+$pf_width    = $_POST['pf_width'] ?? '';
+$pf_material = $_POST['pf_material'] ?? '';
+$pf_supplier = $_POST['pf_supplier'] ?? '';
+$pf_remark   = $_POST['pf_remark'] ?? '';
 $pf_name     = ($pf_length && $pf_width && $pf_material && $pf_supplier) ? "предфильтр " . $filter_name : "";
 
-/** ПРОЛИВКА */
+/** ПРОЛИВКА (glueing — INTEGER, пустое => NULL) */
 $glueing        = $_POST['glueing'] ?? '';
+$glueing_sql    = ($glueing === '' || $glueing === null) ? 'NULL' : (int)$glueing;
 $glueing_remark = $_POST['glueing_remark'] ?? '';
 
-/** ФОРМ-ФАКТОР */
+/** ФОРМ-ФАКТОР (form_factor_id — INTEGER, пустое => NULL) */
 $form_factor_id     = $_POST['form_factor'] ?? '';
+$form_factor_sql    = ($form_factor_id === '' || $form_factor_id === null) ? 'NULL' : (int)$form_factor_id;
 $form_factor_remark = $_POST['form_factor_remark'] ?? '';
 
 /** УПАКОВКА */
-$box    = $_POST['box'];
-$g_box  = $_POST['g_box'];
-$remark = $_POST['remark'];
+$box    = $_POST['box'] ?? '';
+$g_box  = $_POST['g_box'] ?? '';
+$remark = $_POST['remark'] ?? '';
 
 /** ЛОГ ИЗМЕНЕНИЙ */
 $changes_log = $_POST['changes_log'] ?? '';
-$ip_address  = $_SERVER['REMOTE_ADDR'];
+$ip_address  = $_SERVER['REMOTE_ADDR'] ?? '';
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 $user_name   = $_SESSION['user_name'] ?? 'Гость';
 
 /** Проверяем, есть ли фильтр в БД */
@@ -55,8 +67,8 @@ $sql = "INSERT INTO panel_filter_structure
         (filter, category, paper_package, wireframe, prefilter, glueing, glueing_remark, 
          form_factor_id, form_factor_remark, box, g_box, comment)
         VALUES 
-        ('$filter_name','$category','$p_p_name','$wf_name','$pf_name','$glueing',
-         '$glueing_remark','$form_factor_id','$form_factor_remark','$box','$g_box','$remark')
+        ('$filter_name','$category','$p_p_name','$wf_name','$pf_name',$glueing_sql,
+         '$glueing_remark',$form_factor_sql,'$form_factor_remark','$box','$g_box','$remark')
         ON DUPLICATE KEY UPDATE
             category = VALUES(category),
             paper_package = VALUES(paper_package),

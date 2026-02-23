@@ -33,37 +33,27 @@ if (empty($userDepartments)) {
 
 require_once('tools/tools.php');
 require_once('settings.php');
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 
 $user_id = $session['user_id'];
 $user_name = $session['full_name'] ?? 'Пользователь';
 
-// Подключаемся к БД
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    die('Ошибка подключения к БД: ' . $mysqli->connect_error);
-}
-$mysqli->set_charset("utf8mb4");
-
-// Создаем таблицы если их нет (передаем соединение)
 require_once('cap_db_init.php');
 
-// Получаем список существующих крышек для автодополнения
 $caps_list = [];
-$sql = "SELECT DISTINCT cap_name FROM cap_stock ORDER BY cap_name";
-if ($result = $mysqli->query($sql)) {
-    while ($row = $result->fetch_assoc()) {
+$stmt = $pdo->query("SELECT DISTINCT cap_name FROM cap_stock ORDER BY cap_name");
+if ($stmt) {
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
         $caps_list[] = $row['cap_name'];
     }
-    $result->close();
 }
 
-// Получаем список заявок для выпадающего списка (используем тот же алгоритм, что и на main.php)
 $orders_list = [];
-$sql_orders = "SELECT DISTINCT order_number, workshop, hide FROM orders";
-if ($result_orders = $mysqli->query($sql_orders)) {
-    // Группируем заявки для отображения (как на main.php)
+$result_orders = $pdo->query("SELECT DISTINCT order_number, workshop, hide FROM orders");
+if ($result_orders) {
     $orders_temp = [];
-    while ($orders_data = $result_orders->fetch_assoc()) {
+    while ($orders_data = $result_orders->fetch(PDO::FETCH_ASSOC)) {
         if ($orders_data['hide'] != 1) {
             $order_num = $orders_data['order_number'];
             if (!isset($orders_temp[$order_num])) {
@@ -75,13 +65,8 @@ if ($result_orders = $mysqli->query($sql_orders)) {
     foreach ($orders_temp as $order_num => $order_data) {
         $orders_list[] = $order_num;
     }
-    // Сортируем по убыванию (новые заявки сверху)
     rsort($orders_list);
-    $result_orders->close();
 }
-
-// Закрываем соединение
-$mysqli->close();
 
 ?>
 <!DOCTYPE html>

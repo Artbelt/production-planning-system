@@ -1,5 +1,7 @@
 <?php
 require_once('tools/tools.php');
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo_filter = getPdo('plan_u3');
 
 $filter_name =  $_POST['filter_name'];
 $category = $_POST['category'];
@@ -34,20 +36,12 @@ if ($up_cap_type == 'metal') {
     $up_cap_new = $_POST['up_cap_new'] ?? '';
     
     if ($up_cap_select == '__NEW__' && $up_cap_new != '') {
-        // Добавляем новую крышку в ассортимент
         $up_cup = trim($up_cap_new);
-        // Проверяем, нет ли уже такой крышки в БД
-        global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-        $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-        $check_sql = "SELECT COUNT(*) as cnt FROM cap_stock WHERE cap_name = '".$mysqli->real_escape_string($up_cup)."'";
-        $check_result = $mysqli->query($check_sql);
-        $check_row = $check_result->fetch_assoc();
-        if ($check_row['cnt'] == 0) {
-            // Добавляем новую крышку в таблицу cap_stock
-            $insert_sql = "INSERT INTO cap_stock(cap_name) VALUES('".$mysqli->real_escape_string($up_cup)."')";
-            $mysqli->query($insert_sql);
+        $chk = $pdo_filter->prepare("SELECT COUNT(*) FROM cap_stock WHERE cap_name = ?");
+        $chk->execute([$up_cup]);
+        if ((int)$chk->fetchColumn() == 0) {
+            $pdo_filter->prepare("INSERT INTO cap_stock(cap_name) VALUES(?)")->execute([$up_cup]);
         }
-        $mysqli->close();
     } elseif ($up_cap_select != '' && $up_cap_select != '__NEW__') {
         $up_cup = trim($up_cap_select);
     } else {
@@ -70,20 +64,12 @@ if ($down_cap_type == 'metal') {
     $down_cap_new = $_POST['down_cap_new'] ?? '';
     
     if ($down_cap_select == '__NEW__' && $down_cap_new != '') {
-        // Добавляем новую крышку в ассортимент
         $down_cup = trim($down_cap_new);
-        // Проверяем, нет ли уже такой крышки в БД
-        global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-        $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-        $check_sql = "SELECT COUNT(*) as cnt FROM cap_stock WHERE cap_name = '".$mysqli->real_escape_string($down_cup)."'";
-        $check_result = $mysqli->query($check_sql);
-        $check_row = $check_result->fetch_assoc();
-        if ($check_row['cnt'] == 0) {
-            // Добавляем новую крышку в таблицу cap_stock
-            $insert_sql = "INSERT INTO cap_stock(cap_name) VALUES('".$mysqli->real_escape_string($down_cup)."')";
-            $mysqli->query($insert_sql);
+        $chk = $pdo_filter->prepare("SELECT COUNT(*) FROM cap_stock WHERE cap_name = ?");
+        $chk->execute([$down_cup]);
+        if ((int)$chk->fetchColumn() == 0) {
+            $pdo_filter->prepare("INSERT INTO cap_stock(cap_name) VALUES(?)")->execute([$down_cup]);
         }
-        $mysqli->close();
     } elseif ($down_cap_select != '' && $down_cap_select != '__NEW__') {
         $down_cup = trim($down_cap_select);
     } else {
@@ -146,80 +132,23 @@ if ($mode == 'update') {
         exit();
     }
     
-    // Обновляем информацию о фильтре в БД
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
+    $diametr_outer = $_POST['Diametr_outer'] ?? '';
+    $diametr_inner_1 = $_POST['Diametr_inner_1'] ?? '';
+    $diametr_inner_2 = $_POST['Diametr_inner_2'] ?? '';
+    $height = $_POST['Height'] ?? '';
+    $productivity = $_POST['productivity'] ?? '';
+    $press = (isset($_POST['press']) && $_POST['press'] === '1') ? '1' : '';
     
-    // Экранируем значения для безопасности
-    $filter_name_escaped = $mysqli->real_escape_string($filter_name);
-    $category_escaped = $mysqli->real_escape_string($category);
-    $p_p_name_escaped = $mysqli->real_escape_string($p_p_name);
-    $up_cup_escaped = $mysqli->real_escape_string($up_cup);
-    $down_cup_escaped = $mysqli->real_escape_string($down_cup);
-    $pf_name_escaped = $mysqli->real_escape_string($pf_name);
-    $pi_name_escaped = $mysqli->real_escape_string($pi_name);
-    $pckg_name_escaped = $mysqli->real_escape_string($pckg_name);
-    $remark_escaped = $mysqli->real_escape_string($remark);
-    $analog_escaped = $mysqli->real_escape_string($analog);
-    $diametr_outer_escaped = $mysqli->real_escape_string($diametr_outer);
-    $diametr_inner_1_escaped = $mysqli->real_escape_string($diametr_inner_1);
-    $diametr_inner_2_escaped = $mysqli->real_escape_string($diametr_inner_2);
-    $height_escaped = $mysqli->real_escape_string($height);
-    $up_cap_PU_escaped = $mysqli->real_escape_string($up_cap_PU);
-    $down_cap_PU_escaped = $mysqli->real_escape_string($down_cap_PU);
-    $productivity_escaped = $mysqli->real_escape_string($productivity);
-    // Для press: если значение '1', сохраняем '1', иначе NULL
-    $press_sql = ($press === '1') ? "'1'" : 'NULL';
-    // Для analog: если значение пустое, сохраняем NULL, иначе значение
-    $analog_sql = empty($analog) ? 'NULL' : "'$analog_escaped'";
-    
-    $sql = "UPDATE round_filter_structure SET 
-            category = '$category_escaped',
-            filter_package = '$p_p_name_escaped',
-            up_cap = '$up_cup_escaped',
-            down_cap = '$down_cup_escaped',
-            prefilter = '$pf_name_escaped',
-            plastic_insertion = '$pi_name_escaped',
-            packing = '$pckg_name_escaped',
-            comment = '$remark_escaped',
-            analog = $analog_sql,
-            Diametr_outer = '$diametr_outer_escaped',
-            Diametr_inner_1 = '$diametr_inner_1_escaped',
-            Diametr_inner_2 = '$diametr_inner_2_escaped',
-            Height = '$height_escaped',
-            PU_up_cap = '$up_cap_PU_escaped',
-            PU_down_cap = '$down_cap_PU_escaped',
-            productivity = '$productivity_escaped',
-            press = $press_sql
-            WHERE filter = '$filter_name_escaped'";
-    $result = $mysqli->query($sql);
-    
-    if (!$result) {
-        echo "Ошибка обновления фильтра: " . $mysqli->error;
-        $mysqli->close();
+    $stmt = $pdo_filter->prepare("UPDATE round_filter_structure SET category=?, filter_package=?, up_cap=?, down_cap=?, prefilter=?, plastic_insertion=?, packing=?, comment=?, analog=?, Diametr_outer=?, Diametr_inner_1=?, Diametr_inner_2=?, Height=?, PU_up_cap=?, PU_down_cap=?, productivity=?, press=? WHERE filter=?");
+    $analog_val = empty($analog) ? null : $analog;
+    $press_val = ($press === '1') ? '1' : null;
+    if (!$stmt->execute([$category, $p_p_name, $up_cup, $down_cup, $pf_name, $pi_name, $pckg_name, $remark, $analog_val, $diametr_outer, $diametr_inner_1, $diametr_inner_2, $height, $up_cap_PU ?? '', $down_cap_PU ?? '', $productivity, $press_val, $filter_name])) {
+        echo "Ошибка обновления фильтра";
         exit();
     }
     
-    // Обновляем информацию о гофропакете
-    $p_p_paper_width_escaped = $mysqli->real_escape_string($p_p_paper_width);
-    $p_p_fold_height_escaped = $mysqli->real_escape_string($p_p_fold_height);
-    $p_p_fold_count_escaped = $mysqli->real_escape_string($p_p_fold_count);
-    $p_p_remark_escaped = $mysqli->real_escape_string($p_p_remark);
-    $ext_wf_name_escaped = isset($ext_wf_name) ? $mysqli->real_escape_string($ext_wf_name) : '';
-    $int_wf_name_escaped = isset($int_wf_name) ? $mysqli->real_escape_string($int_wf_name) : '';
-    
-    $sql = "UPDATE paper_package_round SET 
-            p_p_height = '$p_p_paper_width_escaped',
-            p_p_ext_wireframe = '$ext_wf_name_escaped',
-            p_p_int_wireframe = '$int_wf_name_escaped',
-            p_p_paper_width = '$p_p_paper_width_escaped',
-            p_p_fold_height = '$p_p_fold_height_escaped',
-            p_p_fold_count = '$p_p_fold_count_escaped',
-            comment = '$p_p_remark_escaped'
-            WHERE p_p_name = '$p_p_name_escaped'";
-    $result = $mysqli->query($sql);
-    
-    $mysqli->close();
+    $stmt2 = $pdo_filter->prepare("UPDATE paper_package_round SET p_p_height=?, p_p_ext_wireframe=?, p_p_int_wireframe=?, p_p_paper_width=?, p_p_fold_height=?, p_p_fold_count=?, comment=? WHERE p_p_name=?");
+    $stmt2->execute([$p_p_paper_width, $ext_wf_name ?? '', $int_wf_name ?? '', $p_p_paper_width, $p_p_fold_height, $p_p_fold_count, $p_p_remark ?? '', $p_p_name]);
     
     echo "Фильтр {$filter_name} успешно обновлен в БД";
     ?>
@@ -249,46 +178,23 @@ $press = (isset($_POST['press']) && $_POST['press'] === '1') ? '1' : '';
 /** Если фильтра в БД такого нет -> начинаем запись */
 
 /** Запись информации о фильтре в БД */
-// Для press: если значение '1', сохраняем '1', иначе NULL
-$press_for_insert = ($press === '1') ? "'1'" : 'NULL';
-// Для analog: если значение пустое, сохраняем NULL, иначе значение
-$analog_escaped = empty($analog) ? 'NULL' : "'".addslashes($analog)."'";
-$sql = "INSERT INTO round_filter_structure(filter, category, filter_package, up_cap, down_cap, prefilter, plastic_insertion, packing, comment, analog, Diametr_outer, Diametr_inner_1, Diametr_inner_2, Height, PU_up_cap, PU_down_cap, productivity, press) 
-        VALUES ('$filter_name','$category','$p_p_name','$up_cup','$down_cup','$pf_name','$pi_name','$pckg_name','$remark', $analog_escaped, '$diametr_outer', '$diametr_inner_1', '$diametr_inner_2', '$height', '$up_cap_PU','$down_cap_PU', '$productivity', $press_for_insert);";
-$result = mysql_execute($sql);
+$st1 = $pdo_filter->prepare("INSERT INTO round_filter_structure(filter, category, filter_package, up_cap, down_cap, prefilter, plastic_insertion, packing, comment, analog, Diametr_outer, Diametr_inner_1, Diametr_inner_2, Height, PU_up_cap, PU_down_cap, productivity, press) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+$st1->execute([$filter_name, $category, $p_p_name, $up_cup, $down_cup, $pf_name, $pi_name, $pckg_name, $remark, $analog ?: null, $diametr_outer, $diametr_inner_1, $diametr_inner_2, $height, $up_cap_PU ?? '', $down_cap_PU ?? '', $productivity, ($press === '1') ? '1' : null]);
 
-/** Запись информации о гофропакете в БД */
-$sql = "INSERT INTO paper_package_round(p_p_name, p_p_height, p_p_ext_wireframe, p_p_int_wireframe, p_p_paper_width, p_p_fold_height, p_p_fold_count, comment) 
-        VALUES('$p_p_name','$p_p_paper_width','$ext_wf_name','$int_wf_name','$p_p_paper_width','$p_p_fold_height','$p_p_fold_count','$p_p_remark');";
-$result = mysql_execute($sql);
+$st2 = $pdo_filter->prepare("INSERT INTO paper_package_round(p_p_name, p_p_height, p_p_ext_wireframe, p_p_int_wireframe, p_p_paper_width, p_p_fold_height, p_p_fold_count, comment) VALUES (?,?,?,?,?,?,?,?)");
+$st2->execute([$p_p_name, $p_p_paper_width, $ext_wf_name ?? '', $int_wf_name ?? '', $p_p_paper_width, $p_p_fold_height, $p_p_fold_count, $p_p_remark ?? '']);
 
-/** Запись информации о каркасax в БД если каркас указан */
 if ($ext_wf_name != ''){
-    $sql = "INSERT INTO wireframe_round(w_name, w_material) 
-        VALUES('$ext_wf_name','$p_p_ext_wireframe');";
-    $result = mysql_execute($sql);
+    $pdo_filter->prepare("INSERT INTO wireframe_round(w_name, w_material) VALUES (?,?)")->execute([$ext_wf_name, $p_p_ext_wireframe]);
 }
 if ($int_wf_name != ''){
-    $sql = "INSERT INTO wireframe_round(w_name, w_material) 
-        VALUES('$int_wf_name','$p_p_int_wireframe');";
-    $result = mysql_execute($sql);
+    $pdo_filter->prepare("INSERT INTO wireframe_round(w_name, w_material) VALUES (?,?)")->execute([$int_wf_name, $p_p_int_wireframe]);
 }
-
-/** Запись информации о предфильтре в БД если предфильтр указан*/
 if ($pf_name != ''){
-    $sql = "INSERT INTO prefilter_round(pf_name)
-       
-        VALUES('$pf_name')";
-    $result = mysql_execute($sql);
+    $pdo_filter->prepare("INSERT INTO prefilter_round(pf_name) VALUES (?)")->execute([$pf_name]);
 }
-
-/** Запись информации о PP-вставке в БД если вставка указана*/ /** НАДО ДОДЕЛІВАТЬ -!!!!!!!!!!------------------------------------------------------ */
 if ($pi_name != ''){
-
-    $sql = "INSERT INTO insertions(i_name)
-       
-        VALUES('$pi_name')";
-    $result = mysql_execute($sql);
+    $pdo_filter->prepare("INSERT INTO insertions(i_name) VALUES (?)")->execute([$pi_name]);
 }
 
 

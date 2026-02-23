@@ -1,8 +1,8 @@
 <?php
 require_once('tools/tools.php');
+require_once __DIR__ . '/../auth/includes/db.php';
 
-// Загружаем список форм-факторов из БД
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
+$pdo = getPdo('plan');
 $form_factors = $pdo->query("SELECT id, name FROM form_factors ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>

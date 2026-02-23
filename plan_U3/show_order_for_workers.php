@@ -59,7 +59,7 @@ $count =0;
 echo '<form action="filter_parameters.php" method="post">';
 
 /** Разбор массива значений по подключению */
-while ($row = $result->fetch_assoc()){
+while ($row = $result->fetch(PDO::FETCH_ASSOC)){
 
     $count += 1;
     $filter_data = get_filter_data($row['filter']);
