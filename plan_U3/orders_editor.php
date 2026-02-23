@@ -2,8 +2,8 @@
 /** подключение фалйа настроек */
 require_once('settings.php') ;
 require_once('tools/tools.php') ;
-global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 
 $order_count = count($_POST['order_name']);
 echo 'выбраны'.$order_count.' заявки для объединения';
@@ -28,44 +28,37 @@ for ($x=0;$x<count($_POST['order_name']);$x++){
 echo '<p>Заявке присвоено имя: '.$combined_order_name.'<br>';
 
 /** Записываем элементы заявок под новым именем */
+$st_sel = $pdo->prepare("SELECT * FROM orders WHERE order_number = ?");
+$st_ins = $pdo->prepare("INSERT INTO orders (order_number, workshop, filter, count, marking, personal_packaging, personal_label, group_packaging, packaging_rate, group_label, remark, hide, cut_ready, cut_confirmed, plan_ready, corr_ready, build_ready) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+
 for ($x=0;$x<count($_POST['order_name']);$x++) {
-
-    $sql = "SELECT * FROM orders WHERE order_number ='" . $_POST['order_name'][$x] . "';";
-
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)) {echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n" . "Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";exit; }
-
-   while ($order_data = $result->fetch_assoc()) {
-       array_push($combined_order,$order_data);
-   }
-
+    $st_sel->execute([$_POST['order_name'][$x]]);
+    while ($order_data = $st_sel->fetch(PDO::FETCH_ASSOC)) {
+        $combined_order[] = $order_data;
+    }
 }
 
-/** запись позиций заявки в таблицу под новым именем */
 for ($z = 0; $z<count($combined_order); $z++){
-
-    $sql1 = "INSERT INTO orders VALUES ("."'"
-        . $combined_order_name . "',"."'"
-        . $combined_order[$z]['workshop'] . "',"."'"
-        . $combined_order[$z]['filter'] . "',"."'"
-        . $combined_order[$z]['count'] . "',"."'"
-        . $combined_order[$z]['marking']. "',"."'"
-        . $combined_order[$z]['personal_packaging']. "',"."'"
-        . $combined_order[$z]['personal_label'] . "',"."'"
-        . $combined_order[$z]['group_packaging'] . "',"."'"
-        . $combined_order[$z]['packaging_rate'] . "',"."'"
-        . $combined_order[$z]['group_label'] . "',"."'"
-        . $combined_order[$z]['remark'] . "',"."'"
-        . $combined_order[$z]['hide']. "')";
-    if (!$result1 = $mysqli->query($sql1)) {echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql1 . "\n" . "Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-
+    $st_ins->execute([
+        $combined_order_name,
+        $combined_order[$z]['workshop'],
+        $combined_order[$z]['filter'],
+        $combined_order[$z]['count'],
+        $combined_order[$z]['marking'],
+        $combined_order[$z]['personal_packaging'],
+        $combined_order[$z]['personal_label'],
+        $combined_order[$z]['group_packaging'],
+        $combined_order[$z]['packaging_rate'],
+        $combined_order[$z]['group_label'],
+        $combined_order[$z]['remark'],
+        $combined_order[$z]['hide'] ?? 0,
+        $combined_order[$z]['cut_ready'] ?? 0,
+        $combined_order[$z]['cut_confirmed'] ?? 0,
+        $combined_order[$z]['plan_ready'] ?? 0,
+        $combined_order[$z]['corr_ready'] ?? 0,
+        $combined_order[$z]['build_ready'] ?? 0
+    ]);
 }
-
-/** Выполняем запрос*/
-
-/** Закрываем соединение */
-$result->close();
-$mysqli->close();
 
 ?>
 <button onclick="window.close();">Закрыть окно</button>

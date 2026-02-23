@@ -1,11 +1,6 @@
 <?php
-require_once('settings.php');
-
-// Подключение к БД
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    die("Ошибка подключения: " . $mysqli->connect_error);
-}
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan');
 
 // SQL-запрос с сортировкой и объединением примечаний
 $sql = "
@@ -28,10 +23,7 @@ LEFT JOIN prefilter_panel pf ON pfs.prefilter = pf.p_name
 ORDER BY pfs.filter ASC;
 ";
 
-$result = $mysqli->query($sql);
-if (!$result) {
-    die("Ошибка запроса: " . $mysqli->error);
-}
+$rows = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -82,7 +74,7 @@ if (!$result) {
     </tr>
     </thead>
     <tbody>
-    <?php while ($row = $result->fetch_assoc()): ?>
+    <?php foreach ($rows as $row): ?>
         <tr>
             <td><?= htmlspecialchars($row['Фильтр']) ?></td>
             <td><?= htmlspecialchars($row['Количество усилителей']) ?></td>
@@ -98,12 +90,8 @@ if (!$result) {
                 <?= htmlspecialchars($row['Примечания гофропакета']) ?>
             </td>
         </tr>
-    <?php endwhile; ?>
+    <?php endforeach; ?>
     </tbody>
 </table>
 </body>
 </html>
-<?php
-$result->free();
-$mysqli->close();
-?>

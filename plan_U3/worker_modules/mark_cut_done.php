@@ -1,6 +1,7 @@
 <?php
 header('Content-Type: application/json');
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4", "root", "");
+require_once __DIR__ . '/../../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 
 if (!isset($_POST['id'])) {
     echo json_encode(['success' => false, 'message' => 'Нет ID']);

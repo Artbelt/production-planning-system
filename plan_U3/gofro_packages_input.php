@@ -31,11 +31,40 @@ if (empty($userDepartments)) {
     die('У вас нет доступа к цеху U3');
 }
 
+// === ДИАГНОСТИКА paper_package_round (откройте ?debug_ppr=1 в браузере) ===
+if (isset($_GET['debug_ppr'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        require_once __DIR__ . '/../auth/includes/db.php';
+        $pdo = getPdo('plan_u3');
+        $total = $pdo->query("SELECT COUNT(*) FROM paper_package_round")->fetchColumn();
+        $sample = $pdo->query("SELECT p_p_name FROM paper_package_round LIMIT 20")->fetchAll(PDO::FETCH_COLUMN);
+        $testQuery = trim($_GET['test_q'] ?? 'гофро');
+        $like = "%{$testQuery}%";
+        $stmt = $pdo->prepare("SELECT p_p_name FROM paper_package_round WHERE p_p_name LIKE ? LIMIT 10");
+        $stmt->execute([$like]);
+        $matched = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        echo json_encode([
+            'ok' => true,
+            'table' => 'paper_package_round',
+            'total_rows' => (int)$total,
+            'sample_names' => $sample,
+            'test_query' => $testQuery,
+            'matched_count' => count($matched),
+            'matched' => $matched,
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    } catch (Exception $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
+
 // === АВТОДОПОЛНЕНИЕ ===
 if (isset($_GET['q'])) {
     header('Content-Type: application/json');
     try {
-        $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4", "root", "");
+        require_once __DIR__ . '/../auth/includes/db.php';
+        $pdo = getPdo('plan_u3');
         $query = $_GET['q'];
         $stmt = $pdo->prepare("SELECT DISTINCT p_p_name FROM paper_package_round WHERE p_p_name LIKE ? LIMIT 10");
         $stmt->execute(["%$query%"]);
@@ -50,7 +79,8 @@ if (isset($_GET['q'])) {
 if (isset($_GET['orders']) && isset($_GET['part'])) {
     header('Content-Type: application/json');
     try {
-        $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4", "root", "");
+        require_once __DIR__ . '/../auth/includes/db.php';
+        $pdo = getPdo('plan_u3');
         $part = $_GET['part'];
         // Ищем заявки, где используется этот гофропакет через структуру фильтров
         // В round_filter_structure поле filter_package содержит название гофропакета
@@ -72,9 +102,8 @@ if (isset($_GET['orders']) && isset($_GET['part'])) {
 
 // === СОХРАНЕНИЕ В БД ===
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4", "root", "", [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
-    ]);
+    require_once __DIR__ . '/../auth/includes/db.php';
+    $pdo = getPdo('plan_u3');
     $data = json_decode(file_get_contents("php://input"), true);
 
     $date = $data['date'] ?? null;
@@ -131,7 +160,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // === ПОЛУЧЕНИЕ СПИСКА ЗАЯВОК ===
 try {
-    $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4", "root", "");
+    require_once __DIR__ . '/../auth/includes/db.php';
+    $pdo = getPdo('plan_u3');
     $orders = $pdo->query("SELECT DISTINCT order_number FROM orders WHERE hide IS NULL OR hide = 0")->fetchAll(PDO::FETCH_COLUMN);
 } catch (Exception $e) {
     $orders = [];

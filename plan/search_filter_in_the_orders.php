@@ -107,16 +107,11 @@ echo "<h4>Информация по наличию фильтра " . htmlspecia
 echo "<p>Заявки, в которых присутствует эта позиция:</p>";
 
 /** Создаем подключение к БД */
-$mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-/** Выполняем запрос SQL */
-$sql = "SELECT order_number FROM orders WHERE filter ='".$filter."'";
-
-/** Если запрос не удачный -> exit */
-if (!$result = $mysqli->query($sql)){ 
-    echo '<div class="alert">Ошибка: Наш запрос не удался и вот почему: <br>Запрос: ' . $sql . '<br>Номер ошибки: ' . $mysqli->errno . '<br>Ошибка: ' . $mysqli->error . '</div>'; 
-    exit; 
-}
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan');
+$stmt = $pdo->prepare("SELECT order_number FROM orders WHERE filter = ?");
+$stmt->execute([$filter]);
+$ordersRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 /** Разбор массива значений  */
 echo '<form action="show_order.php" method="post">';
@@ -126,7 +121,7 @@ $yy_now = (int)date('y');
 $yy_prev = ($yy_now - 1 + 100) % 100; // предыдущий год в формате 00..99
 $hidden_count = 0;
 
-while ($orders_data = $result->fetch_assoc()){
+foreach ($ordersRows as $orders_data) {
     $order_number = $orders_data['order_number'];
     // пытаемся извлечь 2 цифры года из начала номера заявки
     $yy_from_order = null;

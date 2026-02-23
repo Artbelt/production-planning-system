@@ -33,22 +33,15 @@ if (empty($userDepartments)) {
 
 require_once('tools/tools.php');
 require_once('settings.php');
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 require_once('cap_db_init.php');
 
-// Подключаемся к БД
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    die('Ошибка подключения к БД: ' . $mysqli->connect_error);
-}
-$mysqli->set_charset("utf8mb4");
-
-// Получаем список заявок (используем тот же алгоритм, что и на main.php)
 $orders_list = [];
-$sql_orders = "SELECT DISTINCT order_number, workshop, hide FROM orders";
-if ($result_orders = $mysqli->query($sql_orders)) {
-    // Группируем заявки для отображения (как на main.php)
+$result_orders = $pdo->query("SELECT DISTINCT order_number, workshop, hide FROM orders");
+if ($result_orders) {
     $orders_temp = [];
-    while ($orders_data = $result_orders->fetch_assoc()) {
+    while ($orders_data = $result_orders->fetch(PDO::FETCH_ASSOC)) {
         if ($orders_data['hide'] != 1) {
             $order_num = $orders_data['order_number'];
             if (!isset($orders_temp[$order_num])) {
@@ -60,9 +53,7 @@ if ($result_orders = $mysqli->query($sql_orders)) {
     foreach ($orders_temp as $order_num => $order_data) {
         $orders_list[] = $order_num;
     }
-    // Сортируем по убыванию (новые заявки сверху)
     rsort($orders_list);
-    $result_orders->close();
 }
 
 // Получаем выбранную заявку
@@ -73,20 +64,10 @@ $summary = [];
 $order_info = null;
 
 if (!empty($selected_order)) {
-    // Получаем движение крышек по заявке
-    $stmt = $mysqli->prepare("
-        SELECT date, cap_name, operation_type, quantity, filter_name, production_date, user_name, comment
-        FROM cap_movements
-        WHERE order_number = ?
-        ORDER BY date DESC, id DESC
-    ");
+    $stmt = $pdo->prepare("SELECT date, cap_name, operation_type, quantity, filter_name, production_date, user_name, comment FROM cap_movements WHERE order_number = ? ORDER BY date DESC, id DESC");
     
-    if ($stmt) {
-        $stmt->bind_param("s", $selected_order);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        
-        while ($row = $result->fetch_assoc()) {
+    if ($stmt && $stmt->execute([$selected_order])) {
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $movements[] = $row;
             
             // Подсчитываем итоги по крышкам
@@ -98,25 +79,16 @@ if (!empty($selected_order)) {
                 $summary[$cap_name] += abs($row['quantity']);
             }
         }
-        
-        $stmt->close();
     }
     
-    // Проверяем существование заявки
-    $stmt = $mysqli->prepare("SELECT COUNT(*) as cnt FROM orders WHERE order_number = ?");
-    if ($stmt) {
-        $stmt->bind_param("s", $selected_order);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $row = $result->fetch_assoc();
-        if ($row['cnt'] > 0) {
+    $stmt2 = $pdo->prepare("SELECT COUNT(*) as cnt FROM orders WHERE order_number = ?");
+    if ($stmt2 && $stmt2->execute([$selected_order])) {
+        $row = $stmt2->fetch(PDO::FETCH_ASSOC);
+        if (($row['cnt'] ?? 0) > 0) {
             $order_info = $selected_order;
         }
-        $stmt->close();
     }
 }
-
-$mysqli->close();
 
 ?>
 <!DOCTYPE html>

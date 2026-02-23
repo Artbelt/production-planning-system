@@ -9,9 +9,8 @@ if (empty($order)) {
 }
 
 try {
-    $pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u3;charset=utf8mb4", "root", "", [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
-    ]);
+    require_once __DIR__ . '/../../auth/includes/db.php';
+    $pdo = getPdo('plan_u3');
     
     // Общая информация о заявке
     $stmt = $pdo->prepare("SELECT COUNT(*) as total, SUM(count) as total_count FROM orders WHERE order_number = ? AND (hide IS NULL OR hide != 1)");

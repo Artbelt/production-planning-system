@@ -89,11 +89,12 @@ function loadSettings($path) {
         error_log("Fatal error loading settings from {$path}: " . $e->getMessage());
     }
     
-    // Fallback настройки
+    // Fallback — из env.php
+    if (file_exists(__DIR__ . '/../../env.php')) require __DIR__ . '/../../env.php';
     return [
-        'host' => '127.0.0.1',
-        'user' => 'root',
-        'pass' => ''
+        'host' => defined('DB_HOST') ? DB_HOST : '127.0.0.1',
+        'user' => defined('DB_USER') ? DB_USER : 'root',
+        'pass' => defined('DB_PASS') ? DB_PASS : ''
     ];
 }
 

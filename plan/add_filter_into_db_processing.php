@@ -11,34 +11,22 @@ $filter =  $_GET['filter'];
 $workshop = $_GET['workshop'];
 
 /** Подключаемся к БД */
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan');
 
-/** Если не получилось подключиться */
-if ($mysqli->connect_errno) {  echo "Номер ошибки: " . $mysqli->connect_errno . "\n". "Ошибка: " . $mysqli->connect_error . "\n";
-    exit;
-}
-
-/** Выполняем запрос SQL */
-$sql = "SELECT * FROM filters WHERE filter = '$filter';";
-/** Если запрос вернет ошибку */
-if (!$result = $mysqli->query($sql)) {  echo "Номер ошибки: " . $mysqli->errno . "\n" . "Ошибка: " . $mysqli->error . "\n";
-    exit;
-}
+$stmt = $pdo->prepare("SELECT * FROM filters WHERE filter = ?");
+$stmt->execute([$filter]);
+$existing = $stmt->fetch(PDO::FETCH_ASSOC);
 
 /** Разбираем результат запроса. Если нет ни одной строки, значит можно вносить фильтр в БД */
-if ($result->num_rows === 0) {
+if (!$existing) {
 
-    /** Записываем название фильтра в БД */
-    $sql = "INSERT INTO filters(filter, workshop) VALUES ('$filter','$workshop');";
-
-    /** Если произошла ошибка при добавлении */
-    if (!$result = $mysqli->query($sql)){ echo "Номер ошибки: " . $mysqli->errno . "\n" . "Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
+    $ins = $pdo->prepare("INSERT INTO filters(filter, workshop) VALUES (?, ?)");
+    $ins->execute([$filter, $workshop]);
     /** Если внесение в БД успешно */
     echo "Фильтр ".$filter." успешно добавлен в БД";
 
-} else {/** Если такой фильтр уже есть */
+} else {
     echo "Фильтр ".$filter." уже есть в БД";
 }
 

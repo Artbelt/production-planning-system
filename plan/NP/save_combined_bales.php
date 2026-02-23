@@ -1,6 +1,7 @@
 <?php
 $data = json_decode(file_get_contents("php://input"), true);
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
+require_once __DIR__ . '/../../auth/includes/db.php';
+$pdo = getPdo('plan');
 
 $order = $data['order'];
 $auto_bales = $data['auto_bales'];

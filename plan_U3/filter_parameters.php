@@ -19,18 +19,13 @@ if (!$filter) {exit();}
 
 
 /** Создаем подключение к БД */
-$mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
+$stmt = $pdo->prepare("SELECT * FROM panel_filter_structure WHERE filter = ?");
+$stmt->execute([$filter]);
+$rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-
-/** Выполняем запрос SQL  выборка из таблицы данных фильтров*/
-$sql = "SELECT * FROM panel_filter_structure WHERE filter='".$filter."';";
-
-/** Если запрос не удачный -> exit */
-if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-
-/** Разбор массива значений  */
-
-while ($filter_data = $result->fetch_assoc()) {
+foreach ($rows as $filter_data) {
 
     $type_of_filter = $filter_data['category'];
     $paper_package = $filter_data['paper_package'];
@@ -40,17 +35,12 @@ while ($filter_data = $result->fetch_assoc()) {
     $g_box = $filter_data['g_box'];
     $comment = $filter_data['comment'];
 }
-$result->close();
 
-/** Выполняем запрос SQL  выборка из таблицы данных гофропакетов*/
-$sql_paper = "SELECT * FROM paper_package_panel WHERE p_p_name='".$paper_package."';";
+$stmt_paper = $pdo->prepare("SELECT * FROM paper_package_panel WHERE p_p_name = ?");
+$stmt_paper->execute([$paper_package]);
+$result_paper = $stmt_paper->fetchAll(PDO::FETCH_ASSOC);
 
-/** Если запрос не удачный -> exit */
-if (!$result_paper= $mysqli->query($sql_paper)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-
-    /** Разбор массива значений  */
-
-    while ($paper_package_data = $result_paper->fetch_assoc()) {
+    foreach ($result_paper as $paper_package_data) {
 
         $p_p_length = $paper_package_data['p_p_length'];
         $p_p_height = $paper_package_data['p_p_height'];
@@ -60,50 +50,22 @@ if (!$result_paper= $mysqli->query($sql_paper)){ echo "Ошибка: Наш за
         $p_p_remark = $paper_package_data['p_p_remark'];
     }
 
-/** Закрываем соединение */
-$result_paper->close();
-
-/** Выполняем запрос SQL  выборка из таблицы данных каркасов*/
-$sql_wireframe = "SELECT * FROM wireframe_panel WHERE w_name='".$wireframe."';";
-
-/** Если запрос не удачный -> exit */
-if (!$result_wireframe= $mysqli->query($sql_wireframe)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-
-/** Разбор массива значений  */
-
-while ($wireframe_data = $result_wireframe->fetch_assoc()) {
-
+$stmt_wf = $pdo->prepare("SELECT * FROM wireframe_panel WHERE w_name = ?");
+$stmt_wf->execute([$wireframe]);
+foreach ($stmt_wf->fetchAll(PDO::FETCH_ASSOC) as $wireframe_data) {
     $w_length = $wireframe_data['w_length'];
     $w_width = $wireframe_data['w_width'];
     $w_material = $wireframe_data['w_material'];
-
 }
 
-/** Закрываем соединение */
-$result_wireframe->close();
-
-/** Выполняем запрос SQL  выборка из таблицы данных предфильтров*/
-$sql_prefilter = "SELECT * FROM prefilter_panel WHERE p_name='".$prefilter."';";
-
-/** Если запрос не удачный -> exit */
-if (!$result_prefilter= $mysqli->query($sql_prefilter)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-
-/** Разбор массива значений  */
-
-while ($prefilter_data = $result_prefilter->fetch_assoc()) {
-
+$stmt_pf = $pdo->prepare("SELECT * FROM prefilter_panel WHERE p_name = ?");
+$stmt_pf->execute([$prefilter]);
+foreach ($stmt_pf->fetchAll(PDO::FETCH_ASSOC) as $prefilter_data) {
     $p_length = $prefilter_data['p_length'];
     $p_width = $prefilter_data['p_width'];
     $p_material = $prefilter_data['p_material'];
     $p_remark = $prefilter_data['p_remark'];
-
 }
-
-/** Закрываем соединение */
-$result_prefilter->close();
-
-/** Закрываем соединение */
-$mysqli->close();
 
 /** Выводим данные */
 

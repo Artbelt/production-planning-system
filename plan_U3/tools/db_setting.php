@@ -1,15 +1,13 @@
 <?php
 /** Создаем БД и таблици для работы программы */
 
-/** Подключение к MySql */
-$server_name  = '127.0.0.1';
-$user_name = 'root';
-$password = '';
+require_once __DIR__ . '/../../auth/includes/db.php';
+
 $database_name = 'plan';
 $table_name = 'orders';
 
-/** Создание подключения */
-$connection = new mysqli($server_name,$user_name,$password);
+/** Создание подключения (без выбора БД — создадим её) */
+$connection = new mysqli(DB_HOST, DB_USER, DB_PASS);
 
 /** Проверка соединения */
 if ($connection->error){

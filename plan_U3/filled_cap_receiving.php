@@ -1,8 +1,8 @@
 <?php
 require_once('tools/tools.php');
 require_once('settings.php');
-
-$mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 
 if (isset($_POST['date_of_filled_operation']) & ($_POST['date_of_filled_operation'] != '')){
     $input_date = $_POST['date_of_filled_operation'];
@@ -26,23 +26,12 @@ if (isset($_POST['date_of_filled_operation']) & ($_POST['date_of_filled_operatio
 
 
 if (isset($_POST['name_of_cap'])) {
-
     $cap = $_POST['name_of_cap'];
     $cap_count = $_POST['input_cap_count'];
-    /** Запись поступивших крышек на склад */
-    $sql = "INSERT INTO log (date_of_operation, name_of_cap_field, count_of_caps, cap_action) VALUES ('$input_date', '$input_cap', '$input_count','FILL');";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)) {
-        echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n" . "Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-        exit;
+    $st = $pdo->prepare("INSERT INTO log (date_of_operation, name_of_cap_field, count_of_caps, cap_action) VALUES (?, ?, ?, 'FILL')");
+    if (!$st->execute([$input_date, $input_cap, $input_count])) {
+        echo "Ошибка записи"; exit;
     }
-    // $sql = "SELECT * FROM list_of_caps WHERE name_of_cap = '$cap';";
-   // $sql = "UPDATE list_of_caps SET cap_count = cap_count +'$cap_count'  WHERE name_of_cap = '$cap';";
-    if (!$result = $mysqli->query($sql)) {
-        echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n" . "Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-
 }
 
 

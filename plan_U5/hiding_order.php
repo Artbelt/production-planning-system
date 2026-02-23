@@ -58,7 +58,8 @@ if (empty($order)) {
     die('Ошибка: не указан номер заявки.');
 }
 
-$mysqli = new mysqli('127.0.0.1','root','','plan_u5');
+if (file_exists(__DIR__ . '/../env.php')) require __DIR__ . '/../env.php';
+$mysqli = new mysqli(defined('DB_HOST') ? DB_HOST : '127.0.0.1', defined('DB_USER') ? DB_USER : 'root', defined('DB_PASS') ? DB_PASS : '', 'plan_u5');
 
 if ($mysqli->connect_error) {
     die('Ошибка подключения к базе данных: ' . $mysqli->connect_error);

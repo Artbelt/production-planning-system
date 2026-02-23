@@ -1,5 +1,6 @@
 <?php
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan');
 
 // Получаем список заявок
 $orders = $pdo->query("SELECT DISTINCT order_number FROM orders WHERE hide IS NULL OR hide=0 ORDER BY order_number ASC")

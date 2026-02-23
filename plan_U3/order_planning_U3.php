@@ -13,24 +13,11 @@ echo "Режим <mark>простого</mark> планирования заяв
 /** оформление номера заявки */
 echo "<section id='order_number'><b> ".$order_number."</b></section><p>";
 
-/** Подключаемся к БД для вывода заявки по подключению №1*/
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    /** Если не получилось подключиться */
-    echo 'Возникла проблема на сайте'
-        . "Номер ошибки: " . $mysqli->connect_errno . "\n"
-        . "Ошибка: " . $mysqli->connect_error . "\n";
-    exit;
-}
-/** Выполняем запрос SQL по подключению №1*/
-$sql = "SELECT * FROM orders WHERE order_number = '$order_number';";
-if (!$result = $mysqli->query($sql)) {
-    echo "Ошибка: Наш запрос не удался и вот почему: \n"
-        . "Запрос: " . $sql . "\n"
-        . "Номер ошибки: " . $mysqli->errno . "\n"
-        . "Ошибка: " . $mysqli->error . "\n";
-    exit;
-}
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
+$stmt = $pdo->prepare("SELECT * FROM orders WHERE order_number = ?");
+$stmt->execute([$order_number]);
+$orderRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 /** Формируем шапку таблицы для вывода заявки */
 echo "<table id='main_table' border='1' style='font-size: 13px'>
@@ -46,8 +33,8 @@ echo "<table id='main_table' border='1' style='font-size: 13px'>
         </tr>";
 
 
-/** Разбор массива значений по подключению №1 */
-while ($row = $result->fetch_assoc()){
+/** Разбор массива значений */
+foreach ($orderRows as $row) {
     $difference = (int)$row['count']-0;
     echo "<tr>"
         ."<td>".$row['filter']."</td>"

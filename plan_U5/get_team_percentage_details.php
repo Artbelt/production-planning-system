@@ -125,6 +125,23 @@ try {
             $stmt_prod->close();
         }
         
+        // Плановая дата изготовления позиции (из build_plan), формат дд.мм.гг
+        $planned_dates_str = '';
+        $stmt_plan = $mysqli->prepare("SELECT GROUP_CONCAT(DISTINCT plan_date ORDER BY plan_date) AS plan_dates FROM build_plan WHERE order_number = ? AND filter = ?");
+        if ($stmt_plan) {
+            $stmt_plan->bind_param('ss', $order_number, $filter_name);
+            $stmt_plan->execute();
+            $result_plan = $stmt_plan->get_result();
+            if ($result_plan && ($row_plan = $result_plan->fetch_assoc()) && !empty($row_plan['plan_dates'])) {
+                $dates = array_map(function ($d) {
+                    $t = strtotime(trim($d));
+                    return $t ? date('d.m.y', $t) : $d;
+                }, explode(',', $row_plan['plan_dates']));
+                $planned_dates_str = implode(', ', $dates);
+            }
+            $stmt_plan->close();
+        }
+
         // Получаем данные по остальным заявкам (для того же фильтра) - по каждой заявке отдельно
         $other_orders_data = [];
         $stmt_other_orders = $mysqli->prepare("
@@ -166,6 +183,7 @@ try {
             'item_percentage' => $item_percentage,
             'ordered_in_order' => $ordered_in_order,
             'produced_in_order' => $produced_in_order,
+            'planned_dates' => htmlspecialchars($planned_dates_str, ENT_QUOTES, 'UTF-8'),
             'other_orders_data' => $other_orders_data
         ];
     }

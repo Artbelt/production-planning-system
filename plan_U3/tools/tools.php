@@ -1,21 +1,13 @@
 <?php /** tools.php в файле прописаны разные функции */
 
-/** ПОдключаем функции */
-require_once('C:/xampp/htdocs/plan_U3/settings.php') ;
+require_once(__DIR__ . '/../settings.php');
+require_once(__DIR__ . '/../../auth/includes/db.php');
 
-global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
+function _planPdo() { return getPdo('plan_u3'); }
 
 function show_ads(){
-
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
-    $host = $mysql_host;
-    $db = $mysql_database;
-    $user = $mysql_user;
-    $pass = $mysql_user_pass;
-
     try {
-        $pdo = new PDO("mysql:host=$host;dbname=$db", $user, $pass);
+        $pdo = _planPdo();
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
         // Запрос активных объявлений
@@ -100,20 +92,19 @@ function is_admin($user){
             return true;
         }
         
-        // Если нет информации о роли, проверяем в старой таблице по имени пользователя
         if (isset($user['full_name'])) {
-            $sql = "SELECT * FROM users WHERE user = '".$user['full_name']."'";
-            $result = mysql_execute($sql);
-            $status = mysqli_fetch_assoc($result);
+            $pdo = _planPdo();
+            $st = $pdo->prepare("SELECT * FROM users WHERE user = ?");
+            $st->execute([$user['full_name']]);
+            $status = $st->fetch(PDO::FETCH_ASSOC);
             return ($status && $status['Admin'] == 1);
         }
         return false;
     }
-    
-    // Если $user - это строка (старая система)
-    $sql = "SELECT * FROM users WHERE user = '".$user."'";
-    $result = mysql_execute($sql);
-    $status = mysqli_fetch_assoc($result);
+    $pdo = _planPdo();
+    $st = $pdo->prepare("SELECT * FROM users WHERE user = ?");
+    $st->execute([$user]);
+    $status = $st->fetch(PDO::FETCH_ASSOC);
     if ($status && $status['Admin'] == 1){
         return true;
     } else {
@@ -133,10 +124,9 @@ function edit_access_button_draw(){
 /** Функция показывает есть ли доступ к редактированию данных */
 function is_edit_access_granted(){
     //получаем статус возможности редактирования
-    /** Выполняем запрос SQL для загрузки заявок*/
-    $sql = "SELECT * FROM editor_access_time";
-    $result = mysql_execute($sql);
-    $access_time_result = mysqli_fetch_assoc($result);
+    $pdo = _planPdo();
+    $st = $pdo->query("SELECT * FROM editor_access_time");
+    $access_time_result = $st->fetch(PDO::FETCH_ASSOC);
     $acces_time = $access_time_result['access_time'];
     $now_time = date("Y-m-d H:i:s");
     if ($acces_time > $now_time){
@@ -188,13 +178,13 @@ function get_produced_filters_in_time ($start_date,$finish_date){
     $start_date = reverse_date($start_date);
     $finish_date = reverse_date($finish_date);
 
-    $sql = "SELECT * FROM manufactured_production WHERE date_of_production >= '$start_date' AND date_of_production <= '$finish_date';";
-
-    $result = mysql_execute($sql);
+    $pdo = _planPdo();
+    $st = $pdo->prepare("SELECT * FROM manufactured_production WHERE date_of_production >= ? AND date_of_production <= ?");
+    $st->execute([$start_date, $finish_date]);
 
     $result_array = array();
 
-    foreach ($result as $variant){
+    foreach ($st as $variant){
         $temp_array = array();
         $temp_date ='';
         //$x += $variant['count_of_filters'];
@@ -223,22 +213,14 @@ function print_r_my ($a){
 
 /** Отображение выпуска продукции за последнюю неделю */
 function show_weekly_production(){
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    
     $count = 0;
+    $pdo = _planPdo();
     
-    // Начинаем плашку (карточку)
     echo '<div class="production-card">';
     echo '<div class="production-card-header">';
     echo '<h3 class="production-card-title">Изготовленная продукция за последние 10 дней</h3>';
     echo '</div>';
     echo '<div class="production-card-body">';
-    
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        echo "Ошибка подключения к БД";
-        return;
-    }
     
     // Собираем данные за все дни
     $all_days_data = [];
@@ -247,14 +229,9 @@ function show_weekly_production(){
         $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));
         $production_date = reverse_date($production_date);
         
-        $sql = "SELECT SUM(count_of_filters) AS total_count FROM manufactured_production WHERE date_of_production = '$production_date'";
-        $result = $mysqli->query($sql);
-        
-        if (!$result) {
-            continue;
-        }
-        
-        $row = $result->fetch_assoc();
+        $st = $pdo->prepare("SELECT SUM(count_of_filters) AS total_count FROM manufactured_production WHERE date_of_production = ?");
+        $st->execute([$production_date]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
         $total_count = (int)($row['total_count'] ?? 0);
         
         // Сохраняем данные для этого дня
@@ -264,13 +241,7 @@ function show_weekly_production(){
         ];
         
         $count = $count + $total_count;
-        
-        if ($result) {
-            $result->free();
-        }
     }
-    
-    $mysqli->close();
     
     // Выводим таблицу
     echo '<style>
@@ -572,54 +543,29 @@ function show_weekly_production(){
 
 /** Отображение выпуска гофропакетов за последнюю неделю */
 function show_weekly_parts(){
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    
     $count = 0;
+    $pdo = _planPdo();
     
-    // Начинаем плашку (карточку)
     echo '<div class="production-card">';
     echo '<div class="production-card-header">';
     echo '<h3 class="production-card-title">Изготовленные гофропакеты за последние 10 дней</h3>';
     echo '</div>';
     echo '<div class="production-card-body">';
     
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        echo "Ошибка подключения к БД";
-        return;
-    }
-    
-    // Собираем данные за все дни
     $all_days_data = [];
     
     for ($a = 1; $a < 11; $a++) {
         $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));
         $production_date = reverse_date($production_date);
         
-        $sql = "SELECT SUM(count_of_parts) AS total_count FROM manufactured_parts WHERE date_of_production = '$production_date'";
-        $result = $mysqli->query($sql);
-        
-        if (!$result) {
-            continue;
-        }
-        
-        $row = $result->fetch_assoc();
+        $st = $pdo->prepare("SELECT SUM(count_of_parts) AS total_count FROM manufactured_parts WHERE date_of_production = ?");
+        $st->execute([$production_date]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
         $total_count = (int)($row['total_count'] ?? 0);
         
-        // Сохраняем данные для этого дня
-        $all_days_data[] = [
-            'date' => $production_date,
-            'total_count' => $total_count
-        ];
-        
+        $all_days_data[] = ['date' => $production_date, 'total_count' => $total_count];
         $count = $count + $total_count;
-        
-        if ($result) {
-            $result->free();
-        }
     }
-    
-    $mysqli->close();
     
     // Выводим таблицу
     echo '<table class="production-table">';
@@ -773,26 +719,17 @@ function show_weekly_parts(){
 
 /** Отображение остатка крышек по позиции */
 function show_prepared_caps($filter){
-
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
     $up_cap='';
     $down_cap='';
     $up_cap_filled_count='';
     $up_cap_not_filled_count='';
     $down_cap_count='';
 
-    /** Создаем подключение к БД */
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-    /** Определяем какие крішки входят в состав фильтра*/
-    $sql = "SELECT up_cap, down_cap FROM round_filter_structure WHERE filter = '$filter';";
-
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-    $cap_data = $result->fetch_assoc();
+    $pdo = _planPdo();
+    $st = $pdo->prepare("SELECT up_cap, down_cap FROM round_filter_structure WHERE filter = ?");
+    $st->execute([$filter]);
+    $cap_data = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$cap_data) { echo "Фильтр не найден"; exit; }
     $up_cap = $cap_data['up_cap']??'';
 
 //    if (isset($cap_data['up_cap'])){
@@ -807,20 +744,14 @@ function show_prepared_caps($filter){
         /** если металлические крышки в фильтре присутствуют, то находим их колическтво на остатке */
        // if ($up_cap != ''){
         if (isset($up_cap)){
-            $sql="SELECT current_quantity FROM cap_stock WHERE cap_name = '$up_cap'";
-            /** Если запрос не удачный -> exit */
-            if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-                exit;
-            }
-            $up_cap_data = $result->fetch_assoc();
+            $st2 = $pdo->prepare("SELECT current_quantity FROM cap_stock WHERE cap_name = ?");
+            $st2->execute([$up_cap]);
+            $up_cap_data = $st2->fetch(PDO::FETCH_ASSOC);
             $up_cap_not_filled_count = $up_cap_data['current_quantity']??'';
 
-            /** Получаем информацию по залитому уплотнителю */
-            $sql="SELECT cap_count FROM list_of_filled_caps WHERE name_of_cap = '$up_cap'";
-            if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-                exit;
-            }
-            $filled_up_cap_data = $result->fetch_assoc();
+            $st3 = $pdo->prepare("SELECT cap_count FROM list_of_filled_caps WHERE name_of_cap = ?");
+            $st3->execute([$up_cap]);
+            $filled_up_cap_data = $st3->fetch(PDO::FETCH_ASSOC);
             $up_cap_filled_count = $filled_up_cap_data['cap_count']??'';
 
         } else {//если не определены крышки для этого фильтра -> заменяем просто чем угодно
@@ -830,12 +761,9 @@ function show_prepared_caps($filter){
 
     //if ($down_cap != ''){
         if (isset($down_cap)){
-            $sql="SELECT current_quantity FROM cap_stock WHERE cap_name = '$down_cap'";
-            /** Если запрос не удачный -> exit */
-            if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-                exit;
-            }
-            $down_cap_data = $result->fetch_assoc();
+            $st4 = $pdo->prepare("SELECT current_quantity FROM cap_stock WHERE cap_name = ?");
+            $st4->execute([$down_cap]);
+            $down_cap_data = $st4->fetch(PDO::FETCH_ASSOC);
             $down_cap_count = $down_cap_data['current_quantity']??'';
         } else {
             $down_cap_count = '(H)';
@@ -857,30 +785,18 @@ function show_prepared_caps($filter){
  * @return ни чего не возвращает, просто рисует список заявок
  */
 function load_orders($list, $selection, $form){
+    $pdo = _planPdo();
+    $result = $pdo->query("SELECT DISTINCT order_number, workshop FROM orders WHERE hide IS NULL OR hide = 0");
+    if (!$result) { echo "Ошибка загрузки заявок"; return; }
 
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
-    /** Создаем подключение к БД */
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-    /** Выполняем запрос SQL для загрузки заявок*/
-    $sql = "SELECT DISTINCT order_number, workshop FROM orders WHERE hide IS NULL OR hide = 0;";
-
-    if (!isset($form)){
-        $form = 'form';
-    }
-
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
+    if (!isset($form)){ $form = 'form'; }
 
     if ($list == '0') {
 
         if (isset($selection)&&($selection != 0)){// если $selected определено
             /** Разбор массива значений для выпадающего списка */
             echo "<select id='selected_order' name = 'selected_order' form='".$form."'>";
-            while ($orders_data = $result->fetch_assoc()) {
+            while ($orders_data = $result->fetch(PDO::FETCH_ASSOC)) {
                 if ($selection == $orders_data['order_number']){
                     echo "<option name='order_number' value=" . $orders_data['order_number'] . " selected>" . $orders_data['order_number'] . "</option>";
                 } else {
@@ -894,7 +810,7 @@ function load_orders($list, $selection, $form){
             /** Если $selected не определено то делаем список */
             /** Разбор массива значений для выпадающего списка */
             echo "<select id='selected_order'  name = 'selected_order' form='".$form."'>";
-            while ($orders_data = $result->fetch_assoc()) {
+            while ($orders_data = $result->fetch(PDO::FETCH_ASSOC)) {
                 echo "<option name='order_number' value=" . $orders_data['order_number'] . ">" . $orders_data['order_number'] . "</option>";
             }
             echo "</select>";
@@ -903,190 +819,79 @@ function load_orders($list, $selection, $form){
         echo 'Перечень заявок';
         /** Разбор массива значений для списка чекбоксов */
         echo "<form action='orders_editor.php' method='post'>";
-        while ($orders_data = $result->fetch_assoc()) {
+        while ($orders_data = $result->fetch(PDO::FETCH_ASSOC)) {
             echo "<input type='checkbox' name='order_name[]'value=".$orders_data['order_number']." <label>".$orders_data['order_number'] ."</label><br>";
         }
         echo "<button type='submit'>Объединить для расчета</button>";
         echo "</form>";
 
     }
-    /** Закрываем соединение */
-    $result->close();
-    $mysqli->close();
 }
 
 /** Создание <SELECT> списка с перечнем PP вставок */
 function load_insertions(){
-
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
-    /** Создаем подключение к БД */
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-    /** Выполняем запрос SQL для загрузки заявок*/
-    $sql = "SELECT DISTINCT * FROM insertions order by i_name;";
-
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-    /** Разбор массива значений  */
+    $pdo = _planPdo();
+    $st = $pdo->query("SELECT DISTINCT * FROM insertions ORDER BY i_name");
+    if (!$st) { echo "Ошибка загрузки вставок"; return; }
     echo "<select id='pp_insertion' name = 'pp_insertion'>";
     echo "<option></option>";
-    while ($pp_insertions_data = $result->fetch_assoc()){
-        echo "<option name='pp_insertion' value=".$pp_insertions_data['i_name'].">".$pp_insertions_data['i_name']."</option>";
+    while ($row = $st->fetch(PDO::FETCH_ASSOC)){
+        echo "<option name='pp_insertion' value=".$row['i_name'].">".$row['i_name']."</option>";
     }
     echo "</select>";
-
-    /** Закрываем соединение */
-    $result->close();
-    $mysqli->close();
-
 }
 
 /** Создание <SELECT> списка с перечнем крышек */
 function load_caps($name_of_list){
-
-
-        global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
-        /** Создаем подключение к БД */
-        $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-        /** Выполняем запрос SQL для загрузки заявок*/
-        $sql = "SELECT DISTINCT * FROM cap_stock order by cap_name;";
-
-        /** Если запрос не удачный -> exit */
-        if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-            exit;
-        }
-    if ($name_of_list ==''){
-        /** Разбор массива значений  */
-        echo "<select id='name_of_cap' name = 'name_of_cap'>";
-        echo "<option></option>";
-        while ($caps_data = $result->fetch_assoc()){
-            echo "<option name='name_of_cap' value=".$caps_data['cap_name'].">".$caps_data['cap_name']."</option>";
-        }
-        echo "</select>";
-
-        /** Закрываем соединение */
-        $result->close();
-        $mysqli->close();
-    }else{
-        /** Разбор массива значений  */
-        echo "<select id=".$name_of_list." name = ".$name_of_list.">";
-        echo "<option></option>";
-        while ($caps_data = $result->fetch_assoc()){
-            echo "<option name='name_of_cap' value=".$caps_data['cap_name'].">".$caps_data['cap_name']."</option>";
-        }
-        echo "</select>";
-
-        /** Закрываем соединение */
-        $result->close();
-        $mysqli->close();
-
+    $pdo = _planPdo();
+    $st = $pdo->query("SELECT DISTINCT * FROM cap_stock ORDER BY cap_name");
+    if (!$st) { echo "Ошибка загрузки крышек"; return; }
+    $id = $name_of_list === '' ? 'name_of_cap' : $name_of_list;
+    $name = $name_of_list === '' ? 'name_of_cap' : $name_of_list;
+    echo "<select id='$id' name='$name'>";
+    echo "<option></option>";
+    while ($row = $st->fetch(PDO::FETCH_ASSOC)){
+        echo "<option name='name_of_cap' value=".$row['cap_name'].">".$row['cap_name']."</option>";
     }
+    echo "</select>";
 }
 
 /** Создание <SELECT> списка с перечнем залитых крышек */
 function load_filled_caps(){
-
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
-    /** Создаем подключение к БД */
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-    /** Выполняем запрос SQL для загрузки заявок*/
-    $sql = "SELECT DISTINCT * FROM list_of_filled_caps;";
-
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-
-
-    /** Разбор массива значений  */
+    $pdo = _planPdo();
+    $st = $pdo->query("SELECT DISTINCT * FROM list_of_filled_caps");
+    if (!$st) { echo "Ошибка загрузки залитых крышек"; return; }
     echo "<select id='name_of_filled_cap' name = 'name_of_filled_cap'>";
-    while ($caps_data = $result->fetch_assoc()){
-        echo "<option name='name_of_filled_cap' value=".$caps_data['name_of_cap'].">".$caps_data['name_of_cap']."</option>";
+    while ($row = $st->fetch(PDO::FETCH_ASSOC)){
+        echo "<option name='name_of_filled_cap' value=".$row['name_of_cap'].">".$row['name_of_cap']."</option>";
     }
     echo "</select>";
-
-    /** Закрываем соединение */
-    $result->close();
-    $mysqli->close();
 }
 
 /** Вывод списка операции с крышками по маркеру:  */
 function load_cap_history($target){
-    if ($target == 'input'){
-        global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
-        /** Создаем подключение к БД */
-        $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-        /** Выполняем запрос SQL для загрузки заявок*/
-       // $sql = "SELECT * FROM log;";
-        $sql = "SELECT * FROM cap_log WHERE cap_action = 'IN';";
-
-
-        /** Если запрос не удачный -> exit */
-        if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-            exit;
-        }
-        while ($log_data = $result->fetch_assoc()){
-            echo $log_data['date_of_operation']." поступило ".$log_data['name_of_cap_field']." в количестве ".$log_data['count_of_caps']." шт"."\r\n";
-        }
-
-    }
-    if ($target == 'filled'){
-        global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
-        /** Создаем подключение к БД */
-        $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-        /** Выполняем запрос SQL для загрузки заявок*/
-        $sql = "SELECT * FROM cap_log WHERE cap_action = 'FILL';";
-
-        /** Если запрос не удачный -> exit */
-        if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-            exit;
-        }
-        while ($log_data = $result->fetch_assoc()){
-            echo $log_data['date_of_operation']." поступило ".$log_data['name_of_cap_field']." в количестве ".$log_data['count_of_caps']." шт"."\r\n";
-        }
-
+    $pdo = _planPdo();
+    $action = $target === 'input' ? 'IN' : ($target === 'filled' ? 'FILL' : null);
+    if ($action === null) return;
+    $st = $pdo->prepare("SELECT * FROM cap_log WHERE cap_action = ?");
+    $st->execute([$action]);
+    while ($row = $st->fetch(PDO::FETCH_ASSOC)){
+        echo $row['date_of_operation']." поступило ".$row['name_of_cap_field']." в количестве ".$row['count_of_caps']." шт"."\r\n";
     }
 }
 
 
-/** СОздание <SELECT> списка с перечнем фильтров имеющихся в БД */
+/** Создание <SELECT> списка с перечнем фильтров имеющихся в БД */
 function load_filters_into_select(){
-
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
-    /** Создаем подключение к БД */
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-    /** Выполняем запрос SQL для загрузки заявок*/
-    $sql = "SELECT DISTINCT filter FROM round_filter_structure ORDER BY filter;";
-
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-
-    /** Разбор массива значений  */
+    $pdo = _planPdo();
+    $st = $pdo->query("SELECT DISTINCT filter FROM round_filter_structure ORDER BY filter");
+    if (!$st) { echo "Ошибка загрузки фильтров"; return; }
     echo "<select name='analog_filter'>";
     echo "<option value=''>выбор аналога</option>";
-    while ($orders_data = $result->fetch_assoc()){
-        echo "<option value=".$orders_data['filter'].">".$orders_data['filter']."</option>";
+    while ($row = $st->fetch(PDO::FETCH_ASSOC)){
+        echo "<option value=".$row['filter'].">".$row['filter']."</option>";
     }
     echo "</select>";
-
-    /** Закрываем соединение */
-    $result->close();
-    $mysqli->close();
 }
 
 /** Функция модифицирует дату, записанную в текстовом формате на заданное количество дней */
@@ -1106,164 +911,80 @@ function modify_date($string_date, $modifier){
  * @return bool
  */
 function write_of_filters($date_of_production, $order_number, $filters, $user_id = null, $user_name = null){
-
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
-    // Пытаемся получить user_id и user_name из сессии если не переданы
     if ($user_id === null || $user_name === null) {
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
-        }
-        if ($user_id === null && isset($_SESSION['auth_user_id'])) {
-            $user_id = $_SESSION['auth_user_id'];
-        }
-        if ($user_name === null && isset($_SESSION['auth_full_name'])) {
-            $user_name = $_SESSION['auth_full_name'];
-        }
+        if (session_status() === PHP_SESSION_NONE) session_start();
+        if ($user_id === null && isset($_SESSION['auth_user_id'])) $user_id = $_SESSION['auth_user_id'];
+        if ($user_name === null && isset($_SESSION['auth_full_name'])) $user_name = $_SESSION['auth_full_name'];
     }
 
-    /** Создаем подключение к БД */
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-    if ($mysqli->connect_errno) {
-        echo "Ошибка подключения к БД: " . $mysqli->connect_error;
-        return false;
-    }
-    $mysqli->set_charset("utf8mb4");
-
-    // Инициализируем таблицы если их нет
+    $pdo = _planPdo();
     $cap_db_init_path = dirname(__DIR__) . '/cap_db_init.php';
-    if (file_exists($cap_db_init_path)) {
-        require_once($cap_db_init_path);
-    }
+    if (file_exists($cap_db_init_path)) require_once($cap_db_init_path);
 
-    /** Цикл для разбора значений массива со значениями "фильтер - количество" */
+    $st_ins = $pdo->prepare("INSERT INTO manufactured_production (date_of_production, name_of_filter, count_of_filters, name_of_order) VALUES (?, ?, ?, ?)");
+    $st_caps = $pdo->prepare("SELECT up_cap, down_cap FROM round_filter_structure WHERE filter = ?");
+
     foreach ($filters as $filter_record) {
-
-        /** Получили значение {елемент масива[фильтр][количество]} */
         $filter_name = $filter_record[0];
         $filter_count = intval($filter_record[1]);
 
-        /** Форматируем sql-запрос, "записать в БД -> дата -> заявка -> фильтер -> количство" */
-        $sql = "INSERT INTO manufactured_production (date_of_production, name_of_filter, count_of_filters, name_of_order) 
-                VALUES ('$date_of_production','$filter_name','$filter_count','$order_number')";
-
-        /** Выполняем запрос. Если запрос не удачный -> exit */
-        if (!$result = $mysqli->query($sql)){ 
-            echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-            /** в случае неудачи функция выводит FALSЕ */
+        if (!$st_ins->execute([$date_of_production, $filter_name, $filter_count, $order_number])) {
+            echo "Ошибка записи manufactured_production";
             return false;
         }
 
-        /** СПИСАНИЕ КРЫШЕК - НОВАЯ СИСТЕМА */
-        /** Получаем информацию о крышках для фильтра */
-        $sql = "SELECT up_cap, down_cap FROM round_filter_structure WHERE filter = ?";
-        $stmt = $mysqli->prepare($sql);
-        
-        if (!$stmt) {
-            echo "Ошибка подготовки запроса: " . $mysqli->error;
-            continue;
-        }
-        
-        $stmt->bind_param("s", $filter_name);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $caps_data = $result->fetch_assoc();
-        $stmt->close();
+        $st_caps->execute([$filter_name]);
+        $caps_data = $st_caps->fetch(PDO::FETCH_ASSOC);
+        if (!$caps_data) continue;
 
-        if ($caps_data) {
-            // Обрабатываем верхнюю крышку
-            if (!empty($caps_data['up_cap'])) {
-                $up_cap = trim($caps_data['up_cap']);
-                write_off_cap($mysqli, $up_cap, $filter_count, $date_of_production, $order_number, $filter_name, $user_id, $user_name);
-            }
-
-            // Обрабатываем нижнюю крышку
-            if (!empty($caps_data['down_cap'])) {
-                $down_cap = trim($caps_data['down_cap']);
-                write_off_cap($mysqli, $down_cap, $filter_count, $date_of_production, $order_number, $filter_name, $user_id, $user_name);
-            }
-        }
-
-        // Также записываем в старый журнал для совместимости
         if (!empty($caps_data['up_cap'])) {
             $up_cap = trim($caps_data['up_cap']);
-            $sql = "INSERT INTO cap_log (date_of_operation, name_of_cap_field, count_of_caps, cap_action) 
-                    VALUES ('$date_of_production','$up_cap','$filter_count','OUT')
-                    ON DUPLICATE KEY UPDATE count_of_caps = count_of_caps";
-            $mysqli->query($sql);
+            write_off_cap($pdo, $up_cap, $filter_count, $date_of_production, $order_number, $filter_name, $user_id, $user_name);
         }
         if (!empty($caps_data['down_cap'])) {
             $down_cap = trim($caps_data['down_cap']);
-            $sql = "INSERT INTO cap_log (date_of_operation, name_of_cap_field, count_of_caps, cap_action) 
-                    VALUES ('$date_of_production','$down_cap','$filter_count','OUT')
-                    ON DUPLICATE KEY UPDATE count_of_caps = count_of_caps";
-            $mysqli->query($sql);
+            write_off_cap($pdo, $down_cap, $filter_count, $date_of_production, $order_number, $filter_name, $user_id, $user_name);
+        }
+
+        if (!empty($caps_data['up_cap'])) {
+            $up_cap = trim($caps_data['up_cap']);
+            $pdo->exec("INSERT INTO cap_log (date_of_operation, name_of_cap_field, count_of_caps, cap_action) VALUES ('$date_of_production','$up_cap','$filter_count','OUT') ON DUPLICATE KEY UPDATE count_of_caps = count_of_caps");
+        }
+        if (!empty($caps_data['down_cap'])) {
+            $down_cap = trim($caps_data['down_cap']);
+            $pdo->exec("INSERT INTO cap_log (date_of_operation, name_of_cap_field, count_of_caps, cap_action) VALUES ('$date_of_production','$down_cap','$filter_count','OUT') ON DUPLICATE KEY UPDATE count_of_caps = count_of_caps");
         }
     }
-
-    /** Закрываем соединение */
-    $mysqli->close();
     return true;
 }
 
 /** Вспомогательная функция для списания крышки
- * @param $mysqli - соединение с БД
- * @param $cap_name - название крышки
- * @param $quantity - количество для списания
- * @param $date - дата операции
- * @param $order_number - номер заявки
- * @param $filter_name - название фильтра
- * @param $user_id - ID пользователя
- * @param $user_name - имя пользователя
+ * @param PDO $pdo - соединение с БД
+ * @param string $cap_name - название крышки
+ * @param int $quantity - количество для списания
+ * @param string $date - дата операции
+ * @param string $order_number - номер заявки
+ * @param string $filter_name - название фильтра
+ * @param int|null $user_id - ID пользователя
+ * @param string|null $user_name - имя пользователя
  */
-function write_off_cap($mysqli, $cap_name, $quantity, $date, $order_number, $filter_name, $user_id, $user_name) {
-    // Проверяем остаток
-    $stmt = $mysqli->prepare("SELECT current_quantity FROM cap_stock WHERE cap_name = ?");
-    if (!$stmt) {
-        return false;
-    }
-    $stmt->bind_param("s", $cap_name);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $stock_row = $result->fetch_assoc();
-    $stmt->close();
-
+function write_off_cap($pdo, $cap_name, $quantity, $date, $order_number, $filter_name, $user_id, $user_name) {
+    $st = $pdo->prepare("SELECT current_quantity FROM cap_stock WHERE cap_name = ?");
+    $st->execute([$cap_name]);
+    $stock_row = $st->fetch(PDO::FETCH_ASSOC);
     $current_qty = $stock_row ? intval($stock_row['current_quantity']) : 0;
-    
-    // Если крышки нет в таблице остатков, создаем запись с нулевым остатком
+
     if (!$stock_row) {
-        $stmt = $mysqli->prepare("INSERT INTO cap_stock (cap_name, current_quantity) VALUES (?, 0)");
-        if ($stmt) {
-            $stmt->bind_param("s", $cap_name);
-            $stmt->execute();
-            $stmt->close();
-        }
+        $pdo->prepare("INSERT INTO cap_stock (cap_name, current_quantity) VALUES (?, 0)")->execute([$cap_name]);
     }
 
-    // Списываем крышку (уменьшаем остаток)
     $new_qty = max(0, $current_qty - $quantity);
-    $stmt = $mysqli->prepare("UPDATE cap_stock SET current_quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE cap_name = ?");
-    if ($stmt) {
-        $stmt->bind_param("is", $new_qty, $cap_name);
-        $stmt->execute();
-        $stmt->close();
-    }
+    $pdo->prepare("UPDATE cap_stock SET current_quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE cap_name = ?")->execute([$new_qty, $cap_name]);
 
-    // Записываем движение в cap_movements
-    $stmt = $mysqli->prepare("
-        INSERT INTO cap_movements 
-        (date, cap_name, operation_type, quantity, order_number, filter_name, production_date, user_id, user_name)
+    $pdo->prepare("
+        INSERT INTO cap_movements (date, cap_name, operation_type, quantity, order_number, filter_name, production_date, user_id, user_name)
         VALUES (?, ?, 'PRODUCTION_OUT', ?, ?, ?, ?, ?, ?)
-    ");
-    if ($stmt) {
-        // Типы: s=string, i=integer: date(s), cap_name(s), quantity(i), order_number(s), filter_name(s), production_date(s), user_id(i), user_name(s)
-        // Всего 8 параметров: date, cap_name, quantity, order_number, filter_name, production_date, user_id, user_name
-        $stmt->bind_param("ssisssis", $date, $cap_name, $quantity, $order_number, $filter_name, $date, $user_id, $user_name);
-        $stmt->execute();
-        $stmt->close();
-    }
-
-    // Старая таблица list_of_caps больше не используется
+    ")->execute([$date, $cap_name, $quantity, $order_number, $filter_name, $date, $user_id, $user_name]);
 }
 
 /** Занесение комплектующих. Внесение гофропакетов в БД в таблицу "лог(manufactured_parts)" и в таблицу "склад(list_of_parts)"
@@ -1274,32 +995,16 @@ function write_off_cap($mysqli, $cap_name, $quantity, $date, $order_number, $fil
  */
 
 function write_of_parts($date_of_production, $order_number, $parts){
-
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
-    /** Создаем подключение к БД */
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-    /** Цикл для разбора значений массива со значениями "фильтер - количество" */
+    $pdo = _planPdo();
+    $st = $pdo->prepare("INSERT INTO manufactured_parts (date_of_production, name_of_parts, count_of_parts, name_of_order) VALUES (?, ?, ?, ?)");
     foreach ($parts as $part_record) {
-
-        /** Получили значение {елемент масива[фильтр][количество]} */
         $part_name = $part_record[0];
         $part_count = $part_record[1];
-
-        /** Форматируем sql-запрос, "записать в БД -> дата -> заявка -> фильтер -> количство" */
-        $sql = "INSERT INTO manufactured_parts (date_of_production, name_of_parts, count_of_parts, name_of_order) 
-                VALUES ('$date_of_production','$part_name','$part_count','$order_number')";
-
-        /** Выполняем запрос. Если запрос не удачный -> exit */
-        if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-            /** в случае неудачи функция выводит FALSЕ */
+        if (!$st->execute([$date_of_production, $part_name, $part_count, $order_number])) {
+            echo "Ошибка записи manufactured_parts";
             return false;
-            exit;
         }
     }
-    //echo '111111';
-    /** Закрываем соединение */
     return true;
 }
 
@@ -1313,128 +1018,50 @@ function reverse_date($date){
 /** Функция возвращает количество произведенных указанных фильтров по указанной заявке */
 /** функция возвращает массив ARRAY['ПЕРЕЧЕНЬ_ДАТ_И_КОЛИЧЕСТВ','КОЛИЧЕСТВО_СУММАРНОЕ'] */
 function select_produced_filters_by_order($filter_name, $order_name){
-
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    $count = 0;
-    /** Подключение к БД   */
-    $mysqli = new mysqli($mysql_host,$mysql_user, $mysql_user_pass, $mysql_database);
-
-    /** Если не получилось подключиться.  */
-    if ($mysqli->connect_errno) {
-        echo  "Номер ошибки: " . $mysqli->connect_errno . "\n" . "Ошибка: " . $mysqli->connect_error . "\n";
-        return "ERROR#02";
-    }
-    /** Выполняем запрос SQL по подключению */
-    $sql = "SELECT * FROM manufactured_production WHERE name_of_order = '$order_name' AND name_of_filter = '$filter_name';";
-
-    /** Если запрос не удался */
-    if (!$result = $mysqli->query($sql)) {
-        echo "Номер ошибки: " . $mysqli->errno . "\n". "Ошибка: " . $mysqli->error . "\n";
+    $pdo = _planPdo();
+    $st = $pdo->prepare("SELECT count_of_filters FROM manufactured_production WHERE name_of_order = ? AND name_of_filter = ?");
+    if (!$st->execute([$order_name, $filter_name])) {
+        echo "Ошибка запроса manufactured_production";
         return "ERROR#01";
     }
-
-    /** Разбираем результата запроса */
-    while ($row = $result->fetch_assoc()){
+    $count = 0;
+    while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
         $count += $row['count_of_filters'];
     }
-
-    /** Создаем массив для вывода результата*/
-    $result_part_one = "#in_construction";
-    $result_part_two = $count;
-    $result_array = [];
-    array_push($result_array,$result_part_one);
-    array_push($result_array,$result_part_two);
-
-    return $result_array;
+    return ["#in_construction", $count];
 }
 
 
 /** Функция выполняет запрос к БД и возвращает количество комплектующих определенного изделия по выбранной заявке */
 function manufactured_part_count($part,$order) {
-
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    /** Подключаемся к БД для вывода заявки */
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        /** Если не получилось подключиться */
-        echo 'Возникла проблема на сайте'
-            . "Номер ошибки: " . $mysqli->connect_errno . "\n"
-            . "Ошибка: " . $mysqli->connect_error . "\n";
-        exit;
-    }
-    /** Выполняем запрос SQL */
-    $sql = "SELECT * FROM manufactured_parts WHERE name_of_parts LIKE '%$part' AND name_of_order='$order'";
-    //$sql = "SELECT * FROM orders WHERE order_number = '$order_number';";
-    if (!$result = $mysqli->query($sql)) {
-        echo "Ошибка: Наш запрос не удался и вот почему: \n"
-            . "Запрос: " . $sql . "\n"
-            . "Номер ошибки: " . $mysqli->errno . "\n"
-            . "Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
+    $pdo = _planPdo();
+    $st = $pdo->prepare("SELECT count_of_parts FROM manufactured_parts WHERE name_of_parts LIKE ? AND name_of_order = ?");
+    $st->execute(["%$part", $order]);
     $count = 0;
-
-    /** Разбираем результата запроса */
-    while ($row = $result->fetch_assoc()){
+    while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
         $count += $row['count_of_parts'];
     }
-
     return $count;
 }
 
 /** Возвращает количество изготовленных (списанных по производству) крышек по заявке и фильтру из cap_movements */
 function manufactured_caps_count_by_order_filter($order_number, $filter_name) {
-    global $mysql_host, $mysql_user, $mysql_user_pass, $mysql_database;
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        return 0;
-    }
-    $mysqli->set_charset("utf8mb4");
-    $stmt = $mysqli->prepare("SELECT COALESCE(SUM(quantity), 0) AS total FROM cap_movements WHERE order_number = ? AND filter_name = ? AND operation_type = 'PRODUCTION_OUT'");
-    if (!$stmt) {
-        $mysqli->close();
-        return 0;
-    }
-    $stmt->bind_param("ss", $order_number, $filter_name);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $row = $result ? $result->fetch_assoc() : null;
-    $total = $row ? (int)$row['total'] : 0;
-    $stmt->close();
-    $mysqli->close();
-    return $total;
+    $pdo = _planPdo();
+    $st = $pdo->prepare("SELECT COALESCE(SUM(quantity), 0) AS total FROM cap_movements WHERE order_number = ? AND filter_name = ? AND operation_type = 'PRODUCTION_OUT'");
+    $st->execute([$order_number, $filter_name]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    return $row ? (int)$row['total'] : 0;
 }
 
 /** Функция выполняет запрос к БД и возвращает количество комплектующих определенного изделия на складе */
 function count_of_manufactured_parts_in_the_storage($part) {
-
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    /** Подключаемся к БД для вывода заявки */
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        /** Если не получилось подключиться */
-        echo 'Возникла проблема на сайте'
-            . "Номер ошибки: " . $mysqli->connect_errno . "\n"
-            . "Ошибка: " . $mysqli->connect_error . "\n";
-        exit;
-    }
-    /** Выполняем запрос SQL */
-    $sql = "SELECT * FROM list_of_parts WHERE part LIKE '%$part%'";
-    //$sql = "SELECT * FROM orders WHERE order_number = '$order_number';";
-    if (!$result = $mysqli->query($sql)) {
-        echo "Ошибка: Наш запрос не удался и вот почему: \n"
-            . "Запрос: " . $sql . "\n"
-            . "Номер ошибки: " . $mysqli->errno . "\n"
-            . "Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
+    $pdo = _planPdo();
+    $st = $pdo->prepare("SELECT count FROM list_of_parts WHERE part LIKE ?");
+    $st->execute(["%$part%"]);
     $count = 0;
-
-    /** Разбираем результата запроса */
-    while ($row = $result->fetch_assoc()){
+    while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
         $count += $row['count'];
     }
-
     return $count;
 }
 
@@ -1450,75 +1077,22 @@ function produced_filter_count_by_order ($filter,$order){
 
 /** Функция выполняет запрос к БД и создает выборку заявки по выбранному номеру */
 function show_order($order_number){
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    /** Подключаемся к БД для вывода заявки */
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        /** Если не получилось подключиться */
-        echo 'Возникла проблема на сайте'
-            . "Номер ошибки: " . $mysqli->connect_errno . "\n"
-            . "Ошибка: " . $mysqli->connect_error . "\n";
+    $pdo = _planPdo();
+    $st = $pdo->prepare("SELECT * FROM orders WHERE order_number = ?");
+    if (!$st->execute([$order_number])) {
+        echo "Ошибка загрузки заявки";
         exit;
     }
-    /** Выполняем запрос SQL */
-    $sql = "SELECT * FROM orders WHERE order_number = '$order_number';";
-    if (!$result = $mysqli->query($sql)) {
-        echo "Ошибка: Наш запрос не удался и вот почему: \n"
-            . "Запрос: " . $sql . "\n"
-            . "Номер ошибки: " . $mysqli->errno . "\n"
-            . "Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-    return $result; // Выход из функции, дальше какая-то лажа
-echo '<p>#########################<p>';
-//************************************************** надо разобраться, тут какая-то лажа получилась*********************************//
-    /** Формируем шапку таблицы для вывода заявки */
-    echo "<table style='border: 1px solid black; border-collapse: collapse; font-size: 14px;'>
-        <tr>
-            <th style=' border: 1px solid black'> Фильтр
-            </th>
-            <th style=' border: 1px solid black'> Количество, шт           
-            </th>                                                     
-        </tr>";
-
-    /**  массив для сохранения заявки в объект планирования */
-    $order_array = array();
-
-    /** Разбор массива значений по подключению */
-    while ($row = $result->fetch_assoc()){
-
-        echo "<tr>"
-            ."<td style=' border: 1px solid black'>".$row['filter']."</td>"
-            ."<td style=' border: 1px solid black'>".$row['count']."</td>"
-            ."</tr>";
-
-        /** наполняем массив для сохранения заявки */
-        $temp_array = array();
-        array_push($temp_array, $row['filter']);
-        array_push($temp_array, $row['count']);
-        array_push($order_array,$temp_array);
-    }
-
-    echo "</table>";
-//************************************************** конец лажи где надо разобраться********************************************//
-
+    return $st; // Возвращает PDOStatement для итерации
 }
 
 /** Функция выводит список заказа с чекбоксами для выбора позиций позиций для раскроя*/
 
 function show_order_checkedlist($order_number){
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    /** Подключаемся к БД для вывода заявки */
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        /** Если не получилось подключиться */
-        echo 'Возникла проблема на сайте'. "Номер ошибки: " . $mysqli->connect_errno . "\n" . "Ошибка: " . $mysqli->connect_error . "\n";
-        exit;
-    }
-    /** Выполняем запрос SQL */
-    $sql = "SELECT * FROM orders WHERE order_number = '$order_number';";
-    if (!$result = $mysqli->query($sql)) {
-        echo "Ошибка: Наш запрос не удался и вот почему: \n". "Запрос: " . $sql . "\n". "Номер ошибки: " . $mysqli->errno . "\n" . "Ошибка: " . $mysqli->error . "\n";
+    $pdo = _planPdo();
+    $result = $pdo->prepare("SELECT * FROM orders WHERE order_number = ?");
+    if (!$result->execute([$order_number])) {
+        echo "Ошибка загрузки заявки";
         exit;
     }
 
@@ -1542,7 +1116,7 @@ function show_order_checkedlist($order_number){
 
     $counter = 0;
     /** Разбор массива значений по подключению */
-    while ($row = $result->fetch_assoc()){
+    while ($row = $result->fetch(PDO::FETCH_ASSOC)){
         $counter++;
         echo "<tr>"
             ."<td style=' border: 1px solid black'>".$counter."</td>"
@@ -1579,35 +1153,13 @@ function show_order_checkedlist($order_number){
 
 /** Функция возвращает массив номеров заявок актуальных */
 function select_actual_orders(){
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    /** Подключаемся к БД для вывода заявки по подключению №1*/
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        /** Если не получилось подключиться */
-        echo 'Возникла проблема на сайте'
-            . "Номер ошибки: " . $mysqli->connect_errno . "\n"
-            . "Ошибка: " . $mysqli->connect_error . "\n";
-        exit;
+    $pdo = _planPdo();
+    $st = $pdo->query("SELECT DISTINCT order_number FROM orders WHERE hide IS NULL OR hide = 0");
+    if (!$st) return [];
+    $temp_array = [];
+    while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
+        $temp_array[] = $row['order_number'];
     }
-
-    /** Выполняем запрос SQL для загрузки заявок*/
-    $sql = "SELECT DISTINCT order_number FROM orders  WHERE hide IS NULL OR hide = 0;";
-
-    if (!$result = $mysqli->query($sql)) {
-        echo "Ошибка: Наш запрос не удался и вот почему: \n"
-            . "Запрос: " . $sql . "\n"
-            . "Номер ошибки: " . $mysqli->errno . "\n"
-            . "Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-
-    $temp_array = array();
-
-    while ($row = $result->fetch_assoc()){
-        /** наполняем массив для сохранения заявки */
-        array_push($temp_array, $row['order_number']);
-    }
-
     return $temp_array;
 }
 
@@ -1668,148 +1220,82 @@ function summ_the_same_elements_of_array($input_array){
 
 /** Функция из заявки возвращает массив вида ...[[filter][count]][[filter][count]] */
 function get_order($order_number){
-
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    /** Подключаемся к БД для вывода заявки */
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        /** Если не получилось подключиться */
-        echo 'Возникла проблема на сайте'
-            . "Номер ошибки: " . $mysqli->connect_errno . "\n"
-            . "Ошибка: " . $mysqli->connect_error . "\n";
+    $pdo = _planPdo();
+    $st = $pdo->prepare("SELECT * FROM orders WHERE order_number = ?");
+    if (!$st->execute([$order_number])) {
+        echo "Ошибка загрузки заявки";
         exit;
     }
-    /** Выполняем запрос SQL */
-    $sql = "SELECT * FROM orders WHERE order_number = '$order_number';";
-    if (!$result = $mysqli->query($sql)) {
-        echo "Ошибка: Наш запрос не удался и вот почему: \n"
-            . "Запрос: " . $sql . "\n"
-            . "Номер ошибки: " . $mysqli->errno . "\n"
-            . "Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-
-    /**  массив для сохранения заявки в объект планирования */
-    $order_array = array();
-
-    /** Разбор массива значений по подключению */
-    while ($row = $result->fetch_assoc()){
-
-        /** наполняем массив для сохранения заявки */
-        $temp_array = array();
-        array_push($temp_array, $row['filter']);
-        array_push($temp_array, $row['count']);
-        array_push($order_array,$temp_array);
+    $order_array = [];
+    while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
+        $order_array[] = [$row['filter'], $row['count']];
     }
     return $order_array;
 }
 
 /** Функция обеспечивает подключение к БД и выполняет запрос sql */
 /** возвращает результат выполнения sql запроса */
+/** @deprecated Используйте _planPdo() и PDO напрямую. Оставлено для совместимости. */
 function mysql_execute($sql){
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    /** Подключаемся к БД */
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        /** Если не получилось подключиться */
-        echo 'Возникла проблема на сайте'
-            . "Номер ошибки: " . $mysqli->connect_errno . "\n"
-            . "Ошибка: " . $mysqli->connect_error . "\n";
+    $pdo = _planPdo();
+    $upper = trim(strtoupper(substr($sql, 0, 6)));
+    if ($upper === 'SELECT' || $upper === 'SHOW') {
+        $stmt = $pdo->query($sql);
+        if ($stmt === false) {
+            $e = $pdo->errorInfo();
+            echo "Ошибка запроса: " . $sql . "\n" . ($e[2] ?? '');
+            exit;
+        }
+        return $stmt;
+    }
+    $r = $pdo->exec($sql);
+    if ($r === false) {
+        $e = $pdo->errorInfo();
+        echo "Ошибка exec: " . $sql . "\n" . ($e[2] ?? '');
         exit;
     }
-    /** Выполняем запрос SQL */
-    if (!$result = $mysqli->query($sql)) {
-        echo "Ошибка: Наш запрос не удался и вот почему: \n"
-            . "Запрос: " . $sql . "\n"
-            . "Номер ошибки: " . $mysqli->errno . "\n"
-            . "Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-
-    return $result;
+    return true;
 }
 
 /** Функция формирует список коробок имеющихся в БД
  * если в функцию передается переменная, то выбирается коробка, соответствующая переменной
  */
 function select_boxes($index){
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-    /** Подключаемся к БД */
-    if ($mysqli->connect_errno){/** Если не получилось подключиться */
-        echo 'Возникла проблема на сайте'."Номер ошибки: " . $mysqli->connect_errno . "\n"."Ошибка: " . $mysqli->connect_error . "\n";
-        exit;
-    }
-
-    $sql = "SELECT * FROM box ORDER BY b_name";
-    /** Выполняем запрос SQL */
-    if (!$result = $mysqli->query($sql)) {
-        echo "Ошибка: Наш запрос не удался и вот почему: \n"
-            . "Запрос: " . $sql . "\n"
-            . "Номер ошибки: " . $mysqli->errno . "\n"
-            . "Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-    /** извлечение ассоциативного массива */
+    $pdo = _planPdo();
+    $result = $pdo->query("SELECT * FROM box ORDER BY b_name");
+    if (!$result) { echo "Ошибка загрузки коробок"; return; }
 
     echo "<option></option>";
-
-    while ($row = $result->fetch_assoc()) {
+    while ($row = $result->fetch(PDO::FETCH_ASSOC)) {
         echo "<option";
         // если номер коробки указан, то делаем ее выбранной
         if ($row['b_name'] == $index) echo " selected ";
         echo ">".$row['b_name']."</option>";
     }
-
-    /* удаление выборки */
-    $result->free();
-
 }
 
 /** Функция формирует список ящиков имеющихся в БД */
 function select_g_boxes($index){
+    $pdo = _planPdo();
+    $result = $pdo->query("SELECT * FROM g_box ORDER BY gb_name");
+    if (!$result) { echo "Ошибка загрузки ящиков"; return; }
 
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-    /** Подключаемся к БД */
-    if ($mysqli->connect_errno){/** Если не получилось подключиться */
-        echo 'Возникла проблема на сайте'."Номер ошибки: " . $mysqli->connect_errno . "\n"."Ошибка: " . $mysqli->connect_error . "\n";
-        exit;
-    }
-
-    $sql = "SELECT * FROM g_box ORDER BY gb_name";
-    /** Выполняем запрос SQL */
-    if (!$result = $mysqli->query($sql)) {
-        echo "Ошибка: Наш запрос не удался и вот почему: \n"
-            . "Запрос: " . $sql . "\n"
-            . "Номер ошибки: " . $mysqli->errno . "\n"
-            . "Ошибка: " . $mysqli->error . "\n";
-        exit;
-    }
-    /** извлечение ассоциативного массива */
     echo "<option></option>";
-
-
-     while ($row = $result->fetch_assoc()) {
+    while ($row = $result->fetch(PDO::FETCH_ASSOC)) {
         echo "<option";
         // если номер ящика указан, то делаем ее выбранной
         if ($row['gb_name'] == $index) echo " selected ";
         echo ">".$row['gb_name']."</option>";
     }
-
-
-
-    /* удаление выборки */
-    $result->free();
-
 }
 
 /** Проверка наличия фильтра в БД */
 function check_filter($filter){
+    $pdo = _planPdo();
+    $st = $pdo->prepare("SELECT * FROM round_filter_structure WHERE filter = ?");
+    $st->execute([$filter]);
 
-    $result = mysql_execute("SELECT * FROM round_filter_structure WHERE filter = '$filter'");
-
-    if ($result->num_rows > 0) {
+    if ($st->rowCount() > 0) {
         $a = true;
     } else {
         $a = false;
@@ -1853,23 +1339,13 @@ function check_filter($filter){
 
 )*/
 function get_filter_data($target_filter){
-
-    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    /** Создаем подключение к БД */
-    $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-    /** @var  $result_array  массив вывода результата*/
-    $result_array = array();
-
-    /** ГОФРОПАКЕТ */
+    $pdo = _planPdo();
+    $result_array = [];
     $result_array['paper_package_name'] = 'гофропакет '.$target_filter;
 
-    /** Выполняем запрос SQL */
-    $sql = "SELECT * FROM paper_package_round WHERE p_p_name = '".$result_array['paper_package_name']."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $paper_package_data = $result->fetch_assoc();
+    $st = $pdo->prepare("SELECT * FROM paper_package_round WHERE p_p_name = ?");
+    if (!$st->execute([$result_array['paper_package_name']])) { echo "Ошибка запроса paper_package_round"; exit; }
+    $paper_package_data = $st->fetch(PDO::FETCH_ASSOC);
 
     //$result_array['paper_package_height'] = $paper_package_data['p_p_height'];
 
@@ -1941,12 +1417,9 @@ function get_filter_data($target_filter){
 //    }
 
 
-    /** Выполняем запрос SQL */
-    $sql = "SELECT * FROM round_filter_structure WHERE filter = '".$target_filter."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $filter_data = $result->fetch_assoc();
+    $st = $pdo->prepare("SELECT * FROM round_filter_structure WHERE filter = ?");
+    if (!$st->execute([$target_filter])) { echo "Ошибка запроса round_filter_structure"; exit; }
+    $filter_data = $st->fetch(PDO::FETCH_ASSOC);
     
     // Проверяем что данные найдены
     if ($filter_data !== null) {
@@ -2053,14 +1526,10 @@ function get_filter_data($target_filter){
         $result_array['down_cap_PU'] = '';
     }
 
-    /** КАРКАС Наружній*/
-    $result_array['paper_package_ext_wireframe_name'] =$target_filter.' наружный каркас';
-    /** Выполняем запрос SQL */
-    $sql = "SELECT * FROM wireframe_round WHERE w_name = '".$result_array['paper_package_ext_wireframe_name']."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $wireframe_data = $result->fetch_assoc();
+    $result_array['paper_package_ext_wireframe_name'] = $target_filter.' наружный каркас';
+    $st = $pdo->prepare("SELECT * FROM wireframe_round WHERE w_name = ?");
+    if (!$st->execute([$result_array['paper_package_ext_wireframe_name']])) { echo "Ошибка запроса wireframe_round"; exit; }
+    $wireframe_data = $st->fetch(PDO::FETCH_ASSOC);
     if ($wireframe_data == null) {
         $result_array['paper_package_ext_wireframe_name']=null;
         $result_array['paper_package_ext_wireframe_material'] = null;
@@ -2068,14 +1537,10 @@ function get_filter_data($target_filter){
         $result_array['paper_package_ext_wireframe_material'] = $wireframe_data['w_material'];
     }
 
-    /** КАРКАС внутренний*/
-    $result_array['paper_package_int_wireframe_name'] =$target_filter.' внутренний каркас';
-    /** Выполняем запрос SQL */
-    $sql = "SELECT * FROM wireframe_round WHERE w_name = '".$result_array['paper_package_int_wireframe_name']."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $wireframe_data = $result->fetch_assoc();
+    $result_array['paper_package_int_wireframe_name'] = $target_filter.' внутренний каркас';
+    $st = $pdo->prepare("SELECT * FROM wireframe_round WHERE w_name = ?");
+    if (!$st->execute([$result_array['paper_package_int_wireframe_name']])) { echo "Ошибка запроса wireframe_round"; exit; }
+    $wireframe_data = $st->fetch(PDO::FETCH_ASSOC);
     if ($wireframe_data == null) {
         $result_array['paper_package_int_wireframe_name']=null;
         $result_array['paper_package_int_wireframe_material'] = null;
@@ -2084,15 +1549,10 @@ function get_filter_data($target_filter){
     }
 
 
-    /** ПРЕДФИЛЬТР */
     $result_array['prefilter_name'] = 'предфильтр '.$target_filter;
-
-    /** Выполняем запрос SQL */
-    $sql = "SELECT * FROM prefilter_round WHERE pf_name = '".$result_array['prefilter_name']."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $prefilter_data = $result->fetch_assoc();
+    $st = $pdo->prepare("SELECT * FROM prefilter_round WHERE pf_name = ?");
+    if (!$st->execute([$result_array['prefilter_name']])) { echo "Ошибка запроса prefilter_round"; exit; }
+    $prefilter_data = $st->fetch(PDO::FETCH_ASSOC);
 
     if ($prefilter_data == null){
         $result_array['prefilter_name'] = '';
@@ -2102,15 +1562,10 @@ function get_filter_data($target_filter){
 
 
 
-    /** РР ВСТАВКА */
     $result_array['pp_insertion'] = 'РР вставка '.$target_filter;
-    /** Выполняем запрос SQL */
-        $sql = "SELECT * FROM insertions WHERE i_name = 'PP_вставка_".$target_filter."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-
-    $pp_insertion_data = $result->fetch_assoc();
+    $st = $pdo->prepare("SELECT * FROM insertions WHERE i_name = ?");
+    if (!$st->execute(['PP_вставка_'.$target_filter])) { echo "Ошибка запроса insertions"; exit; }
+    $pp_insertion_data = $st->fetch(PDO::FETCH_ASSOC);
     if (isset($pp_insertion_data)){
         $result_array['pp_insertion'] = $pp_insertion_data['i_name'];
     }else{
@@ -2118,14 +1573,10 @@ function get_filter_data($target_filter){
     }
     
 
-    /** Упаковка */
     $result_array['packing'] = '';
-    /** Выполняем запрос SQL */
-    $sql = "SELECT packing FROM round_filter_structure WHERE filter = '".$target_filter."';";
-    /** Если запрос не удачный -> exit */
-    if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
-    /** Разбор массива значений  */
-    $packing_data = $result->fetch_assoc();
+    $st = $pdo->prepare("SELECT packing FROM round_filter_structure WHERE filter = ?");
+    if (!$st->execute([$target_filter])) { echo "Ошибка запроса packing"; exit; }
+    $packing_data = $st->fetch(PDO::FETCH_ASSOC);
     if (isset($packing_data['packing'])){
         $result_array['packing'] = $packing_data['packing'];
     }else{
@@ -2137,10 +1588,6 @@ function get_filter_data($target_filter){
     } else {
         $result_array['packing'] =  $packing_data['packing'];
     }
-
-    /** Закрываем соединение */
-    $result->close();
-    $mysqli->close();
 
     return $result_array;
 }

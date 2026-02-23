@@ -33,6 +33,8 @@ if (empty($userDepartments)) {
 
 require_once('tools/tools.php');
 require_once('settings.php');
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 require_once('cap_db_init.php');
 
 $user_id = $session['user_id'];
@@ -56,57 +58,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         exit;
     }
     
-    // Подключаемся к БД
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-    if ($mysqli->connect_errno) {
-        echo json_encode(['success' => false, 'error' => 'Ошибка подключения к БД']);
-        exit;
-    }
-    $mysqli->set_charset("utf8mb4");
-    
-    // Начинаем транзакцию
-    $mysqli->begin_transaction();
-    
+    $pdo->beginTransaction();
     try {
-        // 1. Обновляем остаток в cap_stock
-        $stmt = $mysqli->prepare("UPDATE cap_stock SET current_quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE cap_name = ?");
-        if (!$stmt) {
-            throw new Exception('Ошибка подготовки запроса: ' . $mysqli->error);
+        $stmt = $pdo->prepare("UPDATE cap_stock SET current_quantity = ?, last_updated = CURRENT_TIMESTAMP WHERE cap_name = ?");
+        if (!$stmt->execute([$new_quantity, $cap_name])) {
+            throw new Exception('Ошибка обновления остатка');
         }
-        $stmt->bind_param("is", $new_quantity, $cap_name);
-        if (!$stmt->execute()) {
-            throw new Exception('Ошибка обновления остатка: ' . $stmt->error);
-        }
-        $stmt->close();
         
-        // 2. Рассчитываем разницу для записи в cap_movements
         $difference = $new_quantity - $old_quantity;
         
         if ($difference != 0) {
-            // 3. Записываем корректировку в cap_movements
             $today = date('Y-m-d');
             $comment = "Корректировка остатка: было {$old_quantity}, стало {$new_quantity}";
             
-            $stmt = $mysqli->prepare("
-                INSERT INTO cap_movements 
-                (date, cap_name, operation_type, quantity, user_id, user_name, comment)
-                VALUES (?, ?, 'ADJUSTMENT', ?, ?, ?, ?)
-            ");
-            
-            if (!$stmt) {
-                throw new Exception('Ошибка подготовки запроса движения: ' . $mysqli->error);
+            $stmt = $pdo->prepare("INSERT INTO cap_movements (date, cap_name, operation_type, quantity, user_id, user_name, comment) VALUES (?, ?, 'ADJUSTMENT', ?, ?, ?, ?)");
+            if (!$stmt->execute([$today, $cap_name, $difference, $user_id, $user_name, $comment])) {
+                throw new Exception('Ошибка записи движения');
             }
-            
-            $stmt->bind_param("ssiiss", $today, $cap_name, $difference, $user_id, $user_name, $comment);
-            
-            if (!$stmt->execute()) {
-                throw new Exception('Ошибка записи движения: ' . $stmt->error);
-            }
-            $stmt->close();
         }
         
-        // Коммитим транзакцию
-        $mysqli->commit();
+        $pdo->commit();
         
         echo json_encode([
             'success' => true, 
@@ -115,35 +86,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         ]);
         
     } catch (Exception $e) {
-        $mysqli->rollback();
+        $pdo->rollBack();
         echo json_encode(['success' => false, 'error' => $e->getMessage()]);
-    } finally {
-        $mysqli->close();
     }
     exit;
 }
 
-// Подключаемся к БД
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    die('Ошибка подключения к БД: ' . $mysqli->connect_error);
-}
-$mysqli->set_charset("utf8mb4");
-
-// Получаем остатки
-$sql = "SELECT cap_name, current_quantity, last_updated 
-        FROM cap_stock 
-        ORDER BY cap_name ASC";
-$result = $mysqli->query($sql);
+$result = $pdo->query("SELECT cap_name, current_quantity, last_updated FROM cap_stock ORDER BY cap_name ASC");
 
 $total_caps = 0;
 $stock_data = [];
 if ($result) {
-    while ($row = $result->fetch_assoc()) {
+    while ($row = $result->fetch(PDO::FETCH_ASSOC)) {
         $stock_data[] = $row;
         $total_caps += $row['current_quantity'];
     }
-    $result->close();
 }
 
 $capStockMap = [];
@@ -163,8 +120,8 @@ $ordersSql = "
     LIMIT 30
 ";
 
-if ($ordersResult = $mysqli->query($ordersSql)) {
-    while ($orderRow = $ordersResult->fetch_assoc()) {
+if ($ordersResult = $pdo->query($ordersSql)) {
+    while ($orderRow = $ordersResult->fetch(PDO::FETCH_ASSOC)) {
         $orderRow['filter'] = trim($orderRow['filter']);
         if ($orderRow['filter'] === '') {
             continue;
@@ -172,7 +129,6 @@ if ($ordersResult = $mysqli->query($ordersSql)) {
         $ordersForTooltip[] = $orderRow;
         $filtersForTooltip[] = $orderRow['filter'];
     }
-    $ordersResult->close();
 }
 
 $filterCapsMap = [];
@@ -180,25 +136,14 @@ if (!empty($filtersForTooltip)) {
     $uniqueFilters = array_values(array_unique($filtersForTooltip));
     $placeholders = implode(',', array_fill(0, count($uniqueFilters), '?'));
     $types = str_repeat('s', count($uniqueFilters));
-    $stmt = $mysqli->prepare("SELECT filter, up_cap, down_cap FROM round_filter_structure WHERE filter IN ($placeholders)");
-    if ($stmt) {
-        $bindParams = [$types];
-        foreach ($uniqueFilters as $idx => $value) {
-            $bindParams[] = &$uniqueFilters[$idx];
-        }
-        call_user_func_array([$stmt, 'bind_param'], $bindParams);
-        
-        if ($stmt->execute()) {
-            $capsResult = $stmt->get_result();
-            while ($capRow = $capsResult->fetch_assoc()) {
+    $stmt = $pdo->prepare("SELECT filter, up_cap, down_cap FROM round_filter_structure WHERE filter IN ($placeholders)");
+    if ($stmt && $stmt->execute($uniqueFilters)) {
+            while ($capRow = $stmt->fetch(PDO::FETCH_ASSOC)) {
                 $filterCapsMap[$capRow['filter']] = [
                     'up_cap' => $capRow['up_cap'],
                     'down_cap' => $capRow['down_cap']
                 ];
             }
-            $capsResult->close();
-        }
-        $stmt->close();
     }
 }
 
@@ -279,8 +224,6 @@ if (empty($capHintLines)) {
 }
 
 $capHintText = implode("\n", $capHintLines);
-
-$mysqli->close();
 
 ?>
 <!DOCTYPE html>

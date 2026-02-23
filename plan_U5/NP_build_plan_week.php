@@ -2,22 +2,15 @@
 // NP_build_plan_week.php — недельный календарь (2 бригады) с фиксированной высотой 13ч
 // Требуются эндпоинты в NP_build_plan.php: action=load, save, busy, meta
 
-$dsn  = "mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4";
-$user = "root";
-$pass = "";
+require_once __DIR__ . '/../auth/includes/db.php';
 $SHIFT_HOURS = 11.5; // фактическая смена для расчётов
-
-
 
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES|ENT_SUBSTITUTE,'UTF-8'); }
 // Подсказки по заявкам из corrugation_plan (только тут, без API)
 $orderSuggestions = [];
 $corrugatedFilters = []; // Распланированные гофропакеты
 try{
-    $pdoSug = new PDO($dsn,$user,$pass,[
-        PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC
-    ]);
+    $pdoSug = getPdo('plan_u5');
     $st = $pdoSug->query("
         SELECT cp.order_number, MAX(cp.plan_date) AS last_date
         FROM corrugation_plan cp

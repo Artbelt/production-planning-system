@@ -1,9 +1,9 @@
 <?php
+require_once __DIR__ . '/settings.php';
 /***** AJAX: сохранить/загрузить раскрой в ОДНУ таблицу cut_plan_salon
 Требуется столбец fact_length_m (DECIMAL(10,3) NULL) *****/
 if (isset($_GET['action']) && in_array($_GET['action'], ['save_plan','load_plan'], true)) {
     header('Content-Type: application/json; charset=utf-8');
-    $dsn='mysql:host=127.0.0.1;dbname=plan_U5;charset=utf8mb4'; $user='root'; $pass='';
     try {
         $pdo=new PDO($dsn,$user,$pass,[
             PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,
@@ -123,7 +123,6 @@ if (isset($_GET['action']) && in_array($_GET['action'], ['save_plan','load_plan'
 }
 ?>
 <?php
-$dsn='mysql:host=127.0.0.1;dbname=plan_U5;charset=utf8mb4'; $user='root'; $pass='';
 $orderNumber=$_GET['order_number']??''; if($orderNumber===''){http_response_code(400);exit('Укажите ?order_number=...');}
 try{
     $pdo=new PDO($dsn,$user,$pass,[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION,PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);

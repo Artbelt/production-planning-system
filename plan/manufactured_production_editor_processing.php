@@ -15,18 +15,14 @@ $date = $_POST['date'];
 
 
 /** Создаем подключение к БД */
-$mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-/** Выполняем запрос SQL для загрузки заявок*/
-$sql = "SELECT * FROM manufactured_production WHERE date_of_production ='".$date."';";
-
-/** Если запрос не удачный -> exit */
-if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-    exit;
-}
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan');
+$stmt = $pdo->prepare("SELECT * FROM manufactured_production WHERE date_of_production = ?");
+$stmt->execute([$date]);
+$rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 //создаем отдельно формы для обработки полей в таблице, каждая строка будет относиться к отдельной форме
-$row_count = mysqli_num_rows($result);
+$row_count = count($rows);
 for ($x = 0; $x < $row_count; $x++){
     echo '<form id="form_'.$x.'" action="record_editor.php" method="post" target="_blank"></form>';
 }
@@ -43,7 +39,7 @@ echo "<table  id='main_table' border='1' style='font-size: 13px'><tr><td> Дат
 
 //счетчик
 $a=0;
-while ($prodused_data = $result->fetch_assoc()){
+foreach ($rows as $prodused_data) {
 
     echo '<tr><td>';
     echo "<input type = text name ='date_of_production' form='form_".$a."'value ='".$prodused_data['date_of_production']."' size='10' readonly></input>";

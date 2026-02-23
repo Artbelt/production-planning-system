@@ -1,10 +1,11 @@
 <?php
 $application_name = 'Система планирования производства. Easy_Plan';
 /** ---------------Параметры подключения к БД-------------------- */
-$mysql_host = '127.0.0.1';
-$mysql_database = 'plan_U4';
-$mysql_user = 'root';
-$mysql_user_pass = '';
+if (file_exists(__DIR__ . '/../env.php')) require __DIR__ . '/../env.php';
+$mysql_host = defined('DB_HOST') ? DB_HOST : '127.0.0.1';
+$mysql_database = 'plan_u4';
+$mysql_user = defined('DB_USER') ? DB_USER : 'root';
+$mysql_user_pass = defined('DB_PASS') ? DB_PASS : '';
 /** -----------------Настройки раскроя рулонов------------------- */
 $width_of_main_roll = 1200; /** ширина бухты, идущей в порезку */
 $main_roll_length = 1200; /** Длина раскраиваемой бухты */

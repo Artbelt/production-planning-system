@@ -1,12 +1,13 @@
 <?php
 /**
  * Класс для записи аудита изменений в БД
+ * Поддерживает PDO
  */
 class AuditLogger {
-    private $mysqli;
+    private $pdo;
     
-    public function __construct($mysqli) {
-        $this->mysqli = $mysqli;
+    public function __construct(PDO $pdo) {
+        $this->pdo = $pdo;
     }
     
     /**
@@ -46,9 +47,8 @@ class AuditLogger {
                 additional_info
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             
-            $stmt = $this->mysqli->prepare($query);
-            $stmt->bind_param(
-                'ssssssssss',
+            $stmt = $this->pdo->prepare($query);
+            $result = $stmt->execute([
                 $table_name,
                 $record_id,
                 $operation,
@@ -59,10 +59,7 @@ class AuditLogger {
                 $user_agent,
                 $session_id,
                 $additional_info
-            );
-            
-            $result = $stmt->execute();
-            $stmt->close();
+            ]);
             
             return $result;
             
@@ -122,21 +119,17 @@ class AuditLogger {
                      ORDER BY created_at DESC 
                      LIMIT ?";
             
-            $stmt = $this->mysqli->prepare($query);
-            $stmt->bind_param('ssi', $table_name, $record_id, $limit);
-            $stmt->execute();
-            
-            $result = $stmt->get_result();
+            $stmt = $this->pdo->prepare($query);
+            $stmt->execute([$table_name, $record_id, $limit]);
             $history = [];
             
-            while ($row = $result->fetch_assoc()) {
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                 $row['old_values'] = $row['old_values'] ? json_decode($row['old_values'], true) : null;
                 $row['new_values'] = $row['new_values'] ? json_decode($row['new_values'], true) : null;
                 $row['changed_fields'] = $row['changed_fields'] ? explode(',', $row['changed_fields']) : null;
                 $history[] = $row;
             }
             
-            $stmt->close();
             return $history;
             
         } catch (Exception $e) {
@@ -160,18 +153,14 @@ class AuditLogger {
                      GROUP BY operation, DATE(created_at)
                      ORDER BY date DESC, operation";
             
-            $stmt = $this->mysqli->prepare($query);
-            $stmt->bind_param('si', $table_name, $days);
-            $stmt->execute();
-            
-            $result = $stmt->get_result();
+            $stmt = $this->pdo->prepare($query);
+            $stmt->execute([$table_name, $days]);
             $stats = [];
             
-            while ($row = $result->fetch_assoc()) {
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                 $stats[] = $row;
             }
             
-            $stmt->close();
             return $stats;
             
         } catch (Exception $e) {

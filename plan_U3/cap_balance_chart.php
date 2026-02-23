@@ -33,14 +33,9 @@ if (empty($userDepartments)) {
 
 require_once('tools/tools.php');
 require_once('settings.php');
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 require_once('cap_db_init.php');
-
-// Подключаемся к БД
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    die('Ошибка подключения к БД: ' . $mysqli->connect_error);
-}
-$mysqli->set_charset("utf8mb4");
 
 // Получаем параметры фильтрации
 $date_from = $_GET['date_from'] ?? date('Y-m-d', strtotime('-30 days'));
@@ -65,16 +60,11 @@ $sql_income = "
     ORDER BY date DESC
 ";
 
-$stmt_income = $mysqli->prepare($sql_income);
-if ($stmt_income) {
-    $stmt_income->bind_param("ss", $date_from, $date_to);
-    $stmt_income->execute();
-    $result_income = $stmt_income->get_result();
-    while ($row = $result_income->fetch_assoc()) {
+$stmt_income = $pdo->prepare($sql_income);
+if ($stmt_income && $stmt_income->execute([$date_from, $date_to])) {
+    while ($row = $stmt_income->fetch(PDO::FETCH_ASSOC)) {
         $income_data[$row['date']] = (int)$row['total_pieces'];
     }
-    $result_income->close();
-    $stmt_income->close();
 }
 
 // Получаем данные о расходе крышек по дням (в штуках)
@@ -92,12 +82,9 @@ $sql_production = "
     ORDER BY date DESC, filter_name
 ";
 
-$stmt_production = $mysqli->prepare($sql_production);
-if ($stmt_production) {
-    $stmt_production->bind_param("ss", $date_from, $date_to);
-    $stmt_production->execute();
-    $result_production = $stmt_production->get_result();
-    while ($row = $result_production->fetch_assoc()) {
+$stmt_production = $pdo->prepare($sql_production);
+if ($stmt_production && $stmt_production->execute([$date_from, $date_to])) {
+    while ($row = $stmt_production->fetch(PDO::FETCH_ASSOC)) {
         $date = $row['date'];
         $filter_name = trim($row['filter_name'] ?? '');
         $quantity = (int)$row['total_pieces'];
@@ -117,8 +104,6 @@ if ($stmt_production) {
             $fact_details[$date][$filter_name] += $quantity;
         }
     }
-    $result_production->close();
-    $stmt_production->close();
 }
 
 // Создаем массив всех дат в выбранном периоде
@@ -138,9 +123,8 @@ sort($all_dates);
 // Получаем план потребления крышек по дням
 $plan_data = [];
 $plan_details = []; // Детальная информация для tooltip
-// Проверяем существование таблицы build_plans
-$check_table = $mysqli->query("SHOW TABLES LIKE 'build_plans'");
-if ($check_table && $check_table->num_rows > 0) {
+$check_table = $pdo->query("SHOW TABLES LIKE 'build_plans'");
+if ($check_table && $check_table->rowCount() > 0) {
     // Получаем план сборки по датам (только фильтры с металлическими крышками)
     $sql_plan = "
         SELECT 
@@ -161,13 +145,9 @@ if ($check_table && $check_table->num_rows > 0) {
         ORDER BY bp.day_date, bp.filter
     ";
     
-    $stmt_plan = $mysqli->prepare($sql_plan);
-    if ($stmt_plan) {
-        $stmt_plan->bind_param("ss", $date_from, $date_to);
-        $stmt_plan->execute();
-        $result_plan = $stmt_plan->get_result();
-        
-        while ($row = $result_plan->fetch_assoc()) {
+    $stmt_plan = $pdo->prepare($sql_plan);
+    if ($stmt_plan && $stmt_plan->execute([$date_from, $date_to])) {
+        while ($row = $stmt_plan->fetch(PDO::FETCH_ASSOC)) {
             $date = $row['date'];
             $filter = trim($row['filter'] ?? '');
             $qty = (int)$row['qty'];
@@ -198,8 +178,6 @@ if ($check_table && $check_table->num_rows > 0) {
                 $plan_details[$date][$filter] += $qty;
             }
         }
-        $result_plan->close();
-        $stmt_plan->close();
     }
 }
 
@@ -232,7 +210,6 @@ foreach ($all_dates as $date) {
     $chart_delta[] = $delta;
 }
 
-$mysqli->close();
 ?>
 <!DOCTYPE html>
 <html>

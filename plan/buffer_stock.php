@@ -4,9 +4,7 @@
 declare(strict_types=1);
 header('Content-Type: text/html; charset=utf-8');
 
-$dsn  = "mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4";
-$user = "root";
-$pass = "";
+require_once __DIR__ . '/../auth/includes/db.php';
 
 function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
@@ -105,10 +103,7 @@ $filter     = $_GET['filter']     ?? null;
 $includeZero= isset($_GET['include_zero']) && $_GET['include_zero'] == '1';
 
 try {
-    $pdo = new PDO($dsn, $user, $pass, [
-        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
+    $pdo = getPdo('plan');
 
     $rows = get_buffer($pdo, [
         'date_from'    => $date_from,

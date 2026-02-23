@@ -54,12 +54,32 @@ try {
     
     while ($row = $result->fetch_assoc()) {
         $count = (int)$row['total_count'];
+        $order_number = $row['order_number'] ?? '';
+        $filter_label = $row['filter_label'] ?? '';
         $total_count += $count;
         
+        // Плановая дата гофрирования (из corrugation_plan), формат дд.мм.гг
+        $planned_dates_str = '';
+        $stmt_plan = $mysqli->prepare("SELECT GROUP_CONCAT(DISTINCT plan_date ORDER BY plan_date) AS plan_dates FROM corrugation_plan WHERE order_number = ? AND filter_label = ?");
+        if ($stmt_plan) {
+            $stmt_plan->bind_param('ss', $order_number, $filter_label);
+            $stmt_plan->execute();
+            $result_plan = $stmt_plan->get_result();
+            if ($result_plan && ($row_plan = $result_plan->fetch_assoc()) && !empty($row_plan['plan_dates'])) {
+                $dates = array_map(function ($d) {
+                    $t = strtotime(trim($d));
+                    return $t ? date('d.m.y', $t) : $d;
+                }, explode(',', $row_plan['plan_dates']));
+                $planned_dates_str = implode(', ', $dates);
+            }
+            $stmt_plan->close();
+        }
+        
         $items[] = [
-            'order_number' => htmlspecialchars($row['order_number'] ?? '', ENT_QUOTES, 'UTF-8'),
-            'filter_label' => htmlspecialchars($row['filter_label'] ?? '', ENT_QUOTES, 'UTF-8'),
-            'count' => $count
+            'order_number' => htmlspecialchars($order_number, ENT_QUOTES, 'UTF-8'),
+            'filter_label' => htmlspecialchars($filter_label, ENT_QUOTES, 'UTF-8'),
+            'count' => $count,
+            'planned_dates' => htmlspecialchars($planned_dates_str, ENT_QUOTES, 'UTF-8')
         ];
     }
     

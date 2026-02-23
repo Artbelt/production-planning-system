@@ -13,12 +13,8 @@ echo "<tr align='center'><td>Фильтр</td><td width='50'>Диаметр на
 <td  width='50'>Диаметр внутренний низ</td><td>Высота</td><td  width='50'>Верхняя крышка</td><td  width='50'>Нижняя крышка</td>
 <td>РР вставка</td><td>Предфильтр</td><td>Упаковка</td><td>Примечание</td></tr>";
 
-global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-
-/** Создаем подключение к БД */
-$mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-
-/** Выполняем запрос SQL  выборка из таблицы данных фильтров*/
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 $sql = "SELECT * FROM list_of_caps order by name_of_cap ASC;";
 
 $sql= "SELECT 
@@ -38,12 +34,10 @@ round_filter_structure.packing
 FROM round_filter_structure  WHERE filter NOT LIKE '%pe%' order by filter ASC";
 //FROM round_filter_structure  WHERE filter LIKE '%AF%' AND filter NOT LIKE '%pe%' order by filter ASC";
 
-/** Если запрос не удачный -> exit */
-if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n"; exit; }
+$rows = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
 
-/** Разбор массива значений  */
 
-while ($filter_params = $result->fetch_assoc()) {
+foreach ($rows as $filter_params) {
     $filter = $filter_params['filter'];
     $diameter_out = $filter_params['Diametr_outer'];
     $diameter_inner_1 = $filter_params['Diametr_inner_1'];
@@ -90,7 +84,6 @@ while ($filter_params = $result->fetch_assoc()) {
     echo "<td>".$comment."</td>";
     echo "</tr>";
 }
-$result->close();
 echo "</table>";
 
 ?>

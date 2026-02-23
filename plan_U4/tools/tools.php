@@ -1,7 +1,7 @@
 <?php /** tools.php в файле прописаны разные функции */
 
 /** ПОдключаем функции */
-require_once('C:/xampp/htdocs/plan_U4/settings.php') ;
+require_once(__DIR__ . '/../settings.php');
 
 global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
 

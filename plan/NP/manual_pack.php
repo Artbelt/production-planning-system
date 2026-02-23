@@ -1,7 +1,8 @@
 <?php
 // manual_pack.php
 
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
+require_once __DIR__ . '/../../auth/includes/db.php';
+$pdo = getPdo('plan');
 
 // Сохраняем одну вручную собранную бухту
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {

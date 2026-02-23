@@ -33,14 +33,9 @@ if (empty($userDepartments)) {
 
 require_once('tools/tools.php');
 require_once('settings.php');
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan_u3');
 require_once('cap_db_init.php');
-
-// Подключаемся к БД
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-if ($mysqli->connect_errno) {
-    die('Ошибка подключения к БД: ' . $mysqli->connect_error);
-}
-$mysqli->set_charset("utf8mb4");
 
 // Получаем параметры фильтрации
 $date_from = $_GET['date_from'] ?? date('Y-m-d', strtotime('-30 days'));
@@ -68,14 +63,10 @@ $sql_income = "
     ORDER BY date DESC
 ";
 
-$stmt_income = $mysqli->prepare($sql_income);
-if ($stmt_income) {
-    $stmt_income->bind_param("ss", $date_from, $date_to);
-    $stmt_income->execute();
-    $result_income = $stmt_income->get_result();
-    
+$stmt_income = $pdo->prepare($sql_income);
+if ($stmt_income && $stmt_income->execute([$date_from, $date_to])) {
     $income_details = [];
-    while ($row = $result_income->fetch_assoc()) {
+    while ($row = $stmt_income->fetch(PDO::FETCH_ASSOC)) {
         $date = $row['date'];
         $cap_name = trim($row['cap_name']);
         $quantity = (int)$row['total_quantity'];
@@ -85,8 +76,6 @@ if ($stmt_income) {
         }
         $income_details[$date][$cap_name] = $quantity;
     }
-    $result_income->close();
-    $stmt_income->close();
     
     // Подсчитываем общее количество крышек по дням (в штуках)
     foreach ($income_details as $date => $caps) {
@@ -119,12 +108,9 @@ $sql_filters = "
     GROUP BY date_of_production, name_of_filter
 ";
 
-$stmt_filters = $mysqli->prepare($sql_filters);
-if ($stmt_filters) {
-    $stmt_filters->bind_param("ss", $date_from, $date_to);
-    $stmt_filters->execute();
-    $result_filters = $stmt_filters->get_result();
-    while ($row = $result_filters->fetch_assoc()) {
+$stmt_filters = $pdo->prepare($sql_filters);
+if ($stmt_filters && $stmt_filters->execute([$date_from, $date_to])) {
+    while ($row = $stmt_filters->fetch(PDO::FETCH_ASSOC)) {
         $date = $row['date'];
         $filter_name = trim($row['name_of_filter'] ?? '');
         $count = (int)$row['total_filters'];
@@ -134,8 +120,6 @@ if ($stmt_filters) {
         }
         $filter_counts_by_date[$date][$filter_name] = $count;
     }
-    $result_filters->close();
-    $stmt_filters->close();
 }
 
 // Получаем детальную информацию о крышках по фильтрам
@@ -155,14 +139,10 @@ $sql_production = "
     ORDER BY date DESC, filter_name, cap_name
 ";
 
-$stmt_production = $mysqli->prepare($sql_production);
-if ($stmt_production) {
-    $stmt_production->bind_param("ss", $date_from, $date_to);
-    $stmt_production->execute();
-    $result_production = $stmt_production->get_result();
-    
+$stmt_production = $pdo->prepare($sql_production);
+if ($stmt_production && $stmt_production->execute([$date_from, $date_to])) {
     $production_details = [];
-    while ($row = $result_production->fetch_assoc()) {
+    while ($row = $stmt_production->fetch(PDO::FETCH_ASSOC)) {
         $date = $row['date'];
         $filter_name = trim($row['filter_name'] ?? '');
         $cap_name = trim($row['cap_name'] ?? '');
@@ -176,8 +156,6 @@ if ($stmt_production) {
         }
         $production_details[$date][$filter_name][$cap_name] = $quantity;
     }
-    $result_production->close();
-    $stmt_production->close();
     
     // Подсчитываем общее количество крышек и формируем tooltip
     foreach ($production_details as $date => $filters) {
@@ -259,7 +237,6 @@ foreach ($chart_dates as $date) {
     $chart_balance[] = $cumulative_balance;
 }
 
-$mysqli->close();
 ?>
 <!DOCTYPE html>
 <html>

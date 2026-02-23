@@ -204,9 +204,8 @@ function get_corr_fact_for_filter(PDO $pdo, string $orderNumber, string $filterL
 // Получаем номер заявки
 $order_number = $_POST['order_number'] ?? '';
 
-// Подключим отдельный PDO для выборок из manufactured_corrugated_packages (факт гофропакетов)
-$pdo_corr = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
-$pdo_corr->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo_corr = getPdo('plan');
 
 // Загружаем заявку (как и раньше)
 $result = show_order($order_number);

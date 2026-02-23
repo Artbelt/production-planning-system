@@ -490,17 +490,14 @@ if ($analog_filter !== '') {
                             <option value="">— Выберите —</option>
                             <option value="__NEW__">+ Добавить новую крышку</option>
                             <?php
-                            global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-                            $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-                            $sql = "SELECT DISTINCT cap_name FROM cap_stock ORDER BY cap_name";
-                            if ($result = $mysqli->query($sql)) {
-                                while ($row = $result->fetch_assoc()) {
+                            $pdo = _planPdo();
+                            $st = $pdo->query("SELECT DISTINCT cap_name FROM cap_stock ORDER BY cap_name");
+                            if ($st) {
+                                while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
                                     $selected = ($analog_data['up_cap'] ?? '') == $row['cap_name'] ? 'selected' : '';
                                     echo "<option value='".htmlspecialchars($row['cap_name'])."' $selected>".htmlspecialchars($row['cap_name'])."</option>";
                                 }
-                                $result->close();
                             }
-                            $mysqli->close();
                             ?>
                         </select>
                         <div id="new_metal_cap_up" class="new-cap-input hidden" style="margin-top:12px">
@@ -543,17 +540,14 @@ if ($analog_filter !== '') {
                             <option value="">— Выберите —</option>
                             <option value="__NEW__">+ Добавить новую крышку</option>
                             <?php
-                            global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-                            $mysqli = new mysqli($mysql_host,$mysql_user,$mysql_user_pass,$mysql_database);
-                            $sql = "SELECT DISTINCT cap_name FROM cap_stock ORDER BY cap_name";
-                            if ($result = $mysqli->query($sql)) {
-                                while ($row = $result->fetch_assoc()) {
+                            $pdo = _planPdo();
+                            $st = $pdo->query("SELECT DISTINCT cap_name FROM cap_stock ORDER BY cap_name");
+                            if ($st) {
+                                while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
                                     $selected = ($analog_data['down_cap'] ?? '') == $row['cap_name'] ? 'selected' : '';
                                     echo "<option value='".htmlspecialchars($row['cap_name'])."' $selected>".htmlspecialchars($row['cap_name'])."</option>";
                                 }
-                                $result->close();
                             }
-                            $mysqli->close();
                             ?>
                         </select>
                         <div id="new_metal_cap_down" class="new-cap-input hidden" style="margin-top:12px">

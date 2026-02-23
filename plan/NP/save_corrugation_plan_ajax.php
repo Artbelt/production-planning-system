@@ -1,20 +1,20 @@
 <?php
 header('Content-Type: application/json; charset=utf-8');
 
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan;charset=utf8mb4", "root", "");
-$order = $_POST['order'] ?? '';
-$raw = $_POST['plan_data'] ?? '';
+require_once __DIR__ . '/../../auth/includes/db.php';
+$pdo = getPdo('plan');
+$order = isset($_POST['order']) ? trim((string)$_POST['order']) : '';
+$raw = isset($_POST['plan_data']) ? (string)$_POST['plan_data'] : '';
 
-if (!$order || !$raw) {
-    echo json_encode(['success' => false, 'message' => 'Отсутствуют данные']);
+if ($order === '' || $raw === '') {
+    echo json_encode(['success' => false, 'message' => 'Отсутствуют данные (order или plan_data)']);
     exit;
 }
 
 try {
     $data = json_decode($raw, true);
-    
-    if (!$data) {
-        echo json_encode(['success' => false, 'message' => 'Ошибка в данных плана']);
+    if (!is_array($data)) {
+        echo json_encode(['success' => false, 'message' => 'Ошибка в данных плана (ожидался JSON-объект)']);
         exit;
     }
 

@@ -1,20 +1,10 @@
 <?php
-// Подключение к базе данных
-$mysql_host = '127.0.0.1';
-$mysql_user = 'root';
-$mysql_user_pass = '';
-$mysql_database = 'plan';
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo = getPdo('plan');
 
-$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
-
-// Проверка подключения
-if ($mysqli->connect_error) {
-    die('Ошибка подключения (' . $mysqli->connect_errno . ') ' . $mysqli->connect_error);
-}
-
-// SQL-запрос для получения данных
 $sql = "SELECT p_p_name, p_p_height, p_p_pleats_count FROM paper_package_panel";
-$result = $mysqli->query($sql);
+$stmt = $pdo->query($sql);
+$rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <!DOCTYPE html>
@@ -69,8 +59,8 @@ $result = $mysqli->query($sql);
     </tr>
     </thead>
     <tbody>
-    <?php if ($result->num_rows > 0): ?>
-        <?php while ($row = $result->fetch_assoc()): ?>
+    <?php if (count($rows) > 0): ?>
+        <?php foreach ($rows as $row): ?>
             <?php
             $length = ($row['p_p_height'] * 2 + 1) * $row['p_p_pleats_count'] / 1000;
             $count_from = $length > 0 ? 1000 / $length : 0;
@@ -80,7 +70,7 @@ $result = $mysqli->query($sql);
                 <td><?= htmlspecialchars($length) ?></td>
                 <td><?= htmlspecialchars(round($count_from, 0)) ?></td>
             </tr>
-        <?php endwhile; ?>
+        <?php endforeach; ?>
     <?php else: ?>
         <tr>
             <td colspan="3">Нет данных для отображения.</td>
