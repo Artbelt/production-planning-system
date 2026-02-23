@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/../auth/includes/db.php';
 $pdo = getPdo('plan_u3');
 

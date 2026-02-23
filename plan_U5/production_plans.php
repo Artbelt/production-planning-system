@@ -1,8 +1,6 @@
 <?php
 // Подключение к базе данных
-$dsn = 'mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4';
-$user = 'root';
-$pass = '';
+require_once __DIR__ . '/settings.php';
 
 try {
     $pdo = new PDO($dsn, $user, $pass, [

@@ -1,9 +1,7 @@
 <?php
 // view_production_plan.php — план vs факт + переносы по сменам для выбранной заявки
 
-$dsn = 'mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4';
-$user = 'root';
-$pass = '';
+require_once __DIR__ . '/settings.php';
 
 try {
     $pdo = new PDO($dsn, $user, $pass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
