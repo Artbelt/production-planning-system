@@ -5,7 +5,7 @@ require_once('tools/tools.php');
 <html lang="ru">
 <head>
     <meta charset="utf-8" />
-    <title>Добавление нового панельного фильтра в БД</title>
+    <title>Добавление нового фильтра в БД</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
         :root{
@@ -171,7 +171,7 @@ require_once('tools/tools.php');
 <div class="container">
 
     <header class="top">
-        <div class="title">Добавление нового панельного фильтра</div>
+        <div class="title">Добавление нового салонного фильтра</div>
         <div class="badge">
             <span class="muted">Цех:</span>
             <strong><?php echo isset($_POST['workshop']) ? htmlspecialchars($_POST['workshop']) : '—'; ?></strong>

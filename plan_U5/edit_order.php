@@ -1,9 +1,14 @@
 <?php
 // edit_order.php — редактирование существующей заявки
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4", "root", "", [
+require_once __DIR__ . '/settings.php';
+require_once __DIR__ . '/audit_logger.php';
+
+$pdo = new PDO($dsn, $user, $pass, [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
 ]);
+$mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+$auditLogger = new AuditLogger($mysqli);
 
 // API: сохранить изменения заявки
 if (($_GET['action'] ?? '') === 'save_order' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -24,7 +29,9 @@ if (($_GET['action'] ?? '') === 'save_order' && $_SERVER['REQUEST_METHOD'] === '
             foreach ($deleted_items as $del_item) {
                 $filter = trim((string)($del_item['filter'] ?? ''));
                 $count = (int)($del_item['count'] ?? 0);
-                
+                $recId = $order_number . '|' . ($filter ?: '(пусто)') . '|' . $count;
+                $oldVals = ['order_number' => $order_number, 'filter' => $filter ?: null, 'count' => $count];
+
                 if ($filter !== '') {
                     $delStmt = $pdo->prepare("DELETE FROM orders WHERE order_number = ? AND `filter` = ? AND `count` = ? LIMIT 1");
                     $delStmt->execute([$order_number, $filter, $count]);
@@ -32,6 +39,7 @@ if (($_GET['action'] ?? '') === 'save_order' && $_SERVER['REQUEST_METHOD'] === '
                     $delStmt = $pdo->prepare("DELETE FROM orders WHERE order_number = ? AND (`filter` IS NULL OR `filter` = '') AND `count` = ? LIMIT 1");
                     $delStmt->execute([$order_number, $count]);
                 }
+                $auditLogger->logDelete('orders', $recId, $oldVals, 'edit_order: удалена позиция заявки', null);
             }
         }
 
@@ -69,10 +77,66 @@ if (($_GET['action'] ?? '') === 'save_order' && $_SERVER['REQUEST_METHOD'] === '
                     $order_number, $workshop, $filter, $count, $marking,
                     $personal_packaging, $personal_label, $group_packaging, $packaging_rate, $group_label, $remark
                 ]);
+                $recId = $order_number . '|' . $filter . '|' . $count;
+                $newVals = ['order_number' => $order_number, 'workshop' => $workshop, 'filter' => $filter, 'count' => $count, 'marking' => $marking, 'personal_packaging' => $personal_packaging, 'personal_label' => $personal_label, 'group_packaging' => $group_packaging, 'packaging_rate' => $packaging_rate, 'group_label' => $group_label, 'remark' => $remark];
+                $auditLogger->logInsert('orders', $recId, $newVals, 'edit_order: добавлена позиция заявки', null);
             } else {
-                // Обновляем существующую позицию
+                // Обновляем существующую позицию (только если есть реальные изменения)
                 $old_filter = trim((string)($it['old_filter'] ?? $filter));
-                $old_count = (int)($it['old_count'] ?? $count);
+                $old_count  = (int)($it['old_count'] ?? $count);
+
+                // Читаем актуальное состояние строки из БД
+                $selectStmt = $pdo->prepare("
+                    SELECT `filter`, `count`, marking,
+                           personal_packaging, personal_label, group_packaging,
+                           packaging_rate, group_label, remark
+                    FROM orders
+                    WHERE order_number = ? AND `filter` = ? AND `count` = ?
+                    LIMIT 1
+                ");
+                $selectStmt->execute([$order_number, $old_filter, $old_count]);
+                $existing = $selectStmt->fetch(PDO::FETCH_ASSOC);
+
+                if (!$existing) {
+                    // Нет такой строки — ничего не обновляем и не логируем, чтобы не плодить мусор
+                    continue;
+                }
+
+                $oldVals = [
+                    'filter'             => $existing['filter'],
+                    'count'              => (int)$existing['count'],
+                    'marking'            => $existing['marking'],
+                    'personal_packaging' => $existing['personal_packaging'],
+                    'personal_label'     => $existing['personal_label'],
+                    'group_packaging'    => $existing['group_packaging'],
+                    'packaging_rate'     => $existing['packaging_rate'] === null ? null : (int)$existing['packaging_rate'],
+                    'group_label'        => $existing['group_label'],
+                    'remark'             => $existing['remark'],
+                ];
+
+                $newVals = [
+                    'filter'             => $filter,
+                    'count'              => $count,
+                    'marking'            => $marking,
+                    'personal_packaging' => $personal_packaging,
+                    'personal_label'     => $personal_label,
+                    'group_packaging'    => $group_packaging,
+                    'packaging_rate'     => $packaging_rate,
+                    'group_label'        => $group_label,
+                    'remark'             => $remark,
+                ];
+
+                $changed = [];
+                foreach (['filter','count','marking','personal_packaging','personal_label','group_packaging','packaging_rate','group_label','remark'] as $f) {
+                    if (($oldVals[$f] ?? null) !== ($newVals[$f] ?? null)) {
+                        $changed[] = $f;
+                    }
+                }
+
+                // Если ничего не изменилось — пропускаем UPDATE и лог
+                if (!$changed) {
+                    continue;
+                }
 
                 $upd = $pdo->prepare("UPDATE orders SET 
                     `filter` = ?, `count` = ?, marking = ?,
@@ -87,6 +151,9 @@ if (($_GET['action'] ?? '') === 'save_order' && $_SERVER['REQUEST_METHOD'] === '
                     $packaging_rate, $group_label, $remark,
                     $order_number, $old_filter, $old_count
                 ]);
+
+                $recId = $order_number . '|' . $old_filter . '|' . $old_count;
+                $auditLogger->logUpdate('orders', $recId, $oldVals, $newVals, $changed, 'edit_order: обновлена позиция заявки', null);
             }
         }
         $pdo->commit();

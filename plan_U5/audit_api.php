@@ -6,9 +6,11 @@ header('Content-Type: application/json; charset=utf-8');
 
 session_start();
 
+require_once __DIR__ . '/settings.php';
+
 try {
     // Подключение к базе данных
-    $mysqli = new mysqli("localhost", "root", "", "plan_U5");
+    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
 
     if ($mysqli->connect_error) {
         throw new Exception('Ошибка подключения к базе данных: ' . $mysqli->connect_error);

@@ -524,6 +524,39 @@
             });
         }
 
+        function getChangedFieldsArray(log) {
+            if (Array.isArray(log.changed_fields)) {
+                return log.changed_fields;
+            }
+            if (typeof log.changed_fields === 'string' && log.changed_fields.trim() !== '') {
+                return log.changed_fields.split(',').map(s => s.trim()).filter(Boolean);
+            }
+            return [];
+        }
+
+        function buildDisplayValues(log, type) {
+            const source = type === 'old' ? log.old_values : log.new_values;
+            if (!source) {
+                return '';
+            }
+
+            const changed = getChangedFieldsArray(log);
+
+            // Для UPDATE показываем только изменённые поля
+            if (log.operation === 'UPDATE' && changed.length > 0) {
+                const filtered = {};
+                changed.forEach(field => {
+                    if (Object.prototype.hasOwnProperty.call(source, field)) {
+                        filtered[field] = source[field];
+                    }
+                });
+                return JSON.stringify(filtered, null, 2);
+            }
+
+            // Для INSERT/DELETE или если нет списка полей — показываем всё как раньше
+            return JSON.stringify(source, null, 2);
+        }
+
         function displayAuditLogs(logs) {
             const tbody = document.getElementById('auditTableBody');
             tbody.innerHTML = '';
@@ -535,10 +568,11 @@
 
             logs.forEach(log => {
                 const row = document.createElement('tr');
-                
-                const oldValues = log.old_values ? JSON.stringify(log.old_values, null, 2) : '';
-                const newValues = log.new_values ? JSON.stringify(log.new_values, null, 2) : '';
-                const changedFields = log.changed_fields ? log.changed_fields.join(', ') : '';
+
+                const oldValues = buildDisplayValues(log, 'old');
+                const newValues = buildDisplayValues(log, 'new');
+                const changedArray = getChangedFieldsArray(log);
+                const changedFields = changedArray.length ? changedArray.join(', ') : '';
                 
                 const userName = (log.user_name && log.user_name.trim()) ? log.user_name.trim() : '-';
                 row.innerHTML = `

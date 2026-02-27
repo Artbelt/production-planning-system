@@ -4,9 +4,7 @@
 declare(strict_types=1);
 header('Content-Type: text/html; charset=utf-8');
 
-$dsn  = "mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4";
-$user = "root";
-$pass = "";
+require_once __DIR__ . '/settings.php';
 
 function h(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 

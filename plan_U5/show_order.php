@@ -579,6 +579,16 @@ $page_title = $order_number ? $order_number : "Заявка";
             border-bottom: 1px solid var(--border);
         }
 
+        /* Компактное модальное окно */
+        .modal-content.modal-compact { max-width: 520px; }
+        .modal-content.modal-compact .modal-header { padding: 0.5rem 0.75rem; }
+        .modal-content.modal-compact .modal-header h3 { font-size: 0.8125rem; }
+        .modal-content.modal-compact .modal-body { padding: 0.5rem 0.75rem; }
+        .modal-content.modal-compact .zero-positions-header { margin: 0 0 0.5rem 0; font-size: 0.6875rem; padding-bottom: 0.5rem; }
+        .modal-content.modal-compact table { font-size: 0.6875rem; }
+        .modal-content.modal-compact th, .modal-content.modal-compact td { padding: 0.2rem 0.4rem; }
+        .modal-content.modal-compact .no-zero-positions { padding: 1rem; font-size: 0.75rem; }
+
 
         /* Мобильная адаптация для модального окна */
         @media (max-width: 768px) {
@@ -826,6 +836,7 @@ $page_title = $order_number ? $order_number : "Заявка";
     echo "<div class='action-panel-title'>Действия</div>";
     echo "<div class='button-group'>";
     echo "<button onclick='showZeroProductionPositions()' class='btn-secondary btn-sm'>Позиции выпуск которых = 0</button>";
+    echo "<button onclick='showLaggingPositions()' class='btn-secondary btn-sm'>Позиции отстающие &gt; 20%</button>";
     echo "<button onclick='checkGofraPackages()' class='btn-secondary btn-sm'>Проверка гофропакетов</button>";
     echo "<button id='btnToggleGantt' onclick='toggleGanttColumn()' class='btn-secondary btn-sm'>Диаграмма Ганта</button>";
     echo "<button onclick='openWorkersSpecification()' class='btn-secondary btn-sm'>Спецификация для рабочих</button>";
@@ -963,6 +974,24 @@ $page_title = $order_number ? $order_number : "Заявка";
 
 </div>
 
+<!-- Модальное окно для позиций с отставанием > 20% -->
+<div id="laggingPositionsModal" class="modal">
+    <div class="modal-content modal-compact">
+        <div class="modal-header">
+            <h3>Отставание &gt; 20%</h3>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <button onclick="printLaggingPositions()" class="btn-secondary btn-sm" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">Печать</button>
+                <button class="modal-close" onclick="closeLaggingPositionsModal()">&times;</button>
+            </div>
+        </div>
+        <div class="modal-body">
+            <div id="laggingPositionsContent">
+                <p style="text-align:center;padding:20px;color:var(--muted);font-size:0.75rem;">Загрузка...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Модальное окно для позиций с нулевым выпуском -->
 <div id="zeroProductionModal" class="modal">
     <div class="modal-content" style="max-width: 585px;">
@@ -1059,6 +1088,91 @@ $page_title = $order_number ? $order_number : "Заявка";
     // Функция для закрытия модального окна
     function closeZeroProductionModal() {
         document.getElementById('zeroProductionModal').style.display = 'none';
+    }
+
+    // Функция для показа позиций с отставанием > 20%
+    function showLaggingPositions() {
+        const modal = document.getElementById('laggingPositionsModal');
+        modal.style.display = 'flex';
+        loadLaggingPositionsData();
+    }
+
+    function closeLaggingPositionsModal() {
+        document.getElementById('laggingPositionsModal').style.display = 'none';
+    }
+
+    function printLaggingPositions() {
+        const orderNumber = '<?= htmlspecialchars($order_number) ?>';
+        const content = document.getElementById('laggingPositionsContent');
+        const printWindow = window.open('', '_blank', 'width=700,height=500');
+        const printHTML = `<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Отставание &gt; 20% - ${orderNumber}</title><style>body{font-family:Arial,sans-serif;margin:20px;font-size:11px}h1{color:#374151;font-size:14px;margin:0 0 10px}h2{color:#6b7280;font-size:12px;margin:0 0 15px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #374151;padding:4px;text-align:left}th{background:#f3f4f6}</style></head><body><h1>Позиции с отставанием более 20%</h1><h2>Заявка: ${orderNumber} | ${new Date().toLocaleDateString('ru-RU')}</h2>${content.innerHTML}</body></html>`;
+        printWindow.document.write(printHTML);
+        printWindow.document.close();
+        printWindow.onload = function() { printWindow.focus(); printWindow.print(); };
+    }
+
+    // Позиции, где изготовлено меньше заданного более чем на 20%: produced < planned * 0.8
+    function loadLaggingPositionsData() {
+        const content = document.getElementById('laggingPositionsContent');
+        content.innerHTML = '<p style="text-align:center;padding:20px;color:var(--muted);font-size:0.75rem;">Загрузка...</p>';
+        
+        const table = document.getElementById('order_table');
+        const rows = table.querySelectorAll('tr');
+        const laggingPositions = [];
+        
+        for (let i = 1; i < rows.length - 1; i++) {
+            const row = rows[i];
+            const cells = row.querySelectorAll('td');
+            
+            if (cells.length >= 13) {
+                const filter = cells[1].textContent.trim();
+                const plannedCount = parseInt(cells[2].textContent) || 0;
+                const producedElement = cells[10].querySelector('.tooltip') || cells[10];
+                const producedCount = parseInt(producedElement.firstChild ? producedElement.firstChild.textContent.trim() : cells[10].textContent.trim()) || 0;
+                const gofraElement = cells[12].querySelector('.tooltip') || cells[12];
+                const gofraText = gofraElement.firstChild ? gofraElement.firstChild.textContent.trim() : cells[12].textContent.trim();
+                const gofraCount = parseInt(gofraText) || 0;
+                const remark = cells[9].textContent.trim();
+                
+                // manufactured < planned * 0.8 (отставание более 20%)
+                if (plannedCount > 0 && producedCount < plannedCount * 0.8) {
+                    const lagPercent = Math.round((1 - producedCount / plannedCount) * 100);
+                    laggingPositions.push({
+                        filter: filter,
+                        plannedCount: plannedCount,
+                        producedCount: producedCount,
+                        gofraCount: gofraCount,
+                        remark: remark,
+                        lagPercent: lagPercent
+                    });
+                }
+            }
+        }
+        
+        displayLaggingPositions(laggingPositions);
+    }
+
+    function displayLaggingPositions(positions) {
+        const content = document.getElementById('laggingPositionsContent');
+        
+        if (positions.length === 0) {
+            content.innerHTML = `<div class="no-zero-positions"><p style="color:var(--success);font-weight:600;font-size:0.75rem;">Нет позиций с отставанием &gt; 20%</p></div>`;
+            return;
+        }
+        
+        let html = `<div class="zero-positions-header">Найдено: ${positions.length}</div>`;
+        html += `<table class="compact-table"><thead><tr><th>Фильтр</th><th style="text-align:center;">План</th><th style="text-align:center;">Изгот.</th><th style="text-align:center;">Гофра</th><th style="text-align:center;">−%</th>${positions.some(p => p.remark) ? '<th>Прим.</th>' : ''}</tr></thead><tbody>`;
+        
+        positions.forEach((position) => {
+            html += `<tr><td>${position.filter}</td><td style="text-align:center;">${position.plannedCount}</td><td style="text-align:center;color:#dc2626;font-weight:600;">${position.producedCount}</td><td style="text-align:center;color:var(--accent);">${position.gofraCount}</td><td style="text-align:center;color:#dc2626;font-weight:600;">${position.lagPercent}%</td>${positions.some(p => p.remark) ? `<td style="font-size:0.65rem;color:var(--muted);">${position.remark || ''}</td>` : ''}</tr>`;
+        });
+        
+        html += `
+                </tbody>
+            </table>
+        `;
+        
+        content.innerHTML = html;
     }
 
     // Функция для загрузки данных о позициях с нулевым выпуском
@@ -1550,12 +1664,16 @@ $page_title = $order_number ? $order_number : "Заявка";
     // Закрытие модального окна при клике вне его
     window.onclick = function(event) {
         const zeroModal = document.getElementById('zeroProductionModal');
+        const laggingModal = document.getElementById('laggingPositionsModal');
         const gofraModal = document.getElementById('gofraCheckModal');
         const filterModal = document.getElementById('filterInfoModal');
         const ganttModal = document.getElementById('ganttModal');
         
         if (event.target === zeroModal) {
             closeZeroProductionModal();
+        }
+        if (event.target === laggingModal) {
+            closeLaggingPositionsModal();
         }
         if (event.target === gofraModal) {
             closeGofraCheckModal();
