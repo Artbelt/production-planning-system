@@ -1,19 +1,33 @@
 <?php
-require_once('tools/tools.php');
-require_once __DIR__ . '/../auth/includes/db.php';
-$pdo_filter = getPdo('plan_u3');
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' || empty($_POST['filter_name'] ?? '')) {
+    http_response_code(400);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('Страница предназначена для вызова из формы (POST). Укажите filter_name.');
+}
 
-$filter_name =  $_POST['filter_name'];
-$category = $_POST['category'];
+try {
+    require_once __DIR__ . '/settings.php';
+    require_once __DIR__ . '/tools/tools.php';
+    require_once __DIR__ . '/../auth/includes/db.php';
+    $pdo_filter = getPdo('plan_u3');
+} catch (Throwable $e) {
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('Ошибка инициализации: ' . $e->getMessage() . ' (файл ' . basename($e->getFile()) . ', строка ' . $e->getLine() . ')');
+}
+
+try {
+$filter_name = trim((string)($_POST['filter_name'] ?? ''));
+$category = $_POST['category'] ?? '';
 /** ГОФРОПАКЕТ */
 $p_p_name = "гофропакет ".$filter_name;
-$p_p_height = $_POST['p_p_fold_height'];
-$p_p_ext_wireframe = $_POST['p_p_ext_wireframe'];//material
-$p_p_int_wireframe = $_POST['p_p_int_wireframe'];//material
-$p_p_paper_width = $_POST['p_p_paper_width'];
-$p_p_fold_height = $_POST['p_p_fold_height'];
-$p_p_fold_count = $_POST['p_p_fold_count'];
-$p_p_remark = $_POST['p_p_remark'];
+$p_p_height = $_POST['p_p_fold_height'] ?? '';
+$p_p_ext_wireframe = $_POST['p_p_ext_wireframe'] ?? '';
+$p_p_int_wireframe = $_POST['p_p_int_wireframe'] ?? '';
+$p_p_paper_width = $_POST['p_p_paper_width'] ?? '';
+$p_p_fold_height = $_POST['p_p_fold_height'] ?? '';
+$p_p_fold_count = $_POST['p_p_fold_count'] ?? '';
+$p_p_remark = $_POST['p_p_remark'] ?? '';
 /** КАРКАС НАРУЖНыЙ */
 $ext_wf_name = '';
 if ($p_p_ext_wireframe != ''){
@@ -83,7 +97,7 @@ if ($down_cap_type == 'metal') {
 
 /** ПРЕДФИЛЬТР */
 
-$pf_presence = $_POST['prefilter'];
+$pf_presence = $_POST['prefilter'] ?? '';
 if ($pf_presence != '') {
         $pf_name = "предфильтр ".$filter_name;
 } else {
@@ -91,7 +105,7 @@ if ($pf_presence != '') {
 }
 /** ВСТАВКА ПП */
 
-$pi_presence = $_POST['pp_insertion'];
+$pi_presence = $_POST['pp_insertion'] ?? '';
 if ($pi_presence != '') {
     $pi_name = $pi_presence;
 } else {
@@ -101,7 +115,7 @@ if ($pi_presence != '') {
 
 
 /** Packing */
-$pckg_presence = $_POST['packing'];
+$pckg_presence = $_POST['packing'] ?? '';
 if ($pckg_presence != '') {
     $pckg_name = "г/к ящик ".$filter_name;
 } else {
@@ -111,7 +125,7 @@ if ($pckg_presence != '') {
 /** Проверяем режим работы */
 $mode = isset($_POST['mode']) ? $_POST['mode'] : 'insert';
 
-$remark =  $_POST['remark'];
+$remark = $_POST['remark'] ?? '';
 // Аналог берем из поля analog (которое равно analog_filter - прототипу)
 $analog = isset($_POST['analog']) ? trim($_POST['analog']) : '';
 // Для обратной совместимости: если analog пустой, пытаемся извлечь из remark
@@ -123,7 +137,9 @@ if (empty($analog) && !empty($remark) && preg_match('/ANALOG_FILTER=([^\s]+)/i',
 }
 
 /** @var $a ПРоверка наличия фильтра в БД  */
-$a = check_filter($_POST['filter_name']);
+$a = check_filter($filter_name);
+
+$asNum = function($v) { $t = trim((string)$v); return $t === '' ? null : $t; };
 
 /** Если режим update - обновляем существующий фильтр */
 if ($mode == 'update') {
@@ -132,11 +148,11 @@ if ($mode == 'update') {
         exit();
     }
     
-    $diametr_outer = $_POST['Diametr_outer'] ?? '';
-    $diametr_inner_1 = $_POST['Diametr_inner_1'] ?? '';
-    $diametr_inner_2 = $_POST['Diametr_inner_2'] ?? '';
-    $height = $_POST['Height'] ?? '';
-    $productivity = $_POST['productivity'] ?? '';
+    $diametr_outer = $asNum($_POST['Diametr_outer'] ?? '');
+    $diametr_inner_1 = $asNum($_POST['Diametr_inner_1'] ?? '');
+    $diametr_inner_2 = $asNum($_POST['Diametr_inner_2'] ?? '');
+    $height = $asNum($_POST['Height'] ?? '');
+    $productivity = $asNum($_POST['productivity'] ?? '');
     $press = (isset($_POST['press']) && $_POST['press'] === '1') ? '1' : '';
     
     $stmt = $pdo_filter->prepare("UPDATE round_filter_structure SET category=?, filter_package=?, up_cap=?, down_cap=?, prefilter=?, plastic_insertion=?, packing=?, comment=?, analog=?, Diametr_outer=?, Diametr_inner_1=?, Diametr_inner_2=?, Height=?, PU_up_cap=?, PU_down_cap=?, productivity=?, press=? WHERE filter=?");
@@ -163,11 +179,11 @@ if ($mode == 'insert' && $a > 0){
     exit();
 }
 
-$diametr_outer = $_POST['Diametr_outer'];
-$diametr_inner_1 = $_POST['Diametr_inner_1'];
-$diametr_inner_2 = $_POST['Diametr_inner_2'];
-$height = $_POST['Height'];
-$productivity = isset($_POST['productivity']) ? $_POST['productivity'] : '';
+$diametr_outer = $asNum($_POST['Diametr_outer'] ?? '');
+$diametr_inner_1 = $asNum($_POST['Diametr_inner_1'] ?? '');
+$diametr_inner_2 = $asNum($_POST['Diametr_inner_2'] ?? '');
+$height = $asNum($_POST['Height'] ?? '');
+$productivity = $asNum($_POST['productivity'] ?? '');
 // В БД: 1 или NULL (пусто). Если не выбрано или пусто - сохраняем как NULL
 $press = (isset($_POST['press']) && $_POST['press'] === '1') ? '1' : '';
 // $up_cap_PU и $down_cap_PU уже определены выше
@@ -201,3 +217,9 @@ if ($pi_name != ''){
 echo "Фильтр {$filter_name} успешно добавлен в БД";
 ?>
 <button onclick="window.close();">Закрыть окно</button>
+<?php
+} catch (Throwable $e) {
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('Ошибка: ' . $e->getMessage() . ' (файл ' . basename($e->getFile()) . ', строка ' . $e->getLine() . ')');
+}
