@@ -828,15 +828,19 @@ function load_orders($list, $selection, $form){
     }
 }
 
-/** Создание <SELECT> списка с перечнем PP вставок */
-function load_insertions(){
+/** Создание <SELECT> списка с перечнем PP вставок
+ * @param string $selected значение i_name для предвыбранной опции (например, из прототипа)
+ */
+function load_insertions($selected = ''){
     $pdo = _planPdo();
     $st = $pdo->query("SELECT DISTINCT * FROM insertions ORDER BY i_name");
     if (!$st) { echo "Ошибка загрузки вставок"; return; }
-    echo "<select id='pp_insertion' name = 'pp_insertion'>";
-    echo "<option></option>";
+    echo "<select id='pp_insertion' name='pp_insertion'>";
+    echo "<option value=''></option>";
     while ($row = $st->fetch(PDO::FETCH_ASSOC)){
-        echo "<option name='pp_insertion' value=".$row['i_name'].">".$row['i_name']."</option>";
+        $val = htmlspecialchars($row['i_name'], ENT_QUOTES, 'UTF-8');
+        $sel = ($selected !== '' && $row['i_name'] === $selected) ? ' selected="selected"' : '';
+        echo "<option value=\"".$val."\"".$sel.">".htmlspecialchars($row['i_name'])."</option>";
     }
     echo "</select>";
 }

@@ -584,7 +584,7 @@ if ($analog_filter !== '') {
                 <h3>Вставка PP</h3>
                 <div>
                     <label>Вставка</label>
-                    <?php load_insertions() ?>
+                    <?php load_insertions($analog_data['pp_insertion'] ?? '') ?>
                 </div>
             </section>
 

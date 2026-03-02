@@ -217,6 +217,19 @@ if ($pi_name != ''){
 echo "Фильтр {$filter_name} успешно добавлен в БД";
 ?>
 <button onclick="window.close();">Закрыть окно</button>
+<script>
+(function(){
+  var filterName = <?=json_encode($filter_name)?>;
+  if (filterName == null) return;
+  try {
+    if (window.opener) {
+      window.opener.postMessage({ type: 'filterAdded', filter: filterName }, '*');
+    } else {
+      try { localStorage.setItem('plan_U3_filterAdded', JSON.stringify({ filter: filterName })); } catch (_) {}
+    }
+  } catch (e) { console.warn('notify parent:', e); }
+})();
+</script>
 <?php
 } catch (Throwable $e) {
     http_response_code(500);

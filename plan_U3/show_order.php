@@ -9,11 +9,19 @@ require('settings.php');
 require ('style/table.txt');
 
 
-/** Номер заявки которую надо нарисовать */
-$order_number = $_POST['order_number'];
+/** Номер заявки которую надо нарисовать (POST — при переходе с главной, иначе пусто при прямой ссылке) */
+$order_number = isset($_POST['order_number']) ? trim((string)$_POST['order_number']) : '';
+
+/** При отсутствии номера заявки — сообщение и выход (таблица не заполняется при прямой загрузке страницы) */
+if ($order_number === '') {
+    echo '<h3>Заявка</h3>';
+    echo '<p style="color:#c00;">Номер заявки не передан. Выберите заявку на <a href="main.php">главной странице</a> (кнопка с номером заявки).</p>';
+    echo '<p>Страница show_order.php открывается с данными только при переходе из списка заявок.</p>';
+    return;
+}
 
 /** Показываем номер заявки */
-echo '<h3>Заявка:'.$order_number.'</h3><p>';
+echo '<h3>Заявка: '.htmlspecialchars($order_number).'</h3><p>';
 
 ?>
 
@@ -199,6 +207,10 @@ while ($row = $result->fetch(PDO::FETCH_ASSOC)){
 
 }
 
+/** Если по заявке не найдено ни одной позиции — выводим подсказку */
+if ($count === 0) {
+    echo "<tr><td colspan='14' style='padding:10px; color:#666;'>По заявке «".htmlspecialchars($order_number)."» в базе не найдено ни одной позиции. Проверьте номер заявки или создайте заявку.</td></tr>";
+}
 
 /** @var расчет оставшегося количества продукции для производства $summ_difference */
 $summ_difference = $filter_count_in_order - $filter_count_produced;

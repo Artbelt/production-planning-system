@@ -1080,6 +1080,7 @@ try{
         const tbody = el('missTbl');
         for (const [idx, m] of MISSING.entries()){
             const tr = document.createElement('tr');
+            tr.dataset.filter = m.filter;
 
             // 1) Позиция из заявки
             const tdF = document.createElement('td');
@@ -1155,6 +1156,30 @@ try{
         el('missBack').onclick = close;
         el('missClose').onclick = close;
     }
+
+    function removeMissingRowByFilter(filterName) {
+        const needFilter = String(filterName).trim();
+        const tbl = document.getElementById('missTbl');
+        if (!tbl) return;
+        const rows = tbl.querySelectorAll('tr[data-filter]');
+        for (let i = 0; i < rows.length; i++) {
+            if (String(rows[i].dataset.filter || '').trim() === needFilter) {
+                rows[i].remove();
+                break;
+            }
+        }
+    }
+    window.addEventListener('message', function(e){
+        if (!e.data || e.data.type !== 'filterAdded' || e.data.filter == null) return;
+        removeMissingRowByFilter(e.data.filter);
+    });
+    window.addEventListener('storage', function(e){
+        if (e.key !== 'plan_U3_filterAdded' || !e.newValue) return;
+        try {
+            var d = JSON.parse(e.newValue);
+            if (d && d.filter != null) removeMissingRowByFilter(d.filter);
+        } catch (_) {}
+    });
 
     // init
     el('btnSave').disabled=true; el('btnClear').disabled=true;

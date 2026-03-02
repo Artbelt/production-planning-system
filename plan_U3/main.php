@@ -3,9 +3,10 @@
 require_once('../auth/includes/config.php');
 require_once('../auth/includes/auth-functions.php');
 
-// Подключаем настройки базы данных
-require_once('settings.php');
-require_once('tools/tools.php');
+// Подключаем настройки базы данных (путь относительно текущего файла)
+require_once(__DIR__ . '/settings.php');
+require_once(__DIR__ . '/../auth/includes/db.php');
+require_once(__DIR__ . '/tools/tools.php');
 
 // Инициализация системы авторизации
 initAuthSystem();
@@ -739,7 +740,7 @@ echo "<!-- Аккуратная панель авторизации -->
             <td class="panel panel--right" style="width:30%;">
                 <?php
                 /* ОПТИМИЗИРОВАННАЯ загрузка заявок */
-                $pdo = _planPdo();
+                $pdo = getPdo('plan_u3');
                 $result = $pdo->query("SELECT DISTINCT order_number, workshop, hide FROM orders");
                 if (!$result) { echo 'Ошибка загрузки заявок'; exit; }
 
@@ -801,6 +802,7 @@ echo "<!-- Аккуратная панель авторизации -->
                     ."<input type='submit' value='Архив заявок'>"
                     ."</form>";
                 echo '<button type="button" onclick="openLoadFileModal()">Загрузить файл</button>';
+                echo '<button type="button" onclick="window.location.href=\'edit_order.php\'">Редактировать заявку</button>';
                 
                 echo '<div style="border-top: 1px dashed var(--border); margin: 8px 0;"></div>';
                 
