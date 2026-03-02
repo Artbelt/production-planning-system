@@ -192,6 +192,7 @@ try{
     SELECT
       o.order_number,
       o.filter,
+      rfs.analog,
       ppr.p_p_material                 AS material,
       ppr.p_p_height                   AS strip_width_mm,
       ppr.p_p_fold_height              AS pleat_height_mm,
@@ -201,7 +202,7 @@ try{
     JOIN round_filter_structure rfs ON rfs.filter=o.filter
     JOIN paper_package_round ppr ON ppr.p_p_name=rfs.filter_package
     WHERE o.order_number=:order_number
-    GROUP BY o.order_number,o.filter,ppr.p_p_material,ppr.p_p_height,ppr.p_p_fold_height,ppr.p_p_fold_count";
+    GROUP BY o.order_number,o.filter,rfs.analog,ppr.p_p_material,ppr.p_p_height,ppr.p_p_fold_height,ppr.p_p_fold_count";
     $st=$pdo->prepare($sql); $st->execute([':order_number'=>$orderNumber]); $rows=$st->fetchAll();
 
     // Загружаем остатки на участке
@@ -288,15 +289,24 @@ try{
 
 }catch(Throwable $e){http_response_code(500);echo 'Ошибка: '.$e->getMessage(); exit;}
 ?>
-<!doctype html><meta charset="utf-8">
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Раскрой по заявке #<?=htmlspecialchars($orderNumber)?></title>
 <style>
-    :root{ --gap:12px; --left:700px; --mid:560px; --right:380px; }
+    :root{ --gap:12px; --left:700px; --mid:560px; --right:380px; --header-top: 56px; }
     *{box-sizing:border-box}
-    body{font:12px/1.25 Arial;margin:10px;height:100vh;overflow:hidden;display:flex;flex-direction:column;align-items:center}
-    h2{margin:0 0 8px;font:600 16px/1.2 Arial}
-    .wrap{display:grid;grid-template-columns:var(--left) var(--mid) var(--right);gap:var(--gap);height:calc(100vh - 38px);max-width:calc(var(--left) + var(--mid) + var(--right) + var(--gap)*2);width:100%}
-
+    html{ padding-top: var(--header-top); }
+    body{font:12px/1.25 Arial;margin:0;padding:0;height:100vh;overflow:hidden;display:flex;flex-direction:column;align-items:center}
+    .page-header{flex-shrink:0;padding: 12px 10px 8px;width:100%;max-width:calc(var(--left) + var(--mid) + var(--right) + var(--gap)*2);box-sizing:border-box}
+    h2{margin:0;font:600 16px/1.2 Arial}
+    .wrap{display:grid;grid-template-columns:var(--left) var(--mid) var(--right);grid-template-rows:minmax(0,1fr);gap:var(--gap);flex:1;min-height:0;max-width:calc(var(--left) + var(--mid) + var(--right) + var(--gap)*2);width:100%;padding:0 10px 10px;box-sizing:border-box}
+    .wrap > *{min-height:0}
+    .mid{display:flex !important;flex-direction:column !important;gap:12px;overflow:hidden !important}
+    .mid #currentBalePanel{flex-shrink:0}
+    .mid #assortPanel{flex:1;min-height:0;display:flex !important;flex-direction:column !important;overflow:hidden !important}
     .left{overflow-y:auto;overflow-x:auto;border:1px solid #ddd;border-radius:8px;padding:8px;font-size:11px;background:#fff}
     .section{margin-bottom:10px}
     .section h3{margin:0 0 6px;font:600 13px/1.2 Arial}
@@ -327,7 +337,7 @@ try{
     .right{text-align:right}
 
     /* компактные ширины колонок */
-    .col-filter{width:150px}.col-w{width:55px}.col-h{width:42px}
+    .col-filter{width:150px}.col-analog{width:60px}.col-w{width:55px}.col-h{width:42px}
     .col-need{width:80px}.col-stock{width:80px}.col-cut{width:80px}.col-rest{width:80px}
     
     /* стили для input остатков */
@@ -476,8 +486,12 @@ try{
     .muted{color:#6b7280;font-size:12px;margin:4px 0}
 
 </style>
+</head>
+<body>
 
-<h2>Раскрой по заявке #<?=htmlspecialchars($orderNumber)?></h2>
+<header class="page-header">
+    <h2>Раскрой по заявке #<?=htmlspecialchars($orderNumber)?></h2>
+</header>
 <div class="wrap">
     <!-- ЛЕВАЯ ТАБЛИЦА -->
     <div class="left">
@@ -485,11 +499,11 @@ try{
             <h3>Позиции</h3>
             <table id="tblAll" class="posTable">
                 <colgroup>
-                    <col class="col-filter"><col class="col-w"><col class="col-h">
+                    <col class="col-filter"><col class="col-analog"><col class="col-w"><col class="col-h">
                     <col class="col-need"><col class="col-stock"><col class="col-cut"><col class="col-rest">
                 </colgroup>
                 <tr>
-                    <th>Фильтр</th><th>Шир, мм</th><th>H, мм</th>
+                    <th>Фильтр</th><th>Аналог</th><th>Шир, мм</th><th>H, мм</th>
                     <th class="right">Нужно, шт</th><th class="right" title="Остаток на участке">Ост. уч., шт</th><th class="right">В раскр., шт</th><th class="right">Ост., шт</th>
                 </tr>
                 <?php foreach($rowsAll as $i=>$r): ?>
@@ -506,6 +520,7 @@ try{
                         data-stock="<?=$stock?>"
                         data-cutn="0">
                         <td><?=htmlspecialchars($r['filter'])?></td>
+                        <td><?=htmlspecialchars($r['analog'] ?? '')?></td>
                         <td><?=$r['strip_width_mm']?></td>
                         <td><?=$r['pleat_height_mm']?></td>
                         <td class="right needn"><?=number_format($need,0,'.',' ')?></td>
@@ -527,7 +542,7 @@ try{
     </div>
 
     <!-- СЕРЕДИНА -->
-    <div class="mid" style="display:flex;flex-direction:column;gap:12px;overflow:auto">
+    <div class="mid">
         <div class="panel" id="currentBalePanel">
             <h3>Текущая бухта</h3>
             <div class="meta">
@@ -542,7 +557,7 @@ try{
                 <span>Остаток: <b id="rest">1200.0</b> мм</span>
             </div>
             <div class="ctrls">
-                <button class="btn" id="btnSave" disabled>Сохранить бухту</button>
+                <button class="btn" id="btnSave" disabled>Сохранить бухту (Ctrl+Enter)</button>
                 <button class="btn" id="btnClear" disabled>Очистить</button>
             </div>
             <div id="baleList" class="quiet">Пусто</div>
@@ -853,6 +868,11 @@ try{
         renderBales(); baleStrips=[]; baleWidth=0; updBaleUI(); highlightWidthMatches();
     }
     document.getElementById('btnSave').addEventListener('click', saveBale);
+    document.addEventListener('keydown', function(e){
+        if (e.ctrlKey && e.key === 'Enter') {
+            if (!el('btnSave').disabled) { e.preventDefault(); saveBale(); }
+        }
+    });
 
     function deleteBale(idx){
         const b = bales[idx]; if(!b) return;
@@ -1191,3 +1211,5 @@ try{
     // показываем модалку, если есть новые позиции
     if (Array.isArray(MISSING) && MISSING.length){ renderMissingModal(); }
 </script>
+</body>
+</html>

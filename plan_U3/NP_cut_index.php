@@ -1,5 +1,6 @@
 <?php
 // NP_cut_index.php
+require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/../auth/includes/db.php';
 
 /* ================= AJAX: FULL REPLANNING ================= */

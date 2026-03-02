@@ -5,6 +5,7 @@
    В списке фильтров: Название [высота валов × ширина бумаги мм] + строкой H×W шторы.
 */
 
+require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/../auth/includes/db.php';
 
 $action = $_GET['action'] ?? '';
