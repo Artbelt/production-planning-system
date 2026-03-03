@@ -311,25 +311,25 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
             if (!is_array($filtersIn) || empty($filtersIn)) { 
                 echo json_encode(['ok'=>true,'items'=>[]]); exit; 
             }
-            
-            // Получаем нативные формы, для которых есть брендовые формы в заявке
-            // Нативная форма должна быть:
-            // 1. Аналогом хотя бы одной брендовой формы из заявки
-            // 2. Сама присутствовать в заявке
+            // Показываем нативную форму только если в плане к ней относится более одной позиции
+            // (эталон + бренды или несколько брендов). Для каждой позиции заявки определяем
+            // её эталон (сам фильтр, если он эталон, иначе analog), группируем по эталону, оставляем count >= 2.
             $in = implode(',', array_fill(0, count($filtersIn), '?'));
-            $sql = "SELECT DISTINCT rfs_native.filter 
-                    FROM round_filter_structure rfs_brand
-                    INNER JOIN round_filter_structure rfs_native 
-                        ON UPPER(TRIM(rfs_brand.analog)) = UPPER(TRIM(rfs_native.filter))
-                    WHERE rfs_brand.filter IN ($in)
-                      AND rfs_brand.analog IS NOT NULL 
-                      AND rfs_brand.analog != ''
-                      AND (rfs_native.analog IS NULL OR rfs_native.analog = '')
-                      AND rfs_native.filter IN ($in)
-                    ORDER BY rfs_native.filter";
-            // Передаем список фильтров дважды: для брендовых и для нативных
+            $sql = "SELECT native_canonical AS filter
+                    FROM (
+                        SELECT COALESCE(rfs_native.filter, rfs_brand.filter) AS native_canonical
+                        FROM round_filter_structure rfs_brand
+                        LEFT JOIN round_filter_structure rfs_native
+                            ON rfs_brand.analog IS NOT NULL AND TRIM(rfs_brand.analog) != ''
+                            AND UPPER(TRIM(rfs_brand.analog)) = UPPER(TRIM(rfs_native.filter))
+                            AND (rfs_native.analog IS NULL OR TRIM(rfs_native.analog) = '')
+                        WHERE rfs_brand.filter IN ($in)
+                    ) t
+                    GROUP BY native_canonical
+                    HAVING COUNT(*) >= 2
+                    ORDER BY filter";
             $st = $pdo->prepare($sql);
-            $st->execute(array_merge($filtersIn, $filtersIn));
+            $st->execute($filtersIn);
             $rows = $st->fetchAll();
             echo json_encode(['ok'=>true,'items'=>$rows]); exit;
         }

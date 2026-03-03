@@ -976,6 +976,24 @@ try{
             
             html += '</div>';
             
+            // Габаритный анализ (относительно AF0167)
+            const refName = data.gabarit_ref || 'AF0167';
+            html += '<div class="section-block" style="margin-top:1rem;">';
+            html += '<div class="section-title">Габаритный анализ</div>';
+            html += '<p style="margin:0 0 0.75rem;color:var(--muted-foreground);font-size:0.9em;">Количество фильтров в заявке по габариту относительно ' + escapeHtml(refName) + ':</p>';
+            html += '<div class="info-grid">';
+            html += `<div class="info-card">
+                <h4>Больше или равен ${escapeHtml(refName)}</h4>
+                <div class="info-value">${data.gabarit_larger_count ?? 0}</div>
+                <div class="info-label">фильтров габаритом больше или равен</div>
+            </div>`;
+            html += `<div class="info-card">
+                <h4>Меньше чем ${escapeHtml(refName)}</h4>
+                <div class="info-value">${data.gabarit_smaller_count ?? 0}</div>
+                <div class="info-label">фильтров габаритом меньше</div>
+            </div>`;
+            html += '</div></div>';
+            
             // Анализ позиций с расчетом смен
             if (data.positions && data.positions.length > 0) {
                 html += '<div class="section-block" style="margin-top:1rem;">';
@@ -997,7 +1015,6 @@ try{
                     const productivity = pos.productivity !== null ? pos.productivity : '—';
                     const shifts = pos.shifts !== null ? pos.shifts : '—';
                     const shiftsClass = pos.shifts !== null && pos.shifts > 5 ? 'shifts-warning' : '';
-                    
                     html += '<tr>';
                     html += `<td style="text-align:center;color:var(--muted-foreground);">${index + 1}</td>`;
                     html += `<td>${escapeHtml(pos.filter)}</td>`;
