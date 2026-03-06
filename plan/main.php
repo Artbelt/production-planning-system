@@ -358,6 +358,12 @@ $advertisement = 'Информация';
                         <input type="hidden" name="workshop" value="<?php echo htmlspecialchars($currentDepartment); ?>">
                         <input type="submit" value="Мониторинг">
                     </form>
+                    <a href="NP_print_build_plan_2.php?fact=1" target="_blank" rel="noopener" class="stack">
+                        <button type="button">План сборки</button>
+                    </a>
+                    <a href="NP_print_corrugation_plan_2.php?fact=1" target="_blank" rel="noopener" class="stack">
+                        <button type="button">План гофрирования</button>
+                    </a>
                     <form action="worker_modules/tasks_corrugation.php" method="post" target="_blank" class="stack">
                         <input type="hidden" name="workshop" value="<?php echo htmlspecialchars($currentDepartment); ?>">
                         <input type="submit" value="Модуль оператора ГМ">
@@ -582,6 +588,9 @@ $advertisement = 'Информация';
                     <?php 
                     if (function_exists('show_weekly_production')) { 
                         show_weekly_production(); 
+                    } 
+                    if (function_exists('show_weekly_corrugated_packages')) { 
+                        show_weekly_corrugated_packages(); 
                     } 
                     ?>
                 </div>
