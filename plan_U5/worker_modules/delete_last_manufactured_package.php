@@ -7,47 +7,55 @@ try {
     require_once __DIR__ . '/../../auth/includes/db.php';
     $pdo = getPdo('plan_u5');
 
-    // Получаем дату из POST
     $date_of_production = $_POST['date_of_production'] ?? '';
+    $id_to_delete = isset($_POST['id']) ? (int)$_POST['id'] : 0;
 
-    // Валидация
-    if (empty($date_of_production)) {
+    $deleteId = null;
+
+    if ($id_to_delete > 0) {
+        // Удаление конкретной записи по ID (проверяем, что запись существует)
+        $stmt = $pdo->prepare("
+            SELECT id FROM manufactured_corrugated_packages WHERE id = ?
+        ");
+        $stmt->execute([$id_to_delete]);
+        $row = $stmt->fetch();
+        if ($row) {
+            $deleteId = (int)$row['id'];
+        }
+    }
+
+    if ($deleteId === null && !empty($date_of_production)) {
+        // Удаление последней записи по дате (как раньше)
+        $stmt = $pdo->prepare("
+            SELECT id 
+            FROM manufactured_corrugated_packages 
+            WHERE date_of_production = ? 
+            ORDER BY timestamp DESC, id DESC 
+            LIMIT 1
+        ");
+        $stmt->execute([$date_of_production]);
+        $lastRecord = $stmt->fetch();
+        if ($lastRecord) {
+            $deleteId = (int)$lastRecord['id'];
+        }
+    }
+
+    if ($deleteId === null) {
         echo json_encode([
             'success' => false,
-            'message' => 'Дата не указана'
+            'message' => $id_to_delete > 0 ? 'Запись не найдена' : 'Дата не указана или записей для удаления не найдено'
         ]);
         exit;
     }
 
-    // Находим последнюю запись (с максимальным timestamp) для указанной даты
-    $stmt = $pdo->prepare("
-        SELECT id 
-        FROM manufactured_corrugated_packages 
-        WHERE date_of_production = ? 
-        ORDER BY timestamp DESC, id DESC 
-        LIMIT 1
-    ");
-    $stmt->execute([$date_of_production]);
-    $lastRecord = $stmt->fetch();
-
-    if (!$lastRecord) {
-        echo json_encode([
-            'success' => false,
-            'message' => 'Записей для удаления не найдено'
-        ]);
-        exit;
-    }
-
-    // Удаляем запись по ID
     $deleteStmt = $pdo->prepare("
-        DELETE FROM manufactured_corrugated_packages 
-        WHERE id = ?
+        DELETE FROM manufactured_corrugated_packages WHERE id = ?
     ");
-    $deleteStmt->execute([$lastRecord['id']]);
+    $deleteStmt->execute([$deleteId]);
 
     echo json_encode([
         'success' => true,
-        'message' => 'Последняя запись успешно удалена'
+        'message' => 'Запись удалена'
     ]);
 
 } catch (PDOException $e) {

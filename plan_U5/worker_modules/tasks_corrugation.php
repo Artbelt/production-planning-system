@@ -710,7 +710,6 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
                 <tbody>
                     <?php 
                     $total_count = 0;
-                    $is_first = true;
                     foreach ($manufactured_packages as $item): 
                         $total_count += (int)$item['count'];
                         $time = $item['timestamp'] ? date('H:i', strtotime($item['timestamp'])) : '-';
@@ -729,21 +728,15 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
                                 <?= htmlspecialchars($time) ?>
                             </td>
                             <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; width: 1%; white-space: nowrap;">
-                                <?php if ($is_first): ?>
-                                    <button class="delete-last-btn" 
-                                            onclick="deleteLastPackage('<?= htmlspecialchars($date) ?>')"
-                                            style="background: var(--accent-color); color: white; border: none; padding: 6px 10px; border-radius: var(--border-radius-sm); cursor: pointer; font-size: 14px; font-weight: 500; transition: var(--transition); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;"
-                                            title="Удалить последнюю внесенную позицию">
-                                        ✕
-                                    </button>
-                                <?php else: ?>
-                                    <span style="color: var(--gray-400); font-size: 11px;">—</span>
-                                <?php endif; ?>
+                                <button class="delete-last-btn delete-row-btn" 
+                                        onclick="deletePackage(<?= (int)$item['id'] ?>)"
+                                        style="background: var(--accent-color); color: white; border: none; padding: 6px 10px; border-radius: var(--border-radius-sm); cursor: pointer; font-size: 14px; font-weight: 500; transition: var(--transition); width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;"
+                                        title="Удалить эту позицию">
+                                    ✕
+                                </button>
                             </td>
                         </tr>
-                    <?php 
-                        $is_first = false;
-                    endforeach; ?>
+                    <?php endforeach; ?>
                     <tr style="background: var(--gray-50); font-weight: 600;">
                         <td colspan="2" style="border: 1px solid var(--gray-200); padding: 8px 12px; text-align: right;">
                             Итого:
@@ -998,9 +991,9 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
             }
         });
 
-        // Функция удаления последней внесенной позиции
-        async function deleteLastPackage(date) {
-            if (!confirm('Вы уверены, что хотите удалить последнюю внесенную позицию?')) {
+        // Удаление позиции по ID (любая строка в списке)
+        async function deletePackage(id) {
+            if (!confirm('Удалить эту позицию?')) {
                 return;
             }
 
@@ -1010,16 +1003,13 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
                     },
-                    body: new URLSearchParams({
-                        date_of_production: date
-                    })
+                    body: new URLSearchParams({ id: id })
                 });
                 
                 const data = await response.json();
                 
                 if (data.success) {
-                    alert('Последняя позиция успешно удалена');
-                    // Перезагружаем страницу для обновления таблицы
+                    alert('Позиция удалена');
                     window.location.reload();
                 } else {
                     alert('Ошибка: ' + (data.message || 'Неизвестная ошибка'));
