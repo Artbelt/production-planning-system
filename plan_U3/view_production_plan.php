@@ -1,318 +1,386 @@
 <?php
-// view_production_plan.php — план vs факт + переносы по сменам для выбранной заявки
+// view_production_plan.php — план vs факт для выбранной заявки (U3)
 
 require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/../auth/includes/db.php';
 $pdo = getPdo('plan_u3');
 
-$order = $_GET['order'] ?? '';
-if (!$order) die("Не указан номер заявки.");
-
-/* ---------- ПЛАН (build_plan) ---------- */
-$stmt = $pdo->prepare("
-    SELECT day_date, filter, `qty`
-    FROM build_plans
-    WHERE order_number = ?
-    ORDER BY day_date, filter
-");
-$stmt->execute([$order]);
-$planRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-/* нормализуем названия и группируем по дате и базе */
-$planByDate = [];              // [$date][] = ['base'=>..., 'count'=>int]
-$planMap    = [];              // [$base][$date] = int
-$allDates   = [];
-
-foreach ($planRows as $r) {
-    $date  = $r['day_date'];
-    $label = preg_replace('/\[.*$/', '', $r['filter']);
-    $label = preg_replace('/[●◩⏃]/u', '', $label);
-    $base  = trim($label);
-    $cnt   = (int)$r['qty'];
-
-    $planByDate[$date][] = ['base'=>$base, 'count'=>$cnt];
-    if (!isset($planMap[$base])) $planMap[$base] = [];
-    if (!isset($planMap[$base][$date])) $planMap[$base][$date] = 0;
-    $planMap[$base][$date] += $cnt;
-
-    $allDates[$date] = true;
+function h($s) {
+    return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-/* ---------- ФАКТ (manufactured_production) ---------- */
-$stmt = $pdo->prepare("
-    SELECT date_of_production AS prod_date,
-           TRIM(SUBSTRING_INDEX(name_of_filter,' [',1)) AS base_filter,
-           SUM(count_of_filters) AS fact_count
-    FROM manufactured_production
-    WHERE name_of_order = ?
-    GROUP BY prod_date, base_filter
-    ORDER BY prod_date, base_filter
-");
-$stmt->execute([$order]);
-$factRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-$factByDate = [];              // [$date][$base] = int
-$factMap    = [];              // [$base][$date] = int
-
-foreach ($factRows as $r) {
-    $date = $r['prod_date'];
-    $base = $r['base_filter'];
-    if ($base === null || $base === '') continue;
-    $cnt  = (int)$r['fact_count'];
-
-    if (!isset($factByDate[$date])) $factByDate[$date] = [];
-    if (!isset($factByDate[$date][$base])) $factByDate[$date][$base] = 0;
-    $factByDate[$date][$base] += $cnt;
-
-    if (!isset($factMap[$base])) $factMap[$base] = [];
-    if (!isset($factMap[$base][$date])) $factMap[$base][$date] = 0;
-    $factMap[$base][$date] += $cnt;
-
-    $allDates[$date] = true;
+function normFilter(string $s): string {
+    $s = preg_replace('/\s*\[.*$/u', '', $s);
+    $s = preg_replace('/[●◩⏃]/u', '', $s);
+    $s = preg_replace('/\s+/u', ' ', trim($s));
+    return $s;
 }
 
-/* ---------- Диапазон дат ---------- */
-if ($allDates) {
-    $dates = array_keys($allDates);
-    sort($dates);
-    $start = new DateTime(reset($dates));
-    $end   = new DateTime(end($dates)); $end->modify('+1 day');
-} else {
-    $dates = [];
-    $start = new DateTime();
-    $end   = new DateTime();
+$order    = $_GET['order'] ?? '';
+$showFact = isset($_GET['fact']) && $_GET['fact'] !== '' && $_GET['fact'] !== '0';
+
+/* ---------- Список активных заявок для селектора ---------- */
+$activeOrders = [];
+try {
+    $activeOrders = $pdo->query("
+        SELECT DISTINCT bp.order_number
+        FROM build_plans bp
+        JOIN orders o ON o.order_number = bp.order_number
+        WHERE o.hide IS NULL OR o.hide != 1
+        ORDER BY bp.order_number DESC
+    ")->fetchAll(PDO::FETCH_COLUMN);
+} catch (Exception $e) {
+    $activeOrders = [];
 }
-$period = new DatePeriod($start, new DateInterval('P1D'), $end);
 
-/* ---------- Распределение факта по плану ---------- */
-/*
-   Для каждой позиции собираем весь факт и последовательно "заполняем" плановые дни
-*/
-$factDistribution = []; // [$date][$base] = количество факта распределенного на этот день
-
-foreach ($planMap as $base => $datesMap) {
-    // Собираем весь факт по этой позиции (сумма по всем датам производства)
-    $totalFact = 0;
-    if (isset($factMap[$base])) {
-        foreach ($factMap[$base] as $factCount) {
-            $totalFact += (int)$factCount;
-        }
-    }
-    
-    // Получаем плановые даты для этой позиции, отсортированные
-    $planDates = array_keys($datesMap);
-    sort($planDates);
-    
-    // Распределяем факт по плановым дням
-    $remainingFact = $totalFact;
-    foreach ($planDates as $planDate) {
-        if ($remainingFact <= 0) break;
-        
-        $planQty = (int)$datesMap[$planDate];
-        $allocatedFact = min($remainingFact, $planQty);
-        
-        if (!isset($factDistribution[$planDate])) {
-            $factDistribution[$planDate] = [];
-        }
-        $factDistribution[$planDate][$base] = $allocatedFact;
-        
-        $remainingFact -= $allocatedFact;
+if ($order === '') {
+    $order = $activeOrders[0] ?? '';
+    if ($order === '') {
+        http_response_code(400);
+        exit('Нет данных для отображения. В базе отсутствуют планы сборки.');
     }
 }
 
+/* ---------- ПЛАН + ВЫСОТА ---------- */
+$planByDate   = [];  // [date][base] => ['filter', 'count']
+$datesSorted  = [];
+
+try {
+    $stmt = $pdo->prepare("
+        SELECT
+            bp.day_date         AS plan_date,
+            bp.filter           AS filter_label,
+            COALESCE(bp.qty, 0) AS qty
+        FROM build_plans bp
+        WHERE bp.order_number = ?
+        ORDER BY plan_date, bp.filter
+    ");
+    $stmt->execute([$order]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($rows as $r) {
+        $date   = $r['plan_date'] ?? '';
+        if ($date === '') continue;
+        $base   = normFilter((string)($r['filter_label'] ?? ''));
+        if ($base === '') continue;
+        $qty    = (int)($r['qty'] ?? 0);
+
+        if (!isset($planByDate[$date])) $planByDate[$date] = [];
+        if (!isset($planByDate[$date][$base])) {
+            $planByDate[$date][$base] = ['filter' => $base, 'count' => 0];
+        }
+        $planByDate[$date][$base]['count'] += $qty;
+    }
+    ksort($planByDate);
+    $datesSorted = array_keys($planByDate);
+} catch (Exception $e) {
+    $planByDate  = [];
+    $datesSorted = [];
+}
+
+/* ---------- ФАКТ ---------- */
+$factByBase = [];  // [base] => ['planned'=>int, 'manufactured'=>int]
+$slotFills  = [];  // [date|base] => ['pct'=>float, 'done'=>int, 'total'=>int]
+
+if ($showFact && !empty($planByDate)) {
+    try {
+        /* Плановый итог по базовому имени */
+        $plannedStmt = $pdo->prepare("
+            SELECT
+                TRIM(REGEXP_REPLACE(filter, '\\\\[.*$', '')) AS base_filter,
+                SUM(COALESCE(qty, 0)) AS total
+            FROM build_plans
+            WHERE order_number = ?
+            GROUP BY base_filter
+        ");
+        $plannedStmt->execute([$order]);
+        while ($r = $plannedStmt->fetch(PDO::FETCH_ASSOC)) {
+            $base = normFilter((string)($r['base_filter'] ?? ''));
+            if ($base === '') continue;
+            $factByBase[$base] = ['planned' => (int)($r['total'] ?? 0), 'manufactured' => 0];
+        }
+
+        /* Фактически изготовлено */
+        $factStmt = $pdo->prepare("
+            SELECT
+                TRIM(SUBSTRING_INDEX(COALESCE(name_of_filter,''), ' [', 1)) AS base_filter,
+                SUM(COALESCE(count_of_filters, 0)) AS total
+            FROM manufactured_production
+            WHERE name_of_order = ?
+            GROUP BY base_filter
+        ");
+        $factStmt->execute([$order]);
+        $manufactured = [];
+        while ($r = $factStmt->fetch(PDO::FETCH_ASSOC)) {
+            $base = normFilter((string)($r['base_filter'] ?? ''));
+            if ($base === '') continue;
+            $manufactured[$base] = (int)($r['total'] ?? 0);
+        }
+        foreach ($factByBase as $base => $v) {
+            $factByBase[$base]['manufactured'] = $manufactured[$base] ?? 0;
+        }
+
+        /* Последовательное заполнение слотов */
+        foreach ($factByBase as $base => $v) {
+            $remaining = (int)($v['manufactured'] ?? 0);
+            if ($remaining <= 0) continue;
+            foreach ($planByDate as $date => $items) {
+                if (!isset($items[$base])) continue;
+                $total   = (int)($items[$base]['count'] ?? 0);
+                $slotKey = $date . '|' . $base;
+                if ($total <= 0) { $slotFills[$slotKey] = ['pct'=>0,'done'=>0,'total'=>0]; continue; }
+                if ($remaining <= 0) break;
+                $used = min($total, $remaining);
+                $slotFills[$slotKey] = ['pct' => 100 * $used / $total, 'done' => $used, 'total' => $total];
+                $remaining -= $used;
+            }
+        }
+    } catch (Exception $e) {
+        /* факт недоступен — тихо игнорируем */
+    }
+}
+
+$DOW = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
 ?>
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>План и факт сборки — переносы | Заявка № <?= htmlspecialchars($order) ?></title>
+    <title>План и факт сборки — переносы | Заявка № <?= h($order) ?></title>
     <style>
-
-        :root{
-            --bg:#f6f7fb; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
-            --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --accent:#2563eb; --hl:#fef3c7; --hlborder:#facc15;
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 11px;
+            line-height: 1.3;
+            background: white;
+            color: #000;
+            padding: 50px 0 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
-        *{box-sizing:border-box}
-        body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:16px;font-size:14px}
-        h1{text-align:center;margin:6px 0 12px;font-weight:700}
-        .toolbar{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;align-items:center;margin-bottom:12px}
-        .toolbar input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;width:280px}
-        .btn{padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer}
-        .btn-print{background:#eaf1ff;color:var(--accent);border-color:#cfe0ff;font-weight:600}
-
-        .calendar{display:grid;grid-template-columns:repeat(auto-fill,150px);gap:10px;justify-content:center}
-        .day{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;min-height:140px;display:flex;flex-direction:column;gap:6px;box-shadow:0 1px 4px rgba(0,0,0,.06);width:150px}
-        .date{font-weight:700;color:#16a34a;white-space:nowrap}
-        .muted{color:var(--muted)}
-        ul{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:4px}
-        li{padding:4px 6px;border-radius:8px;background:#fafafa;border:1px solid var(--line); transition:background-color .15s, box-shadow .15s, border-color .15s}
-        li .row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
-        li strong{cursor:pointer;font-weight:400}
-        .tag{font-size:12px;padding:1px 8px;border-radius:999px;border:1px solid var(--line);background:#fff}
-        .ok{color:var(--ok);border-color:#c9f2d9;background:#f1f9f4}
-        .warn{color:var(--warn);border-color:#fde7c3;background:#fff9ed}
-        .bad{color:var(--bad);border-color:#ffc9c9;background:#fff1f1}
-        .xtra{font-size:12px;color:#334155}
-        .totals{font-size:12px;color:#374151;display:flex;justify-content:space-between;gap:8px}
-        .bar{height:6px;background:#eef2ff;border-radius:999px;overflow:hidden;border:1px solid #dfe3ff}
-        .bar > span{display:block;height:100%;background:#60a5fa}
-
-        /* Подсветка всех вхождений одного фильтра */
-        li.highlight-same{
-            background:var(--hl);
-            border-color:var(--hlborder);
-            box-shadow:0 0 0 2px rgba(250,204,21,.35) inset;
-        }
-        li.highlight-same strong{
-            text-decoration:underline;
-            text-underline-offset:2px;
+        .section-header {
+            font-size: 16px;
+            font-weight: 400;
+            padding: 8px;
+            text-align: center;
+            margin-bottom: 4px;
         }
 
-        @media(max-width:900px){.calendar{grid-template-columns:repeat(3,1fr)}}
-        @media(max-width:600px){.calendar{grid-template-columns:repeat(2,1fr)}}
-        @media print{
-            @page { size: landscape; margin: 10mm; }
-            body{background:#fff}
-            .toolbar{display:none}
-            .day{break-inside:avoid;box-shadow:none}
+        .days-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 150px);
+            border-top: 1px solid #000;
+            border-left: 1px solid #000;
+            width: fit-content;
+        }
+        .day-column {
+            width: 150px;
+            border-right: 1px solid #000;
+            border-bottom: 1px solid #000;
+            display: flex;
+            flex-direction: column;
+        }
+        .day-header {
+            font-size: 10px;
+            font-weight: 400;
+            padding: 6px 4px;
+            background: #f5f5f5;
+            border-bottom: 1px solid #000;
+            text-align: center;
+            line-height: 1.3;
+        }
+        .day-header.weekend { background: #fff3cd; }
+        .items-container { padding: 4px; display: flex; flex-direction: column; min-height: 60px; }
+        .item {
+            border: 1px solid #333;
+            padding: 4px 6px;
+            margin-bottom: 2px;
+            position: relative;
+            overflow: hidden;
+            cursor: default;
+        }
+        .item-fact-fill {
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            background: rgba(34, 197, 94, 0.35);
+            z-index: 0;
+        }
+        .item > .item-row { position: relative; z-index: 1; }
+        .item-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 4px;
+        }
+        .item-name {
+            font-weight: 600;
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex: 1 1 0;
+        }
+        .item-qty {
+            font-size: 10px;
+            font-weight: 700;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .item.item-highlighted {
+            outline: 2px solid #2563eb;
+            outline-offset: -1px;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.4);
+        }
+
+        /* Панель управления */
+        .no-print {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            background: white;
+            padding: 6px 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.15);
+        }
+        .order-select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            background: white;
+            min-width: 150px;
+        }
+        .order-select:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        label.fact-label {
+            display: flex; align-items: center; gap: 6px;
+            cursor: pointer; font-size: 13px;
+        }
+
+        @media print {
+            body { padding-top: 0; }
+            .no-print { display: none !important; }
+            .days-grid { grid-template-columns: repeat(7, 150px); width: fit-content; }
+            .day-column { break-inside: avoid; }
+            .item.item-highlighted { outline: none !important; box-shadow: none !important; }
         }
     </style>
 </head>
 <body>
 
-<h1>План и факт сборки — заявка № <?= htmlspecialchars($order) ?></h1>
-
-<div class="toolbar">
-    <div style="text-align:center; margin-bottom:15px;">
-        <a href="view_production_plan_light.php?order=<?= urlencode($order) ?>"
-           target="_blank"
-           style="padding:8px 14px; background:#4CAF50; color:white; text-decoration:none; border-radius:6px;">
-            📄 Версия для печати (лайт)
-        </a>
-    </div>
-
-    <input type="text" id="searchInput" placeholder="Поиск фильтра...">
-
-
-</div>
-
-<div class="calendar">
-    <?php foreach ($period as $dt):
-        $d = $dt->format('Y-m-d');
-        $planItems = $planByDate[$d] ?? [];
-
-        // только фильтры из плана
-        $keys = [];
-        foreach ($planItems as $it) $keys[$it['base']] = true;
-        ksort($keys, SORT_NATURAL|SORT_FLAG_CASE);
-        ?>
-        <div class="day">
-            <div class="date"><?= $dt->format('d.m.Y') ?></div>
-
-            <?php if ($planItems): ?>
-                <ul>
-                    <?php foreach (array_keys($keys) as $base):
-                        $plan = 0; foreach ($planItems as $it) if ($it['base']===$base) $plan += (int)$it['count'];
-                        
-                        // Пропускаем позиции без плана
-                        if ($plan === 0) continue;
-                        
-                        // Получаем распределенный факт для этой даты и позиции
-                        $fact = (int)($factDistribution[$d][$base] ?? 0);
-
-                        // Вычисляем процент выполнения
-                        $percentage = $plan > 0 ? ($fact / $plan * 100) : 0;
-                        
-                        // Определяем класс и стиль
-                        $cls = 'tag '; // Базовый класс всегда
-                        $customStyle = '';
-                        
-                        // Градиент от 80% до 100%
-                        if ($percentage >= 80 && $percentage < 100) {
-                            // Нормализуем от 0 до 1 в диапазоне 80-100%
-                            $gradientPosition = ($percentage - 80) / 20;
-                            
-                            // Более мягкие, пастельные оттенки зеленого
-                            // Светло-зеленый (80%) -> зеленый (100%)
-                            // RGB: (180, 240, 180) -> (100, 220, 120)
-                            $r = round(180 - ($gradientPosition * (180 - 100)));
-                            $g = round(240 - ($gradientPosition * (240 - 220)));
-                            $b = round(180 - ($gradientPosition * (180 - 120)));
-                            
-                            // Прозрачность 0.5 (50%) - менее яркий
-                            $bgColor = "rgba($r, $g, $b, 0.5)";
-                            $borderColor = "rgba(" . max(0, $r - 20) . "," . max(0, $g - 20) . "," . max(0, $b - 20) . ", 0.6)";
-                            $textColor = '#2d5016'; // Темно-зеленый текст
-                            
-                            $customStyle = "background: $bgColor !important; border-color: $borderColor !important; color: $textColor !important; font-weight: 500 !important;";
-                        } elseif ($percentage >= 100) {
-                            // 100% и выше - приглушенный зеленый
-                            $customStyle = 'background: rgba(100, 220, 120, 0.5) !important; border-color: rgba(80, 200, 100, 0.6) !important; color: #2d5016 !important; font-weight: 500 !important;';
-                        } else {
-                            // Стандартные классы для других случаев
-                                $cls .= ($fact >= $plan) ? 'ok' : ($fact>0 ? 'warn' : 'bad');
-                        }
-                        ?>
-                        <li data-key="<?= htmlspecialchars(mb_strtolower($base)) ?>">
-                            <div class="row">
-                                <strong><?= htmlspecialchars($base) ?></strong>
-                                <span class="<?= $cls ?>" <?= $customStyle ? 'style="' . $customStyle . '"' : '' ?> title="Процент: <?= round($percentage, 1) ?>%"><?= (int)$fact ?>/<?= (int)$plan ?></span>
-                            </div>
-                        </li>
-                    <?php endforeach; ?>
-                </ul>
-            <?php else: ?>
-                <em class="muted">Нет задач</em>
-            <?php endif; ?>
-        </div>
-    <?php endforeach; ?>
+<div class="no-print">
+    <label for="orderSelect" style="font-size:13px;font-weight:500;">Заявка:</label>
+    <select id="orderSelect" class="order-select" onchange="changeOrder(this.value)">
+        <?php foreach ($activeOrders as $ao): ?>
+            <option value="<?= h($ao) ?>" <?= $ao === $order ? 'selected' : '' ?>><?= h($ao) ?></option>
+        <?php endforeach; ?>
+    </select>
+    <label class="fact-label">
+        <input type="checkbox" id="showFact" <?= $showFact ? 'checked' : '' ?> onchange="toggleFact(this.checked)">
+        Факт выполнения
+    </label>
 </div>
 
 <script>
-    // Поиск по названию фильтра
-    const searchInput = document.getElementById('searchInput');
-    searchInput.addEventListener('input', function () {
-        const q = this.value.trim().toLowerCase();
-        document.querySelectorAll('.day li').forEach(li => {
-            li.style.display = (!q || (li.getAttribute('data-key')||'').includes(q)) ? '' : 'none';
+    function changeOrder(o) {
+        if (!o) return;
+        const fact = document.getElementById('showFact')?.checked ? '1' : '';
+        window.location.href = '?order=' + encodeURIComponent(o) + (fact ? '&fact=1' : '');
+    }
+    function toggleFact(show) {
+        const params = new URLSearchParams(window.location.search);
+        const o = params.get('order') || document.getElementById('orderSelect')?.value || '';
+        if (o) params.set('order', o);
+        if (show) params.set('fact', '1'); else params.delete('fact');
+        window.location.href = '?' + params.toString();
+    }
+    document.addEventListener('DOMContentLoaded', function () {
+        const items = document.querySelectorAll('.item[data-filter]');
+        items.forEach(function (el) {
+            el.addEventListener('mouseenter', function () {
+                const f = el.getAttribute('data-filter');
+                items.forEach(function (i) { if (i.getAttribute('data-filter') === f) i.classList.add('item-highlighted'); });
+            });
+            el.addEventListener('mouseleave', function () {
+                const f = el.getAttribute('data-filter');
+                items.forEach(function (i) { if (i.getAttribute('data-filter') === f) i.classList.remove('item-highlighted'); });
+            });
         });
     });
-
-    // Сквозная подсветка одинаковых фильтров при наведении на НАЗВАНИЕ (strong)
-    const calendar = document.querySelector('.calendar');
-
-    function addHighlight(key){
-        if(!key) return;
-        document.querySelectorAll(`.day li[data-key="${CSS.escape(key)}"]`)
-            .forEach(li => li.classList.add('highlight-same'));
-    }
-    function removeHighlight(){
-        document.querySelectorAll('.day li.highlight-same')
-            .forEach(li => li.classList.remove('highlight-same'));
-    }
-
-    // Делегируем события: реагируем только на hover по <strong>
-    calendar.addEventListener('mouseover', (e) => {
-        const strong = e.target.closest('strong');
-        if (!strong) return;
-        const li = strong.closest('li');
-        if (!li) return;
-        const key = (li.getAttribute('data-key')||'').toLowerCase();
-        removeHighlight();
-        addHighlight(key);
-    });
-    calendar.addEventListener('mouseout', (e) => {
-        // Снимаем подсветку, когда курсор уходит с имени
-        const related = e.relatedTarget;
-        // Если ушли на другой strong того же ключа — подсветка обновится по mouseover
-        if (!e.target.closest('strong')) return;
-        // Если ушли куда-то ещё — убираем подсветку
-        if (!related || !related.closest || !related.closest('strong')) {
-            removeHighlight();
-        }
-    });
 </script>
+
+<?php if (empty($planByDate)): ?>
+    <div style="text-align:center;padding:40px;color:#999;">Нет данных для отображения</div>
+<?php else: ?>
+
+<div class="section-header">
+    План и факт сборки — Заявка: <?= h($order) ?><?= $showFact ? ' • Факт' : '' ?>
+</div>
+
+<div class="days-grid">
+    <?php
+    /* Выравниваем начало на понедельник: пустые ячейки для сдвига */
+    $firstTs  = strtotime($datesSorted[0]);
+    $firstDow = (int)date('w', $firstTs); // 0=Вс,1=Пн,...,6=Сб
+    $offset   = ($firstDow === 0) ? 6 : ($firstDow - 1); // кол-во пустых ячеек до первого дня
+    for ($i = 0; $i < $offset; $i++):
+    ?>
+    <div class="day-column" style="border-right:1px solid #ddd;border-bottom:1px solid #ddd;background:#fafafa;"></div>
+    <?php endfor; ?>
+
+    <?php foreach ($planByDate as $date => $items):
+        $keys = array_keys($items);
+        sort($keys, SORT_NATURAL | SORT_FLAG_CASE);
+        $ts  = strtotime($date);
+        $dow = (int)date('w', $ts);
+        $isWeekend = ($dow === 0 || $dow === 6);
+    ?>
+    <div class="day-column">
+        <div class="day-header<?= $isWeekend ? ' weekend' : '' ?>">
+            <?= date('d.m.Y', $ts) ?> <?= $DOW[$dow] ?>
+        </div>
+        <div class="items-container">
+            <?php if (empty($keys)): ?>
+                <div style="color:#bbb;font-size:10px;text-align:center;padding:8px 0;font-style:italic;">Нет задач</div>
+            <?php else: ?>
+                <?php foreach ($keys as $base):
+                    $it      = $items[$base];
+                    $total   = (int)$it['count'];
+                    $slotKey = $date . '|' . $base;
+                    $slot    = $slotFills[$slotKey] ?? null;
+                    $pct     = ($showFact && $slot && ($slot['total'] ?? 0) > 0) ? (float)$slot['pct'] : 0;
+                    $fact    = $factByBase[$base] ?? null;
+                    $factTip = '';
+                    if ($showFact && $fact) {
+                        $factTip = 'Выполнено: ' . (int)$fact['manufactured'] . ' из ' . (int)$fact['planned'];
+                    }
+                ?>
+                <div class="item"
+                     data-filter="<?= h($base) ?>"
+                     <?= $factTip ? 'title="' . h($factTip) . '"' : '' ?>>
+                    <?php if ($showFact && $pct > 0): ?>
+                        <div class="item-fact-fill" style="width:<?= round($pct, 1) ?>%"></div>
+                    <?php endif; ?>
+                    <div class="item-row">
+                        <span class="item-name"><?= h($base) ?></span>
+                        <span class="item-qty"><?= $total ?> шт</span>
+                    </div>
+                </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+    </div>
+    <?php endforeach; ?>
+</div>
+
+<?php endif; ?>
 
 </body>
 </html>
