@@ -154,6 +154,10 @@ try{
     $stmt = $pdo->query("SELECT DISTINCT order_number FROM corrugation_plans");
     $corr_done = array_flip($stmt->fetchAll(PDO::FETCH_COLUMN));
 
+    // Заявки, по которым уже есть план сборки
+    $stmt = $pdo->query("SELECT DISTINCT order_number FROM build_plans");
+    $build_done = array_flip($stmt->fetchAll(PDO::FETCH_COLUMN));
+
 } catch(Throwable $e){
     http_response_code(500); exit("Ошибка БД: ".htmlspecialchars($e->getMessage()));
 }
@@ -686,7 +690,7 @@ try{
     <main>
         <div class="container">
             <div class="applications-list">
-        <?php foreach ($orders as $o): $ord = $o['order_number']; ?>
+        <?php foreach ($orders as $o): $ord = $o['order_number']; $hasBuildPlan = !empty($build_done[$ord]) || !empty($o['build_ready']); ?>
                 <div class="application-card">
                     <div class="card-grid">
                         <div class="app-info">
@@ -757,8 +761,8 @@ try{
                         </div>
 
                         <div class="stage-section">
-                            <h4 class="stage-title">План раскроя рулона</h4>
-                            <?php if (!$o['build_ready']): ?>
+                            <h4 class="stage-title">План порезки бухт</h4>
+                            <?php if (!$hasBuildPlan): ?>
                                 <span class="badge badge-muted">Нет плана сборки</span>
                             <?php elseif ($o['plan_ready']): ?>
                                 <span class="badge badge-success">Готово</span>
@@ -870,7 +874,7 @@ try{
             '⚠️ ВНИМАНИЕ!\n\n' +
             'При редактировании раскроя нарушится синхронизация с остальными частями плана:\n\n' +
             '• План сборки\n' +
-            '• План раскроя рулона\n' +
+            '• План порезки бухт\n' +
             '• План гофрирования\n\n' +
             'Вероятно, их придется переделывать заново.\n\n' +
             'Продолжить редактирование?'
@@ -884,7 +888,7 @@ try{
         if (confirm(
             '⚠️ ВНИМАНИЕ!\n\n' +
             'При редактировании плана сборки нарушится синхронизация с последующими этапами:\n\n' +
-            '• План раскроя рулона\n' +
+            '• План порезки бухт\n' +
             '• План гофрирования\n\n' +
             'Вероятно, их придется переделывать заново.\n\n' +
             'Продолжить редактирование?'
@@ -893,11 +897,11 @@ try{
         }
     }
     
-    // Редактирование плана раскроя рулона с предупреждением
+    // Редактирование плана порезки бухт с предупреждением
     function editRollPlan(order){
         if (confirm(
             '⚠️ ВНИМАНИЕ!\n\n' +
-            'При редактировании плана раскроя рулона нарушится синхронизация с последующим этапом:\n\n' +
+            'При редактировании плана порезки бухт нарушится синхронизация с последующим этапом:\n\n' +
             '• План гофрирования\n\n' +
             'Вероятно, его придется переделывать заново.\n\n' +
             'Продолжить редактирование?'
