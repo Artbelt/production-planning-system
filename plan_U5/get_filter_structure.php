@@ -78,13 +78,14 @@ function getValue($value) {
     return !empty($value) ? htmlspecialchars($value) : '<span style="color: #9ca3af;">—</span>';
 }
 
-// Функция для отображения Да/Нет
+// Функция для отображения Да/Нет (учёт значений из salon_filter_structure: поролон, язычек, трапеция)
 function getYesNo($value) {
-    if (empty($value)) {
+    if ($value === '' || $value === null) {
         return '<span style="color: #9ca3af;">—</span>';
     }
-    $truthy = ['on','1',1,true,'checked','yes','да','Да','true','True'];
-    $isYes = in_array($value, $truthy, true);
+    $valueStr = is_string($value) ? trim($value) : $value;
+    $truthy = ['on','1',1,true,'checked','yes','да','Да','true','True','поролон','язычек','трапеция'];
+    $isYes = in_array($valueStr, $truthy, true);
     if ($isYes) {
         return '<span style="color: #059669; font-weight: 600;">Да</span>';
     } else {

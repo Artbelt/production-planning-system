@@ -1,5 +1,5 @@
 <?php
-// NP_print_build_plan.php — минималистичная страница для печати плана сборки
+// NP_print_build_plan_2.php — копия страницы плана сборки (Общий план 2)
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
@@ -187,6 +187,22 @@ try {
             padding: 20px;
         }
 
+        /* На мобильных — контент слева и горизонтальная прокрутка по дням */
+        @media (max-width: 768px) {
+            body {
+                justify-content: flex-start;
+                padding: 12px;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            .scroll-wrapper {
+                flex: 0 0 auto;
+                min-width: 0;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                width: 100%;
+            }
+        }
 
         .page-container {
             display: flex;
@@ -226,6 +242,7 @@ try {
             grid-auto-flow: row;
             border-top: 1px solid #000;
             border-left: 1px solid #000;
+            min-width: fit-content;
         }
         
         /* Первая колонка и начало каждой недели имеют левую границу */
@@ -458,6 +475,7 @@ try {
             Нет данных для отображения
         </div>
     <?php else: ?>
+        <div class="scroll-wrapper">
         <div class="page-container">
             <!-- БРИГАДА 1 (верхняя половина) -->
             <div class="brigade-section" id="brigade1">
@@ -543,8 +561,8 @@ try {
                 </div>
             </div>
         </div>
+        </div>
     <?php endif; ?>
 
 </body>
 </html>
-

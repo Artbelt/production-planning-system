@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/../auth/includes/db.php';
 $pdo = getPdo('plan_u3');
 
@@ -349,7 +350,7 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
     $sheet->setTitle('Потребность');
     
     // Заголовок
-    $lastCol = PHPExcel_Cell::stringFromColumnIndex(count($dates) + 3);
+    $lastCol = PHPExcel_Cell::stringFromColumnIndex(count($dates) + 4);
     $title = 'Заявка ' . $order . ': потребность — крышки';
     if ($snapshotDate) {
         $title .= ' (снимок от ' . $snapshotDate . ')';
@@ -380,7 +381,7 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
     $sheet->setCellValueByColumnAndRow($col, 2, 'Дефицит');
     
     // Стили для заголовков
-    $headerRange = 'A2:' . PHPExcel_Cell::stringFromColumnIndex($col - 1) . '2';
+    $headerRange = 'A2:' . PHPExcel_Cell::stringFromColumnIndex($col) . '2';
     $sheet->getStyle($headerRange)->getFont()->setBold(true);
     $sheet->getStyle($headerRange)->getFill()
         ->setFillType(PHPExcel_Style_Fill::FILL_SOLID)
@@ -406,7 +407,7 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
             $rowTotal += $v;
             
             if ($v > 0) {
-                $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+                $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col) . $row;
                 $sheet->setCellValue($cellAddress, (string)$v);
                 $cumulative = (float)($cumulativeDemand[$name][$d] ?? 0);
                 if ($stockQty > 0 && $cumulative <= $stockQty) {
@@ -423,13 +424,13 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
         }
         
         // В заказе
-        $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+        $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col) . $row;
         $sheet->setCellValue($cellAddress, (string)$rowTotal);
         $sheet->getStyle($cellAddress)->getFont()->setBold(true);
         $col++;
         
         // На складе
-        $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+        $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col) . $row;
         $sheet->setCellValue($cellAddress, (string)$stockQty);
         $sheet->getStyle($cellAddress)->getFont()->setBold(true);
         $col++;
@@ -437,7 +438,7 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
         // Дефицит
         $deficit = max(0, $rowTotal - $stockQty);
         if ($deficit > 0) {
-            $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+            $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col) . $row;
             $sheet->setCellValue($cellAddress, (string)$deficit);
             $sheet->getStyle($cellAddress)->getFont()->setBold(true);
             $sheet->getStyle($cellAddress)->getFill()
@@ -451,7 +452,7 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
     // Итоги
     $col = 1;
     $sheet->setCellValueByColumnAndRow($col, $row, 'Итого по дням');
-    $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+    $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col) . $row;
     $sheet->getStyle($cellAddress)->getFont()->setBold(true);
     $col++;
     
@@ -462,13 +463,13 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
         foreach ($items as $name) $colTotal += (float)($matrix[$name][$d] ?? 0);
         $grand += $colTotal;
         if ($colTotal > 0) {
-            $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+            $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col) . $row;
             $sheet->setCellValue($cellAddress, (string)$colTotal);
         }
         $col++;
     }
     
-    $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+    $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col) . $row;
     $sheet->setCellValue($cellAddress, (string)$grand);
     $sheet->getStyle($cellAddress)->getFont()->setBold(true);
     $col++;
@@ -476,26 +477,26 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
     foreach ($items as $name) {
         $totalStock += (int)($stockMap[$name] ?? 0);
     }
-    $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+    $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col) . $row;
     $sheet->setCellValue($cellAddress, (string)$totalStock);
     $sheet->getStyle($cellAddress)->getFont()->setBold(true);
     $col++;
     
     $totalDeficit = max(0, $grand - $totalStock);
     if ($totalDeficit > 0) {
-        $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col - 1) . $row;
+        $cellAddress = PHPExcel_Cell::stringFromColumnIndex($col) . $row;
         $sheet->setCellValue($cellAddress, (string)$totalDeficit);
         $sheet->getStyle($cellAddress)->getFont()->setBold(true);
     }
     
     // Границы для всех ячеек
-    $lastCol = PHPExcel_Cell::stringFromColumnIndex($col - 1);
+    $lastCol = PHPExcel_Cell::stringFromColumnIndex($col);
     $dataRange = 'A2:' . $lastCol . $row;
     $sheet->getStyle($dataRange)->getBorders()->getAllBorders()
         ->setBorderStyle(PHPExcel_Style_Border::BORDER_THIN);
     
     // Автоширина столбцов
-    foreach (range(0, $col - 1) as $colNum) {
+    foreach (range(0, $col) as $colNum) {
         $colLetter = PHPExcel_Cell::stringFromColumnIndex($colNum);
         $sheet->getColumnDimension($colLetter)->setAutoSize(true);
     }
@@ -1245,7 +1246,6 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
     }
 
     function openCreateRequestModal() {
-        // Собираем данные о дефиците из таблицы
         const resultDiv = document.getElementById('result');
         const table = resultDiv.querySelector('table.pivot');
         if (!table) {
@@ -1253,196 +1253,139 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plans ORDER BY or
             return;
         }
 
-        // Получаем заголовки с датами
+        // Получаем заголовки с датами (исключаем последние 3: В заказе, На складе, Дефицит)
         const headerRow = table.querySelector('thead tr');
-        const dateHeaders = Array.from(headerRow.querySelectorAll('th.vertical-date'));
-        const dateHeadersText = dateHeaders.map(th => th.textContent.trim()).slice(0, -3); // Исключаем последние 3 столбца
-        
-        // Собираем данные по плану сборки и остаткам на складе для каждой позиции
+        const allDateHeaders = Array.from(headerRow.querySelectorAll('th.vertical-date'));
+        const dateHeadersText = allDateHeaders.map(th => th.textContent.trim()).slice(0, -3);
+
+        // Собираем данные по плану сборки для каждой позиции
         const planData = {}; // {position: {date: qty}}
-        const stockData = {}; // {position: stockQty}
         const rows = table.querySelectorAll('tbody tr');
-        
+
         rows.forEach(row => {
-            // Пропускаем строку "Итого по дням"
             if (row.classList.contains('foot')) return;
-            
             const cells = row.querySelectorAll('td');
             if (cells.length < 2) return;
-            
             const position = cells[0].textContent.trim();
-            if (position === 'Итого по дням') return;
-            
-            // Получаем остаток на складе (предпоследний столбец)
-            const inStockCell = cells[cells.length - 2];
-            const stockQty = parseFloat(inStockCell.textContent.trim()) || 0;
-            stockData[position] = stockQty;
-            
-            if (!planData[position]) {
-                planData[position] = {};
-            }
-            
-            // Собираем данные по датам (исключаем последние 3 столбца)
+            if (!position) return;
+
+            if (!planData[position]) planData[position] = {};
+
+            // Ячейки дат — всё кроме первого столбца (позиция) и последних трёх (итоги)
             const dateCells = Array.from(cells).slice(1, -3);
             dateCells.forEach((cell, index) => {
-                if (index < dateHeadersText.length) {
+                if (index >= dateHeadersText.length) return;
+                const qty = parseFloat(cell.textContent.trim()) || 0;
+                if (qty > 0) {
                     const date = dateHeadersText[index];
-                    const qty = parseFloat(cell.textContent.trim()) || 0;
-                    if (qty > 0) {
-                        if (!planData[position][date]) {
-                            planData[position][date] = 0;
-                        }
-                        planData[position][date] += qty;
-                    }
+                    planData[position][date] = (planData[position][date] || 0) + qty;
                 }
             });
         });
-        
-        // Определяем партии для каждой позиции и проверяем дефицит
+
+        // Для каждой позиции разбиваем плановые даты на непрерывные партии
         const batches = [];
-        
-        Object.keys(planData).forEach(position => {
-            const stockQty = stockData[position] || 0;
-            
-            // Собираем даты и сортируем их правильно (по дате, а не по строке)
+
+        Object.keys(planData).sort().forEach(position => {
             const dates = Object.keys(planData[position])
                 .filter(d => planData[position][d] > 0)
                 .sort((a, b) => {
-                    // Преобразуем даты для корректного сравнения
-                    const dateA = convertDateToInput(a);
-                    const dateB = convertDateToInput(b);
-                    if (dateA < dateB) return -1;
-                    if (dateA > dateB) return 1;
-                    return 0;
+                    const da = convertDateToInput(a), db = convertDateToInput(b);
+                    return da < db ? -1 : da > db ? 1 : 0;
                 });
-            
+
             if (dates.length === 0) return;
-            
-            // Рассчитываем накопленную потребность по датам
-            let cumulativeBefore = 0; // Накопленная потребность до текущей даты
-            
-            // Группируем даты в партии по непрерывности
+
             let currentBatch = {
-                position: position,
+                position,
                 startDate: dates[0],
-                dates: [dates[0]],
-                qty: planData[position][dates[0]],
-                cumulativeBefore: 0 // Накопленная потребность до начала партии
+                endDate: dates[0],
+                qty: planData[position][dates[0]]
             };
-            
-            // Обновляем накопленную потребность после первой даты
-            cumulativeBefore = planData[position][dates[0]];
-            
+
             for (let i = 1; i < dates.length; i++) {
-                // Преобразуем даты из формата "d-m-y" в формат для сравнения
-                const prevDateStr = convertDateToInput(dates[i - 1]);
-                const currDateStr = convertDateToInput(dates[i]);
-                const prevDate = new Date(prevDateStr + 'T00:00:00');
-                const currDate = new Date(currDateStr + 'T00:00:00');
+                const prevDate = new Date(convertDateToInput(dates[i - 1]) + 'T00:00:00');
+                const currDate = new Date(convertDateToInput(dates[i]) + 'T00:00:00');
                 const daysDiff = (currDate - prevDate) / (1000 * 60 * 60 * 24);
-                
-                // Если пропущена смена (больше 1 дня) - начинается новая партия
+
                 if (daysDiff > 1) {
-                    // Проверяем, есть ли дефицит в текущей партии
-                    // Накопленная потребность на конец партии = накопленная до начала + размер партии
-                    const batchEndCumulative = currentBatch.cumulativeBefore + currentBatch.qty;
-                    
-                    // Если накопленная потребность на конец партии превышает остаток - есть дефицит
-                    if (batchEndCumulative > stockQty) {
-                        // Количество дефицита = сколько не хватает на конец партии
-                        const batchDeficit = batchEndCumulative - stockQty;
-                        
-                        // Но нужно учесть, что если остаток покрывает начало партии, 
-                        // то дефицит только на часть партии
-                        const deficitAtStart = Math.max(0, currentBatch.cumulativeBefore - stockQty);
-                        const actualDeficit = deficitAtStart > 0 ? currentBatch.qty : batchDeficit;
-                        
-                        batches.push({
-                            position: currentBatch.position,
-                            qty: actualDeficit,
-                            date: convertDateToInput(currentBatch.startDate)
-                        });
-                    }
-                    
-                    // Обновляем накопленную потребность (на конец предыдущей партии)
-                    cumulativeBefore = batchEndCumulative;
-                    
-                    // Начинаем новую партию
+                    // Разрыв — сохраняем текущую партию и начинаем новую
+                    batches.push({
+                        position: currentBatch.position,
+                        qty: currentBatch.qty,
+                        startDate: convertDateToInput(currentBatch.startDate),
+                        endDate: convertDateToInput(currentBatch.endDate)
+                    });
                     currentBatch = {
-                        position: position,
+                        position,
                         startDate: dates[i],
-                        dates: [dates[i]],
-                        qty: planData[position][dates[i]],
-                        cumulativeBefore: cumulativeBefore
+                        endDate: dates[i],
+                        qty: planData[position][dates[i]]
                     };
-                    
-                    // Обновляем накопленную потребность после добавления новой даты
-                    cumulativeBefore += planData[position][dates[i]];
                 } else {
-                    // Продолжаем текущую партию
-                    currentBatch.dates.push(dates[i]);
+                    // Продолжение партии
+                    currentBatch.endDate = dates[i];
                     currentBatch.qty += planData[position][dates[i]];
-                    
-                    // Обновляем накопленную потребность
-                    cumulativeBefore += planData[position][dates[i]];
                 }
             }
-            
-            // Проверяем последнюю партию на дефицит
-            const batchEndCumulative = currentBatch.cumulativeBefore + currentBatch.qty;
-            
-            // Если накопленная потребность на конец партии превышает остаток - есть дефицит
-            if (batchEndCumulative > stockQty) {
-                const batchDeficit = batchEndCumulative - stockQty;
-                
-                // Учитываем, покрывает ли остаток начало партии
-                const deficitAtStart = Math.max(0, currentBatch.cumulativeBefore - stockQty);
-                const actualDeficit = deficitAtStart > 0 ? currentBatch.qty : batchDeficit;
-                
-                batches.push({
-                    position: currentBatch.position,
-                    qty: actualDeficit,
-                    date: convertDateToInput(currentBatch.startDate)
-                });
-            }
+            // Последняя партия
+            batches.push({
+                position: currentBatch.position,
+                qty: currentBatch.qty,
+                startDate: convertDateToInput(currentBatch.startDate),
+                endDate: convertDateToInput(currentBatch.endDate)
+            });
         });
-        
+
         if (batches.length === 0) {
             alert('Нет данных для создания заявки');
             return;
         }
 
-        // Сортируем партии по дате, затем по позиции
+        // Сортируем по дате начала, затем по позиции
         batches.sort((a, b) => {
-            if (a.date < b.date) return -1;
-            if (a.date > b.date) return 1;
+            if (a.startDate < b.startDate) return -1;
+            if (a.startDate > b.startDate) return 1;
             if (a.position < b.position) return -1;
             if (a.position > b.position) return 1;
             return 0;
         });
 
-        // Формируем содержимое модального окна
+        // Формируем таблицу в модальном окне
         let tableHtml = '<table class="request-table">';
-        tableHtml += '<thead><tr><th>Крышка</th><th>Количество</th><th>Дата</th></tr></thead>';
+        tableHtml += '<thead><tr><th>Крышка</th><th>Количество</th><th>Дата нужды</th></tr></thead>';
         tableHtml += '<tbody>';
-        
+
         batches.forEach((batch, index) => {
+            // Если партия занимает несколько дней — показываем период, иначе одну дату
+            const dateLabel = batch.startDate !== batch.endDate
+                ? formatDateRu(batch.startDate) + ' – ' + formatDateRu(batch.endDate)
+                : formatDateRu(batch.startDate);
             tableHtml += '<tr data-index="' + index + '">';
             tableHtml += '<td>' + escapeHtml(batch.position) + '</td>';
-            tableHtml += '<td style="font-weight:bold;">' + Math.round(batch.qty) + '</td>';
-            tableHtml += '<td><input type="date" class="batch-date-input" value="' + batch.date + '" data-index="' + index + '" style="width:100%;padding:4px;border:1px solid #ddd;border-radius:4px;"></td>';
+            tableHtml += '<td style="font-weight:bold;text-align:center;">' + Math.round(batch.qty) + '</td>';
+            tableHtml += '<td>' + dateLabel
+                + ' <input type="date" class="batch-date-input" value="' + batch.startDate
+                + '" data-index="' + index
+                + '" style="margin-left:6px;padding:3px 5px;border:1px solid #ddd;border-radius:4px;font-size:12px;"></td>';
             tableHtml += '</tr>';
         });
-        
+
         tableHtml += '</tbody></table>';
 
         const order = document.getElementById('order').value;
         document.getElementById('requestOrder').textContent = order;
         document.getElementById('requestTableBody').innerHTML = tableHtml;
         document.getElementById('createRequestModal').style.display = 'block';
-        
-        // Сохраняем данные партий
+
         window.batchesArray = batches;
+    }
+
+    function formatDateRu(isoDate) {
+        if (!isoDate) return '';
+        const parts = isoDate.split('-');
+        if (parts.length !== 3) return isoDate;
+        return parts[2] + '.' + parts[1] + '.' + parts[0];
     }
 
     function closeCreateRequestModal() {

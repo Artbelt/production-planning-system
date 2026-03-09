@@ -20,8 +20,23 @@ if ($order_number === '') {
     return;
 }
 
+/** Заголовок страницы с номером заявки */
+echo '<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Заявка '.htmlspecialchars($order_number).'</title></head><body>';
+
 /** Показываем номер заявки */
 echo '<h3>Заявка: '.htmlspecialchars($order_number).'</h3><p>';
+
+/** Стили для всплывающих подсказок (когда делалось) */
+echo '<style>
+.tooltip { position: relative; display: inline-block; cursor: help; }
+.tooltip .tooltiptext {
+    visibility: hidden; width: max-content; max-width: 400px;
+    background-color: #333; color: #fff; text-align: left; padding: 5px 10px;
+    border-radius: 6px; position: absolute; z-index: 10; bottom: 125%; left: 50%;
+    transform: translateX(-50%); opacity: 0; transition: opacity 0.3s; white-space: pre-line;
+}
+.tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
+</style>';
 
 ?>
 
@@ -29,21 +44,20 @@ echo '<h3>Заявка: '.htmlspecialchars($order_number).'</h3><p>';
 
 
     <script>
+        function getCellNumber(cell) {
+            var t = cell.querySelector('.tooltip');
+            if (t && t.firstChild) return parseInt(t.firstChild.textContent.trim(), 10);
+            return parseInt(cell.innerText, 10) || 0;
+        }
         function show_zero(){
-            // Отримуємо таблицю
             var table = document.getElementById('order_table');
-
-// Створюємо нову таблицю для позицій з нульовим значенням "Изготовлено шт"
             var newTable = document.createElement('table');
             var newRow, newCell;
-            var header = table.rows[0]; // Рядок заголовка оригінальної таблиці
 
-// Проходимо по кожному рядку таблиці
             for (var i = 1; i < table.rows.length; i++) {
                 var currentRow = table.rows[i];
-                var manufactured = parseInt(currentRow.cells[10].innerText); // Отримуємо значення "Изготовлено шт"
+                var manufactured = getCellNumber(currentRow.cells[10]);
 
-                // Якщо значення "Изготовлено шт" дорівнює 0, додаємо рядок у нову таблицю
                 if (manufactured === 0) {
                     newRow = newTable.insertRow();
                     // Проходимо по кожному стовпцю у рядку оригінальної таблиці та додаємо відповідні дані в новий рядок
@@ -75,9 +89,8 @@ echo '<h3>Заявка: '.htmlspecialchars($order_number).'</h3><p>';
 // Проходимо по кожному рядку таблиці
         for (var i = 1; i < table.rows.length; i++) {
             var currentRow = table.rows[i];
-            var manufactured = parseInt(currentRow.cells[13].innerText); // Отримуємо значення "Изготовлено шт"
+            var manufactured = getCellNumber(currentRow.cells[13]);
 
-            // Якщо значення "Изготовлено шт" дорівнює 0, додаємо рядок у нову таблицю
             if (manufactured === 0) {
                 newRow = newTable.insertRow();
                 // Проходимо по кожному стовпцю у рядку оригінальної таблиці та додаємо відповідні дані в новий рядок
@@ -125,6 +138,22 @@ echo "<table id='order_table' style='border: 1px solid black; border-collapse: c
             <th> Изготовленные гофропакеты, шт</th>                                                       
         </tr>";
 
+/**
+ * Рендер ячейки с тултипом по датам (когда делалось).
+ * $dateList — массив вида [дата1, кол-во1, дата2, кол-во2, ...]
+ * $totalQty — итоговое число в ячейке
+ */
+function renderTooltipCell($dateList, $totalQty) {
+    if (empty($dateList)) {
+        return "<td>" . (int)$totalQty . "</td>";
+    }
+    $tooltip = '';
+    for ($i = 0; $i < count($dateList); $i += 2) {
+        $tooltip .= $dateList[$i] . ' — ' . $dateList[$i + 1] . " шт\n";
+    }
+    return "<td><div class='tooltip'>" . (int)$totalQty . "<span class='tooltiptext'>" . htmlspecialchars(trim($tooltip)) . "</span></div></td>";
+}
+
 /** Загружаем из БД заявку */
 $result = show_order($order_number);
 
@@ -153,58 +182,56 @@ $pdo_gofro = getPdo('plan_u3');
 
 /** Разбор массива значений по подключению */
 while ($row = $result->fetch(PDO::FETCH_ASSOC)){
-    $difference = (int)$row['count']-(int)select_produced_filters_by_order($row['filter'],$order_number)[1];
-    $filter_count_in_order = $filter_count_in_order + (int)$row['count'] ;
-    $filter_count_produced = $filter_count_produced + (int)select_produced_filters_by_order($row['filter'],$order_number)[1];
+    $prod_info = select_produced_filters_by_order($row['filter'], $order_number);
+    $date_list_filters = $prod_info[0];
+    $total_qty_filters = $prod_info[1];
+    $difference = (int)$row['count'] - $total_qty_filters;
+    $filter_count_in_order = $filter_count_in_order + (int)$row['count'];
+    $filter_count_produced = $filter_count_produced + $total_qty_filters;
 
     // Получаем гофропакет для фильтра из round_filter_structure
     $gofro_package = '';
+    $gofro_date_list = [];
     $gofro_package_count = 0;
     $st_gofro = $pdo_gofro->prepare("SELECT filter_package FROM round_filter_structure WHERE filter = ?");
     $st_gofro->execute([$row['filter']]);
     $row_gofro = $st_gofro->fetch(PDO::FETCH_ASSOC);
     if ($row_gofro && !empty($row_gofro['filter_package'])) {
         $gofro_package = $row_gofro['filter_package'];
-        $gofro_package_count = (int)manufactured_part_count($gofro_package, $order_number);
-        $gofro_packages_produced += $gofro_package_count;
+        list($gofro_date_list, $gofro_package_count) = get_parts_fact_dates($gofro_package, $order_number);
+        $gofro_packages_produced += (int)$gofro_package_count;
     }
 
     $count += 1;
     echo "<tr style='hov'>"
         ."<td>".$count."</td>"
-       // ."<td><input type='submit' name='filter_name' value=".$row['filter']." style=\"height: 20px; width: 200px\">".$row['filter']."</td>"
-        ."<td>".$row['filter']."</td>"
+        ."<td>".htmlspecialchars($row['filter'] ?? '')."</td>"
         ."<td>".$row['count']."</td>"
-        ."<td>".$row['marking']."</td>"
-        ."<td>".$row['personal_packaging']."</td>"
-        ."<td>".$row['personal_label']."</td>"
-        ."<td>".$row['group_packaging']."</td>"
-        ."<td>".$row['packaging_rate']."</td>"
-        ."<td>".$row['group_label']."</td>"
-        ."<td>".$row['remark']."</td>"
-        ."<td>".(int)select_produced_filters_by_order($row['filter'],$order_number)[1]."</td>";
-    if (($difference < 75)AND($difference > 0)){
-        echo "<td>".$difference."</td>";
-    } elseif ($difference < 0){
-        echo "<td>".$difference."</td>";
-    }else{
-        echo "<td>".$difference."</td>";
-    }
-    // Изготовленные крышки по заявке (из cap_movements, списание по производству)
-    $cap_count = (int)manufactured_caps_count_by_order_filter($order_number, $row['filter']);
-    $caps_produced += $cap_count;
-    if ($cap_count > 0) {
-        echo "<td>".$cap_count."</td>";
+        ."<td>".htmlspecialchars($row['marking'] ?? '')."</td>"
+        ."<td>".htmlspecialchars($row['personal_packaging'] ?? '')."</td>"
+        ."<td>".htmlspecialchars($row['personal_label'] ?? '')."</td>"
+        ."<td>".htmlspecialchars($row['group_packaging'] ?? '')."</td>"
+        ."<td>".htmlspecialchars($row['packaging_rate'] ?? '')."</td>"
+        ."<td>".htmlspecialchars($row['group_label'] ?? '')."</td>"
+        ."<td>".htmlspecialchars($row['remark'] ?? '')."</td>";
+    // Изготовлено фильтров — с тултипом по датам
+    echo renderTooltipCell($date_list_filters, $total_qty_filters);
+    echo "<td>".$difference."</td>";
+    // Изготовленные крышки — с тултипом по датам
+    $caps_info = get_caps_fact_dates_by_filter($order_number, $row['filter']);
+    $caps_produced += $caps_info[1];
+    if ($caps_info[1] > 0) {
+        echo renderTooltipCell($caps_info[0], $caps_info[1]);
     } else {
         echo "<td>-</td>";
     }
-    // Выводим количество изготовленных гофропакетов
+    // Изготовленные гофропакеты — с тултипом по датам
     if ($gofro_package_count > 0) {
-        echo "<td>".$gofro_package_count."</td></tr>";
+        echo renderTooltipCell($gofro_date_list, $gofro_package_count);
     } else {
-        echo "<td>-</td></tr>";
+        echo "<td>-</td>";
     }
-
+    echo "</tr>";
 }
 
 /** Если по заявке не найдено ни одной позиции — выводим подсказку */
@@ -253,3 +280,4 @@ echo "<br><form action='hiding_order.php' method='post'>"
         cell.innerHTML = cell.innerHTML.replace(/\[!(.*?)!\]/g, '<span style="background-color: yellow;">$1</span>');
     });
 </script>
+</body></html>

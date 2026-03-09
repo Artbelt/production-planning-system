@@ -1,8 +1,9 @@
+<?php $order_number_title = $_POST['order_number'] ?? ''; ?>
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Заявка</title>
+    <title><?= $order_number_title ? htmlspecialchars($order_number_title) : 'Заявка' ?></title>
     <style>
         /* ===== Modern UI palette (to match main.php) ===== */
         :root{
@@ -128,6 +129,129 @@
             table{ font-size:13px; }
             th, td{ padding: 8px 10px; }
         }
+
+        /* Button styles */
+        button, .btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.375rem;
+            padding: 0.375rem 0.75rem;
+            font-size: 0.8125rem;
+            font-weight: 500;
+            border-radius: calc(var(--radius) - 2px);
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            font-family: inherit;
+            text-decoration: none;
+        }
+        .btn-secondary {
+            background: #f1f5f9;
+            color: var(--ink);
+            border: 1px solid var(--border);
+            box-shadow: none;
+        }
+        .btn-secondary:hover { background: hsl(220, 14%, 92%); }
+        .btn-sm { padding: 0.3rem 0.625rem; font-size: 0.75rem; }
+        .btn-toggle-gantt-active {
+            background: var(--accent) !important;
+            color: #fff !important;
+            border-color: var(--accent) !important;
+        }
+
+        /* Панель для кнопок */
+        .button-group { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        .action-panel {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow-soft);
+        }
+        .action-panel-title {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--muted);
+            margin-bottom: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+        .modal-content {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04);
+            max-width: 900px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            animation: slideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        @keyframes slideIn {
+            from { transform: translateY(-20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--panel);
+        }
+        .modal-header h2, .modal-header h3 {
+            margin: 0;
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: var(--ink);
+        }
+        .modal-close {
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 2px);
+            font-size: 1.25rem;
+            cursor: pointer;
+            color: var(--muted);
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+        .modal-close:hover { background: #f1f5f9; color: var(--ink); }
+        .modal-body { padding: 1.5rem; background: var(--panel); }
+        .modal-content.modal-compact { max-width: 520px; }
+        .modal-content.modal-compact .modal-header { padding: 0.5rem 0.75rem; }
+        .modal-content.modal-compact .modal-header h3 { font-size: 0.8125rem; }
+        .modal-content.modal-compact .modal-body { padding: 0.5rem 0.75rem; }
+        .modal-content.modal-compact table { font-size: 0.6875rem; }
+        .modal-content.modal-compact th,
+        .modal-content.modal-compact td { padding: 0.2rem 0.4rem; }
+        .modal-content.modal-compact .no-zero-positions { padding: 1rem; font-size: 0.75rem; }
+        .no-zero-positions { text-align: center; padding: 2.5rem; color: var(--muted); font-size: 1rem; }
+        .zero-positions-header {
+            margin: 0 0 1rem 0;
+            font-size: 0.75rem;
+            color: var(--ink);
+            font-weight: 600;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--border);
+        }
     </style>
 </head>
 
@@ -177,18 +301,28 @@ function normalize_filter_label($label) {
 }
 
 function get_corr_fact_for_filter(PDO $pdo, string $orderNumber, string $filterLabel): array {
-    $filterLabel = normalize_filter_label($filterLabel);
+    $rawLabel      = trim($filterLabel);
+    // вариант без суффикса [...]
+    $baseLabel     = normalize_filter_label($rawLabel);
+    // вариант с [h48] → [48] (воркеры нормализуют при сохранении)
+    $labelNoH      = preg_replace('/\[h(\d+)\]/', '[$1]', $rawLabel);
+    $baseLabelNoH  = normalize_filter_label($labelNoH);
 
     $stmt = $pdo->prepare("
         SELECT date_of_production, SUM(COALESCE(count,0)) AS fact_count
         FROM manufactured_corrugated_packages
-        WHERE order_number = ?
-          AND TRIM(SUBSTRING_INDEX(filter_label, ' [', 1)) = ?
+        WHERE TRIM(order_number) = TRIM(?)
+          AND (
+              TRIM(filter_label) = ?
+           OR TRIM(filter_label) = ?
+           OR TRIM(SUBSTRING_INDEX(filter_label, ' [', 1)) = ?
+           OR TRIM(SUBSTRING_INDEX(filter_label, ' [', 1)) = ?
+          )
           AND COALESCE(count,0) > 0
         GROUP BY date_of_production
         ORDER BY date_of_production
     ");
-    $stmt->execute([$orderNumber, $filterLabel]);
+    $stmt->execute([$orderNumber, $rawLabel, $labelNoH, $baseLabel, $baseLabelNoH]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $dateList = [];
@@ -218,6 +352,23 @@ $corr_fact_summ = 0;          // суммарно изготовлено гоф�
 
 // Отрисовка таблицы
 echo "<h3>Заявка: ".htmlspecialchars($order_number)."</h3>";
+
+// Панель с кнопками действий
+echo "<div class='action-panel'>";
+echo "<div class='action-panel-title'>Действия</div>";
+echo "<div class='button-group'>";
+echo "<button onclick='showZeroProductionPositions()' class='btn-secondary btn-sm'>Позиции выпуск которых = 0</button>";
+echo "<button onclick='showLaggingPositions()' class='btn-secondary btn-sm'>Позиции отстающие &gt; 20%</button>";
+echo "<button onclick='checkGofraPackages()' class='btn-secondary btn-sm'>Проверка гофропакетов</button>";
+echo "<button onclick='confirmArchiveOrder()' class='btn-secondary btn-sm'>Отправить заявку в архив</button>";
+echo "</div>";
+echo "</div>";
+
+// Скрытая форма для отправки в архив
+echo "<form id='archiveForm' action='hiding_order.php' method='post' style='display: none;'>";
+echo "<input type='hidden' name='order_number' value='".htmlspecialchars($order_number)."'>";
+echo "</form>";
+
 echo "<div class='table-wrap'>";
 echo "<table id='order_table'>";
 echo "<tr>
@@ -295,18 +446,287 @@ echo "</div>";
 echo "<p>* - без учета перевыполнения</p>";
 ?>
 
-<br>
-<form action='hiding_order.php' method='post' style="margin-top: 10px;">
-    <input type='hidden' name='order_number' value='<?= htmlspecialchars($order_number) ?>'>
-    <input type='submit' value='Отправить заявку в архив'>
-</form>
 
+</div>
+
+<!-- Модальное окно для позиций с отставанием > 20% -->
+<div id="laggingPositionsModal" class="modal">
+    <div class="modal-content modal-compact">
+        <div class="modal-header">
+            <h3>Отставание &gt; 20%</h3>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <button onclick="printLaggingPositions()" class="btn-secondary btn-sm" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">Печать</button>
+                <button class="modal-close" onclick="closeLaggingPositionsModal()">&times;</button>
+            </div>
+        </div>
+        <div class="modal-body">
+            <div id="laggingPositionsContent">
+                <p style="text-align:center;padding:20px;color:var(--muted);font-size:0.75rem;">Загрузка...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для позиций с нулевым выпуском -->
+<div id="zeroProductionModal" class="modal">
+    <div class="modal-content" style="max-width: 585px;">
+        <div class="modal-header">
+            <h3>Позиции с нулевым выпуском</h3>
+            <button class="modal-close" onclick="closeZeroProductionModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div id="zeroProductionContent">
+                <p style="text-align:center;padding:40px;color:var(--muted);">Загрузка данных...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для проверки гофропакетов -->
+<div id="gofraCheckModal" class="modal">
+    <div class="modal-content" style="max-width: 585px;">
+        <div class="modal-header">
+            <h3>Проверка гофропакетов</h3>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <button onclick="printGofraCheck()" class="btn-secondary btn-sm" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">Печать</button>
+                <button class="modal-close" onclick="closeGofraCheckModal()">&times;</button>
+            </div>
+        </div>
+        <div class="modal-body">
+            <div id="gofraFilters" style="margin-bottom: 1rem; padding: 0.75rem; background: #f1f5f9; border-radius: calc(var(--radius) - 2px); border: 1px solid var(--border);">
+                <div style="font-weight: 600; margin-bottom: 0.5rem; color: var(--ink); font-size: 0.75rem;">Фильтр по типу проблемы:</div>
+                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.75rem;">
+                        <input type="checkbox" id="filterNoGofra" checked style="margin: 0;">
+                        <span style="color: #dc2626; font-weight: 600;">Нет гофропакетов</span>
+                        <span style="color: var(--muted); font-size: 0.6875rem;">(0 гофропакетов, но есть выпуск)</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.75rem;">
+                        <input type="checkbox" id="filterShortage" checked style="margin: 0;">
+                        <span style="color: #f59e0b; font-weight: 600;">Недостаток</span>
+                        <span style="color: var(--muted); font-size: 0.6875rem;">(недостаток ≥ 20 штук)</span>
+                    </label>
+                </div>
+            </div>
+            <div id="gofraCheckContent">
+                <p style="text-align:center;padding:40px;color:var(--muted);">Загрузка данных...</p>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
     window.addEventListener('load', function () {
         document.getElementById('loading').style.display = 'none';
     });
+
+    // Подтверждение отправки в архив
+    function confirmArchiveOrder() {
+        const orderNumber = '<?= htmlspecialchars($order_number) ?>';
+        const confirmed = confirm('Вы уверены, что хотите отправить заявку "' + orderNumber + '" в архив?\n\nЭто действие можно отменить только администратором базы данных.');
+        if (confirmed) {
+            document.getElementById('archiveForm').submit();
+        }
+    }
+
+    // Спецификация для рабочих
+    function openWorkersSpecification() {
+        const orderNumber = '<?= htmlspecialchars($order_number) ?>';
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = 'show_order_for_workers.php';
+        form.target = '_blank';
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'order_number';
+        input.value = orderNumber;
+        form.appendChild(input);
+        document.body.appendChild(form);
+        form.submit();
+        document.body.removeChild(form);
+    }
+
+    // Переключение столбца «Диаграмма Ганта»
+    function toggleGanttColumn() {
+        const col = document.querySelectorAll('.gantt-col');
+        if (!col.length) return;
+        const isHidden = col[0].style.display === 'none';
+        col.forEach(function(el) { el.style.display = isHidden ? '' : 'none'; });
+        const btn = document.getElementById('btnToggleGantt');
+        if (btn) {
+            isHidden ? btn.classList.add('btn-toggle-gantt-active') : btn.classList.remove('btn-toggle-gantt-active');
+        }
+    }
+
+    // === Позиции с нулевым выпуском ===
+    function showZeroProductionPositions() {
+        document.getElementById('zeroProductionModal').style.display = 'flex';
+        loadZeroProductionData();
+    }
+    function closeZeroProductionModal() {
+        document.getElementById('zeroProductionModal').style.display = 'none';
+    }
+    function loadZeroProductionData() {
+        const content = document.getElementById('zeroProductionContent');
+        content.innerHTML = '<p style="text-align:center;padding:40px;color:var(--muted);">Загрузка данных...</p>';
+        const table = document.getElementById('order_table');
+        const rows = table.querySelectorAll('tr');
+        const zeroPositions = [];
+        for (let i = 1; i < rows.length - 1; i++) {
+            const cells = rows[i].querySelectorAll('td');
+            if (cells.length >= 13) {
+                const filter = cells[1].textContent.trim();
+                const plannedCount = parseInt(cells[2].textContent) || 0;
+                const producedCount = parseInt(cells[10].textContent) || 0;
+                const remark = cells[9].textContent.trim();
+                const gofraElement = cells[12].querySelector('.tooltip') || cells[12];
+                const gofraText = gofraElement.firstChild ? gofraElement.firstChild.textContent.trim() : cells[12].textContent.trim();
+                const gofraCount = parseInt(gofraText) || 0;
+                if (producedCount === 0 && plannedCount > 0) {
+                    zeroPositions.push({ filter, plannedCount, remark, gofraCount });
+                }
+            }
+        }
+        if (zeroPositions.length === 0) {
+            content.innerHTML = '<div class="no-zero-positions"><p style="color:#22c55e;font-weight:600;">Отлично! Все позиции имеют выпуск больше 0</p></div>';
+            return;
+        }
+        let html = `<div class="zero-positions-header">Найдено позиций с нулевым выпуском: ${zeroPositions.length}</div>`;
+        html += `<table><thead><tr><th>Фильтр</th><th style="text-align:center;">План, шт</th><th style="text-align:center;">Гофропакетов, шт</th><th style="text-align:center;">Выпуск, шт</th>${zeroPositions.some(p => p.remark) ? '<th>Примечание</th>' : ''}</tr></thead><tbody>`;
+        zeroPositions.forEach(p => {
+            html += `<tr><td>${p.filter}</td><td style="text-align:center;">${p.plannedCount}</td><td style="text-align:center;color:var(--accent);font-weight:500;">${p.gofraCount}</td><td style="text-align:center;color:#dc2626;font-weight:600;">0</td>${zeroPositions.some(q => q.remark) ? `<td style="font-size:0.6875rem;color:var(--muted);">${p.remark || ''}</td>` : ''}</tr>`;
+        });
+        html += '</tbody></table>';
+        content.innerHTML = html;
+    }
+
+    // === Позиции с отставанием > 20% ===
+    function showLaggingPositions() {
+        document.getElementById('laggingPositionsModal').style.display = 'flex';
+        loadLaggingPositionsData();
+    }
+    function closeLaggingPositionsModal() {
+        document.getElementById('laggingPositionsModal').style.display = 'none';
+    }
+    function loadLaggingPositionsData() {
+        const content = document.getElementById('laggingPositionsContent');
+        content.innerHTML = '<p style="text-align:center;padding:20px;color:var(--muted);font-size:0.75rem;">Загрузка...</p>';
+        const table = document.getElementById('order_table');
+        const rows = table.querySelectorAll('tr');
+        const laggingPositions = [];
+        for (let i = 1; i < rows.length - 1; i++) {
+            const cells = rows[i].querySelectorAll('td');
+            if (cells.length >= 13) {
+                const filter = cells[1].textContent.trim();
+                const plannedCount = parseInt(cells[2].textContent) || 0;
+                const producedEl = cells[10].querySelector('.tooltip') || cells[10];
+                const producedCount = parseInt(producedEl.firstChild ? producedEl.firstChild.textContent.trim() : cells[10].textContent.trim()) || 0;
+                const gofraEl = cells[12].querySelector('.tooltip') || cells[12];
+                const gofraCount = parseInt(gofraEl.firstChild ? gofraEl.firstChild.textContent.trim() : cells[12].textContent.trim()) || 0;
+                const remark = cells[9].textContent.trim();
+                if (plannedCount > 0 && producedCount < plannedCount * 0.8) {
+                    const lagPercent = Math.round((1 - producedCount / plannedCount) * 100);
+                    laggingPositions.push({ filter, plannedCount, producedCount, gofraCount, remark, lagPercent });
+                }
+            }
+        }
+        if (laggingPositions.length === 0) {
+            content.innerHTML = '<div class="no-zero-positions"><p style="color:#22c55e;font-weight:600;font-size:0.75rem;">Нет позиций с отставанием &gt; 20%</p></div>';
+            return;
+        }
+        let html = `<div class="zero-positions-header">Найдено: ${laggingPositions.length}</div>`;
+        html += `<table><thead><tr><th>Фильтр</th><th style="text-align:center;">План</th><th style="text-align:center;">Изгот.</th><th style="text-align:center;">Гофра</th><th style="text-align:center;">−%</th>${laggingPositions.some(p => p.remark) ? '<th>Прим.</th>' : ''}</tr></thead><tbody>`;
+        laggingPositions.forEach(p => {
+            html += `<tr><td>${p.filter}</td><td style="text-align:center;">${p.plannedCount}</td><td style="text-align:center;color:#dc2626;font-weight:600;">${p.producedCount}</td><td style="text-align:center;color:var(--accent);">${p.gofraCount}</td><td style="text-align:center;color:#dc2626;font-weight:600;">${p.lagPercent}%</td>${laggingPositions.some(q => q.remark) ? `<td style="font-size:0.65rem;color:var(--muted);">${p.remark || ''}</td>` : ''}</tr>`;
+        });
+        html += '</tbody></table>';
+        content.innerHTML = html;
+    }
+    function printLaggingPositions() {
+        const orderNumber = '<?= htmlspecialchars($order_number) ?>';
+        const content = document.getElementById('laggingPositionsContent');
+        const printWindow = window.open('', '_blank', 'width=700,height=500');
+        const printHTML = `<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Отставание &gt; 20% - ${orderNumber}</title><style>body{font-family:Arial,sans-serif;margin:20px;font-size:11px}h1{font-size:14px;margin:0 0 10px}h2{font-size:12px;margin:0 0 15px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #374151;padding:4px;text-align:left}th{background:#f3f4f6}</style></head><body><h1>Позиции с отставанием более 20%</h1><h2>Заявка: ${orderNumber} | ${new Date().toLocaleDateString('ru-RU')}</h2>${content.innerHTML}</body></html>`;
+        printWindow.document.write(printHTML);
+        printWindow.document.close();
+        printWindow.onload = function() { printWindow.focus(); printWindow.print(); };
+    }
+
+    // === Проверка гофропакетов ===
+    function checkGofraPackages() {
+        document.getElementById('gofraCheckModal').style.display = 'flex';
+        loadGofraCheckData();
+        const filterNoGofra = document.getElementById('filterNoGofra');
+        const filterShortage = document.getElementById('filterShortage');
+        filterNoGofra.removeEventListener('change', loadGofraCheckData);
+        filterShortage.removeEventListener('change', loadGofraCheckData);
+        filterNoGofra.addEventListener('change', loadGofraCheckData);
+        filterShortage.addEventListener('change', loadGofraCheckData);
+    }
+    function closeGofraCheckModal() {
+        document.getElementById('gofraCheckModal').style.display = 'none';
+    }
+    function loadGofraCheckData() {
+        const content = document.getElementById('gofraCheckContent');
+        content.innerHTML = '<p style="text-align:center;padding:40px;color:var(--muted);">Загрузка данных...</p>';
+        const showNoGofra = document.getElementById('filterNoGofra').checked;
+        const showShortage = document.getElementById('filterShortage').checked;
+        const table = document.getElementById('order_table');
+        const rows = table.querySelectorAll('tr');
+        const problemPositions = [];
+        for (let i = 1; i < rows.length - 1; i++) {
+            const cells = rows[i].querySelectorAll('td');
+            if (cells.length >= 13) {
+                const filter = cells[1].textContent.trim();
+                const plan = cells[2].textContent.trim();
+                const producedEl = cells[10].querySelector('.tooltip') || cells[10];
+                const gofraEl = cells[12].querySelector('.tooltip') || cells[12];
+                const produced = parseInt(producedEl.firstChild ? producedEl.firstChild.textContent.trim() : cells[10].textContent.trim()) || 0;
+                const gofra = parseInt(gofraEl.firstChild ? gofraEl.firstChild.textContent.trim() : cells[12].textContent.trim()) || 0;
+                const shortage = Math.max(0, produced - gofra);
+                let problemType = '', shouldShow = false;
+                if (gofra === 0 && produced > 0) {
+                    problemType = 'Нет гофропакетов';
+                    shouldShow = showNoGofra;
+                } else if (gofra < produced && produced > 0 && shortage >= 20) {
+                    problemType = 'Недостаток';
+                    shouldShow = showShortage;
+                }
+                if (shouldShow) {
+                    problemPositions.push({ filter, plan, produced, gofra, problemType, shortage });
+                }
+            }
+        }
+        if (problemPositions.length === 0) {
+            const msg = (!showNoGofra && !showShortage) ? 'Выберите хотя бы один тип проблемы для отображения.' : 'Для выбранных типов проблем ничего не найдено.';
+            content.innerHTML = `<div style="text-align:center;padding:2.5rem;"><p style="color:#22c55e;font-size:0.875rem;font-weight:600;">${msg}</p></div>`;
+            return;
+        }
+        let html = `<div class="zero-positions-header">Обнаружено проблемных позиций: ${problemPositions.length}</div>`;
+        html += `<table><thead><tr><th>Фильтр</th><th style="text-align:center;">План, шт</th><th style="text-align:center;">Выпущено, шт</th><th style="text-align:center;">Гофропакетов, шт</th><th style="text-align:center;">Недостаток, шт</th><th style="text-align:center;">Тип проблемы</th></tr></thead><tbody>`;
+        problemPositions.forEach(pos => {
+            const typeColor = pos.problemType === 'Нет гофропакетов' ? '#dc2626' : '#f59e0b';
+            html += `<tr><td>${pos.filter}</td><td style="text-align:center;">${pos.plan}</td><td style="text-align:center;color:#22c55e;font-weight:600;">${pos.produced}</td><td style="text-align:center;color:#dc2626;font-weight:600;">${pos.gofra}</td><td style="text-align:center;color:#dc2626;font-weight:600;">${pos.shortage}</td><td style="text-align:center;color:${typeColor};font-weight:600;font-size:0.6875rem;">${pos.problemType}</td></tr>`;
+        });
+        html += '</tbody></table>';
+        content.innerHTML = html;
+    }
+    function printGofraCheck() {
+        const orderNumber = '<?= htmlspecialchars($order_number) ?>';
+        const content = document.getElementById('gofraCheckContent');
+        const printWindow = window.open('', '_blank', 'width=800,height=600');
+        const printHTML = `<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Проверка гофропакетов - ${orderNumber}</title><style>body{font-family:Arial,sans-serif;margin:20px;font-size:12px}h1{color:#dc2626;text-align:center;font-size:18px;margin-bottom:20px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #374151;padding:6px;text-align:center}th{background:#f3f4f6}</style></head><body><h1>Проверка гофропакетов</h1><h2 style="font-size:14px;">Заявка: ${orderNumber}</h2><p style="color:#6b7280;font-size:11px;">Дата: ${new Date().toLocaleDateString('ru-RU')}</p>${content.innerHTML}</body></html>`;
+        printWindow.document.write(printHTML);
+        printWindow.document.close();
+        printWindow.onload = function() { printWindow.focus(); printWindow.print(); };
+    }
+
+    // Закрытие модальных окон при клике вне контента
+    window.onclick = function(event) {
+        if (event.target === document.getElementById('zeroProductionModal')) closeZeroProductionModal();
+        if (event.target === document.getElementById('laggingPositionsModal')) closeLaggingPositionsModal();
+        if (event.target === document.getElementById('gofraCheckModal')) closeGofraCheckModal();
+    }
 </script>
 
 </body>

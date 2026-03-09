@@ -55,6 +55,7 @@ if (!$hasAccessToU3) {
     </div>');
 }
 
+require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/../auth/includes/db.php';
 $pdo = getPdo('plan_u3');
 
@@ -413,6 +414,51 @@ function getStatusClass($fact, $plan) {
             box-shadow: 0 0 0 2px rgba(250,204,21,0.35) inset;
         }
         
+        .position-item.highlight-order {
+            background: #dbeafe;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59,130,246,0.35) inset;
+        }
+        
+        .orders-filter {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 200px;
+            overflow-y: auto;
+            padding: 8px;
+            background: #f9fafb;
+            border-radius: 8px;
+            border: 1px solid var(--line);
+        }
+        
+        .orders-filter-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--muted);
+            margin-bottom: 4px;
+        }
+        
+        .order-checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            padding: 4px 0;
+            user-select: none;
+        }
+        
+        .order-checkbox-item:hover {
+            color: var(--accent);
+        }
+        
+        .order-checkbox-item input {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+        
         .status-badge {
             font-size: 12px;
             padding: 3px 8px;
@@ -550,6 +596,22 @@ function getStatusClass($fact, $plan) {
     <?php if ($weekOffset !== 0): ?>
         <a href="?" class="nav-btn secondary">⌂ Текущая неделя</a>
     <?php endif; ?>
+    
+    <?php if ($totalPositionsInWeek > 0 && !empty($uniqueOrders)): ?>
+        <?php 
+        $ordersList = array_keys($uniqueOrders);
+        sort($ordersList);
+        ?>
+        <div class="orders-filter" style="margin-left: 16px; min-width: 180px;">
+            <div class="orders-filter-title">Заявки на экране</div>
+            <?php foreach ($ordersList as $orderNum): ?>
+                <label class="order-checkbox-item" data-order="<?= htmlspecialchars($orderNum) ?>">
+                    <input type="checkbox" class="order-highlight-cb" value="<?= htmlspecialchars($orderNum) ?>">
+                    <span><?= htmlspecialchars($orderNum) ?></span>
+                </label>
+            <?php endforeach; ?>
+        </div>
+    <?php endif; ?>
 </div>
 
 <?php if ($totalPositionsInWeek == 0): ?>
@@ -675,6 +737,21 @@ if (calendarGrid) {
         }
     });
 }
+
+// Подсветка позиций заявки по чекбоксу
+document.querySelectorAll('.order-highlight-cb').forEach(cb => {
+    cb.addEventListener('change', function() {
+        const orderNum = this.value;
+        const checked = this.checked;
+        document.querySelectorAll(`.position-item[data-order="${CSS.escape(orderNum)}"]`).forEach(item => {
+            if (checked) {
+                item.classList.add('highlight-order');
+            } else {
+                item.classList.remove('highlight-order');
+            }
+        });
+    });
+});
 
 // Автоматический скролл к текущему дню при загрузке (для мобильных)
 window.addEventListener('DOMContentLoaded', function() {

@@ -296,13 +296,13 @@ try{
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Раскрой по заявке #<?=htmlspecialchars($orderNumber)?></title>
 <style>
-    :root{ --gap:12px; --left:700px; --mid:560px; --right:380px; --header-top: 56px; }
+    :root{ --gap:12px; --left:700px; --mid:560px; --right:380px; --header-top: 20px; }
     *{box-sizing:border-box}
     html{ padding-top: var(--header-top); }
     body{font:12px/1.25 Arial;margin:0;padding:0;height:100vh;overflow:hidden;display:flex;flex-direction:column;align-items:center}
-    .page-header{flex-shrink:0;padding: 12px 10px 8px;width:100%;max-width:calc(var(--left) + var(--mid) + var(--right) + var(--gap)*2);box-sizing:border-box}
+    .page-header{flex-shrink:0;padding: 4px 10px 8px;width:100%;max-width:calc(var(--left) + var(--mid) + var(--right) + var(--gap)*2);box-sizing:border-box}
     h2{margin:0;font:600 16px/1.2 Arial}
-    .wrap{display:grid;grid-template-columns:var(--left) var(--mid) var(--right);grid-template-rows:minmax(0,1fr);gap:var(--gap);flex:1;min-height:0;max-width:calc(var(--left) + var(--mid) + var(--right) + var(--gap)*2);width:100%;padding:0 10px 10px;box-sizing:border-box}
+    .wrap{display:grid;grid-template-columns:var(--left) var(--mid) var(--right);grid-template-rows:minmax(0,1fr);gap:var(--gap);flex:1;min-height:0;max-width:calc(var(--left) + var(--mid) + var(--right) + var(--gap)*2);width:100%;padding:0 10px 28px;box-sizing:border-box}
     .wrap > *{min-height:0}
     .mid{display:flex !important;flex-direction:column !important;gap:12px;overflow:hidden !important}
     .mid #currentBalePanel{flex-shrink:0}

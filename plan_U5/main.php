@@ -703,11 +703,11 @@ echo "<!-- Аккуратная панель авторизации -->
                     <form action="NP_build_plan_week.php" method="get" target="_blank" class="stack">
                         <input type="submit" value="Общий план">
                     </form>
-
-
+                    <a href="NP_print_build_plan_2.php?fact=1" target="_blank" rel="noopener" class="stack"><button type="button">Общий план 2</button></a>
                     <form action='NP_monitor.php' method='post' target="_blank" class="stack"><input type='submit' value='Мониторинг'></form>
                     <form action="worker_modules/tasks_corrugation.php" method="post" target="_blank" class="stack"><input type="submit" value="Модуль оператора ГМ"></form>
                     <a href="corrugation_worker_analysis.php" target="_blank" rel="noopener" class="stack"><button type="button">Анализ ГМ</button></a>
+                    <a href="NP_corrugation_analysis.php" target="_blank" rel="noopener" class="stack"><button type="button">Анализ ГМ 2</button></a>
                     <form action="worker_modules/tasks_cut.php" method="post" target="_blank" class="stack"><input type="submit" value="Модуль оператора бумагорезки"></form>
                     <form action="NP/corrugation_print.php" method="post" target="_blank" class="stack"><input type="submit" value="План гофропакетчика"></form>
                     <form action="buffer_stock.php" method="post" target="_blank" class="stack"><input type="submit" value="Буфер гофропакетов"></form>

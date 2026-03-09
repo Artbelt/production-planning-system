@@ -35,11 +35,21 @@ if ($filterName !== '') {
     }
 }
 
-/** Утилита форматирования «Да/Нет» для чекбоксов */
+/** Утилита форматирования «Да/Нет» для чекбоксов (учёт значений из salon_filter_structure: поролон, язычек, трапеция) */
 function yn($v): string {
-    // Поддержим варианты: 'on', '1', 1, true, 'checked', 'yes'
-    $truthy = ['on','1',1,true,'checked','yes','да','Да','true','True'];
-    return in_array($v, $truthy, true) ? 'Да' : 'Нет';
+    if ($v === '' || $v === null) {
+        return 'Нет';
+    }
+    $vStr = is_string($v) ? trim($v) : $v;
+    $truthy = ['on','1',1,true,'checked','yes','да','Да','true','True','поролон','язычек','трапеция'];
+    if (in_array($vStr, $truthy, true)) {
+        return 'Да';
+    }
+    // на случай записи с заглавной: Поролон, Язычек, Трапеция
+    if (is_string($vStr) && in_array(mb_strtolower($vStr, 'UTF-8'), ['поролон', 'язычек', 'трапеция'], true)) {
+        return 'Да';
+    }
+    return 'Нет';
 }
 
 /** Безопасный вывод */

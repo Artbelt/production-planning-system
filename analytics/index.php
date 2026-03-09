@@ -487,6 +487,28 @@ $departments = [
             height: 70px;
             width: 100%;
         }
+        .dept-plan-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--gray-100);
+        }
+        .dept-plan-btn {
+            display: inline-block;
+            padding: 8px 14px;
+            font-size: 13px;
+            color: #fff;
+            background: var(--primary, #2563eb);
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        .dept-plan-btn:hover {
+            background: var(--primary-hover, #1d4ed8);
+            color: #fff;
+        }
         @media (max-width: 768px) {
             .analytics-header {
                 flex-direction: column;
@@ -567,6 +589,18 @@ $departments = [
                         <span><strong>За вчера:</strong> продукция — <?= number_format($deptProd, 0, ',', ' ') ?> шт.</span>
                         <?php endif; ?>
                         <span>гофропакеты — <?= number_format($deptParts, 0, ',', ' ') ?> шт.</span>
+                        <?php if ($code === 'U2'): ?>
+                        <div class="dept-plan-buttons">
+                            <a href="/plan/NP_print_build_plan_2.php?fact=1" target="_blank" class="dept-plan-btn">План сборки</a>
+                            <a href="/plan/NP_print_corrugation_plan_2.php?fact=1" target="_blank" class="dept-plan-btn">План гофрирования</a>
+                        </div>
+                        <?php endif; ?>
+                        <?php if ($code === 'U5'): ?>
+                        <div class="dept-plan-buttons">
+                            <a href="/plan_U5/NP_print_build_plan_2.php?fact=1" target="_blank" class="dept-plan-btn">План сборки</a>
+                            <a href="/plan_U5/NP_corrugation_analysis.php" target="_blank" class="dept-plan-btn">План гофрирования</a>
+                        </div>
+                        <?php endif; ?>
                         <?php if ($code === 'U3'): ?>
                         <?php $filtersWithCaps = $statsYesterday[$code]['filters_with_caps'] ?? null; ?>
                         <span>Фильтры с крышками — <?= $filtersWithCaps !== null ? number_format($filtersWithCaps, 0, ',', ' ') . ' шт.' : '—' ?></span>

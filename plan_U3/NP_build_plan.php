@@ -526,7 +526,7 @@ try{
 }
 ?>
 <!doctype html><meta charset="utf-8">
-<title>План сборки (дневные смены) — заявка #<?=htmlspecialchars($orderNumber)?></title>
+<title>План сборки [<?=htmlspecialchars($orderNumber)?>]</title>
 <style>
     :root{
         --bg:#f6f7fb; --card:#fff; --border:#e5e7eb; --text:#1f2937; --muted:#6b7280;
@@ -1077,7 +1077,7 @@ try{
 
 <div class="topbar">
     <div class="topbar-inner">
-        <h1 class="title">План сборки  — заявка #<span id="titleOrder"><?=htmlspecialchars($orderNumber)?></span></h1>
+        <h1 class="title">План сборки [<span id="titleOrder"><?=htmlspecialchars($orderNumber)?></span>]</h1>
     </div>
 </div>
 
@@ -2772,7 +2772,7 @@ try{
         // вспомогательная отрисовка одного листа
         const renderSheet = (sliceDates) => {
             let html = `<div class="sheet">`;
-            html += `<h3>План сборки — заявка #${escapeHtml(String(ORDER))} · ${escapeHtml(sliceDates[0])} — ${escapeHtml(sliceDates[sliceDates.length-1])}</h3>`;
+            html += `<h3>План сборки [${escapeHtml(String(ORDER))}] · ${escapeHtml(sliceDates[0])} — ${escapeHtml(sliceDates[sliceDates.length-1])}</h3>`;
             html += `<table><thead><tr>`;
             html += `<th style="min-width:160px;text-align:left">Фильтр</th>`;
             html += `<th style="width:70px;text-align:right">Заказано</th>`;

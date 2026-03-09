@@ -1020,41 +1020,65 @@ function reverse_date($date){
 }
 
 /** Функция возвращает количество произведенных указанных фильтров по указанной заявке */
-/** функция возвращает массив ARRAY['ПЕРЕЧЕНЬ_ДАТ_И_КОЛИЧЕСТВ','КОЛИЧЕСТВО_СУММАРНОЕ'] */
+/** функция возвращает массив [ПЕРЕЧЕНЬ_ДАТ_И_КОЛИЧЕСТВ, КОЛИЧЕСТВО_СУММАРНОЕ] — для тултипа «когда делалось» */
 function select_produced_filters_by_order($filter_name, $order_name){
     $pdo = _planPdo();
-    $st = $pdo->prepare("SELECT count_of_filters FROM manufactured_production WHERE name_of_order = ? AND name_of_filter = ?");
+    $st = $pdo->prepare("SELECT date_of_production, count_of_filters FROM manufactured_production WHERE name_of_order = ? AND name_of_filter = ? ORDER BY date_of_production");
     if (!$st->execute([$order_name, $filter_name])) {
         echo "Ошибка запроса manufactured_production";
-        return "ERROR#01";
+        return [[], 0];
     }
+    $dateList = [];
     $count = 0;
     while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
-        $count += $row['count_of_filters'];
+        $dateList[] = $row['date_of_production'];
+        $dateList[] = (int)$row['count_of_filters'];
+        $count += (int)$row['count_of_filters'];
     }
-    return ["#in_construction", $count];
+    return [$dateList, $count];
 }
 
 
 /** Функция выполняет запрос к БД и возвращает количество комплектующих определенного изделия по выбранной заявке */
 function manufactured_part_count($part,$order) {
+    $tmp = get_parts_fact_dates($part, $order);
+    return $tmp[1];
+}
+
+/** Возвращает [массив дат/количеств для тултипа, итого] по деталям из manufactured_parts по наименованию и заявке */
+function get_parts_fact_dates($part_name, $order_number) {
     $pdo = _planPdo();
-    $st = $pdo->prepare("SELECT count_of_parts FROM manufactured_parts WHERE name_of_parts LIKE ? AND name_of_order = ?");
-    $st->execute(["%$part", $order]);
-    $count = 0;
+    $st = $pdo->prepare("SELECT date_of_production, SUM(count_of_parts) AS qty FROM manufactured_parts WHERE name_of_parts LIKE ? AND name_of_order = ? GROUP BY date_of_production ORDER BY date_of_production");
+    $st->execute(["%$part_name", $order_number]);
+    $dateList = [];
+    $total = 0;
     while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
-        $count += $row['count_of_parts'];
+        $dateList[] = $row['date_of_production'];
+        $dateList[] = (int)$row['qty'];
+        $total += (int)$row['qty'];
     }
-    return $count;
+    return [$dateList, $total];
 }
 
 /** Возвращает количество изготовленных (списанных по производству) крышек по заявке и фильтру из cap_movements */
 function manufactured_caps_count_by_order_filter($order_number, $filter_name) {
+    $tmp = get_caps_fact_dates_by_filter($order_number, $filter_name);
+    return $tmp[1];
+}
+
+/** Возвращает [массив дат/количеств для тултипа, итого] по крышкам из cap_movements (PRODUCTION_OUT) */
+function get_caps_fact_dates_by_filter($order_number, $filter_name) {
     $pdo = _planPdo();
-    $st = $pdo->prepare("SELECT COALESCE(SUM(quantity), 0) AS total FROM cap_movements WHERE order_number = ? AND filter_name = ? AND operation_type = 'PRODUCTION_OUT'");
+    $st = $pdo->prepare("SELECT date, SUM(quantity) AS qty FROM cap_movements WHERE order_number = ? AND filter_name = ? AND operation_type = 'PRODUCTION_OUT' GROUP BY date ORDER BY date");
     $st->execute([$order_number, $filter_name]);
-    $row = $st->fetch(PDO::FETCH_ASSOC);
-    return $row ? (int)$row['total'] : 0;
+    $dateList = [];
+    $total = 0;
+    while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
+        $dateList[] = $row['date'];
+        $dateList[] = (int)$row['qty'];
+        $total += (int)$row['qty'];
+    }
+    return [$dateList, $total];
 }
 
 /** Функция выполняет запрос к БД и возвращает количество комплектующих определенного изделия на складе */
