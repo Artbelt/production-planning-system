@@ -1,13 +1,55 @@
 <?php
-// NP_supply_by_order.php — потребность по конкретной заявке
+// NP_supply_requirements.php — потребность комплектующих по заявке
 // Печать: таблица разбивается на несколько страниц по N дат (по умолчанию 20)
 
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4","root","",[
-    PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION
-]);
+require_once __DIR__ . '/../auth/includes/db.php';
+
+// #region agent log
+/**
+ * Технический лог для отладки списка заявок на странице NP_supply_requirements.
+ * Пишет одну строку NDJSON в файл debug-e6b2bc.log в корне проекта.
+ */
+function agent_debug_log_supply(string $hypothesisId, string $message, array $data = []): void {
+    $payload = [
+        'sessionId'    => 'e6b2bc',
+        'runId'        => 'pre-fix-1',
+        'hypothesisId' => $hypothesisId,
+        'location'     => 'NP_supply_requirements.php',
+        'message'      => $message,
+        'data'         => $data,
+        'timestamp'    => (int) round(microtime(true) * 1000),
+    ];
+    $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if ($json !== false) {
+        @file_put_contents(__DIR__ . '/../debug-e6b2bc.log', $json . PHP_EOL, FILE_APPEND);
+    }
+}
+// #endregion
+
+$pdo = null;
+$dbError = '';
+
+try {
+    $pdo = getPdo('plan_u5');
+    agent_debug_log_supply('H1', 'PDO connection acquired', []);
+} catch (PDOException $e) {
+    $dbError = 'Не удалось подключиться к базе данных.';
+    if (function_exists('error_log')) {
+        error_log('NP_supply_requirements.php PDO: ' . $e->getMessage());
+    }
+    agent_debug_log_supply('H1', 'PDO connection failed', [
+        'error' => $e->getMessage(),
+    ]);
+}
 
 /* ===== AJAX: отрисовать только таблицы ===== */
 if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
+    header('Content-Type: text/html; charset=utf-8');
+    if (!$pdo) {
+        http_response_code(503);
+        echo "<p>Сервис временно недоступен: ошибка базы данных.</p>";
+        exit;
+    }
     $order = $_POST['order'] ?? '';
     $ctype = $_POST['ctype'] ?? '';          // box
     $chunkSize = 20; // Фиксированное значение для печати
@@ -18,46 +60,35 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
         exit;
     }
 
-    // Единый запрос по выбранной заявке (точно как в У2)
-    $sql = "
-    WITH bp AS (
-      SELECT
-        order_number,
-        TRIM(SUBSTRING_INDEX(`filter`, ' [', 1)) AS base_filter,
-        `filter` AS filter_label,
-        plan_date AS need_by_date,
-        `count`
-      FROM build_plan
-      WHERE order_number = :ord
-    ),
-    p AS (
-      SELECT b.order_number, b.base_filter, b.filter_label, b.need_by_date, b.`count`,
-             COALESCE(sfs1.box, sfs2.box) AS box,
-             COALESCE(sfs1.g_box, sfs2.g_box) AS g_box
-      FROM bp b
-      LEFT JOIN salon_filter_structure sfs1 ON sfs1.`filter` = b.base_filter
-      LEFT JOIN salon_filter_structure sfs2 ON sfs2.`filter` = b.filter_label
-        AND (sfs1.box IS NULL OR sfs1.box = '')
-    ),
-    o AS (
-      SELECT order_number, COALESCE(packaging_rate, 1) AS packaging_rate
-      FROM orders WHERE order_number = :ord
-    )
-    SELECT
-      'box' AS component_type,
-      p.box AS component_name,
-      p.need_by_date AS need_by_date,
-      p.filter_label,
-      p.base_filter,
-      p.`count` AS qty
-    FROM p
-    WHERE p.box IS NOT NULL AND p.box <> ''
-    ORDER BY p.need_by_date, component_name, p.base_filter
-    ";
+    try {
+        // Запрос без CTE (WITH) для совместимости с MySQL 5.7
+        $sql = "
+        SELECT
+          'box' AS component_type,
+          COALESCE(sfs1.box, sfs2.box) AS component_name,
+          bp.plan_date AS need_by_date,
+          bp.`filter` AS filter_label,
+          TRIM(SUBSTRING_INDEX(bp.`filter`, ' [', 1)) AS base_filter,
+          bp.`count` AS qty
+        FROM build_plan bp
+        LEFT JOIN salon_filter_structure sfs1 ON sfs1.`filter` = TRIM(SUBSTRING_INDEX(bp.`filter`, ' [', 1))
+        LEFT JOIN salon_filter_structure sfs2 ON sfs2.`filter` = bp.`filter`
+          AND (sfs1.box IS NULL OR sfs1.box = '')
+        WHERE bp.order_number = :ord
+          AND (COALESCE(sfs1.box, sfs2.box) IS NOT NULL AND COALESCE(sfs1.box, sfs2.box) <> '')
+        ORDER BY need_by_date, component_name, base_filter
+        ";
 
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([':ord'=>$order]);
-    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([':ord' => $order]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        if (function_exists('error_log')) {
+            error_log('NP_supply_requirements AJAX: ' . $e->getMessage());
+        }
+        echo '<p class="error">Ошибка загрузки данных: ' . htmlspecialchars($e->getMessage()) . '</p>';
+        exit;
+    }
 
     if (!$rows) {
         echo "<p>По заявке <b>".htmlspecialchars($order)."</b> для индивидуальных коробок данных нет.</p>";
@@ -265,8 +296,61 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
 
 /* ===== обычная загрузка страницы ===== */
 
-// Список заявок
-$orders = $pdo->query("SELECT DISTINCT order_number FROM build_plan ORDER BY order_number")->fetchAll(PDO::FETCH_COLUMN);
+$orders = [];
+$debugOrderInfo = null;
+if ($pdo) {
+    try {
+        // Только активные заявки: заявка не скрыта (hide != 1), по одному разу на номер
+        $stmtOrders = $pdo->query("
+            SELECT DISTINCT o.order_number
+            FROM orders o
+            WHERE COALESCE(o.hide, 0) != 1
+            ORDER BY o.order_number DESC
+        ");
+        $orders = $stmtOrders->fetchAll(PDO::FETCH_COLUMN);
+
+        agent_debug_log_supply('H2', 'Active orders loaded', [
+            'count'  => count($orders),
+            'sample' => array_slice($orders, 0, 15),
+        ]);
+
+        // Проверяем конкретную заявку 11-14-26 во всех ключевых источниках
+        $debugOrder = '11-14-26';
+        try {
+            $stmtBuild = $pdo->prepare("SELECT COUNT(*) FROM build_plan WHERE order_number = ?");
+            $stmtBuild->execute([$debugOrder]);
+            $cntBuild = (int) $stmtBuild->fetchColumn();
+
+            $stmtOrd = $pdo->prepare("SELECT hide FROM orders WHERE order_number = ?");
+            $stmtOrd->execute([$debugOrder]);
+            $rowOrd = $stmtOrd->fetch(PDO::FETCH_ASSOC);
+
+            $inOrders   = $rowOrd ? 1 : 0;
+            $hideVal    = $rowOrd['hide'] ?? null;
+            $inDropdown = in_array($debugOrder, $orders, true);
+
+            $debugOrderInfo = [
+                'order'       => $debugOrder,
+                'inDropdown'  => $inDropdown,
+                'inBuildPlan' => $cntBuild,
+                'inOrders'    => $inOrders,
+                'hide'        => $hideVal,
+            ];
+
+            agent_debug_log_supply('H3', 'Debug specific order presence', $debugOrderInfo);
+        } catch (Throwable $e) {
+            agent_debug_log_supply('H3', 'Debug specific order query failed', [
+                'order' => $debugOrder,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    } catch (PDOException $e) {
+        $dbError = $dbError ?: 'Ошибка загрузки списка активных заявок (build_plan / orders).';
+        if (function_exists('error_log')) {
+            error_log('NP_supply_requirements.php query active orders: ' . $e->getMessage());
+        }
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -886,6 +970,12 @@ $orders = $pdo->query("SELECT DISTINCT order_number FROM build_plan ORDER BY ord
 <body>
 
 <h2>Потребность комплектующих по заявке</h2>
+
+<?php if ($dbError !== ''): ?>
+<div class="panel" style="background: #fef2f2; border-color: #fecaca;">
+    <p style="margin: 0; color: #b91c1c; font-weight: 500;"><?= htmlspecialchars($dbError) ?></p>
+</div>
+<?php endif; ?>
 
 <div class="panel">
     <div class="form-group">

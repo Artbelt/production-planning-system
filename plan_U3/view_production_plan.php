@@ -200,7 +200,7 @@ $DOW = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
             margin-bottom: 2px;
             position: relative;
             overflow: hidden;
-            cursor: default;
+            cursor: pointer;
         }
         .item-fact-fill {
             position: absolute;
@@ -233,6 +233,9 @@ $DOW = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
             outline: 2px solid #2563eb;
             outline-offset: -1px;
             box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.4);
+        }
+        .item.item-highlighted-fixed {
+            background: #dbeafe;
         }
 
         /* Панель управления */
@@ -270,6 +273,100 @@ $DOW = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
             .days-grid { grid-template-columns: repeat(7, 150px); width: fit-content; }
             .day-column { break-inside: avoid; }
             .item.item-highlighted { outline: none !important; box-shadow: none !important; }
+            .item.item-highlighted-fixed { background: transparent !important; }
+        }
+
+        /* Плавающая панель с наименованием фильтра (перетаскиваемая) */
+        .filter-panel {
+            position: fixed;
+            top: 70px;
+            right: 20px;
+            max-width: min(90vw, 420px);
+            width: 280px;
+            background: #fef3c7; /* тёплый жёлтый фон, хорошо заметен */
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+            border: 1px solid #f59e0b;
+            z-index: 1500;
+            display: none;
+        }
+        .filter-panel.visible {
+            display: block;
+        }
+        .filter-panel-header {
+            padding: 6px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            background: #fbbf24;
+            border-bottom: 1px solid #f59e0b;
+            cursor: move;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .filter-panel-title {
+            color: #111827;
+            white-space: nowrap;
+        }
+        .filter-panel-close {
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 1;
+            padding: 0 4px;
+            color: #6b7280;
+        }
+        .filter-panel-body {
+            padding: 10px 12px 12px;
+        }
+        .filter-panel-name {
+            font-size: 14px;
+            font-weight: 700;
+            color: #111827;
+            word-break: break-word;
+        }
+
+        /* Мобильная адаптация */
+        @media (max-width: 768px) {
+            body {
+                padding: 60px 8px 16px;
+                align-items: stretch;
+            }
+            .section-header {
+                padding: 8px 4px;
+                font-size: 14px;
+            }
+            .days-grid {
+                grid-template-columns: 1fr;
+                width: 100%;
+            }
+            .day-column {
+                width: auto;
+            }
+            .no-print {
+                left: 8px;
+                right: 8px;
+                top: 8px;
+                justify-content: space-between;
+                flex-wrap: wrap;
+            }
+            .order-select {
+                min-width: 0;
+                flex: 1 1 auto;
+            }
+            .filter-panel {
+                left: 8px;
+                right: 8px;
+                width: auto;
+                max-width: 100%;
+            }
+            .filter-panel-title {
+                max-width: 70%;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
         }
     </style>
 </head>
@@ -302,15 +399,102 @@ $DOW = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
         window.location.href = '?' + params.toString();
     }
     document.addEventListener('DOMContentLoaded', function () {
-        const items = document.querySelectorAll('.item[data-filter]');
+        const items  = document.querySelectorAll('.item[data-filter]');
+        const panel  = document.getElementById('filterPanel');
+        const header = document.getElementById('filterPanelHeader');
+        const nameEl = document.getElementById('filterPanelName');
+        const btnClose = document.getElementById('filterPanelClose');
+
+        let currentSelectedFilter = null;
+
+        function updateHighlight() {
+            items.forEach(function (i) {
+                const f = i.getAttribute('data-filter');
+                if (f && currentSelectedFilter && f === currentSelectedFilter) {
+                    i.classList.add('item-highlighted', 'item-highlighted-fixed');
+                } else {
+                    i.classList.remove('item-highlighted', 'item-highlighted-fixed');
+                }
+            });
+        }
+
+        function openFilterPanel(filterName) {
+            if (!panel || !nameEl) return;
+            nameEl.textContent = filterName || '';
+            panel.classList.add('visible');
+            currentSelectedFilter = filterName || null;
+            updateHighlight();
+        }
+
+        function closeFilterPanel() {
+            if (!panel) return;
+            panel.classList.remove('visible');
+            currentSelectedFilter = null;
+            updateHighlight();
+        }
+
+        // Перетаскивание панели
+        if (panel && header) {
+            let dragging = false;
+            let startX = 0, startY = 0;
+            let startLeft = 0, startTop = 0;
+
+            header.addEventListener('mousedown', function (e) {
+                dragging = true;
+                const rect = panel.getBoundingClientRect();
+                startX = e.clientX;
+                startY = e.clientY;
+                startLeft = rect.left;
+                startTop  = rect.top;
+                document.body.style.userSelect = 'none';
+            });
+
+            document.addEventListener('mousemove', function (e) {
+                if (!dragging) return;
+                const dx = e.clientX - startX;
+                const dy = e.clientY - startY;
+                panel.style.left = (startLeft + dx) + 'px';
+                panel.style.top  = (startTop + dy) + 'px';
+                panel.style.right = 'auto';
+            });
+
+            document.addEventListener('mouseup', function () {
+                if (!dragging) return;
+                dragging = false;
+                document.body.style.userSelect = '';
+            });
+        }
+
+        btnClose?.addEventListener('click', closeFilterPanel);
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') {
+                closeFilterPanel();
+            }
+        });
+
         items.forEach(function (el) {
             el.addEventListener('mouseenter', function () {
                 const f = el.getAttribute('data-filter');
-                items.forEach(function (i) { if (i.getAttribute('data-filter') === f) i.classList.add('item-highlighted'); });
+                items.forEach(function (i) {
+                    if (i.getAttribute('data-filter') === f) i.classList.add('item-highlighted');
+                });
             });
             el.addEventListener('mouseleave', function () {
                 const f = el.getAttribute('data-filter');
-                items.forEach(function (i) { if (i.getAttribute('data-filter') === f) i.classList.remove('item-highlighted'); });
+                items.forEach(function (i) {
+                    const fi = i.getAttribute('data-filter');
+                    // не снимаем подсветку с выбранного фильтра
+                    if (fi === f && fi !== currentSelectedFilter) {
+                        i.classList.remove('item-highlighted');
+                    }
+                });
+            });
+            el.addEventListener('click', function () {
+                const f = el.getAttribute('data-filter') || el.querySelector('.item-name')?.textContent || '';
+                if (f) {
+                    openFilterPanel(f);
+                }
             });
         });
     });
@@ -381,6 +565,16 @@ $DOW = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
 </div>
 
 <?php endif; ?>
+
+<div class="filter-panel" id="filterPanel">
+    <div class="filter-panel-header" id="filterPanelHeader">
+        <span class="filter-panel-title">Наименование фильтра</span>
+        <button type="button" class="filter-panel-close" id="filterPanelClose" title="Закрыть">×</button>
+    </div>
+    <div class="filter-panel-body">
+        <div class="filter-panel-name" id="filterPanelName"></div>
+    </div>
+</div>
 
 </body>
 </html>

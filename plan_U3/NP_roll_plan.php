@@ -9,10 +9,17 @@ if ($order === '') {
 }
 $startDateRaw = (string)($_GET['start_date'] ?? $_POST['start_date'] ?? '');
 $startDateObj = DateTime::createFromFormat('Y-m-d', $startDateRaw);
-if (!$startDateObj || $startDateObj->format('Y-m-d') !== $startDateRaw) {
+$startDateExplicit = ($startDateObj && $startDateObj->format('Y-m-d') === $startDateRaw);
+if (!$startDateExplicit) {
     $startDateObj = new DateTime('today');
 }
 $startDate = $startDateObj->format('Y-m-d');
+
+function normalizeFilterKey(string $filter): string {
+    $s = str_replace("\xC2\xA0", ' ', $filter);
+    $s = trim(preg_replace('/\s+/u', ' ', $s));
+    return strtoupper($s);
+}
 
 try {
     $pdo = getPdo('plan_u3');
@@ -133,21 +140,24 @@ try {
     foreach ($buildRows as $row) {
         $date = (string)($row['day_date'] ?? '');
         $filter = trim((string)($row['filter'] ?? ''));
+        $filterKey = normalizeFilterKey($filter);
         $qty = (int)($row['qty'] ?? 0);
-        if ($date === '' || $filter === '') {
+        if ($date === '' || $filterKey === '') {
             continue;
         }
         $buildDatesMap[$date] = true;
-        $buildFiltersMap[$filter] = true;
-        if (!isset($buildMatrix[$filter])) {
-            $buildMatrix[$filter] = [];
+        if (!isset($buildFiltersMap[$filterKey])) {
+            $buildFiltersMap[$filterKey] = $filter;
         }
-        $buildMatrix[$filter][$date] = ($buildMatrix[$filter][$date] ?? 0) + $qty;
+        if (!isset($buildMatrix[$filterKey])) {
+            $buildMatrix[$filterKey] = [];
+        }
+        $buildMatrix[$filterKey][$date] = ($buildMatrix[$filterKey][$date] ?? 0) + $qty;
     }
     ksort($buildDatesMap);
-    ksort($buildFiltersMap, SORT_NATURAL | SORT_FLAG_CASE);
+    asort($buildFiltersMap, SORT_NATURAL | SORT_FLAG_CASE);
     $buildDates = array_keys($buildDatesMap);
-    $buildFilters = array_keys($buildFiltersMap);
+    $buildFilterKeys = array_keys($buildFiltersMap);
 
     // Бухты по заявке (нижняя таблица)
     $stBales = $pdo->prepare("
@@ -164,6 +174,54 @@ try {
     ");
     $stBales->execute([$order]);
     $bales = $stBales->fetchAll(PDO::FETCH_ASSOC);
+
+    $stBaleFilterLen = $pdo->prepare("
+        SELECT
+            bale_id,
+            TRIM(filter) AS filter_name,
+            SUM(COALESCE(NULLIF(fact_length, 0), length)) AS total_len
+        FROM cut_plans
+        WHERE order_number = ?
+        GROUP BY bale_id, TRIM(filter)
+    ");
+    $stBaleFilterLen->execute([$order]);
+    $baleFilterLen = [];
+    $totalLenByFilter = [];
+    while ($row = $stBaleFilterLen->fetch(PDO::FETCH_ASSOC)) {
+        $baleId = (int)($row['bale_id'] ?? 0);
+        $fname = trim((string)($row['filter_name'] ?? ''));
+        $fkey = normalizeFilterKey($fname);
+        $len = (float)($row['total_len'] ?? 0);
+        if ($baleId <= 0 || $fkey === '' || $len <= 0) {
+            continue;
+        }
+        if (!isset($baleFilterLen[$baleId])) {
+            $baleFilterLen[$baleId] = [];
+        }
+        $baleFilterLen[$baleId][$fkey] = ($baleFilterLen[$baleId][$fkey] ?? 0) + $len;
+        $totalLenByFilter[$fkey] = ($totalLenByFilter[$fkey] ?? 0) + $len;
+    }
+
+    $buildTotalByFilter = [];
+    foreach ($buildMatrix as $filterKey => $byDate) {
+        $buildTotalByFilter[$filterKey] = array_sum($byDate);
+    }
+
+    $baleSupplyMap = [];
+    foreach ($baleFilterLen as $baleId => $filters) {
+        foreach ($filters as $fkey => $len) {
+            $planTotal = (float)($buildTotalByFilter[$fkey] ?? 0);
+            $lenTotal = (float)($totalLenByFilter[$fkey] ?? 0);
+            $qtyShare = ($planTotal > 0 && $lenTotal > 0) ? ($planTotal * $len / $lenTotal) : 0;
+            if ($qtyShare <= 0) {
+                continue;
+            }
+            if (!isset($baleSupplyMap[$baleId])) {
+                $baleSupplyMap[$baleId] = [];
+            }
+            $baleSupplyMap[$baleId][$fkey] = $qtyShare;
+        }
+    }
 
     // Существующие назначения дат порезки
     $stRoll = $pdo->prepare(
@@ -183,7 +241,15 @@ try {
         }
     }
 
-    // Единый диапазон дат для обеих таблиц от даты начала планирования
+    // Единый диапазон дат: при загрузке без start_date — с самой ранней даты в плане; иначе — от указанной даты
+    $planDatesList = array_keys($buildDatesMap);
+    if (!$startDateExplicit && !empty($planDatesList)) {
+        $rangeStartObj = DateTime::createFromFormat('Y-m-d', min($planDatesList));
+        if ($rangeStartObj) {
+            $startDateObj = $rangeStartObj;
+            $startDate = $startDateObj->format('Y-m-d');
+        }
+    }
     $maxDateObj = clone $startDateObj;
     foreach (array_keys($buildDatesMap) as $d) {
         $dObj = DateTime::createFromFormat('Y-m-d', $d);
@@ -263,6 +329,25 @@ try {
         .center { text-align: center; }
         .small { font-size: 12px; color: #6b7280; }
         .zero { color: #9ca3af; }
+        .supply-cell {
+            position: relative;
+            overflow: hidden;
+            min-width: 46px;
+            text-align: center;
+            --cov-fill: 0;
+        }
+        .supply-cell::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: calc(var(--cov-fill) * 1%);
+            background: linear-gradient(to top, rgba(22, 163, 74, 0.45), rgba(74, 222, 128, 0.25));
+            pointer-events: none;
+        }
+        .supply-cell .plan-val { position: relative; z-index: 1; font-weight: 600; line-height: 1.1; }
+        .supply-cell .cov-val { display: none; }
         .matrix-table .sticky-left {
             position: sticky;
             left: 0;
@@ -330,7 +415,7 @@ try {
 
     <div class="card">
         <h2>План сборки по заявке</h2>
-        <?php if (empty($buildFilters) || empty($buildDates)): ?>
+        <?php if (empty($buildFilterKeys) || empty($buildDates)): ?>
             <div class="small">План сборки не найден.</div>
         <?php else: ?>
             <div class="table-scroll">
@@ -344,12 +429,22 @@ try {
                     </tr>
                     </thead>
                     <tbody>
-                    <?php foreach ($buildFilters as $filter): ?>
+                    <?php foreach ($buildFilterKeys as $filterKey): ?>
+                        <?php $filterTitle = (string)$buildFiltersMap[$filterKey]; ?>
                         <tr>
-                            <td><?= htmlspecialchars($filter) ?></td>
+                            <td><?= htmlspecialchars($filterTitle) ?></td>
                             <?php foreach ($columnDates as $date): ?>
-                                <?php $qty = (int)($buildMatrix[$filter][$date] ?? 0); ?>
-                                <td class="center <?= $qty === 0 ? 'zero' : '' ?>"><?= $qty ?></td>
+                                <?php $qty = (int)($buildMatrix[$filterKey][$date] ?? 0); ?>
+                                <td
+                                    class="center supply-cell <?= $qty === 0 ? 'zero' : '' ?>"
+                                    data-plan-cell="1"
+                                    data-filter-key="<?= htmlspecialchars($filterKey) ?>"
+                                    data-date="<?= htmlspecialchars($date) ?>"
+                                    data-plan="<?= $qty ?>"
+                                >
+                                    <div class="plan-val"><?= $qty !== 0 ? (int)$qty : '' ?></div>
+                                    <div class="cov-val"></div>
+                                </td>
                             <?php endforeach; ?>
                         </tr>
                     <?php endforeach; ?>
@@ -421,11 +516,13 @@ try {
             <?php endif; ?>
         </form>
     </div>
+
 </div>
 <script>
     (function () {
         const table = document.getElementById('balesPlanTable');
         const hiddenWrap = document.getElementById('planHiddenInputs');
+        const baleSupplyMap = <?= json_encode($baleSupplyMap, JSON_UNESCAPED_UNICODE) ?>;
         if (!table || !hiddenWrap) return;
 
         function rebuildHiddenInputs() {
@@ -446,23 +543,93 @@ try {
             });
         }
 
+        function updateCoverage() {
+            const provided = Object.create(null); // key: filter|date -> qty
+            table.querySelectorAll('tbody tr').forEach((row) => {
+                const baleId = row.getAttribute('data-bale-id');
+                if (!baleId) return;
+                const selected = row.querySelector('.plan-cell.selected');
+                if (!selected) return;
+                const date = selected.getAttribute('data-date');
+                if (!date) return;
+
+                const filterQtyMap = baleSupplyMap[baleId] || {};
+                Object.keys(filterQtyMap).forEach((filterKey) => {
+                    const key = filterKey + '|' + date;
+                    provided[key] = (provided[key] || 0) + Number(filterQtyMap[filterKey] || 0);
+                });
+            });
+
+            const planCells = Array.from(document.querySelectorAll('[data-plan-cell="1"]'));
+            const dateSet = new Set();
+            const filterSet = new Set();
+            const planExact = Object.create(null); // key: filter|date -> plan qty
+            planCells.forEach((cell) => {
+                const f = cell.getAttribute('data-filter-key') || '';
+                const d = cell.getAttribute('data-date') || '';
+                const p = Number(cell.getAttribute('data-plan') || 0);
+                if (!f || !d) return;
+                filterSet.add(f);
+                dateSet.add(d);
+                const key = f + '|' + d;
+                planExact[key] = p;
+            });
+
+            const dates = Array.from(dateSet).sort();
+            const filters = Array.from(filterSet);
+            const cumPlan = Object.create(null); // key: filter|date -> cumulative plan
+            const cumProvided = Object.create(null); // key: filter|date -> cumulative provided
+            filters.forEach((f) => {
+                let runPlan = 0;
+                let runProvided = 0;
+                dates.forEach((d) => {
+                    const key = f + '|' + d;
+                    runPlan += Number(planExact[key] || 0);
+                    runProvided += Number(provided[key] || 0);
+                    cumPlan[key] = runPlan;
+                    cumProvided[key] = runProvided;
+                });
+            });
+
+            planCells.forEach((cell) => {
+                const filterName = cell.getAttribute('data-filter-key') || '';
+                const date = cell.getAttribute('data-date') || '';
+                const plan = Number(cell.getAttribute('data-plan') || 0);
+                const key = filterName + '|' + date;
+                const gotCum = Number(cumProvided[key] || 0);
+                const needCum = Number(cumPlan[key] || 0);
+                const pctRaw = needCum > 0 ? (gotCum / needCum) * 100 : 0;
+                const pct = Math.max(0, pctRaw);
+
+                // Дневная заливка: покрываем день после покрытия всех предыдущих дней.
+                const prevNeed = needCum - plan;
+                const dayShareRaw = plan > 0 ? ((gotCum - prevNeed) / plan) * 100 : 0;
+                const dayShare = Math.max(0, Math.min(100, dayShareRaw));
+
+                cell.style.setProperty('--cov-fill', String(plan > 0 ? dayShare.toFixed(1) : '0'));
+                cell.title = 'План дня: ' + plan + ' | Покрытие дня: ' + dayShare.toFixed(1) + '% | Накоп. план: ' + needCum.toFixed(1) + ' | Накоп. обеспечено: ' + gotCum.toFixed(1) + ' (' + pct.toFixed(1) + '%)';
+            });
+        }
+
         table.addEventListener('click', (event) => {
             const cell = event.target.closest('.plan-cell');
             if (!cell) return;
             const row = cell.closest('tr');
             if (!row) return;
             if (row.getAttribute('data-done') === '1') return;
-
             if (cell.classList.contains('selected')) {
                 cell.classList.remove('selected');
             } else {
                 row.querySelectorAll('.plan-cell.selected').forEach((c) => c.classList.remove('selected'));
                 cell.classList.add('selected');
             }
+
             rebuildHiddenInputs();
+            updateCoverage();
         });
 
         rebuildHiddenInputs();
+        updateCoverage();
     })();
 </script>
 </body>

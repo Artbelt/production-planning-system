@@ -16,8 +16,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
     
-    // Подключение к БД
-    $mysqli = new mysqli($host, $username, $password, $dbname_U5);
+    // Подключение к БД (используем общие настройки из settings.php)
+    global $mysql_host, $mysql_user, $mysql_user_pass, $mysql_database;
+    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
     $mysqli->set_charset("utf8mb4");
     
     if ($mysqli->connect_error) {

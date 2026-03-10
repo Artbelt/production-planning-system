@@ -791,8 +791,8 @@ try{
 
                         <div class="stage-section">
                             <h4 class="stage-title">План гофрирования</h4>
-                            <?php if (true): ?>
-                                <span class="badge badge-muted">Нет плана раскроя</span>
+                            <?php if (!$o['plan_ready']): ?>
+                                <span class="badge badge-muted">Нет плана порезки бухт</span>
                             <?php elseif ($o['corr_ready']): ?>
                                 <span class="badge badge-success">Готово</span>
                                 <div class="button-group">
@@ -805,7 +805,7 @@ try{
                                     <button class="btn-secondary btn-sm flex-1" onclick="editCorrugationPlan('<?= htmlspecialchars($ord, ENT_QUOTES) ?>')">Изменить</button>
                         </div>
                     <?php else: ?>
-                                <button class="btn-primary btn-sm btn-full" onclick="window.location.href='NP_corrugation_plan.php?order=<?= urlencode($ord) ?>'">
+                                <button class="btn-primary btn-sm btn-full" onclick="window.location.href='NP_corrugation_plan.php?order_number=<?= urlencode($ord) ?>'">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
                                         <line x1="16" y1="2" x2="16" y2="6"/>
@@ -918,7 +918,7 @@ try{
             'Убедитесь, что внесенные изменения не нарушат синхронизацию с предыдущими этапами планирования.\n\n' +
             'Продолжить редактирование?'
         )) {
-            window.open('NP_corrugation_plan.php?order=' + encodeURIComponent(order), '_blank');
+            window.open('NP_corrugation_plan.php?order_number=' + encodeURIComponent(order), '_blank');
         }
     }
     

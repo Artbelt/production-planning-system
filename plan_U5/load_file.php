@@ -107,6 +107,32 @@ date_default_timezone_set('Europe/London');
             background:#f8fafc;
         }
         
+        table tr.deleted-row{
+            display:none;
+        }
+        
+        .delete-btn{
+            background:#dc3545;
+            color:white;
+            border:none;
+            border-radius:50%;
+            width:24px;
+            height:24px;
+            cursor:pointer;
+            font-size:14px;
+            font-weight:bold;
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            transition:all 0.2s;
+            padding:0;
+        }
+        
+        .delete-btn:hover{
+            background:#c82333;
+            transform:scale(1.1);
+        }
+        
         input[type="text"], input[type="submit"]{
             padding:10px 16px;
             border:1px solid var(--border); 
@@ -171,23 +197,38 @@ $propusk = true;/** маркер пропуска начальной части 
 $order = [];/**массив - заявка без лишних элементов, заголовков etc.*/
 $workshop = 'U'.$sheetData['1']['C'];
 echo '<p>для участка №'.$sheetData['1']['C'] . '<br>на период ' . $sheetData['1']['E'] . ' = ' . $sheetData['1']['F'] . '</p>';
-echo '<table>';
+echo '<table id="orderTable">';
 echo '<tr><td><b>Фильтр</b></td><td><b>Кол-во</b></td><td><b>Маркировка</b></td><td><b>Инд.упак.</b>'
     .'</td><td><b>Этик.инд.</b></td><td><b>групп.упак.<b></td><td><b>Hорма упак.</b></td><td><b>этик.групп.</b>'
-    .'</td><td><b>Примечание</b></td></tr>';
+    .'</td><td><b>Примечание</b></td><td><b>Действие</b></td></tr>';
+
+$rowIndex = 0;
 foreach ($sheetData as $arr){
     if($arr['B']=='Марка фильтра') {$propusk = false; continue;}
     if(($propusk == false) && ($arr['B']!='')){/**Убираем пустые ячейки*/
 
-        /** @var убираем все переносі строк $arr */
         $arr = array_map(function($item) {
-            return str_replace(["\r", "\n"], '', $item);
+            if ($item !== null) {
+                return str_replace(["\r", "\n"], '', $item);
+            }
+            return $item;
         }, $arr);
 
-
+        $rowId = 'row-' . $rowIndex;
         array_push($order, $arr);
-        echo '<tr><td>' . $arr['B'] . '</td><td>' . $arr['C'] . '</td><td>' . $arr['D'] . '</td><td>' . $arr['E'] . '</td><td>' . $arr['F']
-            . '</td><td>' . $arr['G'] . '</td><td>' . $arr['H'] . '</td><td>' . $arr['I'] . '</td><td>' . $arr['J'] . '</td></tr>';
+        echo '<tr id="' . $rowId . '" class="order-row" data-row-index="' . $rowIndex . '">';
+        echo '<td>' . htmlspecialchars($arr['B']) . '</td>';
+        echo '<td>' . htmlspecialchars($arr['C']) . '</td>';
+        echo '<td>' . htmlspecialchars($arr['D']) . '</td>';
+        echo '<td>' . htmlspecialchars($arr['E']) . '</td>';
+        echo '<td>' . htmlspecialchars($arr['F']) . '</td>';
+        echo '<td>' . htmlspecialchars($arr['G']) . '</td>';
+        echo '<td>' . htmlspecialchars($arr['H']) . '</td>';
+        echo '<td>' . htmlspecialchars($arr['I']) . '</td>';
+        echo '<td>' . htmlspecialchars($arr['J']) . '</td>';
+        echo '<td><button type="button" class="delete-btn" onclick="deleteRow(' . $rowIndex . ')" title="Удалить строку">×</button></td>';
+        echo '</tr>';
+        $rowIndex++;
     }
 }
 $propusk = true;
@@ -195,18 +236,106 @@ echo '</table>';
 echo '</div>'; // закрываем panel
 
 /** Переменная для сериализации и передачи массива в следующий скрипт */
+$order_json = json_encode($order, JSON_UNESCAPED_UNICODE);
 $order_str = serialize($order);
 
 echo '<div class="form-group">';
-echo '<form action="save_order_into_DB.php" method="post">';
+echo '<form action="save_order_into_DB.php" method="post" id="saveOrderForm">';
 echo '<label for="order_name">Присвоить номер заявке:</label><br><br>';
 echo '<input name="order_name" type="text" placeholder="№X-X" id="order_name" style="width:200px; margin-right:10px;"/>';
-echo "<input type='hidden' name='order_str' value='$order_str'/>";
+echo "<input type='hidden' name='order_str' id='order_str' value='" . htmlspecialchars($order_str, ENT_QUOTES, 'UTF-8') . "'/>";
 echo "<input type='hidden' name='workshop' value='$workshop'/>";
 echo "<input type='submit' value=' и сохранить в БД'/>";
 echo "</form>";
 echo '</div>';
+
+echo "<script>";
+echo "var originalOrderData = " . str_replace('</script>', '<\\/script>', $order_json) . ";";
+echo "var deletedRows = [];";
+echo "</script>";
 ?>
+
+<script>
+function deleteRow(rowIndex) {
+    if (confirm('Вы уверены, что хотите удалить эту строку?')) {
+        var row = document.getElementById('row-' + rowIndex);
+        if (row) {
+            row.classList.add('deleted-row');
+            deletedRows.push(rowIndex);
+            updateOrderData();
+        }
+    }
+}
+
+function updateOrderData() {
+    var filteredOrder = [];
+    for (var i = 0; i < originalOrderData.length; i++) {
+        if (deletedRows.indexOf(i) === -1) {
+            filteredOrder.push(originalOrderData[i]);
+        }
+    }
+    
+    var formData = new FormData();
+    formData.append('action', 'serialize_order');
+    formData.append('order_data', JSON.stringify(filteredOrder));
+    
+    fetch('serialize_order.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.text())
+    .then(serializedData => {
+        document.getElementById('order_str').value = serializedData;
+        var visibleRows = document.querySelectorAll('#orderTable tr.order-row:not(.deleted-row)').length;
+        console.log('Осталось строк: ' + visibleRows);
+    })
+    .catch(error => {
+        console.error('Ошибка сериализации:', error);
+        alert('Ошибка при обновлении данных. Пожалуйста, обновите страницу.');
+    });
+}
+
+document.getElementById('saveOrderForm').addEventListener('submit', function(e) {
+    var visibleRows = document.querySelectorAll('#orderTable tr.order-row:not(.deleted-row)').length;
+    if (visibleRows === 0) {
+        e.preventDefault();
+        alert('Нельзя сохранить заявку без строк! Пожалуйста, оставьте хотя бы одну строку.');
+        return false;
+    }
+    
+    if (deletedRows.length > 0) {
+        e.preventDefault();
+        var form = this;
+        
+        var formData = new FormData();
+        formData.append('action', 'serialize_order');
+        var filteredOrder = [];
+        for (var i = 0; i < originalOrderData.length; i++) {
+            if (deletedRows.indexOf(i) === -1) {
+                filteredOrder.push(originalOrderData[i]);
+            }
+        }
+        formData.append('order_data', JSON.stringify(filteredOrder));
+        
+        fetch('serialize_order.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.text())
+        .then(serializedData => {
+            document.getElementById('order_str').value = serializedData;
+            form.submit();
+        })
+        .catch(error => {
+            console.error('Ошибка сериализации:', error);
+            alert('Ошибка при обновлении данных. Пожалуйста, обновите страницу и попробуйте снова.');
+        });
+        
+        return false;
+    }
+});
+</script>
+
     </div>
 </body>
 </html>

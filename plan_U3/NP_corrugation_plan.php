@@ -5,6 +5,7 @@
    Скролл по двум таблицам синхронный (X/Y).
 */
 
+require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/../auth/includes/db.php';
 
 $action = $_GET['action'] ?? '';
@@ -139,15 +140,23 @@ if (in_array($action, [
             echo json_encode(['ok'=>true,'items'=>$st->fetchAll()]); exit;
         }
 
-        /* plan_bounds (по сборке) ------------------------------------------ */
+        /* plan_bounds (по сборке + гофре) ---------------------------------- */
         if ($action==='plan_bounds'){
             $order = (string)($payload['order'] ?? ($_GET['order'] ?? ''));
             if ($order===''){ echo json_encode(['ok'=>true,'min'=>null,'max'=>null,'days'=>0]); exit; }
             $st = $pdo->prepare("
-                SELECT MIN(day_date) AS dmin, MAX(day_date) AS dmax
-                FROM build_plans WHERE shift='D' AND order_number=?
+                SELECT MIN(x.day_date) AS dmin, MAX(x.day_date) AS dmax
+                FROM (
+                    SELECT day_date
+                    FROM build_plans
+                    WHERE shift='D' AND order_number=?
+                    UNION ALL
+                    SELECT day_date
+                    FROM corrugation_plans
+                    WHERE order_number=?
+                ) x
             ");
-            $st->execute([$order]); $row=$st->fetch();
+            $st->execute([$order, $order]); $row=$st->fetch();
             $min = $row && $row['dmin'] ? $row['dmin'] : null;
             $max = $row && $row['dmax'] ? $row['dmax'] : null;
             $days=0; if($min && $max){ $d1=new DateTime($min); $d2=new DateTime($max); $days=$d1->diff($d2)->days+1; }
@@ -425,7 +434,7 @@ try{
             const sum = corrDayTotals.get(d)||0;
             htmlC+=`<th class="dayHead${wk}" title="Гофрирование">
                       <span class="d">${fmtDM(d)}</span>
-                      <span class="sum"><span class="corrDaySum" data-date="${d}">${sum}</span></span>
+                      <span class="sum"><span class="corrDaySum" data-date="${d}">${sum ? sum : ''}</span></span>
                     </th>`;
         }
         htmlC+='</tr></thead><tbody>';
@@ -434,12 +443,12 @@ try{
             htmlC+=`<tr data-filter="${r.filter}">
       <td class="sticky col-filter"><span class="filterTitle">${r.filter}</span></td>
       <td class="sticky col-ord">${r.ord||0}</td>
-      <td class="sticky col-plan corr-sum" data-filter="${r.filter}">${sum}</td>`;
+      <td class="sticky col-plan corr-sum" data-filter="${r.filter}">${sum ? sum : ''}</td>`;
             for(const d of dates){
                 const q=CORR.get(key(r.filter,d))||0;
                 const wk=isWeekend(d)?' weekend':'';
                 htmlC+=`<td class="dayCell editable${wk}" data-filter="${r.filter}" data-date="${d}">
-        <input class="qtyInput" type="number" min="0" step="1" value="${q?q:''}" placeholder="0" inputmode="numeric">
+        <input class="qtyInput" type="number" min="0" step="1" value="${q?q:''}" placeholder="" inputmode="numeric">
       </td>`;
             }
             htmlC+='</tr>';
@@ -492,7 +501,7 @@ try{
         let s=0;
         for(const r of LEFT_ROWS){ s += (CORR.get(key(r.filter,dateISO))||0); }
         const h = document.querySelector(`.corrDaySum[data-date="${dateISO}"]`);
-        if(h) h.textContent = String(s);
+        if(h) h.textContent = s ? String(s) : '';
     }
 
     function onCorrInput(inp){
@@ -506,7 +515,7 @@ try{
         // пересчитать сумму по строке
         let sum=0; for(const dt of dates){ sum += (CORR.get(key(f,dt))||0); }
         const sumCell = el('corrTable').querySelector(`.corr-sum[data-filter="${CSS.escape(f)}"]`);
-        if(sumCell) sumCell.textContent = String(sum);
+        if(sumCell) sumCell.textContent = sum ? String(sum) : '';
 
         // обновить суточную сумму в шапке нижней таблицы
         updateCorrDayHeader(d);

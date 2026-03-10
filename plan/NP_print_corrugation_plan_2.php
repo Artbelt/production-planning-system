@@ -24,9 +24,11 @@ function normFilter(string $s): string {
 $activeOrders = [];
 try {
     $activeOrders = $pdo->query("
-        SELECT DISTINCT order_number
-        FROM corrugation_plan
-        ORDER BY order_number DESC
+        SELECT DISTINCT cp.order_number
+        FROM corrugation_plan cp
+        INNER JOIN orders o ON o.order_number = cp.order_number
+        WHERE COALESCE(o.hide, 0) = 0
+        ORDER BY cp.order_number DESC
     ")->fetchAll(PDO::FETCH_COLUMN);
 } catch (Exception $e) {
     $activeOrders = [];
