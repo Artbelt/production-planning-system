@@ -121,6 +121,8 @@ if (in_array($action, [
                 $ins->execute([$order, $f, $dd->format('Y-m-d'), $q]);
                 $saved++;
             }
+            // Чтобы на NP_cut_index.php отображался блок "Готово" для плана гофрирования
+            $pdo->prepare("UPDATE orders SET corr_ready = 1 WHERE order_number = ?")->execute([$order]);
             $pdo->commit();
             echo json_encode(['ok'=>true,'saved'=>$saved]); exit;
         }
@@ -140,26 +142,27 @@ if (in_array($action, [
             echo json_encode(['ok'=>true,'items'=>$st->fetchAll()]); exit;
         }
 
-        /* plan_bounds (по сборке + гофре) ---------------------------------- */
+        /* plan_bounds (по сборке + гофре + порезке бухт) ------------------- */
         if ($action==='plan_bounds'){
             $order = (string)($payload['order'] ?? ($_GET['order'] ?? ''));
             if ($order===''){ echo json_encode(['ok'=>true,'min'=>null,'max'=>null,'days'=>0]); exit; }
+            $dates = [];
             $st = $pdo->prepare("
-                SELECT MIN(x.day_date) AS dmin, MAX(x.day_date) AS dmax
-                FROM (
-                    SELECT day_date
-                    FROM build_plans
-                    WHERE shift='D' AND order_number=?
-                    UNION ALL
-                    SELECT day_date
-                    FROM corrugation_plans
-                    WHERE order_number=?
-                ) x
+                SELECT day_date FROM build_plans WHERE shift='D' AND order_number=?
+                UNION ALL
+                SELECT day_date FROM corrugation_plans WHERE order_number=?
             ");
-            $st->execute([$order, $order]); $row=$st->fetch();
-            $min = $row && $row['dmin'] ? $row['dmin'] : null;
-            $max = $row && $row['dmax'] ? $row['dmax'] : null;
-            $days=0; if($min && $max){ $d1=new DateTime($min); $d2=new DateTime($max); $days=$d1->diff($d2)->days+1; }
+            $st->execute([$order, $order]);
+            while ($r = $st->fetch(PDO::FETCH_ASSOC)) { if (!empty($r['day_date'])) $dates[] = $r['day_date']; }
+            try {
+                $stRoll = $pdo->prepare("SELECT work_date FROM roll_plans WHERE order_number=?");
+                $stRoll->execute([$order]);
+                while ($r = $stRoll->fetch(PDO::FETCH_ASSOC)) { if (!empty($r['work_date'])) $dates[] = $r['work_date']; }
+            } catch (Throwable $e) { /* roll_plans может отсутствовать */ }
+            $min = !empty($dates) ? min($dates) : null;
+            $max = !empty($dates) ? max($dates) : null;
+            $days = 0;
+            if ($min && $max) { $d1 = new DateTime($min); $d2 = new DateTime($max); $days = $d1->diff($d2)->days + 1; }
             echo json_encode(['ok'=>true,'min'=>$min,'max'=>$max,'days'=>$days]); exit;
         }
 
@@ -380,7 +383,10 @@ try{
 
 <div class="topbar">
     <div class="topbar-inner">
-        <h1 class="title">План гофрирования — заявка #<span id="titleOrder"><?=htmlspecialchars($orderNumber)?></span></h1>
+        <div style="display:flex; align-items:center; gap:12px;">
+            <a href="NP_cut_index.php" class="btn">Назад к этапам</a>
+            <h1 class="title">План гофрирования — заявка #<span id="titleOrder"><?=htmlspecialchars($orderNumber)?></span></h1>
+        </div>
         <div class="help">Низ: впишите количество в ячейку. Верх обновится автоматически.</div>
     </div>
 </div>
@@ -393,6 +399,7 @@ try{
         <button class="btn" id="btnLoad">Загрузить</button>
         <button class="btn" id="btnSave">Сохранить гофрирование</button>
         <span class="help">Диапазон автоматически подхватывается по плану сборки.</span>
+        <span id="earliestDateHint" class="help" style="display:none; margin-left:8px; color:var(--accent); font-weight:600;"></span>
     </div>
 </div>
 
@@ -435,7 +442,17 @@ try{
     const keyNorm=key;
     const isWeekend=iso=>{ const d=new Date(iso).getDay(); return d===0||d===6; };
     const fmtDM=iso=>{const dt=new Date(iso); const dd=String(dt.getDate()).padStart(2,'0'); const mm=String(dt.getMonth()+1).padStart(2,'0'); const w=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'][dt.getDay()]; return `${dd}.${mm}<br><small>${w}</small>`;};
+    const fmtDateShort=iso=>{const dt=new Date(iso); const dd=String(dt.getDate()).padStart(2,'0'); const mm=String(dt.getMonth()+1).padStart(2,'0'); const y=dt.getFullYear(); return `${dd}.${mm}.${y}`;};
     const debounce=(fn,ms)=>{ let t=null; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; };
+
+    function showEarliestDateHint(iso){
+        const h = el('earliestDateHint');
+        if(h){ h.textContent = 'Самая ранняя запланированная дата: ' + fmtDateShort(iso); h.style.display = 'inline'; }
+    }
+    function hideEarliestDateHint(){
+        const h = el('earliestDateHint');
+        if(h){ h.textContent = ''; h.style.display = 'none'; }
+    }
 
     function rebuildDates(){ dates=[]; for(let i=0;i<days;i++) dates.push(addDays(startDateISO, i)); }
 
@@ -658,9 +675,9 @@ try{
         // автодиапазон по сборке
         try{
             const bounds = await planBounds(ORDER);
-            if(bounds.min && bounds.days>0){ startDateISO=bounds.min; days=bounds.days; }
-            else { startDateISO=todayISO; days=14; }
-        }catch{ startDateISO=todayISO; days=14; }
+            if(bounds.min && bounds.days>0){ startDateISO=bounds.min; days=bounds.days; showEarliestDateHint(bounds.min); }
+            else { startDateISO=todayISO; days=14; hideEarliestDateHint(); }
+        }catch{ startDateISO=todayISO; days=14; hideEarliestDateHint(); }
         el('startDate').value = startDateISO; el('days').value = String(days);
 
         // мета (бейджи валов/ширины) опциональна
@@ -684,7 +701,8 @@ try{
 
         el('btnLoad').addEventListener('click', async ()=>{
             const bounds = await planBounds(ORDER);
-            if(bounds.min && bounds.days>0){ startDateISO=bounds.min; days=bounds.days; el('startDate').value=startDateISO; el('days').value=String(days); }
+            if(bounds.min && bounds.days>0){ startDateISO=bounds.min; days=bounds.days; el('startDate').value=startDateISO; el('days').value=String(days); showEarliestDateHint(bounds.min); }
+            else { hideEarliestDateHint(); }
             rebuildDates();
             await Promise.all([loadAssembly(), loadCorr()]);
             recomputeCoverage();
@@ -692,7 +710,12 @@ try{
         });
 
         el('btnSave').addEventListener('click', async ()=>{
-            try{ await saveCorr(); alert('План гофрирования сохранён'); }
+            try{
+                await saveCorr();
+                alert('План гофрирования сохранён');
+                // Обновить страницу этапов (NP_cut_index), если открыта в другой вкладке — покажет блок "Готово"
+                if (window.opener) window.opener.location.reload();
+            }
             catch(e){ alert('Ошибка сохранения: '+e.message); }
         });
     })();

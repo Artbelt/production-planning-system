@@ -114,8 +114,15 @@ try {
                 throw new Exception('Некорректный тип ножа');
             }
             
-            $stmt = $pdo->prepare("INSERT INTO knives (knife_name, knife_type, description) VALUES (?, ?, ?)");
-            if (!$stmt->execute([$knife_name, $knife_type, $description])) {
+            $initial_thickness = isset($_POST['thickness']) && $_POST['thickness'] !== '' ? trim($_POST['thickness']) : null;
+            if ($initial_thickness !== null && !is_numeric(str_replace(',', '.', $initial_thickness))) {
+                $initial_thickness = null;
+            }
+            if ($initial_thickness !== null) {
+                $initial_thickness = (float)str_replace(',', '.', $initial_thickness);
+            }
+            $stmt = $pdo->prepare("INSERT INTO knives (knife_name, knife_type, description, thickness) VALUES (?, ?, ?, ?)");
+            if (!$stmt->execute([$knife_name, $knife_type, $description, $initial_thickness])) {
                 $err = $stmt->errorInfo();
                 if (isset($err[1]) && $err[1] === 1062) {
                     throw new Exception('Комплект ножей с таким названием уже существует');
@@ -123,9 +130,43 @@ try {
                 throw new Exception('Ошибка добавления');
             }
             $knife_id = (int)$pdo->lastInsertId();
-            
+            if ($initial_thickness !== null) {
+                $ins = $pdo->prepare("INSERT INTO knives_thickness_history (knife_id, thickness, user_id, user_name, comment) VALUES (?, ?, ?, ?, ?)");
+                $ins->execute([$knife_id, $initial_thickness, $user_id, $user_name, 'Начальная толщина при добавлении комплекта']);
+            }
             ob_clean();
             echo json_encode(['success' => true, 'knife_id' => $knife_id, 'message' => 'Комплект ножей успешно добавлен'], JSON_UNESCAPED_UNICODE);
+            break;
+
+        case 'set_thickness':
+            $knife_id = intval($_POST['knife_id'] ?? 0);
+            $thickness_raw = trim($_POST['thickness'] ?? '');
+            $comment = trim($_POST['comment'] ?? '');
+            if (!$knife_id || $thickness_raw === '') {
+                throw new Exception('Укажите комплект и толщину');
+            }
+            $thickness = (float)str_replace(',', '.', $thickness_raw);
+            if ($thickness <= 0) {
+                throw new Exception('Толщина должна быть положительным числом');
+            }
+            $chk = $pdo->prepare("SELECT id FROM knives WHERE id = ?");
+            $chk->execute([$knife_id]);
+            if ($chk->rowCount() === 0) {
+                throw new Exception('Комплект ножей не найден');
+            }
+            $pdo->beginTransaction();
+            try {
+                $upd = $pdo->prepare("UPDATE knives SET thickness = ? WHERE id = ?");
+                $upd->execute([$thickness, $knife_id]);
+                $ins = $pdo->prepare("INSERT INTO knives_thickness_history (knife_id, thickness, user_id, user_name, comment) VALUES (?, ?, ?, ?, ?)");
+                $ins->execute([$knife_id, $thickness, $user_id, $user_name, $comment ?: null]);
+                $pdo->commit();
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                throw $e;
+            }
+            ob_clean();
+            echo json_encode(['success' => true, 'message' => 'Толщина сохранена'], JSON_UNESCAPED_UNICODE);
             break;
             
         case 'get_history':
@@ -136,7 +177,7 @@ try {
                 throw new Exception('Не указан ID ножа');
             }
             
-            $stmt = $pdo->prepare("SELECT knife_name, description FROM knives WHERE id = ?");
+            $stmt = $pdo->prepare("SELECT knife_name, description, thickness FROM knives WHERE id = ?");
             $stmt->execute([$knife_id]);
             $knife_info = $stmt->fetch(PDO::FETCH_ASSOC);
             
@@ -148,11 +189,22 @@ try {
             ");
             $stmt->execute([$knife_id]);
             $history = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $stmt = $pdo->prepare("
+                SELECT thickness, user_name, comment, created_at
+                FROM knives_thickness_history
+                WHERE knife_id = ?
+                ORDER BY created_at DESC
+            ");
+            $stmt->execute([$knife_id]);
+            $thickness_history = $stmt->fetchAll(PDO::FETCH_ASSOC);
             
             ob_clean();
             echo json_encode([
                 'success' => true, 
                 'history' => $history,
+                'thickness_history' => $thickness_history,
+                'thickness' => $knife_info['thickness'] !== null ? (float)$knife_info['thickness'] : null,
                 'knife_name' => $knife_info['knife_name'] ?? '',
                 'description' => $knife_info['description'] ?? ''
             ], JSON_UNESCAPED_UNICODE);

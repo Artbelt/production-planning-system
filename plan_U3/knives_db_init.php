@@ -11,9 +11,31 @@ $sql = "CREATE TABLE IF NOT EXISTS knives (
     knife_name VARCHAR(255) NOT NULL,
     knife_type ENUM('bobinorezka', 'prosechnik') NOT NULL,
     description TEXT NULL,
+    thickness DECIMAL(10,3) NULL COMMENT 'Текущая толщина, мм',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY unique_knife_name (knife_name),
     INDEX idx_knife_type (knife_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+$pdo->exec($sql);
+// Добавляем колонку thickness если её ещё нет (миграция для существующих БД)
+try {
+    $pdo->exec("ALTER TABLE knives ADD COLUMN thickness DECIMAL(10,3) NULL COMMENT 'Текущая толщина, мм' AFTER description");
+} catch (Exception $e) {
+    // колонка уже есть — игнорируем
+}
+
+// Таблица истории изменений толщины
+$sql = "CREATE TABLE IF NOT EXISTS knives_thickness_history (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    knife_id INT NOT NULL,
+    thickness DECIMAL(10,3) NOT NULL,
+    user_id INT NULL,
+    user_name VARCHAR(255) NULL,
+    comment TEXT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_knife_id (knife_id),
+    INDEX idx_created_at (created_at),
+    FOREIGN KEY (knife_id) REFERENCES knives(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
 $pdo->exec($sql);
 

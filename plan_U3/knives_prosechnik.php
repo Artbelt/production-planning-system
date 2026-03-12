@@ -65,11 +65,12 @@ while ($currentDate <= $endDateClone) {
 }
 
 $knife_type = 'prosechnik';
-$stmt = $pdo->prepare("SELECT id, knife_name FROM knives WHERE knife_type = ? ORDER BY knife_name");
+$stmt = $pdo->prepare("SELECT id, knife_name, thickness FROM knives WHERE knife_type = ? ORDER BY knife_name");
 $stmt->execute([$knife_type]);
 
 $knives = [];
 while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+    $row['thickness'] = $row['thickness'] !== null ? (float)$row['thickness'] : null;
     $knives[$row['id']] = $row;
 }
 
@@ -504,6 +505,30 @@ function getStatusName($status) {
             border-top: 1px dashed #e5e7eb;
             font-size: 11px;
         }
+        .thickness-badge {
+            display: inline-block;
+            margin-left: 8px;
+            padding: 2px 6px;
+            background: #dbeafe;
+            color: #1e40af;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        .thickness-badge.thickness-empty {
+            background: #f3f4f6;
+            color: #6b7280;
+        }
+        .thickness-edit-link {
+            display: inline-block;
+            margin-left: 6px;
+            font-size: 11px;
+            color: #3b82f6;
+            text-decoration: none;
+        }
+        .thickness-edit-link:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -593,6 +618,12 @@ function getStatusName($status) {
                                     <a href="#" onclick="showHistory(<?php echo $knife_id; ?>, '<?php echo htmlspecialchars($knife['knife_name'], ENT_QUOTES); ?>'); return false;">
                                         <?php echo htmlspecialchars($knife['knife_name']); ?>
                                     </a>
+                                    <?php if ($knife['thickness'] !== null): ?>
+                                        <span class="thickness-badge" title="Текущая толщина"><?php echo number_format($knife['thickness'], 2, '.', ''); ?> мм</span>
+                                    <?php else: ?>
+                                        <span class="thickness-badge thickness-empty" title="Толщина не задана">—</span>
+                                    <?php endif; ?>
+                                    <a href="#" class="thickness-edit-link" onclick="openThicknessModal(<?php echo $knife_id; ?>, '<?php echo htmlspecialchars($knife['knife_name'], ENT_QUOTES); ?>', <?php echo $knife['thickness'] !== null ? number_format($knife['thickness'], 3, '.', '') : 'null'; ?>); return false;">Изм. толщину</a>
                                 </td>
                                 <?php foreach ($dates as $date): 
                                     $status = $calendar_data[$knife_id][$date] ?? null;
@@ -723,9 +754,46 @@ function getStatusName($status) {
                     <label>Описание (необязательно):</label>
                     <textarea id="add_knife_description" name="description"></textarea>
                 </div>
+                <div class="form-group">
+                    <label>Начальная толщина, мм (необязательно):</label>
+                    <input type="text" id="add_knife_thickness" name="thickness" placeholder="например 2.5">
+                </div>
                 <div style="display: flex; gap: 10px; justify-content: flex-end;">
                     <button type="button" onclick="closeAddKnifeModal()" class="btn btn-secondary">Отмена</button>
                     <button type="submit" class="btn btn-success">Добавить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Модальное окно изменения толщины -->
+    <div id="thicknessModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">Изменить толщину</div>
+                <span class="close" onclick="closeThicknessModal()">&times;</span>
+            </div>
+            <form id="thicknessForm">
+                <input type="hidden" id="thickness_knife_id" name="knife_id">
+                <div class="form-group">
+                    <label>Комплект ножей:</label>
+                    <input type="text" id="thickness_knife_name" readonly>
+                </div>
+                <div class="form-group">
+                    <label>Текущая толщина, мм:</label>
+                    <input type="text" id="thickness_current" readonly>
+                </div>
+                <div class="form-group">
+                    <label>Новая толщина, мм:</label>
+                    <input type="number" id="thickness_value" name="thickness" step="0.001" min="0" required placeholder="например 2.35">
+                </div>
+                <div class="form-group">
+                    <label>Комментарий (необязательно):</label>
+                    <input type="text" id="thickness_comment" name="comment" placeholder="например: после заточки">
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button type="button" onclick="closeThicknessModal()" class="btn btn-secondary">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
                 </div>
             </form>
         </div>
@@ -818,6 +886,8 @@ function getStatusName($status) {
             formData.append('knife_name', document.getElementById('add_knife_name').value);
             formData.append('knife_type', 'prosechnik');
             formData.append('description', document.getElementById('add_knife_description').value);
+            const addThick = document.getElementById('add_knife_thickness').value.trim();
+            if (addThick) formData.append('thickness', addThick);
             
             fetch('knives_api.php', {
                 method: 'POST',
@@ -865,6 +935,23 @@ function getStatusName($status) {
                         html += '</div>';
                     }
                     
+                    // Текущая толщина и история толщины
+                    html += '<div style="background: #fef3c7; border: 1px solid #fcd34d; border-radius: 6px; padding: 12px; margin-bottom: 15px;">';
+                    html += '<div style="font-weight: 600; color: #92400e; margin-bottom: 8px; font-size: 13px;">Толщина</div>';
+                    html += '<div style="color: #78350f; font-size: 13px;">Текущая: <strong>' + (data.thickness != null ? data.thickness + ' мм' : '—') + '</strong></div>';
+                    if (data.thickness_history && data.thickness_history.length > 0) {
+                        html += '<div style="margin-top: 10px; font-weight: 600; font-size: 12px; color: #78350f;">История изменений толщины:</div>';
+                        html += '<table class="history-table" style="margin-top: 6px;"><thead><tr><th>Дата</th><th>Толщина, мм</th><th>Пользователь</th><th>Комментарий</th></tr></thead><tbody>';
+                        data.thickness_history.forEach(item => {
+                            const d = item.created_at ? item.created_at.replace(' ', ' ').substr(0, 16) : item.created_at;
+                            html += '<tr><td>' + escapeHtml(d) + '</td><td>' + item.thickness + '</td><td>' + escapeHtml(item.user_name || '-') + '</td><td>' + escapeHtml(item.comment || '-') + '</td></tr>';
+                        });
+                        html += '</tbody></table>';
+                    } else {
+                        html += '<div style="margin-top: 6px; font-size: 12px; color: #a16207;">История изменений толщины отсутствует</div>';
+                    }
+                    html += '</div>';
+                    
                     if (data.history.length === 0) {
                         html += '<p>История изменений отсутствует</p>';
                     } else {
@@ -905,21 +992,52 @@ function getStatusName($status) {
             document.getElementById('historyModal').style.display = 'none';
         }
         
+        // Модальное окно изменения толщины
+        function openThicknessModal(knifeId, knifeName, currentThickness) {
+            document.getElementById('thickness_knife_id').value = knifeId;
+            document.getElementById('thickness_knife_name').value = knifeName;
+            document.getElementById('thickness_current').value = currentThickness != null ? currentThickness : '—';
+            document.getElementById('thickness_value').value = currentThickness != null ? currentThickness : '';
+            document.getElementById('thickness_comment').value = '';
+            document.getElementById('thicknessModal').style.display = 'block';
+        }
+        
+        function closeThicknessModal() {
+            document.getElementById('thicknessModal').style.display = 'none';
+        }
+        
+        document.getElementById('thicknessForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData();
+            formData.append('action', 'set_thickness');
+            formData.append('knife_id', document.getElementById('thickness_knife_id').value);
+            formData.append('thickness', document.getElementById('thickness_value').value);
+            formData.append('comment', document.getElementById('thickness_comment').value);
+            fetch('knives_api.php', { method: 'POST', body: formData })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showMessage('Толщина сохранена', 'success');
+                        closeThicknessModal();
+                        setTimeout(() => location.reload(), 500);
+                    } else {
+                        showMessage('Ошибка: ' + (data.error || ''), 'error');
+                    }
+                })
+                .catch(err => showMessage('Ошибка: ' + err.message, 'error'));
+        });
+        
         // Закрытие модальных окон при клике вне их
         window.onclick = function(event) {
             const statusModal = document.getElementById('statusModal');
             const addKnifeModal = document.getElementById('addKnifeModal');
             const historyModal = document.getElementById('historyModal');
+            const thicknessModal = document.getElementById('thicknessModal');
             
-            if (event.target == statusModal) {
-                closeStatusModal();
-            }
-            if (event.target == addKnifeModal) {
-                closeAddKnifeModal();
-            }
-            if (event.target == historyModal) {
-                closeHistoryModal();
-            }
+            if (event.target == statusModal) closeStatusModal();
+            if (event.target == addKnifeModal) closeAddKnifeModal();
+            if (event.target == historyModal) closeHistoryModal();
+            if (event.target == thicknessModal) closeThicknessModal();
         }
         
         function showMessage(text, type) {

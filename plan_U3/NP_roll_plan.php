@@ -287,9 +287,27 @@ try {
         h1 { font-size: 24px; }
         h2 { font-size: 18px; }
         .meta { margin-bottom: 12px; color: #4b5563; font-size: 14px; }
-        .actions { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; align-items: end; }
-        .date-form { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
-        .date-form label { font-size: 12px; color: #4b5563; display: flex; flex-direction: column; gap: 4px; }
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 12px;
+            flex-wrap: nowrap;
+            align-items: center;
+        }
+        .date-form {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: nowrap;
+        }
+        .date-form label {
+            font-size: 12px;
+            color: #4b5563;
+            display: flex;
+            flex-direction: row;
+            gap: 6px;
+            white-space: nowrap;
+        }
         .date-form input[type="date"] { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; }
         .btn {
             display: inline-block; border: 0; border-radius: 8px; padding: 8px 12px;
@@ -305,8 +323,12 @@ try {
             border-radius: 8px;
             background: #fff;
         }
-        table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 13px; }
-        th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; vertical-align: top; }
+        .table-scroll-vertical {
+            height: 40vh;
+            overflow-y: auto;
+        }
+        table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; }
+        th, td { border: 1px solid #e5e7eb; padding: 4px 6px; text-align: left; vertical-align: top; }
         th { background: #f3f4f6; }
         th.date-header {
             writing-mode: vertical-rl;
@@ -418,7 +440,7 @@ try {
         <?php if (empty($buildFilterKeys) || empty($buildDates)): ?>
             <div class="small">План сборки не найден.</div>
         <?php else: ?>
-            <div class="table-scroll">
+            <div class="table-scroll table-scroll-vertical">
                 <table>
                     <thead>
                     <tr>
@@ -465,7 +487,7 @@ try {
             <?php if (empty($bales)): ?>
                 <div class="small">По заявке нет данных раскроя.</div>
             <?php else: ?>
-                <div class="table-scroll">
+                <div class="table-scroll table-scroll-vertical">
                     <table class="matrix-table" id="balesPlanTable">
                         <thead>
                         <tr>
