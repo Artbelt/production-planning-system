@@ -13,7 +13,7 @@ $action = $_GET['action'] ?? '';
 /* === AJAX ============================================================== */
 if (in_array($action, [
     'load_assembly','load_corr','save_corr','load_left_rows',
-    'plan_bounds','load_meta'
+    'plan_bounds','load_meta','load_roll_cut_dates'
 ], true)) {
     header('Content-Type: application/json; charset=utf-8');
     try{
@@ -187,6 +187,89 @@ if (in_array($action, [
             echo json_encode(['ok'=>true,'items'=>$res]); exit;
         }
 
+        /* load_roll_cut_dates — даты порезки бухт по позициям (filter+date) + кол-во гофропакетов из порезки для подсветки в нижней таблице */
+        if ($action==='load_roll_cut_dates'){
+            $order = (string)($payload['order'] ?? ($_GET['order'] ?? ''));
+            if ($order===''){ http_response_code(400); echo json_encode(['ok'=>false,'error'=>'no order']); exit; }
+            $items = [];
+            try {
+                $norm = function($s){
+                    $s = trim(preg_replace('/\s+/u', ' ', (string)$s));
+                    return strtoupper($s);
+                };
+                // План сборки: всего по фильтру (чтобы оценить «ёмкость» бухты в гофропакетах)
+                $stBuild = $pdo->prepare("SELECT filter, SUM(qty) AS qty FROM build_plans WHERE order_number=? AND shift='D' GROUP BY filter");
+                $stBuild->execute([$order]);
+                $buildTotalByFilter = [];
+                while ($r = $stBuild->fetch(PDO::FETCH_ASSOC)) {
+                    $f = trim((string)($r['filter'] ?? ''));
+                    $fk = $norm($f);
+                    $q = (int)($r['qty'] ?? 0);
+                    if ($fk === '') continue;
+                    $buildTotalByFilter[$fk] = ($buildTotalByFilter[$fk] ?? 0) + $q;
+                }
+                // Длины по бухтам и фильтрам
+                $stCut = $pdo->prepare("SELECT bale_id, TRIM(filter) AS f, SUM(COALESCE(NULLIF(fact_length,0), length)) AS total_len FROM cut_plans WHERE order_number=? GROUP BY bale_id, TRIM(filter)");
+                $stCut->execute([$order]);
+                $baleFilterLen = [];
+                $totalLenByFilter = [];
+                while ($r = $stCut->fetch(PDO::FETCH_ASSOC)) {
+                    $bid = (int)($r['bale_id'] ?? 0);
+                    $fk = $norm($r['f'] ?? '');
+                    $len = (float)($r['total_len'] ?? 0);
+                    if ($bid <= 0 || $fk === '' || $len <= 0) continue;
+                    if (!isset($baleFilterLen[$bid])) $baleFilterLen[$bid] = [];
+                    $baleFilterLen[$bid][$fk] = ($baleFilterLen[$bid][$fk] ?? 0) + $len;
+                    $totalLenByFilter[$fk] = ($totalLenByFilter[$fk] ?? 0) + $len;
+                }
+                // Доля бухты по фильтру (сколько гофропакетов «даёт» эта бухта по плану)
+                $baleSupplyMap = [];
+                foreach ($baleFilterLen as $bid => $byFilter) {
+                    foreach ($byFilter as $fk => $len) {
+                        $planTotal = (float)($buildTotalByFilter[$fk] ?? 0);
+                        $lenTotal = (float)($totalLenByFilter[$fk] ?? 0);
+                        if ($planTotal <= 0 || $lenTotal <= 0) continue;
+                        $share = $planTotal * $len / $lenTotal;
+                        if (!isset($baleSupplyMap[$bid])) $baleSupplyMap[$bid] = [];
+                        $baleSupplyMap[$bid][$fk] = $share;
+                    }
+                }
+                // Кто когда режется
+                $stRoll = $pdo->prepare("SELECT bale_id, work_date FROM roll_plans WHERE order_number=?");
+                $stRoll->execute([$order]);
+                $rollByDate = [];
+                $filterDates = [];
+                while ($r = $stRoll->fetch(PDO::FETCH_ASSOC)) {
+                    $bid = (int)($r['bale_id'] ?? 0);
+                    $d = (string)($r['work_date'] ?? '');
+                    if ($bid <= 0 || $d === '') continue;
+                    if (!isset($rollByDate[$d])) $rollByDate[$d] = [];
+                    $rollByDate[$d][] = $bid;
+                }
+                // Порезка по фильтрам из cut_plans (какие фильтры в каких бухтах)
+                $stPairs = $pdo->prepare("SELECT DISTINCT TRIM(c.filter) AS filter, r.work_date AS day_date FROM roll_plans r JOIN cut_plans c ON c.order_number=r.order_number AND c.bale_id=r.bale_id WHERE r.order_number=?");
+                $stPairs->execute([$order]);
+                while ($row = $stPairs->fetch(PDO::FETCH_ASSOC)) {
+                    $f = trim((string)($row['filter'] ?? ''));
+                    $d = (string)($row['day_date'] ?? '');
+                    if ($f === '' || $d === '') continue;
+                    $fk = $norm($f);
+                    $qty = 0.0;
+                    foreach (($rollByDate[$d] ?? []) as $bid) {
+                        $supply = (float)($baleSupplyMap[$bid][$fk] ?? 0);
+                        if ($supply <= 0) continue;
+                        // каждая бухта даёт фиксированное количество гофропакетов по этому фильтру;
+                        // если порезка разбита на несколько дней, сумма по дням равна общему плану
+                        $qty += $supply;
+                    }
+                    $items[] = ['filter' => $f, 'day_date' => $d, 'qty' => (int)round($qty)];
+                }
+            } catch (Throwable $e) {
+                // roll_plans или cut_plans могут отсутствовать
+            }
+            echo json_encode(['ok'=>true,'items'=>$items]); exit;
+        }
+
         echo json_encode(['ok'=>false,'error'=>'unknown action']); exit;
 
     }catch(Throwable $e){
@@ -253,10 +336,13 @@ try{
     .dayHead .d{display:block;font-weight:400}
     .dayHead .sum{display:block;color:var(--muted);font-size:11px}
 
-    .dayCell{width:var(--wDay);min-width:var(--wDay);max-width:var(--wDay);text-align:center; position:relative;}
+    .dayCell{width:var(--wDay);min-width:var(--wDay);max-width:var(--wDay);text-align:center; position:relative; overflow:visible;}
+    .dayCell .dayCell-inner{ display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100%; gap:0; }
     .dayCell.weekend{background:var(--weekend)!important}
     .qty{display:block;padding:2px 0;margin:0;border-radius:0;transition:background .12s; position:relative; z-index:1;}
     .qty.zero{color:#cbd5e1; opacity:.65}
+    .dayCell.roll-cut-day{ background: linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%); border-left:2px solid var(--accent); }
+    .roll-cut-qty{ font-size:11px; font-weight:600; color:var(--accent); line-height:1.2; margin-top:2px; white-space:nowrap; }
 
     /* единый стиль названия фильтра (верх+низ одинаково) */
     .filterTitle{font-weight:600}
@@ -320,6 +406,7 @@ try{
 
     <div class="block">
         <h3>Гофрирование (редактируемо)</h3>
+        <p class="help" style="margin:0 0 8px 0;">В ячейках с голубым фоном — даты порезки бухт с этой позицией; под полем ввода мелко показано <strong>↓N</strong> — гофропакетов из порезки в этот день.</p>
         <div id="corrScroller" class="scroller small">
             <div id="corrTable"></div>
         </div>
@@ -339,10 +426,13 @@ try{
     let CORR = new Map();    // f|d -> qty гофры
     let COV  = new Map();    // f|d -> покрыто
     let META = {};
+    let ROLL_CUT_DATES = new Set();   // "filter|date" — даты порезки бухт по позициям
+    let ROLL_CUT_QTY = new Map();   // "filter|date" -> кол-во гофропакетов из порезки в этот день
 
     const el=id=>document.getElementById(id);
     const addDays=(iso,k)=>{const dt=new Date(iso); dt.setDate(dt.getDate()+k); return dt.toISOString().slice(0,10);};
-    const key=(f,d)=>`${f}|${d}`;
+    const key=(f,d)=>`${String(f).trim().toUpperCase()}|${d}`;
+    const keyNorm=key;
     const isWeekend=iso=>{ const d=new Date(iso).getDay(); return d===0||d===6; };
     const fmtDM=iso=>{const dt=new Date(iso); const dd=String(dt.getDate()).padStart(2,'0'); const mm=String(dt.getMonth()+1).padStart(2,'0'); const w=['Вс','Пн','Вт','Ср','Чт','Пт','Сб'][dt.getDay()]; return `${dd}.${mm}<br><small>${w}</small>`;};
     const debounce=(fn,ms)=>{ let t=null; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; };
@@ -356,6 +446,7 @@ try{
     async function loadLeftRows(order){ const body=JSON.stringify({order}); const res=await fetch(location.pathname+'?action=load_left_rows',{method:'POST',headers:{'Content-Type':'application/json'},body}); const data=await res.json(); if(!data.ok) throw new Error(data.error||'left'); return data.items||[]; }
     async function planBounds(order){ const body=JSON.stringify({order}); const res=await fetch(location.pathname+'?action=plan_bounds',{method:'POST',headers:{'Content-Type':'application/json'},body}); const data=await res.json(); if(!data.ok) throw new Error(data.error||'bounds'); return data; }
     async function loadMeta(){ const filters=LEFT_ROWS.map(r=>r.filter); if(!filters.length){ META={}; return; } const body=JSON.stringify({filters}); const res=await fetch(location.pathname+'?action=load_meta',{method:'POST',headers:{'Content-Type':'application/json'},body}); const data=await res.json(); META=data.items||{}; }
+    async function loadRollCutDates(){ const body=JSON.stringify({order:ORDER}); const res=await fetch(location.pathname+'?action=load_roll_cut_dates',{method:'POST',headers:{'Content-Type':'application/json'},body}); const data=await res.json(); ROLL_CUT_DATES.clear(); ROLL_CUT_QTY.clear(); if(data.ok&&Array.isArray(data.items)) data.items.forEach(r=>{ const k=key(r.filter,r.day_date); ROLL_CUT_DATES.add(k); if (typeof r.qty==='number') ROLL_CUT_QTY.set(k, r.qty); }); }
 
     /* ===== COVERAGE ========================================================= */
     function recomputeCoverage(){
@@ -412,7 +503,7 @@ try{
                 const ratio = req>0?Math.round((cov/req)*100):0;
                 htmlA+=`<td class="dayCell${wk}">
           <div class="fillBar" style="width:${ratio}%;"></div>
-          <span class="qty${zeroCls}" title="${req>0?`Покрыто ${cov} из ${req} (${ratio}%)`:'Нет сборки'}">${req}</span>
+          <span class="qty${zeroCls}" title="${req>0?`Покрыто ${cov} из ${req} (${ratio}%)`:'Нет сборки'}">${req===0 ? '' : req}</span>
         </td>`;
             }
             htmlA+='</tr>';
@@ -447,8 +538,16 @@ try{
             for(const d of dates){
                 const q=CORR.get(key(r.filter,d))||0;
                 const wk=isWeekend(d)?' weekend':'';
-                htmlC+=`<td class="dayCell editable${wk}" data-filter="${r.filter}" data-date="${d}">
+                const k=keyNorm(r.filter,d);
+                const rollCutCls = ROLL_CUT_DATES.has(k) ? ' roll-cut-day' : '';
+                const rollCutQty = ROLL_CUT_QTY.get(k);
+                const rollCutTitle = rollCutCls ? (rollCutQty != null ? `Порезка бухт: ${rollCutQty} гофропакетов` : 'Запланирована порезка бухт с этой позицией') : '';
+                const rollCutLabel = rollCutCls ? `<div class="roll-cut-qty" title="Гофропакетов из порезки">↓${rollCutQty != null ? rollCutQty : '0'}</div>` : '';
+                htmlC+=`<td class="dayCell editable${wk}${rollCutCls}" data-filter="${r.filter}" data-date="${d}" title="${rollCutTitle}">
+        <div class="dayCell-inner">
         <input class="qtyInput" type="number" min="0" step="1" value="${q?q:''}" placeholder="" inputmode="numeric">
+        ${rollCutLabel}
+        </div>
       </td>`;
             }
             htmlC+='</tr>';
@@ -566,6 +665,7 @@ try{
 
         // мета (бейджи валов/ширины) опциональна
         try{ await loadMeta(); }catch{}
+        try{ await loadRollCutDates(); }catch{}
 
         rebuildDates();
         await loadAssembly();
