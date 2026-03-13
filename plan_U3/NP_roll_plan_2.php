@@ -115,9 +115,11 @@ try {
         $totalLenByFilter[$fkey] = ($totalLenByFilter[$fkey] ?? 0) + $len;
     }
 
-    $baleSupplyMap = [];
+    $filtersBaleIds = [];
     foreach ($baleFilterLen as $baleId => $filters) {
         foreach ($filters as $fkey => $len) {
+            if (!isset($filtersBaleIds[$fkey])) $filtersBaleIds[$fkey] = [];
+            $filtersBaleIds[$fkey][] = $baleId;
             $planTotal = (float)($buildTotalByFilter[$fkey] ?? 0);
             $lenTotal = (float)($totalLenByFilter[$fkey] ?? 0);
             $qtyShare = ($planTotal > 0 && $lenTotal > 0) ? ($planTotal * $len / $lenTotal) : 0;
@@ -125,6 +127,10 @@ try {
             if (!isset($baleSupplyMap[$baleId])) $baleSupplyMap[$baleId] = [];
             $baleSupplyMap[$baleId][$fkey] = $qtyShare;
         }
+    }
+    foreach ($filtersBaleIds as $fk => $list) {
+        $filtersBaleIds[$fk] = array_values(array_unique($list));
+        sort($filtersBaleIds[$fk], SORT_NUMERIC);
     }
 
     // --- План порезки бухт (roll_plans) → матрица порезки по фильтрам/датам ---
@@ -240,6 +246,7 @@ try {
         .date-form input[type="date"] { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; }
         .btn { display: inline-block; border: 0; border-radius: 8px; padding: 8px 12px; background: #2563eb; color: #fff; text-decoration: none; cursor: pointer; font-size: 14px; }
         .btn.secondary { background: #6b7280; }
+        .btn.btn-sm { padding: 4px 8px; font-size: 12px; }
         .table-scroll { width: 100%; overflow-x: auto; overflow-y: hidden; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
         .table-scroll-vertical { max-height: 70vh; overflow-y: auto; }
         .table-scroll-vertical table thead { position: sticky; top: 0; z-index: 4; background: #f3f4f6; }
@@ -255,6 +262,13 @@ try {
         .zero { color: #9ca3af; }
         .sticky-left { position: sticky; left: 0; background: #fff; z-index: 2; }
         .filter-name-cell { min-width: 140px; vertical-align: middle; }
+        .filter-bale-dots { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+        .filter-bale-dot {
+            width: 20px; height: 20px; border-radius: 50%; font-size: 10px; font-weight: 600;
+            display: inline-flex; align-items: center; justify-content: center;
+            background: #93c5fd; color: #1e40af; border: 1px solid #60a5fa;
+        }
+        .filter-bale-dot.assigned { background: #9ca3af; color: #4b5563; border-color: #6b7280; opacity: 0.7; }
         .stage-col { min-width: 90px; }
         .stage-col.sticky-left { left: 140px; }
         th.sticky-left { background: #f3f4f6; z-index: 3; }
@@ -362,21 +376,39 @@ try {
                     </tr>
                     </thead>
                     <tbody>
+                    <?php
+                    $assignedBaleIds = [];
+                    foreach ($dateToBales as $list) {
+                        foreach ($list as $bid) { $assignedBaleIds[$bid] = true; }
+                    }
+                    ?>
                     <?php foreach ($filterKeysOrdered as $blockIndex => $filterKey): ?>
-                        <?php $filterTitle = $allFiltersMap[$filterKey]; ?>
+                        <?php
+                        $filterTitle = $allFiltersMap[$filterKey];
+                        $baleIdsForFilter = $filtersBaleIds[$filterKey] ?? [];
+                        ?>
                         <tr class="row-build" data-block-index="<?= (int)$blockIndex ?>">
-                            <td class="sticky-left filter-name-cell" rowspan="3"><?= htmlspecialchars($filterTitle) ?></td>
+                            <td class="sticky-left filter-name-cell" rowspan="3" data-filter-key="<?= htmlspecialchars($filterKey) ?>">
+                                <strong><?= htmlspecialchars($filterTitle) ?></strong>
+                                <?php if (!empty($baleIdsForFilter)): ?>
+                                    <div class="filter-bale-dots">
+                                        <?php foreach ($baleIdsForFilter as $bid): ?>
+                                            <span class="filter-bale-dot<?= isset($assignedBaleIds[$bid]) ? ' assigned' : '' ?>" data-bale-id="<?= (int)$bid ?>"><?= (int)$bid ?></span>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php endif; ?>
+                            </td>
                             <td class="sticky-left stage-col">сборка</td>
                             <?php foreach ($columnDates as $date): ?>
                                 <?php $qty = (int)($buildMatrix[$filterKey][$date] ?? 0); $d = DateTime::createFromFormat('Y-m-d', $date); $w = $d ? (int)$d->format('w') : -1; $weekend = ($w === 0 || $w === 6); ?>
                                 <td class="center <?= $weekend ? 'weekend' : '' ?> <?= $qty === 0 ? 'zero' : '' ?>"><?= $qty !== 0 ? $qty : '' ?></td>
                             <?php endforeach; ?>
                         </tr>
-                        <tr class="row-cut" data-block-index="<?= (int)$blockIndex ?>">
+                        <tr class="row-cut" data-block-index="<?= (int)$blockIndex ?>" data-filter-key="<?= htmlspecialchars($filterKey) ?>">
                             <td class="sticky-left stage-col">порезка</td>
                             <?php foreach ($columnDates as $date): ?>
                                 <?php $val = $cutMatrix[$filterKey][$date] ?? 0; $qty = is_numeric($val) ? (float)$val : 0; $d = DateTime::createFromFormat('Y-m-d', $date); $w = $d ? (int)$d->format('w') : -1; $weekend = ($w === 0 || $w === 6); ?>
-                                <td class="center <?= $weekend ? 'weekend' : '' ?> <?= $qty == 0 ? 'zero' : '' ?>"><?= $qty != 0 ? ($qty == (int)$qty ? (int)$qty : number_format($qty, 1)) : '' ?></td>
+                                <td class="center cut-cell <?= $weekend ? 'weekend' : '' ?> <?= $qty == 0 ? 'zero' : '' ?>" data-date="<?= htmlspecialchars($date) ?>"><?= $qty != 0 ? ($qty == (int)$qty ? (int)$qty : number_format($qty, 1)) : '' ?></td>
                             <?php endforeach; ?>
                         </tr>
                         <tr class="row-corr" data-block-index="<?= (int)$blockIndex ?>">
@@ -405,7 +437,10 @@ try {
         </div>
     </div>
     <div class="panel-bottom">
-        <h3>Дата → набор бухт</h3>
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+            <h3 style="margin: 0;">Дата → набор бухт</h3>
+            <button type="button" class="btn btn-sm secondary" id="btnClearPlan">Очистить план порезки</button>
+        </div>
         <table class="date-bales-table" id="dateBalesTable">
             <thead><tr><th>Дата</th><th>Набор бухт</th></tr></thead>
             <tbody>
@@ -474,6 +509,8 @@ try {
     var dateToBales = <?= json_encode($dateToBales) ?>;
     var columnDates = <?= json_encode($columnDates) ?>;
     var baleIds = <?= json_encode($baleIds) ?>;
+    var baleSupplyMap = <?= json_encode($baleSupplyMap) ?>;
+    var filterKeysOrdered = <?= json_encode(array_values($filterKeysOrdered)) ?>;
 
     var panelTop = document.getElementById('panelTop');
     var dateBalesTable = document.getElementById('dateBalesTable');
@@ -528,6 +565,7 @@ try {
                 chip.className = 'bale-chip';
                 chip.setAttribute('data-bale-id', bid);
                 chip.draggable = true;
+                chip.title = 'Двойной щелчок — вернуть в буфер';
                 chip.textContent = bid;
                 cell.appendChild(chip);
             });
@@ -553,6 +591,47 @@ try {
         }
     }
 
+    function getAssignedBaleIds() {
+        var set = {};
+        columnDates.forEach(function (d) {
+            (dateToBales[d] || []).forEach(function (bid) { set[bid] = true; });
+        });
+        return set;
+    }
+
+    function updateFilterBaleDots() {
+        var assigned = getAssignedBaleIds();
+        document.querySelectorAll('.filter-bale-dot').forEach(function (dot) {
+            var bid = parseInt(dot.getAttribute('data-bale-id'), 10);
+            dot.classList.toggle('assigned', !!assigned[bid]);
+        });
+    }
+
+    function recalcCutMatrixAndUpdate() {
+        var cutMatrix = {};
+        columnDates.forEach(function (date) {
+            (dateToBales[date] || []).forEach(function (bid) {
+                var supply = baleSupplyMap[String(bid)] || baleSupplyMap[bid] || {};
+                Object.keys(supply).forEach(function (fkey) {
+                    if (!cutMatrix[fkey]) cutMatrix[fkey] = {};
+                    cutMatrix[fkey][date] = (cutMatrix[fkey][date] || 0) + (supply[fkey] || 0);
+                });
+            });
+        });
+        var planTable = document.getElementById('planTable');
+        if (!planTable) return;
+        planTable.querySelectorAll('tr.row-cut .cut-cell').forEach(function (cell) {
+            var row = cell.closest('tr');
+            var fkey = row ? row.getAttribute('data-filter-key') : '';
+            var date = cell.getAttribute('data-date');
+            if (!fkey || !date) return;
+            var val = (cutMatrix[fkey] && cutMatrix[fkey][date]) || 0;
+            var qty = Number(val);
+            cell.textContent = qty !== 0 ? (qty === (qty | 0) ? String(qty | 0) : qty.toFixed(1)) : '';
+            cell.classList.toggle('zero', qty === 0);
+        });
+    }
+
     function bindChipDrag(container) {
         if (!container) return;
         container.querySelectorAll('.bale-chip').forEach(function (chip) {
@@ -564,6 +643,15 @@ try {
                 chip.classList.add('dragging');
             };
             chip.ondragend = function () { chip.classList.remove('dragging'); };
+            chip.ondblclick = function () {
+                var baleId = parseInt(chip.getAttribute('data-bale-id'), 10);
+                if (!baleId) return;
+                removeBaleFromAllDates(baleId);
+                reRenderBalesCells();
+                reRenderTopCircles();
+                recalcCutMatrixAndUpdate();
+                updateFilterBaleDots();
+            };
         });
     }
 
@@ -578,6 +666,8 @@ try {
         removeBaleFromAllDates(baleId);
         reRenderBalesCells();
         reRenderTopCircles();
+        recalcCutMatrixAndUpdate();
+        updateFilterBaleDots();
     });
 
     dateBalesTable.querySelectorAll('.bales-cell').forEach(function (cell) {
@@ -601,6 +691,8 @@ try {
             addBaleToDate(baleId, date);
             reRenderBalesCells();
             reRenderTopCircles();
+            recalcCutMatrixAndUpdate();
+            updateFilterBaleDots();
         });
     });
 
@@ -608,6 +700,17 @@ try {
         var cell = tr.querySelector('.bales-cell');
         if (cell) bindChipDrag(cell);
     });
+
+    var btnClearPlan = document.getElementById('btnClearPlan');
+    if (btnClearPlan) {
+        btnClearPlan.onclick = function () {
+            columnDates.forEach(function (d) { dateToBales[d] = []; });
+            reRenderBalesCells();
+            reRenderTopCircles();
+            recalcCutMatrixAndUpdate();
+            updateFilterBaleDots();
+        };
+    }
 
     reRenderTopCircles();
 })();
