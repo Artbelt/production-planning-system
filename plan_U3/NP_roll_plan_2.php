@@ -26,7 +26,6 @@ function normalizeFilterKey(string $filter): string {
 
 try {
     $pdo = getPdo('plan_u3');
-
     // Таблицы (если нет — создаём)
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS roll_plans (
@@ -204,6 +203,31 @@ try {
         $columnDates[] = (clone $startDateObj)->modify('+' . $i . ' day')->format('Y-m-d');
     }
 
+    // Суммы по дням для заголовков
+    $buildPerDate = array_fill_keys($columnDates, 0);
+    foreach ($buildMatrix as $fk => $byDate) {
+        foreach ($byDate as $d => $qty) {
+            if (isset($buildPerDate[$d])) {
+                $buildPerDate[$d] += (int)$qty;
+            }
+        }
+    }
+    // Порезка по дням (кол-во бухт) — по сохранённому плану roll_plans
+    $cutBalesPerDate = array_fill_keys($columnDates, 0);
+    foreach ($rollMap as $bid => $workDate) {
+        if ($workDate !== '' && isset($cutBalesPerDate[$workDate])) {
+            $cutBalesPerDate[$workDate]++;
+        }
+    }
+    $corrPerDate = array_fill_keys($columnDates, 0);
+    foreach ($corrMatrix as $fk => $byDate) {
+        foreach ($byDate as $d => $qty) {
+            if (isset($corrPerDate[$d])) {
+                $corrPerDate[$d] += (int)$qty;
+            }
+        }
+    }
+
     // Сортируем фильтры по отображаемому имени
     $filterKeys = array_keys($allFiltersMap);
     asort($allFiltersMap, SORT_NATURAL | SORT_FLAG_CASE);
@@ -236,23 +260,35 @@ try {
     <style>
         body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f6f8fb; color: #1f2937; }
         .container { width: 100%; max-width: none; margin: 0; padding: 0; box-sizing: border-box; }
+        .container h2 { font-size: 14px; }
         .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-        .top-panel { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-        .top-panel .title { margin: 0; font-size: 20px; font-weight: 700; }
-        .top-panel .meta { margin: 0; color: #4b5563; font-size: 14px; }
-        .top-panel .actions { margin-left: auto; }
-        .date-form { display: flex; gap: 8px; align-items: center; flex-wrap: nowrap; }
-        .date-form label { font-size: 12px; color: #4b5563; }
+        .top-panel { display: flex; align-items: center; gap: 12px; flex-wrap: nowrap; }
+        .top-panel .title { margin: 0; font-size: 18px; font-weight: 700; white-space: nowrap; }
+        .top-panel .actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+        .date-form { display: flex; gap: 8px; align-items: center; flex-wrap: nowrap; flex: 1; justify-content: center; }
+        .date-form label {
+            font-size: 12px;
+            color: #4b5563;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+        }
         .date-form input[type="date"] { padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; }
         .btn { display: inline-block; border: 0; border-radius: 8px; padding: 8px 12px; background: #2563eb; color: #fff; text-decoration: none; cursor: pointer; font-size: 14px; }
         .btn.secondary { background: #6b7280; }
         .btn.btn-sm { padding: 4px 8px; font-size: 12px; }
         .table-scroll { width: 100%; overflow-x: auto; overflow-y: hidden; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
-        .table-scroll-vertical { max-height: 70vh; overflow-y: auto; }
+        .table-scroll-vertical {
+            height: calc(100vh - 220px);
+            min-height: 300px;
+            overflow-y: auto;
+        }
         .table-scroll-vertical table thead { position: sticky; top: 0; z-index: 4; background: #f3f4f6; }
         table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; }
-        th, td { border: 1px solid #e5e7eb; padding: 4px 6px; text-align: left; vertical-align: top; }
-        th { background: #f3f4f6; }
+        th, td { border: 1px solid #e5e7eb; padding: 2px 4px; text-align: left; vertical-align: top; }
+        th { background: #f3f4f6; font-weight: normal; }
         th.date-header {
             writing-mode: vertical-rl; transform: rotate(180deg); text-align: center; white-space: nowrap;
             min-width: 2.5ch; width: 2.5ch; height: 10ch; padding: 4px 2px; vertical-align: middle;
@@ -262,6 +298,28 @@ try {
         .zero { color: #9ca3af; }
         .sticky-left { position: sticky; left: 0; background: #fff; z-index: 2; }
         .filter-name-cell { min-width: 140px; vertical-align: middle; }
+        .stage-col {
+            min-width: 120px;
+            white-space: nowrap;
+            line-height: 1.1;
+            text-align: right;
+        }
+        .stage-stat { font-size: 10px; color: #4b5563; margin-left: 4px; opacity: 0.9; }
+        .stage-bar {
+            display: block;
+            width: 100%;
+            height: 6px;
+            border-radius: 999px;
+            background: #e5e7eb;
+            overflow: hidden;
+            margin-top: 2px;
+        }
+        .stage-bar-fill {
+            display: block;
+            height: 100%;
+            width: calc(var(--p, 0) * 1%);
+            background: linear-gradient(90deg, #bfdbfe, #60a5fa);
+        }
         .filter-bale-dots { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
         .filter-bale-dot {
             width: 20px; height: 20px; border-radius: 50%; font-size: 10px; font-weight: 600;
@@ -269,24 +327,22 @@ try {
             background: #93c5fd; color: #1e40af; border: 1px solid #60a5fa;
         }
         .filter-bale-dot.assigned { background: #9ca3af; color: #4b5563; border-color: #6b7280; opacity: 0.7; }
-        .stage-col { min-width: 90px; }
         .stage-col.sticky-left { left: 140px; }
         th.sticky-left { background: #f3f4f6; z-index: 3; }
-        .row-build { background: #fefce8; }
-        .row-cut  { background: #f0fdf4; }
-        .row-corr { background: #eff6ff; }
-        .row-build td.sticky-left { background: #fef9c3; }
-        .row-cut td.sticky-left  { background: #dcfce7; }
-        .row-corr td.sticky-left { background: #dbeafe; }
+        .row-build { }
+        .row-cut  { }
+        .row-corr { }
         th.date-header.weekend { background: #e5e7eb; }
         td.weekend { background: #f9fafb; }
         /* подсветка блока из 3 строк при наведении */
         .block-hover.row-build,
-        .block-hover.row-build td.sticky-left { background: #fde047 !important; }
+        .block-hover.row-build td.sticky-left,
         .block-hover.row-cut,
-        .block-hover.row-cut td.sticky-left { background: #86efac !important; }
+        .block-hover.row-cut td.sticky-left,
         .block-hover.row-corr,
-        .block-hover.row-corr td.sticky-left { background: #93c5fd !important; }
+        .block-hover.row-corr td.sticky-left {
+            background: #e5e7eb !important;
+        }
 
         /* Правая панель: бухты и таблица дата/набор бухт */
         .page-wrap { display: flex; min-height: 100vh; width: 100%; margin: 0; padding: 0; box-sizing: border-box; }
@@ -302,10 +358,6 @@ try {
             flex-shrink: 0;
         }
         .panel-top {
-            height: 25%;
-            min-height: 100px;
-            max-height: 25vh;
-            overflow: auto;
             padding: 10px;
             border-bottom: 1px solid #e5e7eb;
         }
@@ -321,7 +373,14 @@ try {
         .bale-circle:hover { background: #2563eb; }
         .bale-circle.dragging { opacity: 0.6; cursor: grabbing; }
         .bale-circle.in-date { background: #059669; border-color: #047857; }
-        .panel-bottom { flex: 1; overflow: auto; padding: 10px; min-height: 0; }
+        .panel-bottom {
+            /* высота, согласованная с основной таблицей */
+            height: calc(100vh - 220px);
+            min-height: 300px;
+            overflow: auto;
+            padding: 10px;
+            box-sizing: border-box;
+        }
         .panel-bottom h3 { margin: 0 0 8px; font-size: 13px; color: #374151; }
         .date-bales-table { width: 100%; border-collapse: collapse; font-size: 11px; }
         .date-bales-table th, .date-bales-table td { border: 1px solid #e5e7eb; padding: 4px 6px; text-align: left; vertical-align: top; }
@@ -343,8 +402,7 @@ try {
 <div class="container">
     <div class="card">
         <div class="top-panel">
-            <h1 class="title">План по заявке (сборка / порезка / гофрирование)</h1>
-            <span class="meta">Заявка: <b><?= htmlspecialchars($order) ?></b></span>
+            <h1 class="title">План по заявке (сборка / порезка / гофрирование) — заявка <b><?= htmlspecialchars($order) ?></b></h1>
             <div class="actions">
                 <a class="btn secondary" href="NP_cut_index.php">Назад к этапам</a>
                 <a class="btn secondary" href="NP_roll_plan.php?order=<?= urlencode($order) ?>&amp;start_date=<?= htmlspecialchars($startDate) ?>">План порезки бухт</a>
@@ -359,7 +417,6 @@ try {
 
     <div class="card">
         <h2>План по заявке: сборка — порезка — гофрирование</h2>
-        <p class="meta">Каждый фильтр представлен тремя строками: план сборки, план порезки (по назначенным бухтам), план гофрирования.</p>
         <?php if (empty($filterKeysOrdered) || empty($columnDates)): ?>
             <p>Нет данных по заявке.</p>
         <?php else: ?>
@@ -367,11 +424,53 @@ try {
                 <table id="planTable">
                     <thead>
                     <tr>
-                        <th class="sticky-left">Фильтр</th>
+                        <th class="sticky-left" rowspan="4">Фильтр</th>
                         <th class="sticky-left stage-col">Этап</th>
+                        <?php
+                        $ruMonths = [
+                            1 => 'января', 2 => 'февраля', 3 => 'марта', 4 => 'апреля',
+                            5 => 'мая', 6 => 'июня', 7 => 'июля', 8 => 'августа',
+                            9 => 'сентября', 10 => 'октября', 11 => 'ноября', 12 => 'декабря',
+                        ];
+                        ?>
                         <?php foreach ($columnDates as $date): ?>
-                            <?php $d = DateTime::createFromFormat('Y-m-d', $date); $w = $d ? (int)$d->format('w') : -1; $weekend = ($w === 0 || $w === 6); ?>
-                            <th class="date-header<?= $weekend ? ' weekend' : '' ?>"><span class="date-label"><?= htmlspecialchars($date) ?></span></th>
+                            <?php
+                            $d = DateTime::createFromFormat('Y-m-d', $date);
+                            $w = $d ? (int)$d->format('w') : -1;
+                            $weekend = ($w === 0 || $w === 6);
+                            $day = $d ? (int)$d->format('j') : '';
+                            $monthNum = $d ? (int)$d->format('n') : 0;
+                            $monthName = $ruMonths[$monthNum] ?? '';
+                            $label = trim($day . ' ' . $monthName);
+                            ?>
+                            <th class="date-header<?= $weekend ? ' weekend' : '' ?>"><span class="date-label"><?= htmlspecialchars($label) ?></span></th>
+                        <?php endforeach; ?>
+                    </tr>
+                    <tr>
+                        <th class="sticky-left stage-col">сборка</th>
+                        <?php foreach ($columnDates as $date): ?>
+                            <?php $bSum = (int)($buildPerDate[$date] ?? 0); ?>
+                            <th>
+                                <span style="font-size:10px;"><?= $bSum ?></span>
+                            </th>
+                        <?php endforeach; ?>
+                    </tr>
+                    <tr>
+                        <th class="sticky-left stage-col">порезка</th>
+                        <?php foreach ($columnDates as $date): ?>
+                            <?php $cBales = (int)($cutBalesPerDate[$date] ?? 0); ?>
+                            <th class="header-cut-bales" data-date="<?= htmlspecialchars($date) ?>">
+                                <span style="font-size:10px;"><?= $cBales ?></span>
+                            </th>
+                        <?php endforeach; ?>
+                    </tr>
+                    <tr>
+                        <th class="sticky-left stage-col">гофрирование</th>
+                        <?php foreach ($columnDates as $date): ?>
+                            <?php $gSum = (int)($corrPerDate[$date] ?? 0); ?>
+                            <th>
+                                <span style="font-size:10px;"><?= $gSum ?></span>
+                            </th>
                         <?php endforeach; ?>
                     </tr>
                     </thead>
@@ -386,6 +485,12 @@ try {
                         <?php
                         $filterTitle = $allFiltersMap[$filterKey];
                         $baleIdsForFilter = $filtersBaleIds[$filterKey] ?? [];
+                        $totalBuild = (int)($buildTotalByFilter[$filterKey] ?? 0);
+                        $totalCut = array_sum($cutMatrix[$filterKey] ?? []);
+                        $totalCorr = array_sum($corrMatrix[$filterKey] ?? []);
+                        $pctBuild = ($totalBuild > 0) ? 100 : 0;
+                        $pctCut = ($totalBuild > 0 && $totalCut > 0) ? min(100, round($totalCut / $totalBuild * 100)) : 0;
+                        $pctCorr = ($totalBuild > 0 && $totalCorr > 0) ? min(100, round($totalCorr / $totalBuild * 100)) : 0;
                         ?>
                         <tr class="row-build" data-block-index="<?= (int)$blockIndex ?>">
                             <td class="sticky-left filter-name-cell" rowspan="3" data-filter-key="<?= htmlspecialchars($filterKey) ?>">
@@ -398,29 +503,56 @@ try {
                                     </div>
                                 <?php endif; ?>
                             </td>
-                            <td class="sticky-left stage-col">сборка</td>
+                            <td class="sticky-left stage-col">
+                                сборка
+                                <span class="stage-stat">
+                                    <?= $totalBuild ?> из <?= $totalBuild ?>
+                                </span>
+                                <span class="stage-bar" style="--p: <?= $pctBuild ?>;">
+                                    <span class="stage-bar-fill"></span>
+                                </span>
+                            </td>
                             <?php foreach ($columnDates as $date): ?>
                                 <?php $qty = (int)($buildMatrix[$filterKey][$date] ?? 0); $d = DateTime::createFromFormat('Y-m-d', $date); $w = $d ? (int)$d->format('w') : -1; $weekend = ($w === 0 || $w === 6); ?>
                                 <td class="center <?= $weekend ? 'weekend' : '' ?> <?= $qty === 0 ? 'zero' : '' ?>"><?= $qty !== 0 ? $qty : '' ?></td>
                             <?php endforeach; ?>
                         </tr>
                         <tr class="row-cut" data-block-index="<?= (int)$blockIndex ?>" data-filter-key="<?= htmlspecialchars($filterKey) ?>">
-                            <td class="sticky-left stage-col">порезка</td>
+                            <td class="sticky-left stage-col">
+                                порезка
+                                <span class="stage-stat">
+                                    <?= (int)$totalCut ?> из <?= $totalBuild ?>
+                                </span>
+                                <span class="stage-bar" style="--p: <?= $pctCut ?>;">
+                                    <span class="stage-bar-fill"></span>
+                                </span>
+                            </td>
                             <?php foreach ($columnDates as $date): ?>
                                 <?php $val = $cutMatrix[$filterKey][$date] ?? 0; $qty = is_numeric($val) ? (float)$val : 0; $d = DateTime::createFromFormat('Y-m-d', $date); $w = $d ? (int)$d->format('w') : -1; $weekend = ($w === 0 || $w === 6); ?>
                                 <td class="center cut-cell <?= $weekend ? 'weekend' : '' ?> <?= $qty == 0 ? 'zero' : '' ?>" data-date="<?= htmlspecialchars($date) ?>"><?= $qty != 0 ? ($qty == (int)$qty ? (int)$qty : number_format($qty, 1)) : '' ?></td>
                             <?php endforeach; ?>
                         </tr>
-                        <tr class="row-corr" data-block-index="<?= (int)$blockIndex ?>">
-                            <td class="sticky-left stage-col">гофрирование</td>
+                        <tr class="row-corr" data-block-index="<?= (int)$blockIndex ?>" data-filter-key="<?= htmlspecialchars($filterKey) ?>">
+                            <td class="sticky-left stage-col">
+                                гофрирование
+                                <span class="stage-stat">
+                                    <?= (int)$totalCorr ?> из <?= $totalBuild ?>
+                                </span>
+                                <span class="stage-bar" style="--p: <?= $pctCorr ?>;">
+                                    <span class="stage-bar-fill"></span>
+                                </span>
+                            </td>
                             <?php foreach ($columnDates as $date): ?>
                                 <?php $qty = (int)($corrMatrix[$filterKey][$date] ?? 0); $d = DateTime::createFromFormat('Y-m-d', $date); $w = $d ? (int)$d->format('w') : -1; $weekend = ($w === 0 || $w === 6); ?>
-                                <td class="center <?= $weekend ? 'weekend' : '' ?> <?= $qty === 0 ? 'zero' : '' ?>"><?= $qty !== 0 ? $qty : '' ?></td>
+                                <td class="center <?= $weekend ? 'weekend' : '' ?> <?= $qty === 0 ? 'zero' : '' ?>" contenteditable="true" data-date="<?= htmlspecialchars($date) ?>"><?= $qty !== 0 ? $qty : '' ?></td>
                             <?php endforeach; ?>
                         </tr>
                     <?php endforeach; ?>
                     </tbody>
                 </table>
+            </div>
+            <div style="margin-top:8px; display:flex; justify-content:flex-end;">
+                <button type="button" id="btnSavePlans" class="btn btn-sm">Сохранить планы</button>
             </div>
         <?php endif; ?>
     </div>
@@ -511,6 +643,10 @@ try {
     var baleIds = <?= json_encode($baleIds) ?>;
     var baleSupplyMap = <?= json_encode($baleSupplyMap) ?>;
     var filterKeysOrdered = <?= json_encode(array_values($filterKeysOrdered)) ?>;
+    var buildTotalByFilter = <?= json_encode($buildTotalByFilter) ?>;
+    var filterDisplayMap = <?= json_encode($allFiltersMap, JSON_UNESCAPED_UNICODE) ?>;
+    var orderNumber = <?= json_encode($order) ?>;
+    var startDateVal = <?= json_encode($startDate) ?>;
 
     var panelTop = document.getElementById('panelTop');
     var dateBalesTable = document.getElementById('dateBalesTable');
@@ -620,6 +756,8 @@ try {
         });
         var planTable = document.getElementById('planTable');
         if (!planTable) return;
+
+        // Обновляем ячейки порезки по дням
         planTable.querySelectorAll('tr.row-cut .cut-cell').forEach(function (cell) {
             var row = cell.closest('tr');
             var fkey = row ? row.getAttribute('data-filter-key') : '';
@@ -629,6 +767,74 @@ try {
             var qty = Number(val);
             cell.textContent = qty !== 0 ? (qty === (qty | 0) ? String(qty | 0) : qty.toFixed(1)) : '';
             cell.classList.toggle('zero', qty === 0);
+        });
+
+        // Обновляем суммарные цифры "X из Y" для порезки
+        planTable.querySelectorAll('tr.row-cut').forEach(function (row) {
+            var fkey = row.getAttribute('data-filter-key');
+            if (!fkey) return;
+            var totalBuild = Number(buildTotalByFilter[fkey] || 0);
+            var sumCut = 0;
+            if (cutMatrix[fkey]) {
+                Object.keys(cutMatrix[fkey]).forEach(function (d) {
+                    sumCut += Number(cutMatrix[fkey][d] || 0);
+                });
+            }
+            var stat = row.querySelector('.stage-stat');
+            if (stat) {
+                stat.textContent = (sumCut | 0) + ' из ' + (totalBuild | 0);
+            }
+        });
+
+        // Обновляем строку заголовка "порезка" по дням
+        var headerCutCells = planTable.querySelectorAll('thead .header-cut-bales');
+        headerCutCells.forEach(function (th) {
+            var date = th.getAttribute('data-date');
+            if (!date) return;
+            var cnt = (dateToBales[date] || []).filter(function (v, i, a) { return a.indexOf(v) === i; }).length;
+            var span = th.querySelector('span');
+            if (span) {
+                span.textContent = String(cnt);
+            } else {
+                th.textContent = String(cnt);
+            }
+        });
+    }
+
+    // Пересчёт гофрирования при ручном вводе в ячейки
+    function setupCorrEditableHandlers() {
+        var planTable = document.getElementById('planTable');
+        if (!planTable) return;
+        planTable.querySelectorAll('tr.row-corr').forEach(function (row) {
+            var stat = row.querySelector('.stage-stat');
+            var tds = Array.prototype.slice.call(row.querySelectorAll('td')).slice(1); // пропускаем ячейку Этап
+            var baseTotal = 0;
+            if (stat) {
+                // Пытаемся вытащить "N из M" и запомнить M
+                var m = stat.textContent.match(/из\s+(\d+)/);
+                if (m && m[1]) {
+                    baseTotal = parseInt(m[1], 10) || 0;
+                }
+                stat.dataset.total = String(baseTotal);
+            }
+            function recompute() {
+                var sum = 0;
+                tds.forEach(function (td) {
+                    var v = td.textContent.trim();
+                    if (v !== '') {
+                        var n = parseInt(v, 10);
+                        if (!isNaN(n)) sum += n;
+                    }
+                });
+                if (stat) {
+                    var totalBuild = parseInt(stat.dataset.total || '0', 10) || 0;
+                    stat.textContent = (sum | 0) + ' из ' + totalBuild;
+                }
+            }
+            tds.forEach(function (td) {
+                td.addEventListener('input', recompute);
+                td.addEventListener('blur', recompute);
+            });
         });
     }
 
@@ -713,6 +919,84 @@ try {
     }
 
     reRenderTopCircles();
+    setupCorrEditableHandlers();
+
+    var btnSavePlans = document.getElementById('btnSavePlans');
+    if (btnSavePlans) {
+        btnSavePlans.addEventListener('click', function () {
+            saveRollPlans().then(function () {
+                return saveCorrPlans();
+            }).then(function () {
+                alert('Планы порезки и гофрирования сохранены.');
+            }).catch(function (e) {
+                console.error(e);
+                alert('Ошибка сохранения планов.');
+            });
+        });
+    }
+
+    function saveRollPlans() {
+        var planDates = {};
+        columnDates.forEach(function (date) {
+            (dateToBales[date] || []).forEach(function (bid) {
+                planDates[bid] = date;
+            });
+        });
+        var fd = new FormData();
+        fd.append('order', orderNumber);
+        fd.append('start_date', startDateVal);
+        fd.append('action', 'save');
+        Object.keys(planDates).forEach(function (bid) {
+            fd.append('plan_dates[' + bid + ']', planDates[bid]);
+        });
+        return fetch('NP_roll_plan.php', {
+            method: 'POST',
+            body: fd,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        }).then(function (r) { return r.text(); }).then(function (text) {
+            try {
+                var data = JSON.parse(text);
+                if (!data.ok) throw new Error(data.message || 'Ошибка сохранения плана порезки');
+            } catch (e) {
+                // если это не JSON, просто считаем что всё прошло
+            }
+        });
+    }
+
+    function saveCorrPlans() {
+        var items = [];
+        var planTable = document.getElementById('planTable');
+        if (!planTable) return Promise.resolve();
+        planTable.querySelectorAll('tr.row-corr').forEach(function (row) {
+            var fkey = row.getAttribute('data-filter-key');
+            var filterName = filterDisplayMap[fkey] || fkey;
+            row.querySelectorAll('td[contenteditable="true"]').forEach(function (td) {
+                var date = td.getAttribute('data-date');
+                var v = td.textContent.trim();
+                if (!date || v === '') return;
+                var n = parseInt(v, 10);
+                if (isNaN(n) || n <= 0) return;
+                items.push({ filter: filterName, date: date, qty: n });
+            });
+        });
+        if (items.length === 0) return Promise.resolve();
+        var payload = {
+            order: orderNumber,
+            start: startDateVal,
+            days: columnDates.length,
+            items: items
+        };
+        return fetch('NP_corrugation_plan.php?action=save_corr', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (!data.ok) throw new Error(data.error || 'Ошибка сохранения плана гофрирования');
+        }).catch(function (e) {
+            // если сервер вернул не JSON — не падаем, но логируем
+            console.error('save_corr error', e);
+        });
+    }
 })();
 </script>
 </body>
