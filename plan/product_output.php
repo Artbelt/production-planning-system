@@ -33,14 +33,23 @@ if (empty($userDepartments)) {
 
 require_once __DIR__ . '/../auth/includes/db.php';
 
-// === АВТОДОПОЛНЕНИЕ ===
+// === АВТОДОПОЛНЕНИЕ === (только из panel_filter_structure)
 if (isset($_GET['q'])) {
     header('Content-Type: application/json');
     try {
         $pdo = getPdo('plan');
-        $query = $_GET['q'];
-        $stmt = $pdo->prepare("SELECT DISTINCT filter FROM panel_filter_structure WHERE filter LIKE ? LIMIT 10");
-        $stmt->execute(["%$query%"]);
+        $query = trim($_GET['q'] ?? '');
+        $like = '%' . $query . '%';
+        $prefix = $query . '%';
+        // Сначала совпадения по началу названия (SX9…), потом остальные; лимит 20, чтобы SX96 не терялся при вводе SX9
+        $stmt = $pdo->prepare("
+            SELECT DISTINCT TRIM(filter) AS f
+            FROM panel_filter_structure
+            WHERE TRIM(filter) <> '' AND TRIM(filter) LIKE ?
+            ORDER BY (TRIM(filter) LIKE ?) DESC, f
+            LIMIT 20
+        ");
+        $stmt->execute([$like, $prefix]);
         echo json_encode($stmt->fetchAll(PDO::FETCH_COLUMN));
     } catch (Exception $e) {
         echo json_encode([]);
