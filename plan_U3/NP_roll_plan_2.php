@@ -132,6 +132,30 @@ try {
         sort($filtersBaleIds[$fk], SORT_NUMERIC);
     }
 
+    // Высоты штор по фильтрам (для подсветки строк сборки)
+    $filterHeights = [];
+    $allHeights = [];
+    $stHeights = $pdo->prepare("
+        SELECT TRIM(filter) AS filter_name, TRIM(height) AS h
+        FROM cut_plans
+        WHERE order_number = ?
+          AND TRIM(height) <> ''
+        GROUP BY TRIM(filter), TRIM(height)
+        ORDER BY TRIM(height)
+    ");
+    $stHeights->execute([$order]);
+    while ($row = $stHeights->fetch(PDO::FETCH_ASSOC)) {
+        $fname = trim((string)($row['filter_name'] ?? ''));
+        $h = trim((string)($row['h'] ?? ''));
+        if ($fname === '' || $h === '') continue;
+        $fkey = normalizeFilterKey($fname);
+        if (!isset($filterHeights[$fkey])) $filterHeights[$fkey] = [];
+        $filterHeights[$fkey][] = $h;
+        $allHeights[$h] = true;
+    }
+    $allHeightsList = array_keys($allHeights);
+    sort($allHeightsList, SORT_NUMERIC);
+
     // --- План порезки бухт (roll_plans) → матрица порезки по фильтрам/датам ---
     $stRoll = $pdo->prepare(
         $hasDoneColumn
@@ -259,6 +283,27 @@ try {
     <title>План по заявке (сборка / порезка / гофрирование) — <?= htmlspecialchars($order) ?></title>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f6f8fb; color: #1f2937; }
+        /* индикатор загрузки */
+        .page-loading {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(246, 248, 251, 0.85);
+            backdrop-filter: blur(2px);
+        }
+        .page-loading.is-hidden { display: none; }
+        .page-loading .spinner {
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            border: 4px solid rgba(37, 99, 235, 0.18);
+            border-top-color: #2563eb;
+            animation: spin 0.9s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
         .container { width: 100%; max-width: none; margin: 0; padding: 0; box-sizing: border-box; }
         .container h2 { font-size: 14px; }
         .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
@@ -320,6 +365,42 @@ try {
             width: calc(var(--p, 0) * 1%);
             background: linear-gradient(90deg, #bfdbfe, #60a5fa);
         }
+        .stage-col.stage-bar-filled { background: #dbeafe; }
+
+        .height-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: #4b5563;
+        }
+        .height-toolbar-label { white-space: nowrap; }
+        .height-btn {
+            border-radius: 999px;
+            padding: 3px 8px;
+            border: 1px solid #d1d5db;
+            background: #f9fafb;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        .height-btn.active {
+            border-color: #2563eb;
+            background: #e0ecff;
+            color: #1d4ed8;
+        }
+        .height-btn sup.height-count {
+            font-size: 9px;
+            line-height: 1;
+            vertical-align: super;
+            margin-left: 2px;
+            color: #1d4ed8;
+            opacity: 0.9;
+        }
+        .row-corr td.corr-day-highlight {
+            background: #dbeafe;
+            box-shadow: inset 0 0 0 1px #60a5fa;
+        }
         .filter-bale-dots { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
         .filter-bale-dot {
             width: 20px; height: 20px; border-radius: 50%; font-size: 10px; font-weight: 600;
@@ -358,17 +439,17 @@ try {
             flex-shrink: 0;
         }
         .panel-top {
-            padding: 10px;
+            padding: 6px 8px;
             border-bottom: 1px solid #e5e7eb;
         }
-        .panel-top h3 { margin: 0 0 8px; font-size: 13px; color: #374151; }
-        .bale-circles { display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start; }
+        .panel-top h3 { margin: 0 0 6px; font-size: 12px; color: #374151; }
+        .bale-circles { display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
         .bale-circle {
-            width: 32px; height: 32px; border-radius: 50%;
-            background: #3b82f6; color: #fff; font-size: 12px; font-weight: 600;
+            width: 26px; height: 26px; border-radius: 50%;
+            background: #3b82f6; color: #fff; font-size: 11px; font-weight: 700;
             display: flex; align-items: center; justify-content: center;
             cursor: grab; user-select: none; flex-shrink: 0;
-            border: 2px solid #2563eb;
+            border: 1px solid #2563eb;
         }
         .bale-circle:hover { background: #2563eb; }
         .bale-circle.dragging { opacity: 0.6; cursor: grabbing; }
@@ -397,6 +478,9 @@ try {
     </style>
 </head>
 <body>
+<div class="page-loading" id="pageLoading" aria-label="Загрузка" role="status">
+    <div class="spinner" aria-hidden="true"></div>
+</div>
 <div class="page-wrap">
 <div class="main-content">
 <div class="container">
@@ -418,8 +502,17 @@ try {
     <div class="card">
         <h2>План по заявке: сборка — порезка — гофрирование</h2>
         <?php if (empty($filterKeysOrdered) || empty($columnDates)): ?>
-            <p>Нет данных по заявке.</p>
+            <p>Нет данных по заявке.</п>
         <?php else: ?>
+            <?php if (!empty($allHeightsList)): ?>
+                <div class="height-toolbar">
+                    <span class="height-toolbar-label">Высота шторы:</span>
+                    <?php foreach ($allHeightsList as $h): ?>
+                        <button type="button" class="height-btn" data-height="<?= htmlspecialchars($h) ?>"><?= htmlspecialchars($h) ?></button>
+                    <?php endforeach; ?>
+                    <button type="button" class="height-btn" data-height="">Сброс</button>
+                </div>
+            <?php endif; ?>
             <div class="table-scroll table-scroll-vertical">
                 <table id="planTable">
                     <thead>
@@ -468,7 +561,7 @@ try {
                         <th class="sticky-left stage-col">гофрирование</th>
                         <?php foreach ($columnDates as $date): ?>
                             <?php $gSum = (int)($corrPerDate[$date] ?? 0); ?>
-                            <th>
+                            <th class="header-corr-sum" data-date="<?= htmlspecialchars($date) ?>">
                                 <span style="font-size:10px;"><?= $gSum ?></span>
                             </th>
                         <?php endforeach; ?>
@@ -491,8 +584,9 @@ try {
                         $pctBuild = ($totalBuild > 0) ? 100 : 0;
                         $pctCut = ($totalBuild > 0 && $totalCut > 0) ? min(100, round($totalCut / $totalBuild * 100)) : 0;
                         $pctCorr = ($totalBuild > 0 && $totalCorr > 0) ? min(100, round($totalCorr / $totalBuild * 100)) : 0;
+                        $heightsForFilter = $filterHeights[$filterKey] ?? [];
                         ?>
-                        <tr class="row-build" data-block-index="<?= (int)$blockIndex ?>">
+                        <tr class="row-build" data-block-index="<?= (int)$blockIndex ?>" data-heights="<?= htmlspecialchars(implode(',', $heightsForFilter)) ?>">
                             <td class="sticky-left filter-name-cell" rowspan="3" data-filter-key="<?= htmlspecialchars($filterKey) ?>">
                                 <strong><?= htmlspecialchars($filterTitle) ?></strong>
                                 <?php if (!empty($baleIdsForFilter)): ?>
@@ -503,7 +597,7 @@ try {
                                     </div>
                                 <?php endif; ?>
                             </td>
-                            <td class="sticky-left stage-col">
+                            <td class="sticky-left stage-col<?= $pctBuild > 0 ? ' stage-bar-filled' : '' ?>">
                                 сборка
                                 <span class="stage-stat">
                                     <?= $totalBuild ?> из <?= $totalBuild ?>
@@ -518,7 +612,7 @@ try {
                             <?php endforeach; ?>
                         </tr>
                         <tr class="row-cut" data-block-index="<?= (int)$blockIndex ?>" data-filter-key="<?= htmlspecialchars($filterKey) ?>">
-                            <td class="sticky-left stage-col">
+                            <td class="sticky-left stage-col<?= $pctCut > 0 ? ' stage-bar-filled' : '' ?>">
                                 порезка
                                 <span class="stage-stat">
                                     <?= (int)$totalCut ?> из <?= $totalBuild ?>
@@ -533,7 +627,7 @@ try {
                             <?php endforeach; ?>
                         </tr>
                         <tr class="row-corr" data-block-index="<?= (int)$blockIndex ?>" data-filter-key="<?= htmlspecialchars($filterKey) ?>">
-                            <td class="sticky-left stage-col">
+                            <td class="sticky-left stage-col<?= $pctCorr > 0 ? ' stage-bar-filled' : '' ?>">
                                 гофрирование
                                 <span class="stage-stat">
                                     <?= (int)$totalCorr ?> из <?= $totalBuild ?>
@@ -595,6 +689,15 @@ try {
 </div>
 
 <script>
+// скрываем индикатор, когда страница полностью готова
+(function () {
+    var el = document.getElementById('pageLoading');
+    if (!el) return;
+    function hide() { el.classList.add('is-hidden'); }
+    if (document.readyState === 'complete') hide();
+    window.addEventListener('load', hide, { once: true });
+})();
+
 (function () {
     var table = document.getElementById('planTable');
     if (!table) return;
@@ -635,6 +738,71 @@ try {
         }
         if (!stillInside) highlightBlock(tr, false);
     });
+
+    // Подсветка строк сборки по высоте шторы
+    var heightButtons = document.querySelectorAll('.height-btn');
+    function updateHeightButtonCounts() {
+        var counts = {};
+        table.querySelectorAll('tr.row-build').forEach(function (row) {
+            var hs = (row.getAttribute('data-heights') || '').split(',').map(function (v) { return v.trim(); }).filter(Boolean);
+            hs.forEach(function (h) {
+                counts[h] = (counts[h] || 0) + 1;
+            });
+        });
+        heightButtons.forEach(function (btn) {
+            var h = (btn.getAttribute('data-height') || '').trim();
+            if (!h) return; // "Сброс"
+            var n = counts[h] || 0;
+            var base = btn.getAttribute('data-height');
+            btn.innerHTML = String(base) + '<sup class="height-count">' + String(n) + '</sup>';
+        });
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/fec3737a-7de3-4e7b-bbe9-58f5d30241f0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3dc4b9'},body:JSON.stringify({sessionId:'3dc4b9',runId:'pre-fix',hypothesisId:'H1',location:'plan_U3/NP_roll_plan_2.php:updateHeightButtonCounts',message:'height button counts computed',data:{buttons:heightButtons.length,distinct:Object.keys(counts).length},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion agent log
+    }
+    function applyHeightFilter(hVal) {
+        var target = (hVal || '').trim();
+        // очищаем предыдущую подсветку по дням в строках гофрирования
+        table.querySelectorAll('tr.row-corr td.corr-day-highlight').forEach(function (td) {
+            td.classList.remove('corr-day-highlight');
+        });
+        if (!target) return;
+
+        table.querySelectorAll('tr.row-build').forEach(function (row) {
+            var hs = (row.getAttribute('data-heights') || '').split(',').map(function (v) { return v.trim(); }).filter(Boolean);
+            var match = hs.indexOf(target) !== -1;
+            if (!match) return;
+
+            var blockIndex = row.getAttribute('data-block-index');
+            if (!blockIndex) return;
+            var corrRow = table.querySelector('tr.row-corr[data-block-index="' + String(blockIndex).replace(/"/g, '\\"') + '"]');
+            if (!corrRow) return;
+            // подсвечиваем ячейки по дням (все td с data-date)
+            corrRow.querySelectorAll('td[data-date]').forEach(function (td) {
+                var t = (td.textContent || '').trim();
+                if (t !== '') td.classList.add('corr-day-highlight');
+            });
+        });
+    }
+    heightButtons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var val = btn.getAttribute('data-height') || '';
+            if (val === '') {
+                heightButtons.forEach(function (b) { b.classList.remove('active'); });
+                applyHeightFilter('');
+                return;
+            }
+            var isActive = btn.classList.contains('active');
+            heightButtons.forEach(function (b) { b.classList.remove('active'); });
+            if (!isActive) {
+                btn.classList.add('active');
+                applyHeightFilter(val);
+            } else {
+                applyHeightFilter('');
+            }
+        });
+    });
+    updateHeightButtonCounts();
 })();
 
 (function () {
@@ -769,7 +937,7 @@ try {
             cell.classList.toggle('zero', qty === 0);
         });
 
-        // Обновляем суммарные цифры "X из Y" для порезки
+        // Обновляем суммарные цифры "X из Y" и гистограмму для порезки
         planTable.querySelectorAll('tr.row-cut').forEach(function (row) {
             var fkey = row.getAttribute('data-filter-key');
             if (!fkey) return;
@@ -781,8 +949,17 @@ try {
                 });
             }
             var stat = row.querySelector('.stage-stat');
+            var bar = row.querySelector('.stage-bar');
             if (stat) {
                 stat.textContent = (sumCut | 0) + ' из ' + (totalBuild | 0);
+            }
+            if (bar) {
+                var p = (totalBuild > 0) ? Math.min(100, (sumCut / totalBuild) * 100) : 0;
+                bar.style.setProperty('--p', String(p));
+                var stageTd = bar.closest('.stage-col');
+                if (stageTd) {
+                    if (p > 0) stageTd.classList.add('stage-bar-filled'); else stageTd.classList.remove('stage-bar-filled');
+                }
             }
         });
 
@@ -801,12 +978,40 @@ try {
         });
     }
 
+    function updateCorrHeader() {
+        var planTable = document.getElementById('planTable');
+        if (!planTable) return;
+        var headerCells = planTable.querySelectorAll('thead .header-corr-sum');
+        headerCells.forEach(function (th) {
+            var date = th.getAttribute('data-date');
+            if (!date) return;
+            var sum = 0;
+            planTable.querySelectorAll('tr.row-corr td[data-date="' + date.replace(/"/g, '\\"') + '"]').forEach(function (td) {
+                var v = td.textContent.trim();
+                if (v !== '') {
+                    var n = parseInt(v, 10);
+                    if (!isNaN(n)) sum += n;
+                }
+            });
+            var span = th.querySelector('span');
+            if (span) {
+                span.textContent = String(sum);
+            } else {
+                th.textContent = String(sum);
+            }
+        });
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/fec3737a-7de3-4e7b-bbe9-58f5d30241f0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3dc4b9'},body:JSON.stringify({sessionId:'3dc4b9',runId:'pre-fix',hypothesisId:'H3',location:'plan_U3/NP_roll_plan_2.php:updateCorrHeader',message:'corr header updated',data:{cells:headerCells.length},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion agent log
+    }
+
     // Пересчёт гофрирования при ручном вводе в ячейки
     function setupCorrEditableHandlers() {
         var planTable = document.getElementById('planTable');
         if (!planTable) return;
         planTable.querySelectorAll('tr.row-corr').forEach(function (row) {
             var stat = row.querySelector('.stage-stat');
+            var bar = row.querySelector('.stage-bar');
             var tds = Array.prototype.slice.call(row.querySelectorAll('td')).slice(1); // пропускаем ячейку Этап
             var baseTotal = 0;
             if (stat) {
@@ -826,15 +1031,29 @@ try {
                         if (!isNaN(n)) sum += n;
                     }
                 });
+                var totalBuild = parseInt(stat ? (stat.dataset.total || '0') : '0', 10) || 0;
                 if (stat) {
-                    var totalBuild = parseInt(stat.dataset.total || '0', 10) || 0;
                     stat.textContent = (sum | 0) + ' из ' + totalBuild;
                 }
+                if (bar) {
+                    var p = (totalBuild > 0) ? Math.min(100, (sum / totalBuild) * 100) : 0;
+                    bar.style.setProperty('--p', String(p));
+                    var stageCol = bar.closest('.stage-col');
+                    if (stageCol) {
+                        if (p > 0) stageCol.classList.add('stage-bar-filled'); else stageCol.classList.remove('stage-bar-filled');
+                    }
+                }
+                updateCorrHeader();
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/fec3737a-7de3-4e7b-bbe9-58f5d30241f0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3dc4b9'},body:JSON.stringify({sessionId:'3dc4b9',runId:'pre-fix',hypothesisId:'H1',location:'plan_U3/NP_roll_plan_2.php:recompute(corr)',message:'corr recompute',data:{filterKey:row.getAttribute('data-filter-key')||null,sum:sum,totalBuild:totalBuild},timestamp:Date.now()})}).catch(()=>{});
+                // #endregion agent log
             }
             tds.forEach(function (td) {
                 td.addEventListener('input', recompute);
                 td.addEventListener('blur', recompute);
             });
+            // начальная синхронизация заголовка "гофрирование"
+            recompute();
         });
     }
 

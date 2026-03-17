@@ -20,6 +20,238 @@ function normFilter(string $s): string {
     return $s;
 }
 
+// AJAX: список уникальных фильтров для панели "?"
+$action = $_GET['action'] ?? $_POST['action'] ?? '';
+if ($action === 'get_filters') {
+    while (ob_get_level()) ob_end_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    $filters = [];
+    $errors = [];
+    try {
+        $fromPlan = [];
+        $fromFact = [];
+        try {
+            $fromPlan = $pdo->query("
+                SELECT DISTINCT TRIM(SUBSTRING_INDEX(COALESCE(filter_label,''), ' [', 1)) AS base_filter
+                FROM build_plan
+                WHERE COALESCE(filter_label,'') != ''
+            ")->fetchAll(PDO::FETCH_COLUMN);
+        } catch (Exception $e) {
+            $errors[] = 'build_plan: ' . $e->getMessage();
+        }
+        try {
+            $fromFact = $pdo->query("
+                SELECT DISTINCT TRIM(SUBSTRING_INDEX(COALESCE(name_of_filter,''), ' [', 1)) AS base_filter
+                FROM manufactured_production
+                WHERE COALESCE(name_of_filter,'') != ''
+            ")->fetchAll(PDO::FETCH_COLUMN);
+        } catch (Exception $e) {
+            $errors[] = 'manufactured_production: ' . $e->getMessage();
+        }
+        foreach (array_merge($fromPlan, $fromFact) as $name) {
+            $base = normFilter((string)$name);
+            if ($base !== '') $filters[$base] = true;
+        }
+        $filters = array_keys($filters);
+        sort($filters, SORT_NATURAL | SORT_FLAG_CASE);
+        $out = ['filters' => $filters];
+        if (!empty($errors)) $out['warnings'] = $errors;
+        echo json_encode($out);
+    } catch (Exception $e) {
+        echo json_encode(['filters' => [], 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// Обновление заявки в строке выпуска (для страницы filter_release)
+if ($action === 'filter_release_update') {
+    header('Content-Type: application/json; charset=utf-8');
+    $filterName = trim((string)($_POST['filter'] ?? $_GET['filter'] ?? ''));
+    $date = trim((string)($_POST['date'] ?? ''));
+    $oldOrder = trim((string)($_POST['old_order'] ?? ''));
+    $newOrder = trim((string)($_POST['new_order'] ?? ''));
+    if ($filterName === '' || $date === '' || $oldOrder === '') {
+        echo json_encode(['ok' => false, 'error' => 'Не указаны filter, date или old_order']);
+        exit;
+    }
+    try {
+        $stmt = $pdo->prepare("
+            UPDATE manufactured_production
+            SET name_of_order = ?
+            WHERE date_of_production = ?
+              AND TRIM(SUBSTRING_INDEX(COALESCE(name_of_filter,''), ' [', 1)) = ?
+              AND name_of_order = ?
+        ");
+        $stmt->execute([$newOrder, $date, $filterName, $oldOrder]);
+        echo json_encode(['ok' => true, 'updated' => $stmt->rowCount()]);
+    } catch (Exception $e) {
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// AJAX: выпуск по выбранному фильтру за всё время — JSON для панели или CSV для выгрузки
+if ($action === 'filter_release') {
+    $filterName = $_GET['filter'] ?? $_POST['filter'] ?? '';
+    $filterName = trim((string)$filterName);
+    $asJson = isset($_GET['format']) && $_GET['format'] === 'json';
+    if ($filterName === '') {
+        if ($asJson) {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['rows' => [], 'error' => 'Не указано название фильтра.']);
+        } else {
+            header('Content-Type: text/plain; charset=utf-8');
+            echo "Не указано название фильтра.";
+        }
+        exit;
+    }
+    $rows = [];
+    try {
+        $stmt = $pdo->prepare("
+            SELECT date_of_production AS dt, name_of_order AS ord, SUM(count_of_filters) AS total
+            FROM manufactured_production
+            WHERE TRIM(SUBSTRING_INDEX(COALESCE(name_of_filter,''), ' [', 1)) = ?
+            GROUP BY date_of_production, name_of_order
+            ORDER BY date_of_production DESC, name_of_order
+        ");
+        $stmt->execute([$filterName]);
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $rows[] = [
+                'date' => $row['dt'] ?? '',
+                'order' => $row['ord'] ?? '',
+                'total' => (int)($row['total'] ?? 0)
+            ];
+        }
+    } catch (Exception $e) {
+        if ($asJson) {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['rows' => [], 'error' => $e->getMessage()]);
+        } else {
+            header('Content-Type: text/plain; charset=utf-8');
+            echo "Ошибка: " . $e->getMessage();
+        }
+        exit;
+    }
+    if ($asJson) {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['filter' => $filterName, 'rows' => $rows]);
+        exit;
+    }
+    $orderList = [];
+    try {
+        $orderList = $pdo->query("SELECT DISTINCT order_number FROM build_plan WHERE order_number != '' ORDER BY order_number DESC")->fetchAll(PDO::FETCH_COLUMN);
+        $fromProd = $pdo->query("SELECT DISTINCT name_of_order FROM manufactured_production WHERE name_of_order != '' ORDER BY name_of_order DESC")->fetchAll(PDO::FETCH_COLUMN);
+        $orderList = array_values(array_unique(array_merge($orderList, $fromProd)));
+        rsort($orderList, SORT_NATURAL);
+    } catch (Exception $e) {
+        // ignore
+    }
+    header('Content-Type: text/html; charset=utf-8');
+?>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Выпуск — <?= h($filterName) ?></title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background: #fff; }
+        h1 { font-size: 18px; margin-bottom: 16px; }
+        table { border-collapse: collapse; width: 100%; max-width: 520px; }
+        th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
+        th { background: #f0f0f0; }
+        .btn-change { padding: 2px 8px; font-size: 12px; cursor: pointer; }
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; align-items: center; justify-content: center; }
+        .modal-overlay.visible { display: flex; }
+        .modal { background: #fff; padding: 16px; border-radius: 8px; max-width: 320px; width: 90%; max-height: 70vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+        .modal h3 { margin: 0 0 12px; font-size: 14px; }
+        .modal-list { overflow-y: auto; list-style: none; margin: 0; padding: 0; }
+        .modal-list li { padding: 8px 12px; cursor: pointer; border-radius: 4px; }
+        .modal-list li:hover { background: #e8f0fe; }
+        .modal-close { margin-top: 12px; padding: 6px 12px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>Выпуск: <?= h($filterName) ?></h1>
+    <p style="font-size: 12px; color: #666; margin-bottom: 12px;">Нажмите кнопку в начале строки, чтобы выбрать заявку из списка.</p>
+    <table>
+        <thead><tr><th></th><th>Дата</th><th>Заявка</th><th>Кол-во (шт)</th></tr></thead>
+        <tbody>
+        <?php foreach ($rows as $r): ?>
+            <tr data-date="<?= h($r['date']) ?>" data-old-order="<?= h($r['order']) ?>">
+                <td><button type="button" class="btn-change" title="Сменить заявку">…</button></td>
+                <td><?= h($r['date']) ?></td>
+                <td class="order-cell"><?= h($r['order']) ?></td>
+                <td><?= (int)$r['total'] ?></td>
+            </tr>
+        <?php endforeach; ?>
+        <?php if (empty($rows)): ?>
+            <tr><td colspan="4">Нет данных</td></tr>
+        <?php endif; ?>
+        </tbody>
+    </table>
+    <div id="orderModal" class="modal-overlay">
+        <div class="modal">
+            <h3>Выберите заявку</h3>
+            <ul class="modal-list" id="orderModalList"></ul>
+            <button type="button" class="modal-close" id="orderModalClose">Закрыть</button>
+        </div>
+    </div>
+    <script>
+        (function() {
+            var filterName = <?= json_encode($filterName) ?>;
+            var orderList = <?= json_encode($orderList) ?>;
+            var modal = document.getElementById('orderModal');
+            var listEl = document.getElementById('orderModalList');
+            var closeBtn = document.getElementById('orderModalClose');
+            var currentRow = null;
+
+            function openModal(row) {
+                currentRow = row;
+                listEl.innerHTML = orderList.map(function(ord) {
+                    return '<li data-order="' + (ord || '').replace(/"/g, '&quot;') + '">' + (ord || '—') + '</li>';
+                }).join('');
+                listEl.querySelectorAll('li').forEach(function(li) {
+                    li.addEventListener('click', function() {
+                        var newOrder = this.getAttribute('data-order') || '';
+                        var date = currentRow.getAttribute('data-date');
+                        var oldOrder = currentRow.getAttribute('data-old-order');
+                        if (newOrder === oldOrder) { modal.classList.remove('visible'); return; }
+                        var form = new FormData();
+                        form.append('filter', filterName);
+                        form.append('date', date);
+                        form.append('old_order', oldOrder);
+                        form.append('new_order', newOrder);
+                        fetch('NP_print_build_plan_2.php?action=filter_release_update', { method: 'POST', body: form })
+                            .then(function(r) { return r.json(); })
+                            .then(function(data) {
+                                if (data.ok) {
+                                    currentRow.setAttribute('data-old-order', newOrder);
+                                    currentRow.querySelector('.order-cell').textContent = newOrder;
+                                }
+                                modal.classList.remove('visible');
+                            });
+                    });
+                });
+                modal.classList.add('visible');
+            }
+            closeBtn.addEventListener('click', function() { modal.classList.remove('visible'); });
+            modal.addEventListener('click', function(e) { if (e.target === modal) modal.classList.remove('visible'); });
+
+            document.querySelectorAll('.btn-change').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var row = this.closest('tr');
+                    if (row && row.getAttribute('data-date')) openModal(row);
+                });
+            });
+        })();
+    </script>
+</body>
+</html>
+<?php
+    exit;
+}
+
 // Берём список заявок для селектора
 $activeOrders = [];
 try {
@@ -283,17 +515,54 @@ try {
             border-color: #2563eb;
             box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
         }
+        .page-load-progress {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: #e5e7eb;
+            z-index: 9999;
+            overflow: hidden;
+        }
+        .page-load-progress::after {
+            content: '';
+            display: block;
+            height: 100%;
+            width: 0;
+            background: #2563eb;
+            animation: pageLoadProgress 1.2s ease-in-out forwards;
+        }
+        .page-load-progress.done::after {
+            width: 100% !important;
+            transition: width 0.15s ease-out;
+        }
+        .page-load-progress.hide {
+            opacity: 0;
+            transition: opacity 0.25s ease-out;
+            pointer-events: none;
+        }
+        @keyframes pageLoadProgress {
+            0% { width: 0; }
+            20% { width: 25%; }
+            50% { width: 60%; }
+            80% { width: 85%; }
+            100% { width: 92%; }
+        }
         @media print {
+            .page-load-progress { display: none !important; }
             body { background: white; padding-top: 0; }
             .no-print { display: none !important; }
-            .brigade-section { page-break-inside: avoid; page-break-after: always; }
-            .brigade-section:last-child { page-break-after: auto; }
+            .brigade-section { page-break-inside: avoid; }
             .day-column { page-break-inside: avoid; break-inside: avoid; }
+            .day-column.print-page-break { page-break-after: always; }
+            .day-column.print-page-break:last-child { page-break-after: auto; }
             .item.item-highlighted { outline: none !important; box-shadow: none !important; }
         }
     </style>
 </head>
 <body>
+    <div class="page-load-progress no-print" id="pageLoadProgress" aria-hidden="true"></div>
     <div class="no-print">
         <div style="display:flex; justify-content:center; align-items:center; gap:12px;">
             <label for="orderSelect" style="font-size: 13px; font-weight: 500;">Заявка:</label>
@@ -308,11 +577,151 @@ try {
                 <input type="checkbox" id="showFact" <?= $showFact ? 'checked' : '' ?> onchange="toggleFact(this.checked)">
                 Факт выполнения
             </label>
-            <button class="btn" onclick="window.print()">Печать</button>
+            <button class="btn btn-help" id="btnHelp" type="button" title="Выпуск по фильтру за всё время">?</button>
         </div>
     </div>
 
+    <!-- Плавающая панель: ассортимент фильтров и выгрузка выпуска -->
+    <div id="filterReleasePanel" class="filter-release-panel no-print" style="display: none;">
+        <div class="filter-release-panel-header">
+            <span>Выпуск по фильтру за всё время</span>
+            <button type="button" class="filter-release-close" id="filterReleaseClose" aria-label="Закрыть">&times;</button>
+        </div>
+        <div class="filter-release-panel-body">
+            <label class="filter-release-label">Найти фильтр:</label>
+            <input type="text" id="filterReleaseSearch" class="filter-release-search" placeholder="Введите название..." autocomplete="off">
+            <div class="filter-release-list-wrap">
+                <ul id="filterReleaseList" class="filter-release-list"></ul>
+            </div>
+            <div id="filterReleaseResults" class="filter-release-results" style="display: none;">
+                <div class="filter-release-results-head">
+                    <strong id="filterReleaseResultsTitle"></strong>
+                </div>
+                <div class="filter-release-table-wrap">
+                    <table class="filter-release-table">
+                        <thead><tr><th>Дата</th><th>Заявка</th><th>Кол-во</th></tr></thead>
+                        <tbody id="filterReleaseTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <p class="filter-release-hint" id="filterReleaseHint">Выберите позицию — выпуск за всё время отобразится ниже.</p>
+        </div>
+    </div>
+    <div id="filterReleaseOverlay" class="filter-release-overlay no-print" style="display: none;"></div>
+
+    <style>
+        .btn-help {
+            min-width: 36px;
+            padding: 8px 12px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+        .filter-release-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.3);
+            z-index: 1998;
+        }
+        .filter-release-panel {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%;
+            max-width: 420px;
+            max-height: 80vh;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+            z-index: 1999;
+            display: flex;
+            flex-direction: column;
+        }
+        .filter-release-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid #e5e7eb;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .filter-release-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            line-height: 1;
+            cursor: pointer;
+            color: #6b7280;
+            padding: 0 4px;
+        }
+        .filter-release-close:hover { color: #111; }
+        .filter-release-panel-body { padding: 16px; overflow: hidden; display: flex; flex-direction: column; }
+        .filter-release-label { display: block; font-size: 12px; margin-bottom: 6px; color: #374151; }
+        .filter-release-search {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        .filter-release-search:focus {
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+        .filter-release-list-wrap {
+            flex: 1;
+            min-height: 120px;
+            max-height: 280px;
+            overflow-y: auto;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            display: none;
+            background: #fff;
+        }
+        .filter-release-list-wrap.visible {
+            display: block;
+        }
+        .filter-release-list {
+            list-style: none;
+            margin: 0;
+            padding: 4px;
+        }
+        .filter-release-list li {
+            padding: 10px 12px;
+            cursor: pointer;
+            font-size: 13px;
+            border-radius: 6px;
+        }
+        .filter-release-list li:hover { background: #eff6ff; }
+        .filter-release-list li.selected { background: #dbeafe; font-weight: 500; }
+        .filter-release-hint { font-size: 11px; color: #6b7280; margin: 0; }
+        .filter-release-results { margin-top: 12px; border-top: 1px solid #e5e7eb; padding-top: 10px; }
+        .filter-release-results-head { font-size: 13px; margin-bottom: 8px; color: #374151; }
+        .filter-release-table-wrap { max-height: 220px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px; }
+        .filter-release-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .filter-release-table th, .filter-release-table td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #eee; }
+        .filter-release-table th { background: #f3f4f6; font-weight: 600; }
+        .filter-release-table tbody tr:last-child td { border-bottom: none; }
+    </style>
+
     <script>
+        (function() {
+            var bar = document.getElementById('pageLoadProgress');
+            function finishProgress() {
+                if (!bar) return;
+                bar.classList.add('done');
+                setTimeout(function() {
+                    bar.classList.add('hide');
+                    setTimeout(function() { bar.style.display = 'none'; }, 280);
+                }, 120);
+            }
+            if (document.readyState === 'complete') finishProgress();
+            else window.addEventListener('load', finishProgress);
+        })();
         function changeOrder(orderNumber) {
             if (orderNumber) {
                 const fact = document.getElementById('showFact')?.checked ? '1' : '';
@@ -347,24 +756,144 @@ try {
             });
         });
         <?php endif; ?>
+
+        (function() {
+            var panel = document.getElementById('filterReleasePanel');
+            var overlay = document.getElementById('filterReleaseOverlay');
+            var btnHelp = document.getElementById('btnHelp');
+            var closeBtn = document.getElementById('filterReleaseClose');
+            var searchInput = document.getElementById('filterReleaseSearch');
+            var listEl = document.getElementById('filterReleaseList');
+            var listWrap = document.querySelector('.filter-release-list-wrap');
+            var resultsBlock = document.getElementById('filterReleaseResults');
+            var resultsTitle = document.getElementById('filterReleaseResultsTitle');
+            var tableBody = document.getElementById('filterReleaseTableBody');
+            var hintEl = document.getElementById('filterReleaseHint');
+            var allFilters = [];
+
+            function openPanel() {
+                panel.style.display = 'flex';
+                overlay.style.display = 'block';
+                searchInput.value = '';
+                hideResults();
+                if (listWrap) listWrap.classList.remove('visible');
+                if (allFilters.length === 0) loadFilters();
+                else renderList(allFilters);
+                searchInput.focus();
+            }
+            function hideResults() {
+                if (resultsBlock) resultsBlock.style.display = 'none';
+                if (hintEl) hintEl.style.display = '';
+            }
+            function showResults(filterName, rows) {
+                if (!resultsBlock || !resultsTitle || !tableBody) return;
+                resultsTitle.textContent = 'Выпуск: ' + (filterName || '—');
+                tableBody.innerHTML = '';
+                if (rows && rows.length) {
+                    rows.forEach(function(r) {
+                        var tr = document.createElement('tr');
+                        tr.innerHTML = '<td>' + (r.date || '') + '</td><td>' + (r.order || '') + '</td><td>' + (r.total || 0) + ' шт</td>';
+                        tableBody.appendChild(tr);
+                    });
+                } else {
+                    tableBody.innerHTML = '<tr><td colspan="3" style="color:#6b7280;">Нет данных</td></tr>';
+                }
+                resultsBlock.style.display = 'block';
+                if (hintEl) hintEl.style.display = 'none';
+            }
+            function closePanel() {
+                panel.style.display = 'none';
+                overlay.style.display = 'none';
+            }
+            function loadFilters() {
+                listEl.innerHTML = '<li style="cursor:default; color:#6b7280;">Загрузка...</li>';
+                var path = (window.location.pathname || '').split('?')[0];
+                var url = (path || 'NP_print_build_plan_2.php') + '?action=get_filters';
+                fetch(url)
+                    .then(function(r) {
+                        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+                        return r.text();
+                    })
+                    .then(function(text) {
+                        var data;
+                        try { data = JSON.parse(text); } catch (e) { throw new Error('Ответ не JSON'); }
+                        if (data.error) throw new Error(data.error);
+                        allFilters = data.filters || [];
+                        // список покажем только при вводе текста
+                        renderList(allFilters);
+                    })
+                    .catch(function(err) {
+                        listEl.innerHTML = '<li style="cursor:default; color:#c00;">Ошибка загрузки списка: ' + (err && err.message ? err.message : '') + '</li>';
+                    });
+            }
+            function renderList(filters) {
+                if (filters.length === 0) {
+                    listEl.innerHTML = '<li style="cursor:default; color:#6b7280;">Нет совпадений</li>';
+                    return;
+                }
+                listEl.innerHTML = filters.map(function(name) {
+                    var s = (name != null && name !== '') ? String(name) : '—';
+                    return '<li data-filter="' + s.replace(/"/g, '&quot;') + '">' + s + '</li>';
+                }).join('');
+                listEl.querySelectorAll('li[data-filter]').forEach(function(li) {
+                    li.addEventListener('click', function() {
+                        var filter = this.getAttribute('data-filter');
+                        if (!filter || filter === '—') return;
+                        listEl.querySelectorAll('li').forEach(function(l) { l.classList.remove('selected'); });
+                        this.classList.add('selected');
+                        var path = (window.location.pathname || '').split('?')[0];
+                        var url = (path || 'NP_print_build_plan_2.php') + '?action=filter_release&filter=' + encodeURIComponent(filter);
+                        window.open(url, '_blank');
+                        closePanel();
+                    });
+                });
+            }
+            function filterList() {
+                var q = (searchInput.value || '').trim().toLowerCase();
+                if (q === '') {
+                    if (listWrap) listWrap.classList.remove('visible');
+                    return;
+                }
+                var filtered = allFilters.filter(function(name) {
+                    var s = (name != null) ? String(name) : '';
+                    return s.toLowerCase().indexOf(q) !== -1;
+                });
+                renderList(filtered);
+                if (listWrap) listWrap.classList.add('visible');
+            }
+
+            if (btnHelp) btnHelp.addEventListener('click', openPanel);
+            if (closeBtn) closeBtn.addEventListener('click', closePanel);
+            if (overlay) overlay.addEventListener('click', closePanel);
+            if (searchInput) {
+                searchInput.addEventListener('input', filterList);
+                searchInput.addEventListener('keyup', function(e) {
+                    if (e.key === 'Escape') closePanel();
+                    if (!searchInput.value && listWrap) listWrap.classList.remove('visible');
+                });
+            }
+        })();
     </script>
 
     <?php if (empty($planByDate)): ?>
         <div style="text-align: center; padding: 40px; color: #999;">
             Нет данных для отображения
         </div>
-    <?php else: ?>
+    <?php else:
+        $daysPerPrintPage = 7;
+        $dayIndex = 0;
+    ?>
         <div class="scroll-wrapper">
         <div class="page-container">
             <div class="brigade-section" id="daysOnly">
                 <div class="brigade-header">План сборки • Заявка: <?= h($order) ?><?= $showFact ? ' • Факт' : '' ?></div>
                 <div class="days-grid" style="grid-template-columns: repeat(<?= max(1, count($datesSorted)) ?>, 110px);">
-                    <?php foreach ($planByDate as $date => $items): ?>
-                        <?php
-                            $keys = array_keys($items);
-                            sort($keys, SORT_NATURAL | SORT_FLAG_CASE);
-                        ?>
-                        <div class="day-column">
+                    <?php foreach ($planByDate as $date => $items):
+                        $dayIndex++;
+                        $keys = array_keys($items);
+                        sort($keys, SORT_NATURAL | SORT_FLAG_CASE);
+                    ?>
+                        <div class="day-column<?= ($dayIndex % $daysPerPrintPage === 0 && $dayIndex < count($datesSorted)) ? ' print-page-break' : '' ?>">
                             <div class="day-header">
                                 <?= date('d.m.Y', strtotime($date)) ?><br>
                                 <?= ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'][date('w', strtotime($date))] ?>

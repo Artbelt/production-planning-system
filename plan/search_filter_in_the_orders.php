@@ -1,11 +1,16 @@
 <?php
 /** СТраница отображает заявки в которых присутствует запрашиваемый фильтр */
 
-/** ПОдключаем функции */
+/** Подключаем функции */
 require_once('settings.php') ;
 require_once ('tools/tools.php');
 
-$filter = $_POST['filter'];
+$filter = isset($_POST['filter']) ? trim((string)$_POST['filter']) : '';
+if ($filter === '') {
+    header('HTTP/1.1 400 Bad Request');
+    echo '<div class="alert">Не указан фильтр для поиска.</div>';
+    exit;
+}
 
 // Добавляем стили для результатов поиска
 echo '<style>
@@ -113,6 +118,9 @@ $stmt = $pdo->prepare("SELECT order_number FROM orders WHERE filter = ?");
 $stmt->execute([$filter]);
 $ordersRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+/** Запрос количества заказанных фильтров по заявке (один раз подготавливаем) */
+$stmtCount = $pdo->prepare("SELECT count FROM orders WHERE order_number = ? AND filter = ?");
+
 /** Разбор массива значений  */
 echo '<form action="show_order.php" method="post">';
 
@@ -131,13 +139,13 @@ foreach ($ordersRows as $orders_data) {
     // показываем по умолчанию только за последний год
     $is_recent = ($yy_from_order !== null) && ($yy_from_order === $yy_now || $yy_from_order === $yy_prev);
     
-    /** Выполняем запрос о количестве заказанных фильтров */
-    $sql_count = "SELECT count FROM orders WHERE order_number='".$order_number."' AND filter ='".$filter."';";
-    if (!$result_count = $mysqli->query($sql_count)){ 
-        echo '<div class="alert">Ошибка запроса количества: ' . $mysqli->error . '</div>'; 
-        continue; 
+    /** Выполняем запрос о количестве заказанных фильтров через PDO */
+    $stmtCount->execute([$order_number, $filter]);
+    $show_count = $stmtCount->fetch(PDO::FETCH_ASSOC);
+    if ($show_count === false) {
+        echo '<div class="alert">Ошибка запроса количества</div>';
+        continue;
     }
-    $show_count = $result_count->fetch_assoc();
     $ordered_count = $show_count['count'];
     $produced_count = (int)select_produced_filters_by_order($filter, $order_number)[1];
     
@@ -169,11 +177,6 @@ if ($hidden_count > 0) {
         .'</div>';
 }
 echo '</div>';
-
-/** Закрываем соединение */
-$result->close();
-$mysqli->close();
-
 
 // Примечание: обработчик клика навешивается в main.php после вставки HTML
 

@@ -3,7 +3,13 @@ require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/../auth/includes/db.php';
 
 $order = (string)($_GET['order'] ?? $_POST['order'] ?? '');
+$isAjaxSave = ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'save') && !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest');
 if ($order === '') {
+    if ($isAjaxSave) {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['ok' => false, 'message' => 'Укажите номер заявки']);
+        exit;
+    }
     http_response_code(400);
     exit('Укажите номер заявки: ?order=...');
 }
@@ -60,68 +66,86 @@ try {
 
     // Сохранение плана
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_POST['action'] ?? '') === 'save')) {
-        $planDates = $_POST['plan_dates'] ?? [];
-        if (!is_array($planDates)) {
-            $planDates = [];
-        }
-
-        $pdo->beginTransaction();
-
-        // Выполненные бухты не перезаписываем
-        $doneRows = [];
-        if ($hasDoneColumn) {
-            $stDone = $pdo->prepare("SELECT bale_id, work_date FROM roll_plans WHERE order_number = ? AND done = 1");
-            $stDone->execute([$order]);
-            while ($row = $stDone->fetch(PDO::FETCH_ASSOC)) {
-                $doneRows[(int)$row['bale_id']] = $row['work_date'];
-            }
-        }
-
-        // Удаляем только незавершенные назначения и записываем заново
-        if ($hasDoneColumn) {
-            $pdo->prepare("DELETE FROM roll_plans WHERE order_number = ? AND (done IS NULL OR done = 0)")->execute([$order]);
-            $ins = $pdo->prepare("
-                INSERT INTO roll_plans (order_number, bale_id, work_date, done)
-                VALUES (?, ?, ?, 0)
-            ");
-        } else {
-            $pdo->prepare("DELETE FROM roll_plans WHERE order_number = ?")->execute([$order]);
-            $ins = $pdo->prepare("
-                INSERT INTO roll_plans (order_number, bale_id, work_date)
-                VALUES (?, ?, ?)
-            ");
-        }
-
-        foreach ($planDates as $baleIdRaw => $dateRaw) {
-            $baleId = (int)$baleIdRaw;
-            $date = trim((string)$dateRaw);
-
-            if ($baleId <= 0 || $date === '' || isset($doneRows[$baleId])) {
-                continue;
-            }
-
-            $dt = DateTime::createFromFormat('Y-m-d', $date);
-            if (!$dt || $dt->format('Y-m-d') !== $date) {
-                continue;
-            }
-
-            $ins->execute([$order, $baleId, $date]);
-        }
-
-        // Признак готовности этапа "План порезки бухт"
-        $stCnt = $pdo->prepare("SELECT COUNT(*) FROM roll_plans WHERE order_number = ?");
-        $stCnt->execute([$order]);
-        $plannedCount = (int)$stCnt->fetchColumn();
-
         try {
-            $stUpd = $pdo->prepare("UPDATE orders SET plan_ready = ? WHERE order_number = ?");
-            $stUpd->execute([$plannedCount > 0 ? 1 : 0, $order]);
-        } catch (Throwable $e) {
-            // Если поля нет, не блокируем сохранение плана
-        }
+            $planDates = $_POST['plan_dates'] ?? [];
+            if (!is_array($planDates)) {
+                $planDates = [];
+            }
 
-        $pdo->commit();
-        $message = 'План порезки бухт сохранен.';
+            $pdo->beginTransaction();
+
+            // Выполненные бухты не перезаписываем
+            $doneRows = [];
+            if ($hasDoneColumn) {
+                $stDone = $pdo->prepare("SELECT bale_id, work_date FROM roll_plans WHERE order_number = ? AND done = 1");
+                $stDone->execute([$order]);
+                while ($row = $stDone->fetch(PDO::FETCH_ASSOC)) {
+                    $doneRows[(int)$row['bale_id']] = $row['work_date'];
+                }
+            }
+
+            // Удаляем только незавершенные назначения и записываем заново
+            if ($hasDoneColumn) {
+                $pdo->prepare("DELETE FROM roll_plans WHERE order_number = ? AND (done IS NULL OR done = 0)")->execute([$order]);
+                $ins = $pdo->prepare("
+                    INSERT INTO roll_plans (order_number, bale_id, work_date, done)
+                    VALUES (?, ?, ?, 0)
+                ");
+            } else {
+                $pdo->prepare("DELETE FROM roll_plans WHERE order_number = ?")->execute([$order]);
+                $ins = $pdo->prepare("
+                    INSERT INTO roll_plans (order_number, bale_id, work_date)
+                    VALUES (?, ?, ?)
+                ");
+            }
+
+            foreach ($planDates as $baleIdRaw => $dateRaw) {
+                $baleId = (int)$baleIdRaw;
+                $date = trim((string)$dateRaw);
+
+                if ($baleId <= 0 || $date === '' || isset($doneRows[$baleId])) {
+                    continue;
+                }
+
+                $dt = DateTime::createFromFormat('Y-m-d', $date);
+                if (!$dt || $dt->format('Y-m-d') !== $date) {
+                    continue;
+                }
+
+                $ins->execute([$order, $baleId, $date]);
+            }
+
+            // Признак готовности этапа "План порезки бухт"
+            $stCnt = $pdo->prepare("SELECT COUNT(*) FROM roll_plans WHERE order_number = ?");
+            $stCnt->execute([$order]);
+            $plannedCount = (int)$stCnt->fetchColumn();
+
+            try {
+                $stUpd = $pdo->prepare("UPDATE orders SET plan_ready = ? WHERE order_number = ?");
+                $stUpd->execute([$plannedCount > 0 ? 1 : 0, $order]);
+            } catch (Throwable $e) {
+                // Если поля нет, не блокируем сохранение плана
+            }
+
+            $pdo->commit();
+            $message = 'План порезки бухт сохранен.';
+
+            if ($isAjaxSave) {
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['ok' => true, 'message' => $message]);
+                exit;
+            }
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            if ($isAjaxSave) {
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['ok' => false, 'message' => 'Ошибка сохранения: ' . $e->getMessage()]);
+                exit;
+            }
+            throw $e;
+        }
     }
 
     // План сборки (верхняя таблица)
@@ -208,6 +232,7 @@ try {
     }
 
     $baleSupplyMap = [];
+    $filtersBaleIds = [];
     foreach ($baleFilterLen as $baleId => $filters) {
         foreach ($filters as $fkey => $len) {
             $planTotal = (float)($buildTotalByFilter[$fkey] ?? 0);
@@ -220,6 +245,11 @@ try {
                 $baleSupplyMap[$baleId] = [];
             }
             $baleSupplyMap[$baleId][$fkey] = $qtyShare;
+
+            if (!isset($filtersBaleIds[$fkey])) {
+                $filtersBaleIds[$fkey] = [];
+            }
+            $filtersBaleIds[$fkey][] = $baleId;
         }
     }
 
@@ -238,6 +268,12 @@ try {
         ];
         if (!empty($r['work_date'])) {
             $buildDatesMap[(string)$r['work_date']] = true;
+        }
+    }
+    $plannedBaleIds = [];
+    foreach ($rollMap as $bid => $info) {
+        if (!empty($info['work_date'])) {
+            $plannedBaleIds[$bid] = true;
         }
     }
 
@@ -268,7 +304,21 @@ try {
         $columnDates[] = (clone $startDateObj)->modify('+' . $i . ' day')->format('Y-m-d');
     }
 
+    // Количество бухт в порезку на день (по сохранённому плану)
+    $balesPerDate = array_fill_keys($columnDates, 0);
+    foreach ($rollMap as $info) {
+        $wd = $info['work_date'] ?? '';
+        if ($wd !== '' && isset($balesPerDate[$wd])) {
+            $balesPerDate[$wd]++;
+        }
+    }
+
 } catch (Throwable $e) {
+    if (!empty($isAjaxSave)) {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['ok' => false, 'message' => 'Ошибка БД: ' . $e->getMessage()]);
+        exit;
+    }
     http_response_code(500);
     exit('Ошибка БД: ' . htmlspecialchars($e->getMessage()));
 }
@@ -281,8 +331,17 @@ try {
     <title>План порезки бухт — <?= htmlspecialchars($order) ?></title>
     <style>
         body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f6f8fb; color: #1f2937; }
-        .container { max-width: 1200px; margin: 0 auto; }
+        .container { width: 100%; max-width: none; margin: 0; padding: 0; box-sizing: border-box; }
         .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+        .top-panel {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: nowrap;
+        }
+        .top-panel .title { margin: 0; font-size: 20px; font-weight: 700; }
+        .top-panel .meta { margin: 0; color: #4b5563; font-size: 14px; }
+        .top-panel .actions { margin: 0; margin-left: auto; }
         h1, h2 { margin: 0 0 12px; }
         h1 { font-size: 24px; }
         h2 { font-size: 18px; }
@@ -314,7 +373,13 @@ try {
             background: #2563eb; color: #fff; text-decoration: none; cursor: pointer; font-size: 14px;
         }
         .btn.secondary { background: #6b7280; }
-        .message { padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; background: #dcfce7; color: #166534; }
+        .message {
+            padding: 10px 12px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            background: #dcfce7;
+            color: #166534;
+        }
         .table-scroll {
             width: 100%;
             overflow-x: auto;
@@ -324,8 +389,17 @@ try {
             background: #fff;
         }
         .table-scroll-vertical {
-            height: 40vh;
+            height: 30vh;
             overflow-y: auto;
+        }
+        .table-scroll-vertical table thead {
+            position: sticky;
+            top: 0;
+            z-index: 4;
+            background: #f3f4f6;
+        }
+        .table-scroll-vertical table thead th {
+            background: #f3f4f6;
         }
         table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; }
         th, td { border: 1px solid #e5e7eb; padding: 4px 6px; text-align: left; vertical-align: top; }
@@ -335,10 +409,10 @@ try {
             transform: rotate(180deg);
             text-align: center;
             white-space: nowrap;
-            min-width: 42px;
-            width: 42px;
-            height: 140px;
-            padding: 6px 4px;
+            min-width: 2.5ch;
+            width: 2.5ch;
+            height: 10ch;
+            padding: 4px 2px;
             vertical-align: middle;
         }
         .date-label {
@@ -351,10 +425,19 @@ try {
         .center { text-align: center; }
         .small { font-size: 12px; color: #6b7280; }
         .zero { color: #9ca3af; }
+        .bale-num {
+            padding: 0 2px;
+            border-radius: 2px;
+        }
+        .bale-num.planned {
+            background: #fef08a;
+            font-weight: 600;
+        }
         .supply-cell {
             position: relative;
             overflow: hidden;
-            min-width: 46px;
+            min-width: 3ch;
+            width: 3ch;
             text-align: center;
             --cov-fill: 0;
         }
@@ -370,6 +453,9 @@ try {
         }
         .supply-cell .plan-val { position: relative; z-index: 1; font-weight: 600; line-height: 1.1; }
         .supply-cell .cov-val { display: none; }
+        .build-plan-table tbody tr:hover td {
+            background: #eff6ff;
+        }
         .matrix-table .sticky-left {
             position: sticky;
             left: 0;
@@ -381,9 +467,28 @@ try {
             background: #f3f4f6;
             z-index: 3;
         }
+        .matrix-table tbody tr.bale-assigned > td.sticky-left {
+            background: #e5e7eb;
+            opacity: 0.85;
+        }
+        #balesPlanTable tbody tr:hover td {
+            background: #eff6ff;
+        }
+        #balesPlanTable tbody tr {
+            line-height: 1.2;
+        }
+        #balesPlanTable tbody td.sticky-left.bale-name-cell {
+            padding: 2px 6px;
+            font-size: 11px;
+            line-height: 1.25;
+        }
+        #balesPlanTable tbody td.sticky-left.bale-name-cell .badge {
+            font-size: 10px;
+            padding: 1px 5px;
+        }
         .plan-cell {
-            min-width: 28px;
-            width: 28px;
+            min-width: 2.5ch;
+            width: 2.5ch;
             cursor: pointer;
             background: #fff;
             transition: background-color .15s ease;
@@ -402,37 +507,78 @@ try {
             color: #065f46;
         }
         #balesPlanTable th.date-header {
-            min-width: 28px;
-            width: 28px;
-            height: 120px;
+            min-width: 2.5ch;
+            width: 2.5ch;
+            height: 10ch;
             padding: 4px 2px;
             font-size: 11px;
+        }
+        th.date-header.weekend,
+        .bales-per-day-row th.count-cell.weekend {
+            background: #e5e7eb;
         }
         .badge {
             display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px;
             background: #d1fae5; color: #065f46;
+        }
+        .bales-per-day-row th {
+            font-weight: 600;
+            font-size: 11px;
+            padding: 1px 4px;
+            line-height: 1;
+            vertical-align: middle;
+        }
+        .bales-per-day-row .count-cell {
+            writing-mode: horizontal-tb;
+            transform: none;
+            height: 1.2em;
+            min-height: 0;
+            min-width: 2.5ch;
+            width: 2.5ch;
+        }
+        .toast {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            max-width: 320px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            background: #2563eb;
+            color: #f9fafb;
+            box-shadow: 0 10px 25px rgba(15, 23, 42, 0.35);
+            font-size: 13px;
+            line-height: 1.3;
+            opacity: 0;
+            transform: translateY(8px);
+            pointer-events: none;
+            transition: opacity 0.25s ease, transform 0.25s ease;
+            z-index: 50;
+        }
+        .toast--visible {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
         }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="card">
-        <h1>План порезки бухт</h1>
-        <div class="meta">Заявка: <b><?= htmlspecialchars($order) ?></b></div>
-        <div class="actions">
-            <a class="btn secondary" href="NP_cut_index.php">Назад к этапам</a>
-            <form method="get" class="date-form">
-                <input type="hidden" name="order" value="<?= htmlspecialchars($order) ?>">
-                <label>
-                    Дата начала планирования
-                    <input type="date" name="start_date" value="<?= htmlspecialchars($startDate) ?>">
-                </label>
-                <button type="submit" class="btn">Показать</button>
-            </form>
+        <div class="top-panel">
+            <h1 class="title">План порезки бухт</h1>
+            <span class="meta">Заявка: <b><?= htmlspecialchars($order) ?></b></span>
+            <div class="actions">
+                <a class="btn secondary" href="NP_cut_index.php">Назад к этапам</a>
+                <form method="get" class="date-form">
+                    <input type="hidden" name="order" value="<?= htmlspecialchars($order) ?>">
+                    <label>
+                        Дата начала планирования
+                        <input type="date" name="start_date" value="<?= htmlspecialchars($startDate) ?>">
+                    </label>
+                    <button type="submit" class="btn">Показать</button>
+                </form>
+            </div>
         </div>
-        <?php if (!empty($message)): ?>
-            <div class="message"><?= htmlspecialchars($message) ?></div>
-        <?php endif; ?>
     </div>
 
     <div class="card">
@@ -441,20 +587,37 @@ try {
             <div class="small">План сборки не найден.</div>
         <?php else: ?>
             <div class="table-scroll table-scroll-vertical">
-                <table>
+                <table class="build-plan-table">
                     <thead>
                     <tr>
                         <th>Фильтр</th>
                         <?php foreach ($columnDates as $date): ?>
-                            <th class="date-header"><span class="date-label"><?= htmlspecialchars($date) ?></span></th>
+                            <?php $d = DateTime::createFromFormat('Y-m-d', $date); $w = $d ? (int)$d->format('w') : -1; $weekend = ($w === 0 || $w === 6); ?>
+                            <th class="date-header<?= $weekend ? ' weekend' : '' ?>"><span class="date-label"><?= htmlspecialchars($date) ?></span></th>
                         <?php endforeach; ?>
                     </tr>
                     </thead>
                     <tbody>
                     <?php foreach ($buildFilterKeys as $filterKey): ?>
-                        <?php $filterTitle = (string)$buildFiltersMap[$filterKey]; ?>
+                        <?php
+                        $filterTitle = (string)$buildFiltersMap[$filterKey];
+                        $baleIdsForFilter = array_unique($filtersBaleIds[$filterKey] ?? []);
+                        sort($baleIdsForFilter);
+                        ?>
                         <tr>
-                            <td><?= htmlspecialchars($filterTitle) ?></td>
+                            <td class="filter-cell">
+                                <?= htmlspecialchars($filterTitle) ?>
+                                <?php if (!empty($baleIdsForFilter)): ?>
+                                    (<?php
+                                    $parts = [];
+                                    foreach ($baleIdsForFilter as $bid) {
+                                        $planned = isset($plannedBaleIds[$bid]);
+                                        $parts[] = '<span class="bale-num' . ($planned ? ' planned' : '') . '" data-bale-id="' . (int)$bid . '">' . (int)$bid . '</span>';
+                                    }
+                                    echo implode(', ', $parts);
+                                    ?>)
+                                <?php endif; ?>
+                            </td>
                             <?php foreach ($columnDates as $date): ?>
                                 <?php $qty = (int)($buildMatrix[$filterKey][$date] ?? 0); ?>
                                 <td
@@ -479,7 +642,7 @@ try {
     <div class="card">
         <h2>Бухты по заявке</h2>
         <div class="small" style="margin-bottom:10px;">Клик по ячейке выбирает дату порезки для бухты. Повторный клик снимает выбор.</div>
-        <form method="post">
+        <form id="rollPlanForm" method="post">
             <input type="hidden" name="order" value="<?= htmlspecialchars($order) ?>">
             <input type="hidden" name="action" value="save">
             <input type="hidden" name="start_date" value="<?= htmlspecialchars($startDate) ?>">
@@ -493,7 +656,15 @@ try {
                         <tr>
                             <th class="sticky-left">Бухта</th>
                             <?php foreach ($columnDates as $date): ?>
-                                <th class="date-header"><span class="date-label"><?= htmlspecialchars($date) ?></span></th>
+                                <?php $d = DateTime::createFromFormat('Y-m-d', $date); $w = $d ? (int)$d->format('w') : -1; $weekend = ($w === 0 || $w === 6); ?>
+                                <th class="date-header<?= $weekend ? ' weekend' : '' ?>"><span class="date-label"><?= htmlspecialchars($date) ?></span></th>
+                            <?php endforeach; ?>
+                        </tr>
+                        <tr class="bales-per-day-row">
+                            <th class="sticky-left">Бухт/день</th>
+                            <?php foreach ($columnDates as $date): ?>
+                                <?php $d = DateTime::createFromFormat('Y-m-d', $date); $w = $d ? (int)$d->format('w') : -1; $weekend = ($w === 0 || $w === 6); ?>
+                                <th class="date-header count-cell center<?= $weekend ? ' weekend' : '' ?>" data-date="<?= htmlspecialchars($date) ?>"><?= (int)($balesPerDate[$date] ?? 0) ?></th>
                             <?php endforeach; ?>
                         </tr>
                         </thead>
@@ -505,9 +676,8 @@ try {
                             $isDone = !empty($rollMap[$baleId]['done']);
                             ?>
                             <tr data-bale-id="<?= $baleId ?>" data-assigned-date="<?= htmlspecialchars((string)$assigned) ?>" data-done="<?= $isDone ? '1' : '0' ?>">
-                                <td class="sticky-left">
+                                <td class="sticky-left bale-name-cell" title="<?= htmlspecialchars((string)$bale['filters']) ?>">
                                     <b>Бухта <?= $baleId ?></b>
-                                    <div class="small"><?= htmlspecialchars((string)$bale['filters']) ?></div>
                                     <?php if ($isDone): ?><span class="badge">Выполнено</span><?php endif; ?>
                                 </td>
                                 <?php foreach ($columnDates as $date): ?>
@@ -540,12 +710,101 @@ try {
     </div>
 
 </div>
+<div id="rollPlanToast" class="toast"><?= !empty($message) ? htmlspecialchars($message) : '' ?></div>
 <script>
     (function () {
+        function showToast(text) {
+            var toast = document.getElementById('rollPlanToast');
+            if (!toast) return;
+            toast.textContent = text;
+            toast.classList.add('toast--visible');
+            setTimeout(function () {
+                toast.classList.remove('toast--visible');
+            }, 4000);
+        }
+
+        var initialMessage = document.getElementById('rollPlanToast').textContent.trim();
+        if (initialMessage) {
+            requestAnimationFrame(function () { showToast(initialMessage); });
+        }
+
+        var form = document.getElementById('rollPlanForm');
+        if (form) {
+            form.addEventListener('submit', function (e) {
+                e.preventDefault();
+                var btn = form.querySelector('button[type="submit"]');
+                if (btn) { btn.disabled = true; }
+                var fd = new FormData(form);
+                var url = form.getAttribute('action') || (window.location.pathname + window.location.search);
+                fetch(url, {
+                    method: 'POST',
+                    body: fd,
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                })
+                    .then(function (r) { return r.text(); })
+                    .then(function (text) {
+                        var data;
+                        try { data = JSON.parse(text); } catch (e) { data = null; }
+                        if (data && data.ok) {
+                            showToast(data.message || 'План порезки бухт сохранен.');
+                        } else {
+                            showToast((data && data.message) ? data.message : 'Ошибка сохранения.');
+                        }
+                    })
+                    .catch(function (err) {
+                        showToast('Ошибка сохранения.');
+                    })
+                    .finally(function () {
+                        if (btn) { btn.disabled = false; }
+                    });
+            });
+        }
+
         const table = document.getElementById('balesPlanTable');
         const hiddenWrap = document.getElementById('planHiddenInputs');
         const baleSupplyMap = <?= json_encode($baleSupplyMap, JSON_UNESCAPED_UNICODE) ?>;
         if (!table || !hiddenWrap) return;
+
+        function updatePlannedHighlights() {
+            const planned = {};
+            table.querySelectorAll('tbody tr').forEach((row) => {
+                const sel = row.querySelector('.plan-cell.selected');
+                if (sel) {
+                    const bid = row.getAttribute('data-bale-id');
+                    if (bid) planned[bid] = true;
+                }
+            });
+            document.querySelectorAll('.bale-num').forEach((span) => {
+                const bid = span.getAttribute('data-bale-id');
+                span.classList.toggle('planned', !!planned[bid]);
+            });
+        }
+
+        function updateBaleAssignedState() {
+            table.querySelectorAll('tbody tr').forEach((row) => {
+                const hasSelected = row.querySelector('.plan-cell.selected');
+                if (hasSelected) {
+                    row.classList.add('bale-assigned');
+                } else {
+                    row.classList.remove('bale-assigned');
+                }
+            });
+        }
+
+        function updateBalesPerDayRow() {
+            const countByDate = Object.create(null);
+            table.querySelectorAll('tbody tr').forEach((row) => {
+                const selected = row.querySelector('.plan-cell.selected');
+                if (!selected) return;
+                const date = selected.getAttribute('data-date');
+                if (!date) return;
+                countByDate[date] = (countByDate[date] || 0) + 1;
+            });
+            table.querySelectorAll('th.count-cell').forEach((th) => {
+                const date = th.getAttribute('data-date');
+                th.textContent = date ? (countByDate[date] || 0) : '';
+            });
+        }
 
         function rebuildHiddenInputs() {
             hiddenWrap.innerHTML = '';
@@ -647,10 +906,16 @@ try {
             }
 
             rebuildHiddenInputs();
+            updateBaleAssignedState();
+            updatePlannedHighlights();
+            updateBalesPerDayRow();
             updateCoverage();
         });
 
         rebuildHiddenInputs();
+        updateBaleAssignedState();
+        updatePlannedHighlights();
+        updateBalesPerDayRow();
         updateCoverage();
     })();
 </script>

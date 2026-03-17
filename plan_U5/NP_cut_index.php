@@ -921,10 +921,20 @@ try{
         
         try {
             const response = await fetch('NP/get_order_analysis.php?order=' + encodeURIComponent(order));
-            const data = await response.json();
+            let data;
+            try {
+                data = await response.json();
+            } catch (e) {
+                const text = await response.text();
+                console.error('NP/get_order_analysis.php вернул невалидный JSON:', e, text);
+                body.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626;"><p><strong>Ошибка загрузки данных:</strong><br>Сервер вернул некорректный ответ. Проверьте лог ошибок PHP.</p></div>';
+                return;
+            }
             
             if (!data.ok) {
-                body.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626;"><p>Ошибка загрузки данных</p></div>';
+                const msg = data.error ? String(data.error) : 'Неизвестная ошибка';
+                console.error('Ошибка анализа заявки:', msg);
+                body.innerHTML = '<div style="text-align:center;padding:40px;color:#dc2626;"><p><strong>Ошибка загрузки данных:</strong><br>' + msg + '</p></div>';
                 return;
             }
             
