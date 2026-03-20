@@ -312,7 +312,6 @@ $departments = [
         'orders' => '/plan_U5/archived_orders.php',
         'plan' => '/plan_U5/production_plans.php',
         'mobile' => '/plan_U5/mobile_build_plan.php',
-        'buffer' => '/plan_U5/buffer_stock.php',
     ],
 ];
 ?>

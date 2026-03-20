@@ -474,7 +474,6 @@ foreach ($userDepartments as $dept) {
 	<?php if ($userRole === 'assembler'): ?>
 		<?php if (in_array('U5', $availableDepartments)): ?>
 		<button class="btn plan" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);" onclick="window.open('/plan_U5/mobile_build_plan.php', '_blank')">Сводный план У5</button>
-		<button class="btn plan" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);" onclick="window.open('/plan_U5/buffer_stock.php', '_blank')">Буфер гофропакетов У5</button>
 		<?php endif; ?>
 	<?php endif; ?>
 	

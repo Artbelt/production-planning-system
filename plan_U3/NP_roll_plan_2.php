@@ -252,6 +252,27 @@ try {
         }
     }
 
+    // "Высота бумаги" для гофрирования по дням (на основе фильтров, у которых есть план гофрирования в этот день)
+    $corrPaperHeightsPerDate = array_fill_keys($columnDates, ['text' => '', 'title' => '']);
+    foreach ($columnDates as $d) {
+        $hs = [];
+        foreach ($corrMatrix as $fk => $byDate) {
+            $q = (int)($byDate[$d] ?? 0);
+            if ($q <= 0) continue;
+            foreach (($filterHeights[$fk] ?? []) as $h) {
+                $h = trim((string)$h);
+                if ($h !== '') $hs[$h] = true;
+            }
+        }
+        $list = array_keys($hs);
+        if (!empty($list)) {
+            sort($list, SORT_NUMERIC);
+            $title = implode(', ', $list);
+            $text = implode("\n", $list);
+            $corrPaperHeightsPerDate[$d] = ['text' => $text, 'title' => $title];
+        }
+    }
+
     // Сортируем фильтры по отображаемому имени
     $filterKeys = array_keys($allFiltersMap);
     asort($allFiltersMap, SORT_NATURAL | SORT_FLAG_CASE);
@@ -415,14 +436,25 @@ try {
         .row-corr { }
         th.date-header.weekend { background: #e5e7eb; }
         td.weekend { background: #f9fafb; }
-        /* подсветка блока из 3 строк при наведении */
+        /* подсветка блока из 3 строк при наведении — единая синяя гамма */
         .block-hover.row-build,
         .block-hover.row-build td.sticky-left,
         .block-hover.row-cut,
         .block-hover.row-cut td.sticky-left,
         .block-hover.row-corr,
         .block-hover.row-corr td.sticky-left {
-            background: #e5e7eb !important;
+            background: #e8eeff !important;
+        }
+
+        /* подсветка столбца при наведении */
+        td.col-hover,
+        th.col-hover {
+            background-color: #e0ecff !important;
+        }
+        /* пересечение строки и столбца — более насыщенный синий */
+        .block-hover td.col-hover,
+        .block-hover th.col-hover {
+            background-color: #bfdbfe !important;
         }
 
         /* Правая панель: бухты и таблица дата/набор бухт */
@@ -475,6 +507,16 @@ try {
         }
         .date-bales-table .bales-cell .bale-chip:hover { opacity: 0.9; }
         .date-bales-table .bales-cell .bale-chip.dragging { opacity: 0.5; }
+        th.header-paper-height {
+            background: #eef2ff;
+            vertical-align: top;
+        }
+        th.header-paper-height > span {
+            display: block;
+            white-space: pre-line;
+            line-height: 1.1;
+            min-height: 24px;
+        }
     </style>
 </head>
 <body>
@@ -516,6 +558,19 @@ try {
             <div class="table-scroll table-scroll-vertical">
                 <table id="planTable">
                     <thead>
+                    <tr class="paper-height-row">
+                        <th class="sticky-left stage-col" colspan="2">высота бумаги</th>
+                        <?php foreach ($columnDates as $date): ?>
+                            <?php
+                            $ph = $corrPaperHeightsPerDate[$date] ?? ['text' => '', 'title' => ''];
+                            $txt = (string)($ph['text'] ?? '');
+                            $ttl = (string)($ph['title'] ?? '');
+                            ?>
+                            <th class="header-paper-height" data-date="<?= htmlspecialchars($date) ?>" title="<?= htmlspecialchars($ttl) ?>">
+                                <span style="font-size:10px;"><?= htmlspecialchars($txt) ?></span>
+                            </th>
+                        <?php endforeach; ?>
+                    </tr>
                     <tr>
                         <th class="sticky-left" rowspan="4">Фильтр</th>
                         <th class="sticky-left stage-col">Этап</th>
@@ -536,14 +591,14 @@ try {
                             $monthName = $ruMonths[$monthNum] ?? '';
                             $label = trim($day . ' ' . $monthName);
                             ?>
-                            <th class="date-header<?= $weekend ? ' weekend' : '' ?>"><span class="date-label"><?= htmlspecialchars($label) ?></span></th>
+                            <th class="date-header<?= $weekend ? ' weekend' : '' ?>" data-date="<?= htmlspecialchars($date) ?>"><span class="date-label"><?= htmlspecialchars($label) ?></span></th>
                         <?php endforeach; ?>
                     </tr>
                     <tr>
                         <th class="sticky-left stage-col">сборка</th>
                         <?php foreach ($columnDates as $date): ?>
                             <?php $bSum = (int)($buildPerDate[$date] ?? 0); ?>
-                            <th>
+                            <th data-date="<?= htmlspecialchars($date) ?>">
                                 <span style="font-size:10px;"><?= $bSum ?></span>
                             </th>
                         <?php endforeach; ?>
@@ -608,7 +663,7 @@ try {
                             </td>
                             <?php foreach ($columnDates as $date): ?>
                                 <?php $qty = (int)($buildMatrix[$filterKey][$date] ?? 0); $d = DateTime::createFromFormat('Y-m-d', $date); $w = $d ? (int)$d->format('w') : -1; $weekend = ($w === 0 || $w === 6); ?>
-                                <td class="center <?= $weekend ? 'weekend' : '' ?> <?= $qty === 0 ? 'zero' : '' ?>"><?= $qty !== 0 ? $qty : '' ?></td>
+                                <td class="center <?= $weekend ? 'weekend' : '' ?> <?= $qty === 0 ? 'zero' : '' ?>" data-date="<?= htmlspecialchars($date) ?>"><?= $qty !== 0 ? $qty : '' ?></td>
                             <?php endforeach; ?>
                         </tr>
                         <tr class="row-cut" data-block-index="<?= (int)$blockIndex ?>" data-filter-key="<?= htmlspecialchars($filterKey) ?>">
@@ -718,10 +773,28 @@ try {
         });
     }
 
+    function clearColHover() {
+        var tableRoot = table;
+        tableRoot.querySelectorAll('td.col-hover, th.col-hover').forEach(function (cell) {
+            cell.classList.remove('col-hover');
+        });
+    }
+
     tbody.addEventListener('mouseover', function (e) {
+        var cell = e.target.closest('td,th');
         var tr = e.target.closest('tr');
-        if (!tr || !tr.getAttribute('data-block-index')) return;
+        if (!tr || !tr.getAttribute('data-block-index') || !cell) return;
         highlightBlock(tr, true);
+
+        // подсветка столбца по data-date (одинаково для сборки, порезки, гофрирования и заголовков)
+        var date = cell.getAttribute('data-date');
+        if (!date) {
+            clearColHover();
+            return;
+        }
+        clearColHover();
+        var sel = 'td[data-date="' + date.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"], th[data-date="' + date.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]';
+        table.querySelectorAll(sel).forEach(function (c) { c.classList.add('col-hover'); });
     });
 
     tbody.addEventListener('mouseout', function (e) {
@@ -736,7 +809,10 @@ try {
                 if (r.contains(related)) stillInside = true;
             });
         }
-        if (!stillInside) highlightBlock(tr, false);
+        if (!stillInside) {
+            highlightBlock(tr, false);
+            clearColHover();
+        }
     });
 
     // Подсветка строк сборки по высоте шторы
@@ -986,12 +1062,18 @@ try {
             var date = th.getAttribute('data-date');
             if (!date) return;
             var sum = 0;
-            planTable.querySelectorAll('tr.row-corr td[data-date="' + date.replace(/"/g, '\\"') + '"]').forEach(function (td) {
+            var details = [];
+            planTable.querySelectorAll('tr.row-corr').forEach(function (row) {
+                var td = row.querySelector('td[data-date="' + date.replace(/"/g, '\\"') + '"]');
+                if (!td) return;
                 var v = td.textContent.trim();
-                if (v !== '') {
-                    var n = parseInt(v, 10);
-                    if (!isNaN(n)) sum += n;
-                }
+                if (v === '') return;
+                var n = parseInt(v, 10);
+                if (isNaN(n) || n <= 0) return;
+                sum += n;
+                var fkey = row.getAttribute('data-filter-key') || '';
+                var filterName = filterDisplayMap[fkey] || fkey || 'Позиция';
+                details.push(filterName + ': ' + String(n));
             });
             var span = th.querySelector('span');
             if (span) {
@@ -999,10 +1081,49 @@ try {
             } else {
                 th.textContent = String(sum);
             }
+            th.title = details.length ? details.join('\n') : 'Нет гофрирования в этот день';
         });
         // #region agent log
         fetch('http://127.0.0.1:7242/ingest/fec3737a-7de3-4e7b-bbe9-58f5d30241f0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3dc4b9'},body:JSON.stringify({sessionId:'3dc4b9',runId:'pre-fix',hypothesisId:'H3',location:'plan_U3/NP_roll_plan_2.php:updateCorrHeader',message:'corr header updated',data:{cells:headerCells.length},timestamp:Date.now()})}).catch(()=>{});
         // #endregion agent log
+    }
+
+    function updateCorrPaperHeightHeader() {
+        var planTable = document.getElementById('planTable');
+        if (!planTable) return;
+        var headerCells = planTable.querySelectorAll('thead .header-paper-height');
+        if (!headerCells.length) return;
+
+        // blockIndex -> heights[]
+        var heightsByBlock = {};
+        planTable.querySelectorAll('tr.row-build').forEach(function (row) {
+            var bi = row.getAttribute('data-block-index');
+            if (!bi) return;
+            heightsByBlock[bi] = (row.getAttribute('data-heights') || '').split(',').map(function (v) { return v.trim(); }).filter(Boolean);
+        });
+
+        headerCells.forEach(function (th) {
+            var date = th.getAttribute('data-date');
+            if (!date) return;
+            var set = {};
+            planTable.querySelectorAll('tr.row-corr').forEach(function (r) {
+                var bi = r.getAttribute('data-block-index');
+                if (!bi) return;
+                var td = r.querySelector('td[data-date="' + date.replace(/"/g, '\\"') + '"]');
+                if (!td) return;
+                var v = (td.textContent || '').trim();
+                if (v === '') return;
+                var n = parseInt(v, 10);
+                if (isNaN(n) || n <= 0) return;
+                (heightsByBlock[bi] || []).forEach(function (h) { set[h] = true; });
+            });
+            var list = Object.keys(set);
+            list.sort(function (a, b) { return (parseFloat(a) || 0) - (parseFloat(b) || 0); });
+            var text = list.join('\n');
+            var span = th.querySelector('span');
+            if (span) span.textContent = text; else th.textContent = text;
+            th.title = list.join(', ');
+        });
     }
 
     // Пересчёт гофрирования при ручном вводе в ячейки
@@ -1044,6 +1165,7 @@ try {
                     }
                 }
                 updateCorrHeader();
+                updateCorrPaperHeightHeader();
                 // #region agent log
                 fetch('http://127.0.0.1:7242/ingest/fec3737a-7de3-4e7b-bbe9-58f5d30241f0',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'3dc4b9'},body:JSON.stringify({sessionId:'3dc4b9',runId:'pre-fix',hypothesisId:'H1',location:'plan_U3/NP_roll_plan_2.php:recompute(corr)',message:'corr recompute',data:{filterKey:row.getAttribute('data-filter-key')||null,sum:sum,totalBuild:totalBuild},timestamp:Date.now()})}).catch(()=>{});
                 // #endregion agent log

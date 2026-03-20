@@ -255,9 +255,13 @@ if ($action === 'filter_release') {
 // Берём список заявок для селектора
 $activeOrders = [];
 try {
+    // Активные заявки: те, что НЕ скрыты (не отправлены в архив)
     $activeOrders = $pdo->query("
         SELECT DISTINCT order_number
-        FROM build_plan
+        FROM orders
+        WHERE order_number IS NOT NULL
+          AND TRIM(order_number) <> ''
+          AND (hide IS NULL OR hide = 0)
         ORDER BY order_number DESC
     ")->fetchAll(PDO::FETCH_COLUMN);
 } catch (Exception $e) {

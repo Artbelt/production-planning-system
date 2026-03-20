@@ -225,8 +225,14 @@ if ($mysqli->connect_errno) {
     exit;
 }
 
-/** Выполняем запрос SQL для загрузки заявок*/
-$sql = "SELECT DISTINCT order_number, workshop, hide FROM orders;";
+/** Выполняем запрос SQL для загрузки заявок без дублей по номеру */
+$sql = "
+    SELECT
+        order_number,
+        COALESCE(MAX(hide), 0) AS hide
+    FROM orders
+    GROUP BY order_number
+";
 //$sql = 'SELECT order_number FROM orders;';
 if (!$result = $mysqli->query($sql)){
     echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"

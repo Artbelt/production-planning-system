@@ -3,15 +3,20 @@ require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/../auth/includes/db.php';
 $pdo = getPdo('plan_u3');
 
-// Получаем список активных планов (только те, которые связаны с активными заявками)
-$stmt = $pdo->query("
-    SELECT DISTINCT bp.order_number
+/**
+ * Только активные заявки (hide не 1) — неактивные/выполненные в списке не показываем.
+ */
+$sql = "
+    SELECT
+        bp.order_number,
+        MAX(bp.day_date) AS last_plan_date
     FROM build_plans bp
-    INNER JOIN orders o ON bp.order_number = o.order_number
+    INNER JOIN orders o ON o.order_number = bp.order_number
     WHERE (o.hide IS NULL OR o.hide != 1)
-    ORDER BY bp.day_date DESC
-");
-$plans = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    GROUP BY bp.order_number
+    ORDER BY last_plan_date DESC
+";
+$plans = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -20,48 +25,83 @@ $plans = $stmt->fetchAll(PDO::FETCH_COLUMN);
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Планы производства</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            background-color: #f4f4f4;
+        :root{
+            --bg:#f6f7f9;
+            --panel:#ffffff;
+            --ink:#1f2937;
+            --muted:#6b7280;
+            --accent:#22c55e;
+            --accent-hover:#16a34a;
+            --radius:12px;
+            --shadow:0 2px 12px rgba(2,8,20,.06);
         }
-
-        .button-container {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
+        *{box-sizing:border-box}
+        html,body{
+            height:100%;
+            margin:0;
+            font-family:Arial, sans-serif;
+            background:var(--bg);
+            color:var(--ink);
         }
-
-        .btn {
-            padding: 12px 25px;
-            font-size: 16px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            transition: background-color 0.3s;
+        .wrap{
+            min-height:100%;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            padding:24px;
         }
+        .button-container{
+            display:flex;
+            flex-direction:column;
+            gap:14px;
+            background:var(--panel);
+            padding:24px;
+            border-radius:var(--radius);
+            box-shadow:var(--shadow);
+            max-width:520px;
+            width:100%;
+        }
+        .btn{
+            appearance:none;
+            border:0;
+            border-radius:10px;
+            padding:12px 20px;
+            font-size:16px;
+            line-height:1.2;
+            cursor:pointer;
+            background:var(--accent);
+            color:#fff;
+            transition:transform .08s ease, box-shadow .2s ease, background-color .2s ease;
+            box-shadow:0 4px 10px rgba(34,197,94,.25);
+            text-align:left;
+        }
+        .btn:hover{ background:var(--accent-hover) }
+        .btn:active{ transform:translateY(1px) }
 
-        .btn:hover {
-            background-color: #45a049;
+        .sub{
+            display:block;
+            font-size:12px;
+            color:var(--muted);
+            margin-top:4px;
         }
     </style>
 </head>
 <body>
-<div class="button-container">
-    <?php if ($plans): ?>
-        <?php foreach ($plans as $plan): ?>
-            <button class="btn" onclick="window.open('view_production_plan.php?order=<?= urlencode($plan) ?>', '_blank')">
-                <?= htmlspecialchars($plan) ?>
-            </button>
-        <?php endforeach; ?>
-    <?php else: ?>
-        <p>Нет доступных планов.</p>
-    <?php endif; ?>
+<div class="wrap">
+    <div class="button-container">
+        <?php if (!empty($plans)): ?>
+            <?php foreach ($plans as $row): ?>
+                <?php $order = $row['order_number']; ?>
+                <button class="btn" title="Открыть план по заявке"
+                        onclick="window.open('view_production_plan.php?order=<?= urlencode($order) ?>','_blank')">
+                    <?= htmlspecialchars($order) ?>
+                    <span class="sub">статус: активная</span>
+                </button>
+            <?php endforeach; ?>
+        <?php else: ?>
+            <p>Нет доступных планов.</p>
+        <?php endif; ?>
+    </div>
 </div>
 </body>
 </html>

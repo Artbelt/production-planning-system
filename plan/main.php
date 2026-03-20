@@ -376,10 +376,6 @@ $advertisement = 'Информация';
                         <input type="hidden" name="workshop" value="<?php echo htmlspecialchars($currentDepartment); ?>">
                         <input type="submit" value="План для сборщиц">
                     </form>
-                    <form action="buffer_stock.php" method="post" target="_blank" class="stack">
-                        <input type="hidden" name="workshop" value="<?php echo htmlspecialchars($currentDepartment); ?>">
-                        <input type="submit" value="Буфер гофропакетов">
-                    </form>
                 </div>
             </td>
 

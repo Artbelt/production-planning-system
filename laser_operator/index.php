@@ -308,8 +308,34 @@ $allRequests = getAllLaserRequests($databases);
             margin-bottom: 12px;
             box-shadow: var(--shadow);
             border: 1px solid var(--border);
+            position: relative;
         }
         
+        .mini-info-btn {
+            position: absolute;
+            top: 10px;
+            right: 12px;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            border: none;
+            background: var(--accent-solid);
+            color: var(--accent-ink);
+            font-weight: 800;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+            transition: transform 0.15s ease, opacity 0.15s ease;
+        }
+
+        .mini-info-btn:hover {
+            opacity: 0.92;
+            transform: translateY(-1px);
+        }
+
         .header h1 {
             margin: 0 0 2px 0;
             color: var(--ink);
@@ -696,6 +722,7 @@ $allRequests = getAllLaserRequests($databases);
 <body>
     <div class="container">
         <div class="header">
+            <button type="button" class="mini-info-btn" onclick="window.location.href='items_statistics.php'" title="Статистика заказанных изделий по лазеру">i</button>
             <h1>Модуль оператора лазерной резки</h1>
             <p>Управление заявками со всех участков производства</p>
         </div>

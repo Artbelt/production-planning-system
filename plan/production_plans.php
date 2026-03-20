@@ -3,19 +3,15 @@ require_once __DIR__ . '/../auth/includes/db.php';
 $pdo = getPdo('plan');
 
 /**
- * Берём список заявок из build_plan и подтягиваем их статус из orders.hide
- * Предполагаем:
- *   hide = 1  -> заявка выполнена/закрыта (делаем кнопку неактивной/«серой»)
- *   hide = 0  -> активная (зелёная и кликабельная)
+ * Показываем только активные заявки (hide != 1).
  */
 $sql = "
     SELECT
         bp.order_number,
-        MAX(bp.assign_date)               AS last_plan_date,
-        COALESCE(MAX(CASE WHEN o.hide=1 THEN 1 ELSE 0 END), 0) AS is_done
+        MAX(bp.assign_date) AS last_plan_date
     FROM build_plan bp
-    LEFT JOIN orders o
-        ON o.order_number = bp.order_number
+    INNER JOIN orders o ON o.order_number = bp.order_number
+    WHERE (o.hide IS NULL OR o.hide != 1)
     GROUP BY bp.order_number
     ORDER BY last_plan_date DESC
 ";
@@ -35,7 +31,6 @@ $plans = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
             --muted:#6b7280;
             --accent:#22c55e;           /* зелёная */
             --accent-hover:#16a34a;
-            --done:#9ca3af;             /* серая для «выполнено» */
             --radius:12px;
             --shadow:0 2px 12px rgba(2,8,20,.06);
         }
@@ -82,16 +77,6 @@ $plans = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
         .btn:hover{ background:var(--accent-hover) }
         .btn:active{ transform:translateY(1px) }
 
-        /* «Выполнено» — неактивная/серая кнопка */
-        .btn.done{
-            background:var(--done);
-            color:#fff;
-            box-shadow:none;
-            cursor:not-allowed;
-        }
-        .btn.done:hover{ background:var(--done) }
-        .btn.done:active{ transform:none }
-
         /* маленькая подпись под номером заявки */
         .sub{
             display:block;
@@ -106,25 +91,12 @@ $plans = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
     <div class="button-container">
         <?php if (!empty($plans)): ?>
             <?php foreach ($plans as $row): ?>
-                <?php
-                $order = $row['order_number'];
-                $isDone = (int)$row['is_done'] === 1;
-                $title  = $isDone ? 'Заявка выполнена' : 'Открыть план по заявке';
-                ?>
-                <?php if ($isDone): ?>
-                    <!-- Выполненная: серый стиль и заблокирована -->
-                    <button class="btn done" title="<?= htmlspecialchars($title) ?>" disabled>
-                        <?= htmlspecialchars($order) ?>
-                        <span class="sub">статус: выполнено</span>
-                    </button>
-                <?php else: ?>
-                    <!-- Активная: кликабельная -->
-                    <button class="btn" title="<?= htmlspecialchars($title) ?>"
-                            onclick="window.open('view_production_plan.php?order=<?= urlencode($order) ?>','_blank')">
-                        <?= htmlspecialchars($order) ?>
-                        <span class="sub">статус: активная</span>
-                    </button>
-                <?php endif; ?>
+                <?php $order = $row['order_number']; ?>
+                <button class="btn" title="Открыть план по заявке"
+                        onclick="window.open('view_production_plan.php?order=<?= urlencode($order) ?>','_blank')">
+                    <?= htmlspecialchars($order) ?>
+                    <span class="sub">статус: активная</span>
+                </button>
             <?php endforeach; ?>
         <?php else: ?>
             <p>Нет доступных планов.</p>
