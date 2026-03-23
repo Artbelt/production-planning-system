@@ -2,24 +2,37 @@
 // Подавляем deprecated warnings от PHPExcel
 error_reporting(E_ALL & ~E_DEPRECATED & ~E_STRICT);
 
-require 'PHPExcel/Classes/PHPExcel.php';
+require_once __DIR__ . '/PHPExcel/Classes/PHPExcel.php';
 
-if(isset($_FILES['userfile'])) {
-    $uploaddir = 'uploads/';
-    $uploadfile = $uploaddir . basename($_FILES['userfile']['name']);
-
-    $copied = copy($_FILES['userfile']['tmp_name'], $uploadfile);
-
-    if ($copied)
-    {
-        echo "Файл корректен и был успешно загружен.\n";
-    } else {
-        echo "Неудача";
-        die();
-    }
+// Скрипт ожидает файл, отправленный формой POST (name="userfile").
+// При обычном GET-запросе без файла возможны фатальные ошибки (PHP 8+ -> 500).
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_FILES['userfile'])) {
+    http_response_code(400);
+    exit('Нет загруженного файла (ожидается POST multipart/form-data с input name="userfile").');
 }
-$info = new SplFileInfo($uploadfile);
-@rename ($uploadfile, "/upload/1.$info->getExtension();");
+
+if (!is_array($_FILES['userfile']) || !isset($_FILES['userfile']['tmp_name'], $_FILES['userfile']['name'], $_FILES['userfile']['error'])) {
+    http_response_code(400);
+    exit('Некорректные данные загрузки файла.');
+}
+
+if ($_FILES['userfile']['error'] !== UPLOAD_ERR_OK) {
+    http_response_code(400);
+    exit('Ошибка загрузки файла. Код: ' . (int)$_FILES['userfile']['error']);
+}
+
+$uploaddir = __DIR__ . '/uploads/';
+if (!is_dir($uploaddir)) {
+    http_response_code(500);
+    exit('На сервере отсутствует папка для загрузок: ' . htmlspecialchars($uploaddir, ENT_QUOTES, 'UTF-8'));
+}
+
+$uploadfile = $uploaddir . basename($_FILES['userfile']['name']);
+if (!move_uploaded_file($_FILES['userfile']['tmp_name'], $uploadfile)) {
+    http_response_code(500);
+    exit('Не удалось сохранить загруженный файл на сервере.');
+}
+
 set_time_limit(0);
 date_default_timezone_set('Europe/London');
 ?>
@@ -154,18 +167,25 @@ date_default_timezone_set('Europe/London');
 <?php
 
 /** Include path **/
-set_include_path(get_include_path() . PATH_SEPARATOR . '../../../Classes/');
+// PHPExcel ожидает структуру, где IOFactory лежит в PHPExcel/IOFactory.php
+// относительно директории PHPExcel/Classes/.
+set_include_path(get_include_path() . PATH_SEPARATOR . __DIR__ . '/PHPExcel/Classes/');
 
 /** PHPExcel_IOFactory */
-@include 'PHPExcel/IOFactory.php';
+require_once 'PHPExcel/IOFactory.php';
 
 //$inputFileName = './upload/'.$_FILES['userfile']['name'];
-@$inputFileName = $uploadfile;
+$inputFileName = $uploadfile;
 
 echo '<div class="panel">';
 echo '<div class="section-title">Заявка загружена</div>';
 echo '<p>Загружен файл ' . pathinfo($inputFileName,PATHINFO_BASENAME) . '</p>';
-@$objPHPExcel = PHPExcel_IOFactory::load($inputFileName);
+try {
+    $objPHPExcel = PHPExcel_IOFactory::load($inputFileName);
+} catch (Throwable $e) {
+    http_response_code(500);
+    exit('Ошибка при чтении Excel-файла: ' . $e->getMessage());
+}
 
 @$sheetData = $objPHPExcel->getActiveSheet()->toArray(null,true,true,true);
 
@@ -192,12 +212,13 @@ echo '</div>'; // закрываем panel
 
 /** Переменная для сериализации и передачи массива в следующий скрипт */
 $order_str = serialize($order);
+$order_str_b64 = base64_encode($order_str); // base64 надежно переносит байты через HTML
 
 echo '<div class="form-group">';
 echo '<form action="save_order_into_DB.php" method="post">';
 echo '<label for="order_name">Присвоить номер заявке:</label><br><br>';
 echo '<input name="order_name" type="text" placeholder="№X-X" id="order_name" style="width:200px; margin-right:10px;"/>';
-echo "<input type='hidden' name='order_str' value='$order_str'/>";
+echo "<input type='hidden' name='order_str' value='" . htmlspecialchars($order_str_b64, ENT_QUOTES, 'UTF-8') . "'/>";
 echo "<input type='hidden' name='workshop' value='$workshop'/>";
 echo "<input type='submit' value=' и сохранить в БД'/>";
 echo "</form>";

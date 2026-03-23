@@ -13,6 +13,7 @@ require_once ('style/table_1.txt');
     <title>Архив заявок</title>
     <style>
         :root {
+            color-scheme: light;
             --bg: #f4f6f9;
             --card: #ffffff;
             --border: #e5e7eb;
@@ -142,13 +143,17 @@ require_once ('style/table_1.txt');
         }
 
         .order-btn {
+            -webkit-appearance: none;
+            appearance: none;
             width: 100%;
             border: 1px solid #d1d5db;
             background: #ecfdf3;
+            color: var(--text);
             border-radius: 10px;
             padding: 10px 12px;
             text-align: left;
             font-size: 14px;
+            font-family: inherit;
             line-height: 1.3;
             cursor: pointer;
             transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
