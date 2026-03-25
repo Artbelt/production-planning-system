@@ -973,9 +973,6 @@ try{
                                         <div class="pillName">
                                             <div class="pillNameContainer">
                                                 <span class="pillNameText"><?= $p['is_corrugated'] ? '✅ ' : '' ?><?=h($p['filter'])?></span>
-                                                <?php if ($htStr !== null): ?>
-                                                    <span class="pillHeightBadge muted">[<?=h($htStr)?>]</span>
-                                                <?php endif; ?>
                                             </div>
                                             <span class="complexity-indicator" style="display:none"></span>
                                         </div>
@@ -1176,6 +1173,31 @@ try{
         (arr||[]).forEach(v=>{ const k = String(v); if(!s.has(k)){ s.add(k); out.push(v); }});
         return out;
     }
+    function stripPaperDimsLabel(label){
+        if (!label) return '';
+        // Убираем из названия ширину/высоту бумаги: [48] 199 / [h48] 199.5 и т.п.
+        let s = String(label);
+        s = s.replace(/\[\s*h?\s*\d+(?:[.,]\d+)?\s*]\s*\d+(?:[.,]\d+)?/g, '');
+        s = s.replace(/\[\s*h?\s*\d+(?:[.,]\d+)?\s*]/g, '');
+        s = s.replace(/\s{2,}/g, ' ').trim();
+        return s;
+    }
+
+    function parsePaperWidthMmFromFilterLabel(label){
+        if (!label) return null;
+        const s = String(label);
+        // Ширина обычно записана как: "[48] 199" (а высота как: "[h48] 199.5")
+        const m = s.match(/\[\s*\d+(?:[.,]\d+)?\s*\]\s*([0-9]+(?:[.,][0-9]+)?)/u);
+        if (!m) return null;
+        const n = parseFloat(String(m[1]).replace(',', '.'));
+        return isFinite(n) ? n : null;
+    }
+
+    // Очищаем видимый текст плашек сверху от ширины/высоты бумаги
+    document.querySelectorAll('.pillNameText').forEach(el=>{
+        el.textContent = stripPaperDimsLabel(el.textContent);
+    });
+
     function getAllDays(){
         return [...document.querySelectorAll('#daysGrid .col[data-day]')].map(c=>c.dataset.day);
     }
@@ -1222,6 +1244,7 @@ try{
         if (!heightColorOn){
             topPills.forEach(el=>{ el.style.backgroundColor=''; el.style.borderColor=''; });
             rows.forEach(el=>{ el.style.backgroundColor=''; el.style.borderColor=''; });
+            applyWidthColors();
             return;
         }
         topPills.forEach(el=>{
@@ -1239,8 +1262,35 @@ try{
             if (t){ el.style.backgroundColor=t.bg; el.style.borderColor=t.bd; }
             checkAndHideHeight(el);
         });
+        applyWidthColors();
     }
     /* ===== /ПОДСВЕТКА ===== */
+
+    function applyWidthColors(){
+        const WIDE_BG = '#DBEAFE'; // голубой
+        const WIDE_BD = '#93C5FD';
+        const WIDTH_LIMIT = 230;
+
+        const topPills = document.querySelectorAll('#topGrid .pill');
+        const rows = document.querySelectorAll('#daysGrid .rowItem');
+
+        topPills.forEach(el=>{
+            if (el.classList.contains('disabled')) return;
+            const w = parsePaperWidthMmFromFilterLabel(el.dataset.filter);
+            if (w != null && w > WIDTH_LIMIT){
+                el.style.backgroundColor = WIDE_BG;
+                el.style.borderColor = WIDE_BD;
+            }
+        });
+
+        rows.forEach(el=>{
+            const w = parsePaperWidthMmFromFilterLabel(el.dataset.filter);
+            if (w != null && w > WIDTH_LIMIT){
+                el.style.backgroundColor = WIDE_BG;
+                el.style.borderColor = WIDE_BD;
+            }
+        });
+    }
 
     /* ===== ИНДИКАТОР СЛОЖНОСТИ ===== */
     let complexityIndicatorOn = localStorage.getItem('complexityIndicatorOn') === '1';
@@ -1641,13 +1691,13 @@ try{
         row.dataset.hours = rowHours;
         if (height) row.dataset.height = height;
 
-        // Используем полное название - CSS сам обрежет его через text-overflow: ellipsis если нужно
-        const heightBadge = height ? ` <span class="sub height-badge">[${escapeHtml(String(height))}]</span>` : '';
+        // Используем очищенное название: без ширины/высоты бумаги.
+        const fltDisplay = stripPaperDimsLabel(flt);
         const complexityIndicator = rate > 0 ? `<span class="complexity-indicator" style="display:none"></span>` : '';
 
         row.innerHTML = `
         <div class="rowLeft">
-            <div class="rowNameContainer"><b class="rowName" title="${escapeHtml(flt)}">${escapeHtml(flt)}</b>${heightBadge}${complexityIndicator}</div>
+            <div class="rowNameContainer"><b class="rowName" title="${escapeHtml(fltDisplay)}">${escapeHtml(fltDisplay)}</b>${complexityIndicator}</div>
             <div class="sub">
                 <b class="cnt">${count}</b> шт ·
                 <b class="h">${fmtH(rowHours)}</b>ч

@@ -22,7 +22,11 @@ $stmt->execute([$order, $start, $end_date]);
 $positions = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $by_date = [];
 foreach ($positions as $p) {
-    $tooltip = "{$p['filter_label']} | Кол-во гофропакетов: {$p['count']}";
+    // Убираем из tooltip ширину/высоту бумаги, чтобы они не “светились” в интерфейсе
+    $tooltipLabel = preg_replace('/\[\s*h?\s*\d+(?:\.\d+)?\s*]\s*\d+(?:\.\d+)?/u', '', (string)$p['filter_label']);
+    $tooltipLabel = preg_replace('/\[\s*h?\s*\d+(?:\.\d+)?\s*]/u', '', (string)$tooltipLabel);
+    $tooltipLabel = trim(preg_replace('/\s{2,}/u', ' ', $tooltipLabel));
+    $tooltip = "{$tooltipLabel} | Кол-во гофропакетов: {$p['count']}";
     $by_date[$p['plan_date']][] = [
         'id'      => $p['id'],
         'label'   => $p['filter_label'],
@@ -80,6 +84,7 @@ foreach ($existing_plan as $row) {
         th, td { font-size: 10px; border: 1px solid #ccc; padding: 2px; vertical-align: top; white-space: normal; background: #fff; }
         th { background: #fafafa; }
         .position-cell { display: block; margin-bottom: 2px; cursor: pointer; padding: 2px; font-size: 11px; border-bottom: 1px dotted #ccc; user-select: none; }
+        .position-cell.pos-wide { background-color: #DBEAFE; border-bottom-color: #93C5FD; }
         .used { background-color: #ccc; color: #666; cursor: not-allowed; }
         .assigned-item {
             background: #d2f5a3;
@@ -94,6 +99,7 @@ foreach ($existing_plan as $row) {
             line-height: 1.2;
             user-select: none;
         }
+        .assigned-item.pos-wide { background-color: #DBEAFE !important; }
         .half-width { width: 50%; float: left; box-sizing: border-box; }
         .drop-target { min-height: 16px; min-width: 60px; position: relative; user-select: none; }
         .date-col { min-width: 60px; } /* компактная ширина для дат */
@@ -235,10 +241,20 @@ foreach ($existing_plan as $row) {
             <td>
                 <?php foreach ($by_date[$d] ?? [] as $item): ?>
                     <?php
-                    $short = preg_replace('/\[\d+]\s+\d+(\.\d+)?$/', '', $item['label']);
+                    // Убираем из отображения ширину/высоту бумаги: [48] 199 / [h48] 199.5 и т.п.
+                    // Не привязываемся к концу строки: после высоты могут быть значки.
+                    $short = preg_replace('/\[\s*h?\s*\d+(?:\.\d+)?\s*]\s*\d+(?:\.\d+)?/u', '', (string)$item['label']);
+                    $short = preg_replace('/\[\s*h?\s*\d+(?:\.\d+)?\s*]/u', '', (string)$short);
+                    $short = trim(preg_replace('/\s{2,}/u', ' ', $short));
+                    $paperWidth = null;
+                    // Ширина бумаги обычно записана как: "[48] 199" (высота: "[h48] 199.5")
+                    if (preg_match('/\[\s*\d+(?:[.,]\d+)?\s*\]\s*([0-9]+(?:[.,][0-9]+)?)/u', (string)$item['label'], $mm)) {
+                        $paperWidth = (float)str_replace(',', '.', (string)$mm[1]);
+                    }
+                    $posWideClass = ($paperWidth !== null && $paperWidth > 230) ? ' pos-wide' : '';
                     $uniqueId = uniqid('pos_');
                     ?>
-                    <div class="position-cell"
+                    <div class="position-cell<?= $posWideClass ?>"
                          data-id="<?= $uniqueId ?>"
                          data-corr-id="<?= $item['id'] ?>"
                          data-label="<?= htmlspecialchars($item['label']) ?>"
@@ -310,6 +326,24 @@ foreach ($existing_plan as $row) {
         if (!label) return '';
         const base = String(label).split('[')[0].trim().replace(/\s+/g, '').toUpperCase();
         return base;
+    }
+
+    function stripPaperDims(label){
+        if (!label) return '';
+        // Убираем конструкции вида: "[48] 199" / "[h48] 199.5" (в том числе если после высоты есть значок)
+        let s = String(label);
+        s = s.replace(/\[\s*h?\s*\d+(?:[.,]\d+)?\s*]\s*\d+(?:[.,]\d+)?/g, '');
+        s = s.replace(/\[\s*h?\s*\d+(?:[.,]\d+)?\s*]/g, '');
+        s = s.replace(/\s{2,}/g, ' ').trim();
+        return s;
+    }
+
+    function parsePaperWidthMm(label){
+        if (!label) return null;
+        const m = String(label).match(/\[\s*\d+(?:[.,]\d+)?\s*\]\s*([0-9]+(?:[.,][0-9]+)?)/u);
+        if (!m) return null;
+        const n = parseFloat(String(m[1]).replace(',', '.'));
+        return isFinite(n) ? n : null;
     }
 
     let selectedLabel = '';
@@ -573,8 +607,10 @@ foreach ($existing_plan as $row) {
                 }
                 div.innerText = displayName;
                 // В tooltip показываем полную информацию
-                div.title = `${selectedLabel}\nКоличество: ${batch}`;
+                div.title = `${stripPaperDims(selectedLabel)}\nКоличество: ${batch}`;
                 div.classList.add('assigned-item');
+                const wMm = parsePaperWidthMm(selectedLabel);
+                if (wMm != null && wMm > 230) div.classList.add('pos-wide');
                 div.setAttribute('data-label', selectedLabel);
                 div.setAttribute('data-count', batch);
                 div.setAttribute('data-corr-id', selectedCorrId); // Добавляем corrugation_plan_id
@@ -825,8 +861,10 @@ foreach ($existing_plan as $row) {
                     }
                     div.innerText = displayName;
                     // В tooltip показываем полную информацию
-                    div.title = `${fullLabel}\nКоличество: ${count}`;
+                    div.title = `${stripPaperDims(fullLabel)}\nКоличество: ${count}`;
                     div.classList.add('assigned-item');
+                    const wMm = parsePaperWidthMm(fullLabel);
+                    if (wMm != null && wMm > 230) div.classList.add('pos-wide');
                     div.setAttribute('data-label', fullLabel);
                     div.setAttribute('data-count', count);
                     div.setAttribute('data-corr-id', item.corrugation_plan_id || ''); // Добавляем corrugation_plan_id
