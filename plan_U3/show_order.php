@@ -123,7 +123,37 @@ th{ background:#f8fafc; font-weight:600; }
 
 h3{ margin:0; font-size:18px; font-weight:700; }
 
-.table-wrap{ overflow-y:auto; overflow-x:hidden; border-radius: var(--radius); box-shadow: var(--shadow-soft); }
+.table-wrap{ overflow-y:auto; overflow-x:auto; -webkit-overflow-scrolling: touch; border-radius: var(--radius); box-shadow: var(--shadow-soft); }
+
+/* Закрепляем слева 2-й и 3-й столбцы при горизонтальной прокрутке */
+#order_table_container{ --sticky-filter-width: 170px; }
+#order_table_container th.sticky-filter{
+    position: sticky;
+    left: 0;
+    z-index: 6;
+    background: #f8fafc;
+    box-shadow: 2px 0 0 rgba(0,0,0,0.04);
+}
+#order_table_container td.sticky-filter{
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    background: var(--panel);
+    box-shadow: 2px 0 0 rgba(0,0,0,0.04);
+}
+#order_table_container th.sticky-qty{
+    position: sticky;
+    left: var(--sticky-filter-width);
+    z-index: 6;
+    background: #f8fafc;
+    box-shadow: 2px 0 0 rgba(0,0,0,0.04);
+}
+#order_table_container td.sticky-qty{
+    position: sticky;
+    left: var(--sticky-filter-width);
+    z-index: 5;
+    background: var(--panel);
+}
 
 /* Buttons / action panel */
 button, .btn-secondary{
@@ -250,7 +280,8 @@ button, .btn-secondary{
 
 @media (max-width:900px){
     .container{ padding:16px; }
-    table{ font-size:13px; }
+    /* На мобильных ширины часто не хватает: включаем горизонтальную прокрутку */
+    table{ font-size:13px; width: max-content; }
     th, td{ padding: 8px 10px; }
 }
 </style>
@@ -279,11 +310,11 @@ echo "<input type='submit' class='btn-secondary btn-sm' value='Подготов�
 echo "</form>";
 
 /** Формируем шапку таблицы для вывода заявки */
-echo "<div class='table-wrap'><table id='order_table'>
+echo "<div class='table-wrap' id='order_table_container'><table id='order_table'>
         <tr>
             <th> №п/п</th>                       
-            <th> Фильтр</th>
-            <th> Количество, шт</th>
+            <th class='sticky-filter'> Фильтр</th>
+            <th class='sticky-qty'> Количество, шт</th>
             <th> Маркировка</th>
             <th> Упаковка инд.</th>  
             <th> Этикетка инд.</th>
@@ -364,8 +395,8 @@ while ($row = $result->fetch(PDO::FETCH_ASSOC)){
     $count += 1;
     echo "<tr style='hov'>"
         ."<td>".$count."</td>"
-        ."<td>".htmlspecialchars($row['filter'] ?? '')."</td>"
-        ."<td>".$row['count']."</td>"
+        ."<td class='sticky-filter'>".htmlspecialchars($row['filter'] ?? '')."</td>"
+        ."<td class='sticky-qty'>".$row['count']."</td>"
         ."<td>".htmlspecialchars($row['marking'] ?? '')."</td>"
         ."<td>".htmlspecialchars($row['personal_packaging'] ?? '')."</td>"
         ."<td>".htmlspecialchars($row['personal_label'] ?? '')."</td>"
@@ -402,8 +433,8 @@ if ($count === 0) {
 $summ_difference = $filter_count_in_order - $filter_count_produced;
 echo "<tr style='hov'>"
     ."<td>Итого:</td>"
-    ."<td></td>"
-    ."<td>".$filter_count_in_order."</td>"
+    ."<td class='sticky-filter'></td>"
+    ."<td class='sticky-qty'>".$filter_count_in_order."</td>"
     ."<td></td>"
     ."<td></td>"
     ."<td></td>"
@@ -487,10 +518,25 @@ echo "<p style='margin-top:10px;'>* - без учета перевыполнен
 </div>
 
 <script>
+    function updateStickyColumnOffsets() {
+        const container = document.getElementById('order_table_container');
+        const table = document.getElementById('order_table');
+        if (!container || !table) return;
+
+        const filterTh = table.querySelector('thead th.sticky-filter');
+        if (!filterTh) return;
+
+        const w = Math.ceil(filterTh.getBoundingClientRect().width);
+        container.style.setProperty('--sticky-filter-width', w + 'px');
+    }
+
     window.addEventListener('load', function () {
         const el = document.getElementById('loading');
         if (el) el.style.display = 'none';
+        updateStickyColumnOffsets();
     });
+
+    window.addEventListener('resize', updateStickyColumnOffsets);
 
     const ORDER_NUMBER = <?php echo json_encode($order_number, JSON_UNESCAPED_UNICODE); ?>;
 

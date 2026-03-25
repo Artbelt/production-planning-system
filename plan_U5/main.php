@@ -1036,7 +1036,7 @@ echo "<!-- Аккуратная панель авторизации -->
                 profile_mark('Orders loaded');
                 ?>
 
-                <div class="section-title">Сохраненные заявки</div>
+                <div class="section-title">Активные заявки</div>
                 <div class="saved-orders">
                     <?php
                     echo '<form action="show_order.php" method="post" target="_blank">';
@@ -1056,6 +1056,7 @@ echo "<!-- Аккуратная панель авторизации -->
 
                 <div class="section-title" style="margin-top:14px">Управление заявками</div>
                 <section class="stack">
+                    <button type="button" onclick="window.location.href='archived_orders.php'">Архив заявок</button>
                     <button type="button" onclick="openLoadFileModal()">Прочитать XLS заявку</button>
                     <form action='new_order.php' method='post' target='_blank' class="stack"><input type='submit' value='Создать заявку вручную'></form>
                     <button type="button" onclick="openAddToOrderModal()">Добавить к заявке...</button>

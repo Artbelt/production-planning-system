@@ -312,6 +312,9 @@ function show_weekly_production(){
             text-align: right;
             color: #495057;
         }
+        .production-link:hover {
+            color: #004499 !important;
+        }
         .production-stat {
             display: flex;
             align-items: center;
@@ -341,13 +344,17 @@ function show_weekly_production(){
     echo '</tr></thead>';
     echo '<tbody>';
     
-    // Выводим данные по дням в обратном порядке (от новых к старым)
-    // Цикл заполняет массив от вчера к 10 дням назад, переворачиваем для отображения от новых к старым
-    $all_days_data = array_reverse($all_days_data);
+    // Выводим данные по дням (от новых к старым, как в plan_U5)
     foreach ($all_days_data as $day_data) {
         echo '<tr>';
         echo '<td class="date-col">' . htmlspecialchars($day_data['date']) . '</td>';
-        echo '<td class="total-col">' . $day_data['total_count'] . '</td>';
+        echo '<td class="total-col">';
+        if ($day_data['total_count'] > 0) {
+            echo '<span class="production-link" data-date="' . htmlspecialchars($day_data['date']) . '" style="cursor: pointer; color: #0066cc; text-decoration: underline;">' . $day_data['total_count'] . '</span>';
+        } else {
+            echo '-';
+        }
+        echo '</td>';
         echo '</tr>';
     }
     
@@ -364,18 +371,127 @@ function show_weekly_production(){
     }
     echo '</div>'; // закрываем production-card-footer
     echo '</div>'; // закрываем production-card
+
+    // Модальное окно для детальной информации по изготовленной продукции
+    ?>
+    <div id="productionDetailModal" style="display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); justify-content: center; align-items: center;">
+        <div style="background-color: white; padding: 14px 16px; border-radius: 8px; max-width: 900px; max-height: 68vh; overflow-y: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1); position: relative;">
+            <span id="closeProductionModal" style="position: absolute; right: 15px; top: 15px; font-size: 28px; font-weight: bold; color: #999; cursor: pointer; line-height: 1;">&times;</span>
+            <h3 id="productionModalTitle" style="margin-top: 0; margin-bottom: 15px;">Детальная информация по изготовленной продукции</h3>
+            <div id="productionModalContent" style="min-height: 200px;">
+                <div style="text-align: center; padding: 40px;">Загрузка данных...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        if (window.productionModalInitialized) {
+            return;
+        }
+        window.productionModalInitialized = true;
+
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('production-link')) {
+                e.preventDefault();
+                const date = e.target.getAttribute('data-date');
+                showProductionDetails(date);
+            }
+        });
+
+        const closeBtn = document.getElementById('closeProductionModal');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function() {
+                document.getElementById('productionDetailModal').style.display = 'none';
+            });
+        }
+
+        const modal = document.getElementById('productionDetailModal');
+        if (modal) {
+            modal.addEventListener('click', function(e) {
+                if (e.target.id === 'productionDetailModal') {
+                    this.style.display = 'none';
+                }
+            });
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && modal && modal.style.display === 'flex') {
+                modal.style.display = 'none';
+            }
+        });
+
+        function showProductionDetails(date) {
+            const m = document.getElementById('productionDetailModal');
+            const title = document.getElementById('productionModalTitle');
+            const content = document.getElementById('productionModalContent');
+
+            title.textContent = 'Детальная информация по изготовленной продукции (' + date + ')';
+            content.innerHTML = '<div style="text-align: center; padding: 40px;">Загрузка данных...</div>';
+            m.style.display = 'flex';
+
+            fetch('get_production_details.php?date=' + encodeURIComponent(date))
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('HTTP error! status: ' + response.status);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка: ' + escapeHtml(data.error) + '</div>';
+                        return;
+                    }
+
+                    if (!data.items || data.items.length === 0) {
+                        content.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">Нет данных для отображения</div>';
+                        return;
+                    }
+
+                    let html = '<div class="corrugation-summary">';
+                    html += '<strong>Итого за день:</strong> <strong>' + data.total_count + ' шт</strong>';
+                    html += '</div>';
+
+                    html += '<table>';
+                    html += '<thead><tr><th>Заявка</th><th>Фильтр</th><th>Количество</th></tr></thead>';
+                    html += '<tbody>';
+
+                    data.items.forEach(function(item) {
+                        html += '<tr>';
+                        html += '<td>' + escapeHtml(item.order_number || '-') + '</td>';
+                        html += '<td>' + escapeHtml(item.filter_name || '-') + '</td>';
+                        html += '<td>' + item.count + ' шт</td>';
+                        html += '</tr>';
+                    });
+
+                    html += '</tbody></table>';
+                    content.innerHTML = html;
+                })
+                .catch(error => {
+                    content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка загрузки данных: ' + escapeHtml(error.message) + '</div>';
+                });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    })();
+    </script>
+    <?php
 }
 
-/** Отображение изготовленных гофропакетов за последние 10 дней */
-function show_weekly_corrugated_packages(){
+/** Отображение сгофрированных гофропакетов за последние 10 дней (как в plan_U5) */
+function show_weekly_corrugation(){
     global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
     
     $count = 0;
     
     // Начинаем плашку (карточку)
-    echo '<div class="production-card production-card--corrugated">';
+    echo '<div class="production-card">';
     echo '<div class="production-card-header">';
-    echo '<h3 class="production-card-title">Изготовленные гофропакеты за последние 10 дней</h3>';
+    echo '<h3 class="production-card-title">Сгофрированные гофропакеты за последние 10 дней</h3>';
     echo '</div>';
     echo '<div class="production-card-body">';
     
@@ -401,27 +517,25 @@ function show_weekly_corrugated_packages(){
         $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));
         $production_date = reverse_date($production_date);
         
-        // Получаем общее количество гофропакетов за день
-        $sql = "SELECT SUM(COALESCE(count, 0)) as total_count
+        // Получаем данные о сгофрированных гофропакетах из manufactured_corrugated_packages
+        $sql = "SELECT 
+                    SUM(COALESCE(count, 0)) as total_count
                 FROM manufactured_corrugated_packages
-                WHERE date_of_production = ?";
+                WHERE date_of_production = '$production_date'
+                AND COALESCE(count, 0) > 0";
         
-        $stmt = $mysqli->prepare($sql);
-        if (!$stmt) {
-            continue;
-        }
-        $stmt->bind_param('s', $production_date);
-        $stmt->execute();
-        $result = $stmt->get_result();
+        $result = $mysqli->query($sql);
         
         if (!$result) {
-            $stmt->close();
             continue;
         }
         
-        $row = $result->fetch_assoc();
-        $total_count = (int)($row['total_count'] ?? 0);
+        $total_count = 0;
+        if ($row = $result->fetch_assoc()) {
+            $total_count = (int)($row['total_count'] ?? 0);
+        }
         
+        // Сохраняем данные для этого дня
         $all_days_data[] = [
             'date' => $production_date,
             'total_count' => $total_count
@@ -429,25 +543,32 @@ function show_weekly_corrugated_packages(){
         
         $count = $count + $total_count;
         
-        $result->free();
-        $stmt->close();
+        if ($result) {
+            $result->free();
+        }
     }
     
     $mysqli->close();
     
-    // Стили уже определены в show_weekly_production, используем те же классы
+    // Выводим таблицу (стили уже в show_weekly_production)
     echo '<table class="production-table">';
     echo '<thead><tr>';
     echo '<th class="date-col">Дата</th>';
-    echo '<th class="total-col">Всего</th>';
+    echo '<th class="total-col">Всего гофропакетов</th>';
     echo '</tr></thead>';
     echo '<tbody>';
     
-    $all_days_data = array_reverse($all_days_data);
+    // Выводим данные по дням (от новых к старым)
     foreach ($all_days_data as $day_data) {
         echo '<tr>';
         echo '<td class="date-col">' . htmlspecialchars($day_data['date']) . '</td>';
-        echo '<td class="total-col">' . $day_data['total_count'] . '</td>';
+        echo '<td class="total-col">';
+        if ($day_data['total_count'] > 0) {
+            echo '<span class="corrugation-link" data-date="' . htmlspecialchars($day_data['date']) . '" style="cursor: pointer; color: #0066cc; text-decoration: underline;">' . $day_data['total_count'] . '</span>';
+        } else {
+            echo '-';
+        }
+        echo '</td>';
         echo '</tr>';
     }
     
@@ -457,13 +578,178 @@ function show_weekly_corrugated_packages(){
     // Футер карточки со статистикой
     echo '<div class="production-card-footer">';
     $count_per_day = $count / 10;
-    if ($count_per_day > 1000){
-        echo "<div class='production-stat'><span class='production-stat-label'>Среднее количество в день:</span> <span class='production-stat-value highlight_green'>".round($count_per_day, 0)."</span></div>";
-    } else {
-        echo "<div class='production-stat'><span class='production-stat-label'>Среднее количество в день:</span> <span class='production-stat-value highlight_red'>".round($count_per_day, 0)."</span></div>";
-    }
+    echo "<div class='production-stat'><span class='production-stat-label'>Среднее количество в день:</span> <span class='production-stat-value'>".round($count_per_day, 0)."</span></div>";
     echo '</div>'; // закрываем production-card-footer
     echo '</div>'; // закрываем production-card
+    
+    // Модальное окно для детальной информации по гофропакетам
+    ?>
+    <div id="corrugationDetailModal" style="display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); justify-content: center; align-items: center;">
+        <div style="background-color: white; padding: 20px; border-radius: 8px; max-width: 900px; max-height: 90vh; overflow-y: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1); position: relative;">
+            <span id="closeCorrugationModal" style="position: absolute; right: 15px; top: 15px; font-size: 28px; font-weight: bold; color: #999; cursor: pointer; line-height: 1;">&times;</span>
+            <h3 id="corrugationModalTitle" style="margin-top: 0; margin-bottom: 15px;">Детальная информация по гофропакетам</h3>
+            <div id="corrugationModalContent" style="min-height: 200px;">
+                <div style="text-align: center; padding: 40px;">Загрузка данных...</div>
+            </div>
+        </div>
+    </div>
+    
+    <style>
+        .corrugation-link:hover {
+            color: #004499 !important;
+        }
+        #corrugationDetailModal table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        #corrugationDetailModal th {
+            background-color: #f3f4f6;
+            padding: 8px;
+            text-align: left;
+            border: 1px solid #ddd;
+            font-weight: bold;
+        }
+        #corrugationDetailModal td {
+            padding: 8px;
+            border: 1px solid #ddd;
+        }
+        #corrugationDetailModal tr:nth-child(even) {
+            background-color: #f9fafb;
+        }
+        #corrugationDetailModal th:nth-child(1),
+        #corrugationDetailModal td:nth-child(1) {
+            white-space: nowrap;
+        }
+        .corrugation-summary {
+            background-color: #eff6ff;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+    </style>
+    
+    <script>
+    (function() {
+        if (window.corrugationModalInitialized) {
+            return;
+        }
+        window.corrugationModalInitialized = true;
+        
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('corrugation-link')) {
+                e.preventDefault();
+                const date = e.target.getAttribute('data-date');
+                showCorrugationDetails(date);
+            }
+        });
+        
+        const closeBtn = document.getElementById('closeCorrugationModal');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', function() {
+                document.getElementById('corrugationDetailModal').style.display = 'none';
+            });
+        }
+        
+        const modal = document.getElementById('corrugationDetailModal');
+        if (modal) {
+            modal.addEventListener('click', function(e) {
+                if (e.target.id === 'corrugationDetailModal') {
+                    this.style.display = 'none';
+                }
+            });
+        }
+        
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && modal && modal.style.display === 'flex') {
+                modal.style.display = 'none';
+            }
+        });
+        
+        function showCorrugationDetails(date) {
+            const m = document.getElementById('corrugationDetailModal');
+            const title = document.getElementById('corrugationModalTitle');
+            const content = document.getElementById('corrugationModalContent');
+            
+            title.textContent = 'Детальная информация по гофропакетам (' + date + ')';
+            content.innerHTML = '<div style="text-align: center; padding: 40px;">Загрузка данных...</div>';
+            m.style.display = 'flex';
+            
+            fetch('get_corrugation_details.php?date=' + encodeURIComponent(date))
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('HTTP error! status: ' + response.status);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка: ' + escapeHtml(data.error) + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.items || data.items.length === 0) {
+                        content.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">Нет данных для отображения</div>';
+                        return;
+                    }
+                    
+                    let html = '<div class="corrugation-summary">';
+                    html += '<strong>Итого гофропакетов за день:</strong> <strong>' + data.total_count + ' шт</strong>';
+                    html += '</div>';
+                    
+                    html += '<table>';
+                    html += '<thead><tr><th>Заявка</th><th>Фильтр</th><th>Количество</th><th>Плановая дата</th></tr></thead>';
+                    html += '<tbody>';
+                    
+                    data.items.forEach(function(item) {
+                        html += '<tr>';
+                        html += '<td>' + escapeHtml(item.order_number || '-') + '</td>';
+                        html += '<td>' + escapeHtml(item.filter_label || '-') + '</td>';
+                        html += '<td>' + item.count + ' шт</td>';
+                        html += '<td>' + escapeHtml(item.planned_dates || '-') + '</td>';
+                        html += '</tr>';
+                    });
+                    
+                    html += '</tbody></table>';
+                    content.innerHTML = html;
+                })
+                .catch(error => {
+                    content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка загрузки данных: ' + escapeHtml(error.message) + '</div>';
+                });
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    })();
+    </script>
+    <?php
+}
+
+/** Отображение выпуска продукции за месяц */
+function show_monthly_production(){
+    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
+    
+    $first_day = date("Y-m-01");
+    $today = date("Y-m-d");
+    $first_day_reversed = reverse_date($first_day);
+    $today_reversed = reverse_date($today);
+
+    $sql = "SELECT SUM(count_of_filters) as total FROM manufactured_production 
+            WHERE date_of_production >= '$first_day_reversed' AND date_of_production <= '$today_reversed';";
+    $result = mysql_execute($sql);
+
+    $total = 0;
+    if ($result) {
+        $row = $result->fetch_assoc();
+        if ($row && isset($row['total'])) {
+            $total = $row['total'];
+        }
+    }
+
+    echo "<p>В текущем месяце произведено $total фильтров (с 1 числа по сегодня).</p>";
 }
 
 /** Создание списка с перечнем заявок

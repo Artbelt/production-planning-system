@@ -622,13 +622,29 @@ try {
     let selectedHeights = new Set();
     const baleColors = ['#1e90ff', '#00ff00', '#808080', '#ffff00', '#ff00ff', '#00ffff', '#ff8000', '#8000ff', '#cd5c5c', '#ff0080'];
 
+    function hexToRgba(hex, alpha){
+        // Преобразует #rrggbb в rgba(rr, gg, bb, alpha)
+        const h = String(hex).trim();
+        if (!h.startsWith('#')) return hex;
+        const r = parseInt(h.slice(1, 3), 16);
+        const g = parseInt(h.slice(3, 5), 16);
+        const b = parseInt(h.slice(5, 7), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
     function applyHeightFilter() {
-        // Убираем подсветку со всех позиций
-        document.querySelectorAll('.position-cell.highlighted, .assigned-item.highlighted, .position-cell[data-bale-color], .assigned-item[data-bale-color]').forEach(el => {
+        // Убираем подсветку со всех позиций:
+        // highlighted — это временная подсветка при наведении
+        // data-height-filter-color — это подсветка по фильтру высоты (должна сохраняться при hover)
+        document.querySelectorAll(
+            '.position-cell.highlighted, .assigned-item.highlighted, ' +
+            '.position-cell[data-height-filter-color], .assigned-item[data-height-filter-color]'
+        ).forEach(el => {
             el.classList.remove('highlighted');
             el.style.backgroundColor = '';
             el.style.boxShadow = '';
-            el.removeAttribute('data-bale-color');
+            el.style.borderColor = '';
+            el.removeAttribute('data-height-filter-color');
         });
 
         if (selectedHeights.size === 0) {
@@ -653,9 +669,24 @@ try {
                 if (height === 60) colorIndex = 6; // оранжевый
                 if (height === 40) colorIndex = 1; // зеленый
                 const color = baleColors[colorIndex];
-                cell.style.backgroundColor = color;
-                cell.style.boxShadow = '0 0 8px rgba(0,0,0,0.15)';
-                cell.setAttribute('data-bale-color', color);
+                // Важно: не перетираем базовый визуальный статус,
+                // иначе теряется разница "в плане" vs "не в плане".
+                if (cell.classList.contains('used')) {
+                    // Уже распланировано: оставляем синий фон .used, подсвечиваем рамкой/тенью
+                    const outline = hexToRgba(color, 0.9);
+                    cell.style.backgroundColor = ''; // оставить фон из CSS .used
+                    cell.style.borderColor = outline;
+                    cell.style.boxShadow = `0 0 0 2px ${outline}`;
+                    cell.setAttribute('data-height-filter-color', outline);
+                } else {
+                    // Не распланировано: добавляем полупрозрачный фон по высоте
+                    // "На 30% прозрачной": 30% прозрачности = 70% видимости (alpha=0.7)
+                    const bg = hexToRgba(color, 0.7);
+                    cell.style.backgroundColor = bg;
+                    cell.style.borderColor = hexToRgba(color, 0.85);
+                    cell.style.boxShadow = '0 0 8px rgba(0,0,0,0.10)';
+                    cell.setAttribute('data-height-filter-color', bg);
+                }
             }
         });
 
@@ -671,9 +702,13 @@ try {
                 if (height === 60) colorIndex = 6; // оранжевый
                 if (height === 40) colorIndex = 1; // зеленый
                 const color = baleColors[colorIndex];
-                item.style.backgroundColor = color;
-                item.style.boxShadow = '0 0 8px rgba(0,0,0,0.15)';
-                item.setAttribute('data-bale-color', color);
+                // Распланировано (assigned-item уже зелёный): оставляем базовый фон,
+                // но подсвечиваем рамкой/тенью цвета высоты.
+                const outline = hexToRgba(color, 0.9);
+                item.style.backgroundColor = ''; // оставить base background
+                item.style.borderColor = ''; // на assigned-item border обычно нет
+                item.style.boxShadow = `0 0 0 2px ${outline}`;
+                item.setAttribute('data-height-filter-color', outline);
             }
         });
     }
@@ -694,11 +729,15 @@ try {
     function clearHeightFilter() {
         selectedHeights.clear();
         document.querySelectorAll('.height-btn').forEach(btn => btn.classList.remove('active'));
-        document.querySelectorAll('.position-cell.highlighted, .assigned-item.highlighted, .position-cell[data-bale-color], .assigned-item[data-bale-color]').forEach(el => {
+        document.querySelectorAll(
+            '.position-cell.highlighted, .assigned-item.highlighted, ' +
+            '.position-cell[data-height-filter-color], .assigned-item[data-height-filter-color]'
+        ).forEach(el => {
             el.classList.remove('highlighted');
             el.style.backgroundColor = '';
             el.style.boxShadow = '';
-            el.removeAttribute('data-bale-color');
+            el.style.borderColor = '';
+            el.removeAttribute('data-height-filter-color');
         });
     }
 

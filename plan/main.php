@@ -585,8 +585,11 @@ $advertisement = 'Информация';
                     if (function_exists('show_weekly_production')) { 
                         show_weekly_production(); 
                     } 
-                    if (function_exists('show_weekly_corrugated_packages')) { 
-                        show_weekly_corrugated_packages(); 
+                    if (function_exists('show_monthly_production')) { 
+                        show_monthly_production(); 
+                    } 
+                    if (function_exists('show_weekly_corrugation')) { 
+                        show_weekly_corrugation(); 
                     } 
                     ?>
                 </div>

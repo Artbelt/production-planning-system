@@ -79,7 +79,7 @@ foreach ($existing_plan as $row) {
         table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
         th, td { font-size: 10px; border: 1px solid #ccc; padding: 2px; vertical-align: top; white-space: normal; background: #fff; }
         th { background: #fafafa; }
-        .position-cell { display: block; margin-bottom: 2px; cursor: pointer; padding: 2px; font-size: 11px; border-bottom: 1px dotted #ccc; }
+        .position-cell { display: block; margin-bottom: 2px; cursor: pointer; padding: 2px; font-size: 11px; border-bottom: 1px dotted #ccc; user-select: none; }
         .used { background-color: #ccc; color: #666; cursor: not-allowed; }
         .assigned-item {
             background: #d2f5a3;
@@ -92,9 +92,10 @@ foreach ($existing_plan as $row) {
             width: 100%;
             font-size: 10px;
             line-height: 1.2;
+            user-select: none;
         }
         .half-width { width: 50%; float: left; box-sizing: border-box; }
-        .drop-target { min-height: 16px; min-width: 60px; position: relative; }
+        .drop-target { min-height: 16px; min-width: 60px; position: relative; user-select: none; }
         .date-col { min-width: 60px; } /* компактная ширина для дат */
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.4); justify-content: center; align-items: center; }
         .modal-content { background: white; padding: 20px; border-radius: 5px; width: 400px; }
@@ -200,6 +201,7 @@ foreach ($existing_plan as $row) {
             border-radius: 8px;
             max-height: calc(90vh - 40px);
         }
+
     </style>
 </head>
 <body>
@@ -304,10 +306,20 @@ foreach ($existing_plan as $row) {
 </div>
 
 <script>
+    function normalizePlanLabel(label) {
+        if (!label) return '';
+        const base = String(label).split('[')[0].trim().replace(/\s+/g, '').toUpperCase();
+        return base;
+    }
+
     let selectedLabel = '';
     let selectedCutDate = '';
     let selectedId = '';
     let selectedDate = '';
+    // Активная позиция внизу: последняя ячейка (дата и "место"), куда было добавление.
+    // Используется для Shift+клика по позиции сверху.
+    let activeDate = '';
+    let activePlace = null;
 
     function closeModal() {
         document.getElementById("modal").style.display = "none";
@@ -347,11 +359,32 @@ foreach ($existing_plan as $row) {
     document.querySelectorAll('.position-cell').forEach(cell => {
         cell.onmouseenter = () => highlightByLabel(cell.dataset.label);
         cell.onmouseleave = removeHoverHighlight;
-        cell.addEventListener('click', () => {
+        cell.addEventListener('click', (e) => {
+            if (e.shiftKey) {
+                // Shift+клик иногда триггерит выделение текста в браузере — убираем,
+                // чтобы Shift+клик работал как действие, а не как выделение.
+                e.preventDefault();
+                e.stopPropagation();
+                const sel = window.getSelection && window.getSelection();
+                if (sel && sel.removeAllRanges) sel.removeAllRanges();
+            }
             if (cell.classList.contains('used')) return;
             selectedLabel = cell.dataset.label;
             selectedCutDate = cell.dataset.cutDate;
             selectedId = cell.dataset.id;
+
+            // Shift+клик: добавляем сразу начиная с активной даты/места,
+            // продолжая распределение дальше по дням.
+            if (e.shiftKey && activeDate && activePlace !== null && activePlace !== undefined) {
+                // Нельзя добавлять раньше cutDate позиции.
+                const startDate = (selectedCutDate && activeDate < selectedCutDate) ? selectedCutDate : activeDate;
+                distributeToBuildPlan(startDate, activePlace);
+                const usedCell = document.querySelector('.position-cell[data-id="' + selectedId + '"]');
+                if (usedCell) usedCell.classList.add('used');
+                closeModal();
+                return;
+            }
+
             const modalDates = document.getElementById("modal-dates");
             modalDates.innerHTML = "";
             // собираем список дат из заголовков нижней таблицы, исключая левый и правый sticky
@@ -438,6 +471,7 @@ foreach ($existing_plan as $row) {
         const dateList = dateHeaders.slice(1, dateHeaders.length - 1).map(th => th.innerText).filter(d => d >= startDate);
 
         let dateIndex = 0;
+        let lastAssignedDate = null;
         while (total > 0 && dateIndex < dateList.length) {
             const td = document.querySelector(`.drop-target[data-date='${dateList[dateIndex]}'][data-place='${place}']`);
             if (td) {
@@ -477,11 +511,17 @@ foreach ($existing_plan as $row) {
                 }
                 div.setAttribute('data-id', selectedId);
                 td.appendChild(div);
+                lastAssignedDate = dateList[dateIndex];
                 total -= batch;
             }
             dateIndex++;
         }
         attachRemoveHandlers();
+        // Обновляем активную позицию для следующего Shift+клика.
+        if (lastAssignedDate !== null) {
+            activeDate = lastAssignedDate;
+            activePlace = place;
+        }
     }
 
     function preparePlan() {
@@ -614,7 +654,6 @@ foreach ($existing_plan as $row) {
     function loadExistingPlan() {
         const planData = <?= json_encode($plan_data) ?>;
         const corrPlanData = <?= json_encode($by_date) ?>;
-        
         // Создаем маппинг filter -> full label из corrugation_plan
         const filterToLabel = {};
         Object.values(corrPlanData).forEach(dateItems => {
@@ -623,9 +662,23 @@ foreach ($existing_plan as $row) {
                 filterToLabel[filterName] = item.label;
             });
         });
+
+        const topCells = Array.from(document.querySelectorAll('.position-cell'));
+        const topByCorrId = new Map();
+        const topByNormLabel = new Map();
+        topCells.forEach(cell => {
+            const corrId = String(cell.dataset.corrId || '').trim();
+            if (corrId) topByCorrId.set(corrId, cell);
+            const norm = normalizePlanLabel(cell.dataset.label || '');
+            if (norm) {
+                if (!topByNormLabel.has(norm)) topByNormLabel.set(norm, []);
+                topByNormLabel.get(norm).push(cell);
+            }
+        });
         
         // ШАГ 1: Собираем уникальные corrugation_plan_id из build_plan
         const usedCorrIds = new Set();
+        let missingCorrIds = 0;
         
         Object.keys(planData).forEach(date => {
             Object.keys(planData[date]).forEach(place => {
@@ -636,19 +689,23 @@ foreach ($existing_plan as $row) {
                 });
             });
         });
-        
         console.log(`Найдено ${usedCorrIds.size} уникальных позиций для затенения`);
         
         // ШАГ 2: Закрашиваем позиции по corrugation_plan_id
+        const notFoundCorrIds = [];
         usedCorrIds.forEach(corrId => {
             const posCell = document.querySelector(`.position-cell[data-corr-id="${corrId}"]`);
             if (posCell) {
                 posCell.classList.add('used');
                 console.log(`✓ Закрашена позиция с id=${corrId}: ${posCell.dataset.label}`);
             } else {
-                console.warn(`⚠ Позиция с corrugation_plan_id=${corrId} не найдена в верхней таблице`);
+                missingCorrIds++;
+                notFoundCorrIds.push(corrId);
             }
         });
+        if (missingCorrIds > 0) {
+            console.log(`В верхней таблице не найдено corrugation_plan_id: ${missingCorrIds}`);
+        }
         
         // ШАГ 3: Отрисовываем элементы в нижней таблице
         Object.keys(planData).forEach(date => {
@@ -660,16 +717,26 @@ foreach ($existing_plan as $row) {
                     const filterName = item.filter;
                     const count = item.count;
                     const fullLabel = filterToLabel[filterName] || filterName;
-                    
-                    // Находим соответствующую позицию в верхней таблице для связи data-id
-                    const posCell = Array.from(document.querySelectorAll('.position-cell')).find(cell => 
-                        cell.dataset.label === fullLabel && cell.classList.contains('used')
-                    );
-                    
-                    // Если позиции нет в верхней таблице - пропускаем
+
+                    // Находим соответствующую позицию в верхней таблице для связи data-id.
+                    // Важно: матчим в первую очередь по corrugation_plan_id, т.к. fullLabel может не совпадать 1-в-1
+                    // из-за текущего диапазона дат/форматирования в верхней таблице.
+                    const corrId = item.corrugation_plan_id !== null && item.corrugation_plan_id !== undefined
+                        ? String(item.corrugation_plan_id)
+                        : '';
+                    let posCell = corrId
+                        ? document.querySelector(`.position-cell[data-corr-id="${corrId}"]`)
+                        : null;
+
+                    // fallback по label (без требования наличия класса used)
                     if (!posCell) {
-                        console.warn(`Позиция "${fullLabel}" из build_plan не найдена в верхней таблице - пропускаем`);
-                        return;
+                        posCell = Array.from(document.querySelectorAll('.position-cell')).find(cell => cell.dataset.label === fullLabel) || null;
+                    }
+
+                    // Если верхняя клетка есть, но по каким-то причинам не отмечена — отмечаем.
+                    // Это позволит корректно "освобождать" позицию при удалении строки из нижней таблицы.
+                    if (posCell && !posCell.classList.contains('used')) {
+                        posCell.classList.add('used');
                     }
                     
                     const div = document.createElement('div');
@@ -690,8 +757,12 @@ foreach ($existing_plan as $row) {
                     div.setAttribute('data-label', fullLabel);
                     div.setAttribute('data-count', count);
                     div.setAttribute('data-corr-id', item.corrugation_plan_id || ''); // Добавляем corrugation_plan_id
-                    // Используем data-id из верхней таблицы
-                    div.setAttribute('data-id', posCell.dataset.id);
+
+                    // Используем data-id из верхней таблицы, если она есть.
+                    // Если верхней клетки нет (например, позиция вне текущего диапазона дат),
+                    // всё равно рисуем элемент, но оставляем data-id пустым/синтетическим.
+                    const assignedId = posCell ? posCell.dataset.id : (corrId ? `corr_${corrId}` : '');
+                    div.setAttribute('data-id', assignedId);
                     
                     if (td.querySelector('.assigned-item')) {
                         div.classList.add('half-width');
@@ -702,7 +773,45 @@ foreach ($existing_plan as $row) {
                 });
             });
         });
-        
+
+        // Финальная сверка: всё, что реально находится внизу (.assigned-item),
+        // обязано иметь подсветку соответствующей позиции сверху.
+        let reconciledByCorrId = 0;
+        let reconciledByLabel = 0;
+        let reconciledLabelCellMarks = 0;
+        const unresolvedItems = [];
+        document.querySelectorAll('.assigned-item').forEach(item => {
+            const corrId = String(item.dataset.corrId || '').trim();
+            const normLabel = normalizePlanLabel(item.dataset.label || '');
+
+            let topCell = null;
+            let matched = false;
+            if (corrId && topByCorrId.has(corrId)) {
+                topCell = topByCorrId.get(corrId);
+                reconciledByCorrId++;
+                matched = true;
+            } else if (normLabel && topByNormLabel.has(normLabel) && topByNormLabel.get(normLabel).length > 0) {
+                const sameLabelCells = topByNormLabel.get(normLabel);
+                sameLabelCells.forEach(c => {
+                    if (!c.classList.contains('used')) reconciledLabelCellMarks++;
+                    c.classList.add('used');
+                });
+                reconciledByLabel++;
+                matched = true;
+            }
+
+            if (topCell) {
+                topCell.classList.add('used');
+            }
+
+            if (!matched) {
+                unresolvedItems.push({
+                    corrId: corrId || null,
+                    label: item.dataset.label || ''
+                });
+            }
+        });
+
         attachRemoveHandlers();
     }
     

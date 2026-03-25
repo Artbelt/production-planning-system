@@ -1835,7 +1835,7 @@ try{
             const qty = avail;
 
             if (e.shiftKey && lastDay){
-                addToDay(lastDay, lastTeam, pill, qty);
+                addToDaysFromActive(lastDay, lastTeam, pill, qty);
             } else {
                 openDatePicker(pill, qty);
             }
@@ -1845,12 +1845,12 @@ try{
     // add to day
     function addToDay(day, team, pill, qty){
         const avail = +pill.dataset.avail || 0;
-        if (qty<=0 || avail<=0) return;
+        if (qty<=0 || avail<=0) return 0;
         const src  = pill.dataset.sourceDate || '';
         // Нельзя добавить в день раньше даты гофрирования
         if (src && day < src) {
             alert('Нельзя добавить в день ' + day + ': дата сборки должна быть не раньше даты гофрирования (' + src + ').');
-            return;
+            return 0;
         }
         const take = Math.min(qty, avail);
 
@@ -1865,6 +1865,64 @@ try{
 
         lastDay = day;
         lastTeam = team;
+        return take;
+    }
+
+    // Shift+клик: распределяем остаток по дням, начиная с активного дня/бригады
+    function addToDaysFromActive(startDay, team, pill, qty){
+        let remaining = qty;
+        if (remaining<=0) return 0;
+
+        const days = getAllDays();
+        if (!days.length) return 0;
+
+        const src = (pill.dataset.sourceDate || '').trim();
+        const rate = parseInt(pill.dataset.rate || '0', 10) || 0;
+
+        // стартовать с первого допустимого дня (не раньше даты гофрирования)
+        let curDay = startDay;
+        if (src && curDay < src) curDay = src;
+
+        let idx = days.indexOf(curDay);
+        if (idx < 0){
+            idx = days.findIndex(d=>d>=curDay);
+            if (idx < 0) return 0;
+        }
+
+        for (let k = idx; k < days.length && remaining > 0; k++){
+            const day = days[k];
+            if (src && day < src) continue;
+
+            // защита на случай пересборки/удаления колонок
+            ensureDay(day);
+
+            const pillAvail = +pill.dataset.avail || 0;
+            if (pillAvail <= 0) break;
+
+            // Считаем остаточную "мощность" дня с учетом уже запланированных часов и (опционально) других заявок
+            const usedPlan = ((hoursByTeam.get(day) || {})[team] || 0);
+            const usedBusy = considerOtherOrders ? (((busyHours.get(day) || {})[team]) || 0) : 0;
+            const capHours = SHIFT_HOURS - (usedPlan + usedBusy);
+
+            if (capHours <= 1e-9) continue;
+
+            // rate = шт/смена (потому что hours = (count/rate)*SHIFT_HOURS)
+            let maxCountByHours;
+            if (rate > 0){
+                maxCountByHours = Math.max(0, Math.floor(rate * (capHours / SHIFT_HOURS)));
+            } else {
+                // Если rate=0, лимит по часам бессмысленен (hours всегда будет 0)
+                maxCountByHours = remaining;
+            }
+
+            const candidate = Math.min(remaining, pillAvail, maxCountByHours);
+            if (candidate <= 0) continue;
+
+            const taken = addToDay(day, team, pill, candidate);
+            remaining -= taken;
+        }
+
+        return qty - remaining;
     }
 
     // пререндер сохранённого плана
@@ -2137,7 +2195,7 @@ try{
                         if (avail <= 0) return;
                         const qty = avail;
                         if (e.shiftKey && lastDay){
-                            addToDay(lastDay, lastTeam, pill, qty);
+                            addToDaysFromActive(lastDay, lastTeam, pill, qty);
                         } else {
                             openDatePicker(pill, qty);
                         }
