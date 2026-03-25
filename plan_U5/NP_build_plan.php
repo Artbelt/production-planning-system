@@ -439,6 +439,7 @@ try{
 
     /* верхние плашки */
     .pill{border:1px solid #93c5fd;background:#dbeafe;border-radius:10px;padding:8px;margin:4px 0;display:flex;flex-direction:column;gap:6px;position:relative}
+    .pill.used{background:#e5e7eb !important;border-color:#cbd5e1 !important;filter:none !important;opacity:0.85}
     .pillTop{display:flex;align-items:center;gap:10px;justify-content:space-between}
     .pillName{font-weight:600;display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden}
     .pillNameContainer{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden}
@@ -1680,6 +1681,10 @@ try{
 
         plan.get(day)[team].push({source_date:src, filter:flt, count:count, rate:r, height:height ?? ''});
 
+        // Отметим верхнюю плашку как "уже запланировано"
+        const pillForKey = document.querySelector(`.pill[data-source-date="${cssEscape(src)}"][data-filter="${cssEscape(flt)}"]`);
+        if (pillForKey) pillForKey.classList.add('used');
+
         const row = document.createElement('div');
         row.className = 'rowItem';
         row.dataset.day = day;
@@ -1738,6 +1743,18 @@ try{
         const arr = plan.get(day)?.[team] || [];
         const i = arr.findIndex(x=> x.source_date===src && x.filter===flt && x.count===cnt && (x.rate||0)===r);
         if (i>=0){ arr.splice(i,1); plan.get(day)[team] = arr; }
+
+        // Если по этому src/filter больше нет строк — снимаем "уже запланировано"
+        let remainingForKey = 0;
+        plan.forEach(byTeam=>{
+            ['1','2'].forEach(t=>{
+                (byTeam[t]||[]).forEach(r=>{
+                    if (r.source_date === src && r.filter === flt) remainingForKey += (r.count||0);
+                });
+            });
+        });
+        const pillForKey = document.querySelector(`.pill[data-source-date="${cssEscape(src)}"][data-filter="${cssEscape(flt)}"]`);
+        if (pillForKey) pillForKey.classList.toggle('used', remainingForKey > 0);
 
         const pill = document.querySelector(`.pill[data-source-date="${cssEscape(src)}"][data-filter="${cssEscape(flt)}"]`);
         if (pill){

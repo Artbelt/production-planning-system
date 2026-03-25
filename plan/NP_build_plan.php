@@ -85,6 +85,7 @@ foreach ($existing_plan as $row) {
         th { background: #fafafa; }
         .position-cell { display: block; margin-bottom: 2px; cursor: pointer; padding: 2px; font-size: 11px; border-bottom: 1px dotted #ccc; user-select: none; }
         .position-cell.pos-wide { background-color: #DBEAFE; border-bottom-color: #93C5FD; }
+        .position-cell.used { background-color: #ccc !important; border-bottom-color: #aaa !important; }
         .used { background-color: #ccc; color: #666; cursor: not-allowed; }
         .assigned-item {
             background: #d2f5a3;
