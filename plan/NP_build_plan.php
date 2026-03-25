@@ -330,14 +330,43 @@ foreach ($existing_plan as $row) {
         document.getElementById("modal-places").innerHTML = "";
     }
 
-    // Функция проверки, есть ли еще элементы с этим data-id в нижней таблице
-    function checkIfPositionFullyRemoved(posId) {
-        const remainingItems = document.querySelectorAll(`.assigned-item[data-id='${posId}']`);
-        if (remainingItems.length === 0) {
-            // Если больше нет элементов с этим data-id, убираем "used" из верхней таблицы
-            const upperCell = document.querySelector(`.position-cell[data-id='${posId}']`);
-            if (upperCell) {
-                upperCell.classList.remove('used');
+    // Снимаем "used" у верхних позиций, когда внизу больше не осталось соответствующих assigned-item.
+    // Важно: при загрузке сохраненного плана data-id у assigned-item может не совпадать с data-id верхней ячейки,
+    // поэтому проверяем в приоритетном порядке: data-id -> data-corr-id -> нормализованный label.
+    function checkIfPositionFullyRemoved(posId, corrId, label) {
+        // 1) По data-id (самый точный вариант)
+        if (posId) {
+            const remainingItems = document.querySelectorAll(`.assigned-item[data-id='${posId}']`);
+            if (remainingItems.length === 0) {
+                const upperCell = document.querySelector(`.position-cell[data-id='${posId}']`);
+                if (upperCell) upperCell.classList.remove('used');
+            }
+        }
+
+        // 2) По data-corr-id (когда data-id не совпал)
+        if (corrId) {
+            const remainingCorrItems = document.querySelectorAll(`.assigned-item[data-corr-id='${corrId}']`);
+            if (remainingCorrItems.length === 0) {
+                document.querySelectorAll(`.position-cell[data-corr-id='${corrId}']`).forEach(upper => {
+                    upper.classList.remove('used');
+                });
+            }
+        }
+
+        // 3) По нормализованному label (fallback на случай несовпадений форматирования/матчинга)
+        if (label) {
+            const norm = normalizePlanLabel(label);
+            if (norm) {
+                const remainingNormItems = Array.from(document.querySelectorAll('.assigned-item')).filter(item => {
+                    return normalizePlanLabel(item.dataset.label || '') === norm;
+                });
+                if (remainingNormItems.length === 0) {
+                    document.querySelectorAll('.position-cell').forEach(upper => {
+                        if (normalizePlanLabel(upper.dataset.label || '') === norm) {
+                            upper.classList.remove('used');
+                        }
+                    });
+                }
             }
         }
     }
@@ -348,12 +377,47 @@ foreach ($existing_plan as $row) {
             div.onmouseleave = removeHoverHighlight;
             div.onclick = () => {
                 const posId = div.getAttribute('data-id');
-                // Удаляем только этот конкретный элемент
-                div.remove();
-                // Проверяем, остались ли еще элементы с этим data-id
-                checkIfPositionFullyRemoved(posId);
+                const corrId = div.getAttribute('data-corr-id');
+                const label = div.getAttribute('data-label');
+                // Логируем и определяем, какие фрагменты нужно удалить:
+                // по вашему требованию: удаляем не только кликнутый фрагмент, а ВСЕ фрагменты с тем же ID.
+                let itemsToRemove = [];
+                if (posId) {
+                    itemsToRemove = Array.from(document.querySelectorAll(`.assigned-item[data-id='${posId}']`));
+                } else if (corrId) {
+                    itemsToRemove = Array.from(document.querySelectorAll(`.assigned-item[data-corr-id='${corrId}']`));
+                } else if (label) {
+                    const norm = normalizePlanLabel(label);
+                    if (norm) {
+                        itemsToRemove = Array.from(document.querySelectorAll('.assigned-item')).filter(item => {
+                            return normalizePlanLabel(item.dataset.label || '') === norm;
+                        });
+                    }
+                }
+
+                // Удаляем все фрагменты кластера
+                itemsToRemove.forEach(it => it.remove());
+
+                // Проверяем, что позиция действительно освободилась
+                checkIfPositionFullyRemoved(posId, corrId, label);
             };
         });
+    }
+
+    // Проверяем: для даты все 17 мест заполнены по лимиту fillsPerDay
+    function isDateFullyBooked(dateStr, fillsPerDay) {
+        for (let i = 1; i <= 17; i++) {
+            const td = document.querySelector(`.drop-target[data-date='${dateStr}'][data-place='${i}']`);
+            if (!td) return false; // если вдруг ячейка отсутствует — не считаем дату полностью занятой
+
+            let totalPlanned = 0;
+            td.querySelectorAll('.assigned-item').forEach(item => {
+                totalPlanned += parseInt(item.dataset.count || 0);
+            });
+
+            if (totalPlanned < fillsPerDay) return false;
+        }
+        return true;
     }
 
     document.querySelectorAll('.position-cell').forEach(cell => {
@@ -387,6 +451,7 @@ foreach ($existing_plan as $row) {
 
             const modalDates = document.getElementById("modal-dates");
             modalDates.innerHTML = "";
+            const fillsPerDay = parseInt(document.getElementById("fills_per_day").value || "50");
             // собираем список дат из заголовков нижней таблицы, исключая левый и правый sticky
             const ths = Array.from(document.querySelectorAll('#bottom-table thead th'));
             ths.forEach((th, i) => {
@@ -395,10 +460,18 @@ foreach ($existing_plan as $row) {
                     if (dateStr >= selectedCutDate) {
                         const btn = document.createElement("button");
                         btn.innerText = dateStr;
-                        btn.onclick = () => {
-                            selectedDate = dateStr;
-                            renderPlacesForDate(selectedDate);
-                        };
+                        const isFullDate = isDateFullyBooked(dateStr, fillsPerDay);
+                        if (isFullDate) {
+                            btn.disabled = true;
+                            btn.style.opacity = "0.5";
+                            btn.style.backgroundColor = "#e5e7eb";
+                            btn.style.cursor = "not-allowed";
+                        } else {
+                            btn.onclick = () => {
+                                selectedDate = dateStr;
+                                renderPlacesForDate(selectedDate);
+                            };
+                        }
                         modalDates.appendChild(btn);
                     }
                 }

@@ -632,6 +632,32 @@ try {
         return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
+    // Работаем с датами в формате YYYY-MM-DD в локальном часовом поясе,
+    // чтобы не ловить "сдвиг на день" из-за toISOString().
+    function parseISODateLocal(dateStr) {
+        const parts = String(dateStr).split('-');
+        if (parts.length !== 3) return null;
+        const y = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10);
+        const d = parseInt(parts[2], 10);
+        if (!isFinite(y) || !isFinite(m) || !isFinite(d)) return null;
+        return new Date(y, m - 1, d);
+    }
+
+    function formatISODateLocal(dt) {
+        const yyyy = dt.getFullYear();
+        const mm = String(dt.getMonth() + 1).padStart(2, '0');
+        const dd = String(dt.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+    }
+
+    function shiftISODate(dateStr, deltaDays) {
+        const dt = parseISODateLocal(dateStr);
+        if (!dt) return null;
+        dt.setDate(dt.getDate() + deltaDays);
+        return formatISODateLocal(dt);
+    }
+
     function applyHeightFilter() {
         // Убираем подсветку со всех позиций:
         // highlighted — это временная подсветка при наведении
@@ -947,7 +973,53 @@ try {
 
     function attachRemoveHandlers() {
         document.querySelectorAll('.assigned-item').forEach(div => {
-            div.onclick = () => {
+            div.onclick = (e) => {
+                // Shift+клик по плашке в боковой панели: перенос на день назад
+                // (с ограничением: нельзя поставить раньше cutDate).
+                if (e && e.shiftKey) {
+                    const posId = div.getAttribute('data-id');
+                    const upperCell = document.querySelector('.position-cell.used[data-id="' + posId + '"]');
+                    const cutDate = upperCell ? upperCell.dataset.cutDate : null;
+
+                    if (!cutDate) {
+                        alert('Невозможно перенести: не найдена дата раскроя (cutDate).');
+                        return;
+                    }
+
+                    const parentDate = div.closest('.drop-target').dataset.date;
+                    const prevDate = shiftISODate(parentDate, -1);
+                    if (!prevDate) return;
+
+                    // Если предыдущий день раньше cutDate — "контроль": ставим в cutDate (т.е. на ближайший поздний разрешенный день).
+                    let targetDate = prevDate;
+                    if (targetDate < cutDate) {
+                        targetDate = cutDate;
+                        // Если cutDate совпал с текущим днём — перенос невозможен.
+                        if (targetDate === parentDate) {
+                            alert('Нельзя перенести раньше даты раскроя: ' + cutDate);
+                            return;
+                        }
+                        alert('Нельзя перенести на день назад из-за ограничения. Перенос выполнен в ' + targetDate);
+                    }
+
+                    const targetTd = document.querySelector('.drop-target[data-date="' + targetDate + '"]');
+                    if (!targetTd) {
+                        alert('Невозможно перенести: дата ' + targetDate + ' отсутствует в выбранном диапазоне дней.');
+                        return;
+                    }
+
+                    div.remove();
+                    targetTd.appendChild(div);
+
+                    updateSummary(parentDate);
+                    updateSummary(targetDate);
+
+                    activeDay = targetDate;
+                    updateActiveDayVisual();
+                    applyHeightFilter();
+                    return;
+                }
+
                 const posId = div.getAttribute('data-id');
                 const upperCell = document.querySelector('.position-cell.used[data-id="' + posId + '"]');
                 if (upperCell) {

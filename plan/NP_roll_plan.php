@@ -319,6 +319,23 @@ foreach ($rows as $r) {
         thead th:not(:first-child), tbody td:not(:first-child), tfoot td:not(:first-child){
             width:var(--dayW); min-width:var(--dayW); max-width:var(--dayW);
         }
+        /* Заголовок дня: дата + счетчик гофропакетов */
+        thead th:not(:first-child){
+            white-space:normal;
+            height:auto;
+            padding:4px 4px;
+            line-height:1.15;
+        }
+        .day-iso{
+            font-size:11px;
+            font-weight:800;
+        }
+        .day-packages{
+            font-size:10px;
+            font-weight:900;
+            color:#0f766e;
+            margin-top:2px;
+        }
 
         .bale-label{ display:block; font-size:11px; color:#6b7280; margin-top:3px; line-height:1.2; white-space:normal; }
         .highlight{ background:#d1ecf1 !important; border-color:#0bb !important; }
@@ -543,6 +560,7 @@ foreach ($rows as $r) {
     });
 
     let selected = {}; // { "YYYY-MM-DD": ["baleId1","baleId2", ...] }
+    let currentDates = []; // ["YYYY-MM-DD", ...] для обновления счетчика в заголовках
 
     const cssEsc = (s)=> (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/"/g,'\\"');
 
@@ -749,13 +767,16 @@ foreach ($rows as $r) {
         const thead  = document.createElement('thead');
         const headTr = document.createElement('tr');
         headTr.innerHTML = '<th>Бухта</th>';
-        const dates = [];
+        currentDates = [];
         for (let d = 0; d < days; d++) {
             const date = new Date(start);
             date.setDate(start.getDate() + d);
             const iso = date.toISOString().split('T')[0];
-            dates.push(iso);
-            headTr.innerHTML += `<th>${iso}</th>`;
+            currentDates.push(iso);
+            const th = document.createElement('th');
+            th.dataset.date = iso;
+            th.innerHTML = `<div class="day-iso">${iso}</div><div class="day-packages" id="day-pkgs-${iso}"></div>`;
+            headTr.appendChild(th);
         }
         thead.appendChild(headTr);
         table.appendChild(thead);
@@ -787,7 +808,7 @@ foreach ($rows as $r) {
             td0.title = tooltip;
             tr.appendChild(td0);
 
-            dates.forEach(iso=>{
+        currentDates.forEach(iso=>{
                 const td = document.createElement('td');
                 td.dataset.date   = iso;
                 td.dataset.baleId = b.bale_id;
@@ -850,7 +871,7 @@ foreach ($rows as $r) {
         const tfoot = document.createElement('tfoot');
         const totalRow = document.createElement('tr');
         totalRow.innerHTML = '<td><b>Загрузка (ч)</b></td>';
-        dates.forEach(iso=>{
+        currentDates.forEach(iso=>{
             const t = document.createElement('td');
             t.id = 'load-' + iso;
             totalRow.appendChild(t);
@@ -901,6 +922,28 @@ foreach ($rows as $r) {
             const hours = cnt[date] ? (cnt[date].total_mins / 60) : 0;
             td.textContent = (hours>0) ? hours.toFixed(2) : '';
             td.className = (hours > 7) ? 'overload' : '';
+        });
+
+        // Обновляем счетчик гофропакетов в заголовках дат
+        updateDayPackages();
+    }
+
+    function updateDayPackages(){
+        // Считаем суммы гофропакетов по подсвеченным бухтам на каждый день
+        const pkgsByDate = {};
+        document.querySelectorAll('td.highlight').forEach(td=>{
+            const d = td.dataset.date;
+            const baleId = td.dataset.baleId;
+            const bale = BALES.find(b => String(b.bale_id) === String(baleId));
+            const pkgs = bale ? (bale.total_packages || 0) : 0;
+            pkgsByDate[d] = (pkgsByDate[d] || 0) + pkgs;
+        });
+
+        currentDates.forEach(iso=>{
+            const el = document.getElementById('day-pkgs-' + iso);
+            if(!el) return;
+            const v = pkgsByDate[iso] || 0;
+            el.textContent = v > 0 ? String(v) : '';
         });
     }
 
