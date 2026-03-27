@@ -81,6 +81,20 @@ try {
 
     ksort($planByDate);
 
+    // Для одинаковых фильтров в один день фиксируем порядковый номер слота,
+    // чтобы корректно распределять частичное выполнение по каждой ячейке отдельно.
+    $slotIndexByDateFilter = [];
+    foreach ($planByDate as $date => &$items) {
+        foreach ($items as &$it) {
+            $f = trim($it['filter_label'] ?? '');
+            $k = $date . '|' . $f;
+            $slotIndexByDateFilter[$k] = ($slotIndexByDateFilter[$k] ?? 0) + 1;
+            $it['_slot_seq'] = $slotIndexByDateFilter[$k];
+        }
+        unset($it);
+    }
+    unset($items);
+
     // Факт выполнения: план и выполнено по каждому фильтру (при ?fact=1)
     $factByFilter = [];
     $slotFills = [];
@@ -136,7 +150,8 @@ try {
                     if (trim($it['filter_label']) === $f) {
                         $slots[] = [
                             'date' => $date,
-                            'count' => (int)($it['count'] ?? 0)
+                            'count' => (int)($it['count'] ?? 0),
+                            'seq' => (int)($it['_slot_seq'] ?? 0)
                         ];
                     }
                 }
@@ -145,7 +160,7 @@ try {
             $remaining = $manufactured;
             foreach ($slots as $s) {
                 $cnt = $s['count'];
-                $key = $s['date'] . '|' . $f;
+                $key = $s['date'] . '|' . $f . '|' . $s['seq'];
                 if ($cnt <= 0) {
                     $slotFills[$key] = ['pct' => 0, 'done' => 0, 'total' => 0];
                     continue;
@@ -286,6 +301,12 @@ try {
             z-index: 0;
         }
 
+        .item > .item-name,
+        .item > .item-details {
+            position: relative;
+            z-index: 1;
+        }
+
         .item-name {
             font-weight: 600;
             font-size: 12px;
@@ -298,6 +319,12 @@ try {
             display: flex;
             justify-content: flex-end;
             align-items: center;
+        }
+
+        .item.item-highlighted {
+            outline: 2px solid #2563eb;
+            outline-offset: -1px;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.4);
         }
 
         @media print {
@@ -326,6 +353,11 @@ try {
             .day-column {
                 page-break-inside: avoid;
                 break-inside: avoid;
+            }
+
+            .item.item-highlighted {
+                outline: none !important;
+                box-shadow: none !important;
             }
 
             .days-grid {
@@ -416,6 +448,25 @@ try {
             if (show) params.set('fact', '1'); else params.delete('fact');
             window.location.href = '?' + params.toString();
         }
+        <?php if ($showFact): ?>
+        document.addEventListener('DOMContentLoaded', function() {
+            const items = document.querySelectorAll('.item[data-filter]');
+            items.forEach(function(el) {
+                el.addEventListener('mouseenter', function() {
+                    const filter = el.getAttribute('data-filter');
+                    items.forEach(function(i) {
+                        if (i.getAttribute('data-filter') === filter) i.classList.add('item-highlighted');
+                    });
+                });
+                el.addEventListener('mouseleave', function() {
+                    const filter = el.getAttribute('data-filter');
+                    items.forEach(function(i) {
+                        if (i.getAttribute('data-filter') === filter) i.classList.remove('item-highlighted');
+                    });
+                });
+            });
+        });
+        <?php endif; ?>
     </script>
 
     <?php if (empty($planByDate)): ?>
@@ -441,14 +492,17 @@ try {
                                     <?php foreach ($items as $item): 
                                         $filterLabel = trim($item['filter_label'] ?? '');
                                         $planned = (int)($item['count'] ?? 0);
-                                        $slotKey = $date . '|' . $filterLabel;
+                                        $slotSeq = (int)($item['_slot_seq'] ?? 0);
+                                        $slotKey = $date . '|' . $filterLabel . '|' . $slotSeq;
                                         $slot = $slotFills[$slotKey] ?? null;
                                         $pct = ($showFact && $slot && $slot['total'] > 0) ? $slot['pct'] : 0;
                                         $factAgg = $factByFilter[$filterLabel] ?? null;
                                         $doneTotal = $factAgg['manufactured'] ?? 0;
                                         $plannedTotal = $factAgg['planned'] ?? $planned;
                                     ?>
-                                        <div class="item"<?php if ($showFact && $factAgg): ?> title="Выполнено: <?= $doneTotal ?> из <?= $plannedTotal ?>"<?php endif; ?>>
+                                        <div class="item"
+                                             data-filter="<?= h($filterLabel) ?>"
+                                             <?php if ($showFact && $factAgg): ?>title="Выполнено: <?= $doneTotal ?> из <?= $plannedTotal ?>"<?php endif; ?>>
                                             <?php if ($showFact && $pct > 0): ?>
                                                 <div class="item-fact-fill" style="width: <?= round($pct, 1) ?>%"></div>
                                             <?php endif; ?>

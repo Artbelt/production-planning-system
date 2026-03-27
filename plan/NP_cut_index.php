@@ -940,26 +940,7 @@ $corr_done = array_flip($stmt->fetchAll(PDO::FETCH_COLUMN));
                 </div>
             `;
             
-            // Прогресс по этапам
-            if (data.progress) {
-                html += `
-                    <div class="info-card">
-                        <h4>Раскрой</h4>
-                        <div class="info-value">${data.progress.cut || 0}%</div>
-                        <div class="info-label">выполнено</div>
-                    </div>
-                    <div class="info-card">
-                        <h4>Гофрирование</h4>
-                        <div class="info-value">${data.progress.corr || 0}%</div>
-                        <div class="info-label">выполнено</div>
-                    </div>
-                    <div class="info-card">
-                        <h4>Сборка</h4>
-                        <div class="info-value">${data.progress.build || 0}%</div>
-                        <div class="info-label">выполнено</div>
-                    </div>
-                `;
-            }
+            // Убраны плашки прогресса по этапам (Раскрой/Гофрирование/Сборка)
             
             html += '</div>';
             
