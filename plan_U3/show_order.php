@@ -690,6 +690,7 @@ echo "<p style='margin-top:10px;'>* - без учета перевыполнен
             if (cells.length >= 14) {
                 const filter = cells[1].textContent.trim();
                 const plan = cells[2].textContent.trim();
+                const planCount = parseInt(plan) || 0;
 
                 const producedEl = cells[10].querySelector('.tooltip') || cells[10];
                 const producedText = producedEl.firstChild ? producedEl.firstChild.textContent.trim() : cells[10].textContent.trim();
@@ -699,18 +700,20 @@ echo "<p style='margin-top:10px;'>* - без учета перевыполнен
                 const gofraText = gofraEl.firstChild ? gofraEl.firstChild.textContent.trim() : cells[13].textContent.trim();
                 const gofra = parseInt(gofraText) || 0;
 
-                const shortage = Math.max(0, produced - gofra);
+                const shortage = Math.max(0, planCount - gofra);
+                const isNoGofraProblem = gofra === 0 && produced > 0;
+                const isShortageProblem = planCount > 0 && shortage >= 20;
 
-                let problemType = '', shouldShow = false;
-                if (gofra === 0 && produced > 0) {
-                    problemType = 'Нет гофропакетов';
-                    shouldShow = showNoGofra;
-                } else if (gofra < produced && produced > 0 && shortage >= 20) {
-                    problemType = 'Недостаток';
-                    shouldShow = showShortage;
-                }
+                const shouldShowNoGofra = showNoGofra && isNoGofraProblem;
+                const shouldShowShortage = showShortage && isShortageProblem;
+                const shouldShow = shouldShowNoGofra || shouldShowShortage;
 
                 if (shouldShow) {
+                    const typeLabels = [];
+                    if (shouldShowNoGofra) typeLabels.push('Нет гофропакетов');
+                    if (shouldShowShortage) typeLabels.push('Недостаток');
+                    const problemType = typeLabels.join(' + ');
+
                     problemPositions.push({ filter, plan, produced, gofra, problemType, shortage });
                 }
             }
@@ -727,7 +730,9 @@ echo "<p style='margin-top:10px;'>* - без учета перевыполнен
         let html = `<div class="zero-positions-header">Обнаружено проблемных позиций: ${problemPositions.length}</div>`;
         html += `<table><thead><tr><th>Фильтр</th><th style="text-align:center;">План, шт</th><th style="text-align:center;">Выпущено, шт</th><th style="text-align:center;">Гофропакетов, шт</th><th style="text-align:center;">Недостаток, шт</th><th style="text-align:center;">Тип проблемы</th></tr></thead><tbody>`;
         problemPositions.forEach(pos => {
-            const typeColor = pos.problemType === 'Нет гофропакетов' ? '#dc2626' : '#f59e0b';
+            const typeColor = pos.problemType.includes('Нет гофропакетов')
+                ? (pos.problemType.includes('Недостаток') ? '#b45309' : '#dc2626')
+                : '#f59e0b';
             html += `<tr><td>${pos.filter}</td><td style="text-align:center;">${pos.plan}</td><td style="text-align:center;color:#22c55e;font-weight:600;">${pos.produced}</td><td style="text-align:center;color:#dc2626;font-weight:600;">${pos.gofra}</td><td style="text-align:center;color:#dc2626;font-weight:600;">${pos.shortage}</td><td style="text-align:center;color:${typeColor};font-weight:600;font-size:0.6875rem;">${pos.problemType}</td></tr>`;
         });
         html += '</tbody></table>';
