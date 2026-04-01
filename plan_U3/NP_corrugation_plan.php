@@ -13,7 +13,7 @@ $action = $_GET['action'] ?? '';
 /* === AJAX ============================================================== */
 if (in_array($action, [
     'load_assembly','load_corr','save_corr','load_left_rows',
-    'plan_bounds','load_meta','load_roll_cut_dates'
+    'plan_bounds','load_meta','load_roll_cut_dates','load_other_corr_totals'
 ], true)) {
     header('Content-Type: application/json; charset=utf-8');
     try{
@@ -91,6 +91,26 @@ if (in_array($action, [
             ");
             $st->execute([$order, $dtStart->format('Y-m-d'), $dtEnd->format('Y-m-d')]);
             echo json_encode(['ok'=>true,'items'=>$st->fetchAll()]); exit;
+        }
+
+        /* load_other_corr_totals — сумма гофропакетов по другим заявкам по дням (для шапки таблицы) */
+        if ($action==='load_other_corr_totals'){
+            $order = (string)($payload['order'] ?? ($_GET['order'] ?? ''));
+            $start = (string)($payload['start'] ?? ($_GET['start'] ?? ''));
+            $days  = (int)($payload['days']  ?? ($_GET['days'] ?? 14));
+            if ($order==='' || $start==='' || $days<=0){
+                http_response_code(400); echo json_encode(['ok'=>false,'error'=>'bad params']); exit;
+            }
+            $dtStart = new DateTime($start);
+            $dtEnd   = (clone $dtStart)->modify('+'.($days-1).' day');
+            $st = $pdo->prepare("
+                SELECT day_date, SUM(qty) AS total_qty
+                FROM corrugation_plans
+                WHERE order_number <> ? AND day_date BETWEEN ? AND ?
+                GROUP BY day_date
+            ");
+            $st->execute([$order, $dtStart->format('Y-m-d'), $dtEnd->format('Y-m-d')]);
+            echo json_encode(['ok'=>true,'items'=>$st->fetchAll(PDO::FETCH_ASSOC)]); exit;
         }
 
         /* save_corr -------------------------------------------------------- */
@@ -338,6 +358,7 @@ try{
     .dayHead.weekend{background:var(--weekend)!important}
     .dayHead .d{display:block;font-weight:400}
     .dayHead .sum{display:block;color:var(--muted);font-size:11px}
+    .dayHead .otherCorrDay{display:block;margin-top:2px;font-size:10px;color:#64748b}
 
     .dayCell{width:var(--wDay);min-width:var(--wDay);max-width:var(--wDay);text-align:center; position:relative; overflow:visible;}
     .dayCell .dayCell-inner{ display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100%; gap:0; }
@@ -435,6 +456,7 @@ try{
     let META = {};
     let ROLL_CUT_DATES = new Set();   // "filter|date" — даты порезки бухт по позициям
     let ROLL_CUT_QTY = new Map();   // "filter|date" -> кол-во гофропакетов из порезки в этот день
+    let OTHER_CORR_BY_DAY = new Map(); // day ISO -> сумма qty по другим заявкам
 
     const el=id=>document.getElementById(id);
     const addDays=(iso,k)=>{const dt=new Date(iso); dt.setDate(dt.getDate()+k); return dt.toISOString().slice(0,10);};
@@ -459,6 +481,17 @@ try{
     /* ===== AJAX ==== */
     async function loadAssembly(){ const body=JSON.stringify({order:ORDER,start:startDateISO,days}); const res=await fetch(location.pathname+'?action=load_assembly',{method:'POST',headers:{'Content-Type':'application/json'},body}); const data=await res.json(); if(!data.ok) throw new Error(data.error||'asm'); ASM.clear(); (data.items||[]).forEach(r=>{ ASM.set(key(r.filter,r.day_date), parseInt(r.qty,10)||0); }); }
     async function loadCorr(){ const body=JSON.stringify({order:ORDER,start:startDateISO,days}); const res=await fetch(location.pathname+'?action=load_corr',{method:'POST',headers:{'Content-Type':'application/json'},body}); const data=await res.json(); if(!data.ok) throw new Error(data.error||'corr'); CORR.clear(); (data.items||[]).forEach(r=>{ CORR.set(key(r.filter,r.day_date), parseInt(r.qty,10)||0); }); }
+    async function loadOtherCorrTotals(){
+        const body=JSON.stringify({order:ORDER,start:startDateISO,days});
+        const res=await fetch(location.pathname+'?action=load_other_corr_totals',{method:'POST',headers:{'Content-Type':'application/json'},body});
+        const data=await res.json();
+        if(!data.ok) throw new Error(data.error||'other_corr');
+        OTHER_CORR_BY_DAY.clear();
+        (data.items||[]).forEach(r=>{
+            const q = parseInt(r.total_qty,10)||0;
+            if (q>0) OTHER_CORR_BY_DAY.set(String(r.day_date).slice(0,10), q);
+        });
+    }
     async function saveCorr(){ const items=[]; for(const [k,q] of CORR.entries()){ if(!q) continue; const [f,d]=k.split('|'); items.push({filter:f,date:d,qty:q}); } const body=JSON.stringify({order:ORDER,start:startDateISO,days,items}); const res=await fetch(location.pathname+'?action=save_corr',{method:'POST',headers:{'Content-Type':'application/json'},body}); const data=await res.json(); if(!data.ok) throw new Error(data.error||'save'); }
     async function loadLeftRows(order){ const body=JSON.stringify({order}); const res=await fetch(location.pathname+'?action=load_left_rows',{method:'POST',headers:{'Content-Type':'application/json'},body}); const data=await res.json(); if(!data.ok) throw new Error(data.error||'left'); return data.items||[]; }
     async function planBounds(order){ const body=JSON.stringify({order}); const res=await fetch(location.pathname+'?action=plan_bounds',{method:'POST',headers:{'Content-Type':'application/json'},body}); const data=await res.json(); if(!data.ok) throw new Error(data.error||'bounds'); return data; }
@@ -540,9 +573,13 @@ try{
         for(const d of dates){
             const wk=isWeekend(d)?' weekend':'';
             const sum = corrDayTotals.get(d)||0;
+            const otherSum = OTHER_CORR_BY_DAY.get(d) || 0;
+            const otherLine = otherSum > 0
+                ? `<span class="otherCorrDay" title="Гофропакетов по другим заявкам на этот день">др. ${otherSum}</span>`
+                : '';
             htmlC+=`<th class="dayHead${wk}" title="Гофрирование">
                       <span class="d">${fmtDM(d)}</span>
-                      <span class="sum"><span class="corrDaySum" data-date="${d}">${sum ? sum : ''}</span></span>
+                      <span class="sum"><span class="corrDaySum" data-date="${d}">${sum ? sum : ''}</span>${otherLine}</span>
                     </th>`;
         }
         htmlC+='</tr></thead><tbody>';
@@ -685,8 +722,7 @@ try{
         try{ await loadRollCutDates(); }catch{}
 
         rebuildDates();
-        await loadAssembly();
-        await loadCorr();
+        await Promise.all([loadAssembly(), loadCorr(), loadOtherCorrTotals().catch(()=>{})]);
         recomputeCoverage();
         buildTables();
 
@@ -694,7 +730,7 @@ try{
             startDateISO = el('startDate').value || todayISO;
             days = Math.max(1, parseInt(el('days').value,10)||1);
             rebuildDates();
-            await Promise.all([loadAssembly(), loadCorr()]);
+            await Promise.all([loadAssembly(), loadCorr(), loadOtherCorrTotals().catch(()=>{})]);
             recomputeCoverage();
             buildTables();
         });
@@ -704,7 +740,7 @@ try{
             if(bounds.min && bounds.days>0){ startDateISO=bounds.min; days=bounds.days; el('startDate').value=startDateISO; el('days').value=String(days); showEarliestDateHint(bounds.min); }
             else { hideEarliestDateHint(); }
             rebuildDates();
-            await Promise.all([loadAssembly(), loadCorr()]);
+            await Promise.all([loadAssembly(), loadCorr(), loadOtherCorrTotals().catch(()=>{})]);
             recomputeCoverage();
             buildTables();
         });

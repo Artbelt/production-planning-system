@@ -17,6 +17,8 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
     }
 
     // Единый запрос по выбранной заявке
+    // Плейсхолдеры :ord1/:ord2 и :ctype1…:ctype10 — уникальные имена: при PDO::ATTR_EMULATE_PREPARES=false
+    // драйвер MySQL не допускает повторного использования одного именованного параметра.
     $sql = "
     WITH bp AS (
       SELECT
@@ -26,7 +28,7 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
         assign_date,
         `count`
       FROM build_plan
-      WHERE order_number = :ord
+      WHERE order_number = :ord1
     ),
     p AS (
       SELECT b.order_number, b.base_filter, b.filter_label, b.assign_date, b.`count`,
@@ -36,34 +38,47 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
     ),
     o AS (
       SELECT order_number, COALESCE(packaging_rate,1) AS packaging_rate
-      FROM orders WHERE order_number = :ord
+      FROM orders WHERE order_number = :ord2
     )
     SELECT
-      :ctype AS component_type,
+      :ctype1 AS component_type,
       CASE 
-        WHEN :ctype = 'wireframe' THEN p.wireframe
-        WHEN :ctype = 'prefilter' THEN p.prefilter
-        WHEN :ctype = 'box'       THEN p.box
-        WHEN :ctype = 'g_box'     THEN p.g_box
+        WHEN :ctype2 = 'wireframe' THEN p.wireframe
+        WHEN :ctype3 = 'prefilter' THEN p.prefilter
+        WHEN :ctype4 = 'box'       THEN p.box
+        WHEN :ctype5 = 'g_box'     THEN p.g_box
       END AS component_name,
       p.assign_date AS need_by_date,
       p.filter_label,
       p.base_filter,
       CASE 
-        WHEN :ctype = 'g_box' 
+        WHEN :ctype6 = 'g_box' 
              THEN CEIL(p.`count` / NULLIF((SELECT packaging_rate FROM o LIMIT 1),0))
         ELSE p.`count`
       END AS qty
     FROM p
     WHERE
-      ( :ctype <> 'wireframe' OR (p.wireframe IS NOT NULL AND p.wireframe <> '') )
-      AND ( :ctype <> 'prefilter' OR (p.prefilter IS NOT NULL AND p.prefilter <> '') )
-      AND ( :ctype <> 'box'       OR (p.box IS NOT NULL AND p.box <> '') )
-      AND ( :ctype <> 'g_box'     OR (p.g_box IS NOT NULL AND p.g_box <> '') )
+      ( :ctype7 <> 'wireframe' OR (p.wireframe IS NOT NULL AND p.wireframe <> '') )
+      AND ( :ctype8 <> 'prefilter' OR (p.prefilter IS NOT NULL AND p.prefilter <> '') )
+      AND ( :ctype9 <> 'box'       OR (p.box IS NOT NULL AND p.box <> '') )
+      AND ( :ctype10 <> 'g_box'     OR (p.g_box IS NOT NULL AND p.g_box <> '') )
     ORDER BY need_by_date, component_name, base_filter
     ";
     $stmt = $pdo->prepare($sql);
-    $stmt->execute([':ord'=>$order, ':ctype'=>$ctype]);
+    $stmt->execute([
+        ':ord1' => $order,
+        ':ord2' => $order,
+        ':ctype1' => $ctype,
+        ':ctype2' => $ctype,
+        ':ctype3' => $ctype,
+        ':ctype4' => $ctype,
+        ':ctype5' => $ctype,
+        ':ctype6' => $ctype,
+        ':ctype7' => $ctype,
+        ':ctype8' => $ctype,
+        ':ctype9' => $ctype,
+        ':ctype10' => $ctype,
+    ]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     if (!$rows) {
