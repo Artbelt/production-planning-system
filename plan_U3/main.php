@@ -517,6 +517,7 @@ echo "<!-- Аккуратная панель авторизации -->
                         <input type="submit" value="Кол-во гофропакетов из рулона">
                     </form>
                     <a href="NP_supply_requirements.php" target="_blank" rel="noopener" class="stack"><button>Потребность комплектующих по заявке</button></a>
+                    <a href="active_positions.php" target="_blank" rel="noopener" class="stack"><button type="button">Активные позиции</button></a>
                 </div>
 
                 <div class="section-title" style="margin-top:14px">Управление данными</div>
