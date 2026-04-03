@@ -1248,21 +1248,35 @@ function get_order($order_number){
 /** возвращает результат выполнения sql запроса */
 function mysql_execute($sql){
     global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
-    /** Подключаемся к БД */
-    $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+    $mysqli = null;
+    try {
+        $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+    } catch (Throwable $e) {
+        echo 'Возникла проблема на сайте'
+            . "\nОшибка подключения: " . $e->getMessage() . "\n";
+        exit;
+    }
     if ($mysqli->connect_errno) {
-        /** Если не получилось подключиться */
         echo 'Возникла проблема на сайте'
             . "Номер ошибки: " . $mysqli->connect_errno . "\n"
             . "Ошибка: " . $mysqli->connect_error . "\n";
         exit;
     }
-    /** Выполняем запрос SQL */
-    if (!$result = $mysqli->query($sql)) {
+    try {
+        $result = $mysqli->query($sql);
+    } catch (Throwable $e) {
+        echo "Ошибка: Наш запрос не удался и вот почему: \n"
+            . "Запрос: " . $sql . "\n"
+            . "Ошибка: " . $e->getMessage() . "\n";
+        $mysqli->close();
+        exit;
+    }
+    if (!$result) {
         echo "Ошибка: Наш запрос не удался и вот почему: \n"
             . "Запрос: " . $sql . "\n"
             . "Номер ошибки: " . $mysqli->errno . "\n"
             . "Ошибка: " . $mysqli->error . "\n";
+        $mysqli->close();
         exit;
     }
 
@@ -1344,18 +1358,33 @@ function select_g_boxes($index){
 
 }
 
-/** Проверка наличия фильтра в БД */
+/** Проверка наличия фильтра в БД (число строк; нельзя использовать mysql_execute(SELECT) — mysqli уничтожается до чтения результата) */
 function check_filter($filter){
-
-    $result = mysql_execute("SELECT * FROM panel_filter_structure WHERE filter = '$filter'");
-
-    if ($result->num_rows > 0) {
-        $a = true;
-    } else {
-        $a = false;
+    global $mysql_host,$mysql_user,$mysql_user_pass,$mysql_database;
+    try {
+        $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+    } catch (Throwable $e) {
+        return 0;
     }
-
-    return $a;
+    if ($mysqli->connect_errno) {
+        return 0;
+    }
+    $filter_esc = $mysqli->real_escape_string((string)$filter);
+    $sql = "SELECT 1 FROM panel_filter_structure WHERE filter = '$filter_esc' LIMIT 1";
+    try {
+        $result = $mysqli->query($sql);
+    } catch (Throwable $e) {
+        $mysqli->close();
+        return 0;
+    }
+    if (!$result) {
+        $mysqli->close();
+        return 0;
+    }
+    $n = $result->num_rows;
+    $result->free();
+    $mysqli->close();
+    return $n;
 }
 
 /** Получаем всю информацию о фильтре:

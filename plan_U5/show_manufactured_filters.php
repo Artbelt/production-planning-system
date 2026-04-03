@@ -430,6 +430,11 @@ echo "<button onclick='saveHours()' style='margin-top: 10px;'>Сохранить
             }
         });
 
+        const dateInput = document.getElementById('calendar_input');
+        if (dateInput && dateInput.value.trim() !== '') {
+            formData.append('selected_date', dateInput.value.trim());
+        }
+
         fetch('save_hours.php', {
             method: 'POST',
             body: formData

@@ -820,7 +820,6 @@
             }
         });
 
-        //  Добавляем дату
         const dateInput = document.getElementById('calendar_input');
         if (dateInput && dateInput.value.trim() !== '') {
             formData.append('selected_date', dateInput.value.trim());
@@ -832,7 +831,7 @@
         })
             .then(response => response.text())
             .then(result => {
-                alert("✅ Часы успешно сохранены!    V1"+dateInput.value);
+                alert("✅ Часы успешно сохранены!");
             })
             .catch(error => {
                 console.error("Ошибка:", error);

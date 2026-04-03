@@ -31,15 +31,35 @@ if (!$isDirector) {
     showAccessDenied('Доступ к странице аналитики имеют только директоры');
 }
 
-// Дата для отчёта: из GET или вчера по умолчанию
-$reportDate = isset($_GET['date']) ? trim($_GET['date']) : date('Y-m-d', strtotime('-1 day'));
-if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $reportDate)) {
-    $reportDate = date('Y-m-d', strtotime('-1 day'));
-} else {
-    $dt = DateTime::createFromFormat('Y-m-d', $reportDate);
-    if (!$dt || $dt->format('Y-m-d') !== $reportDate) {
-        $reportDate = date('Y-m-d', strtotime('-1 day'));
+// Общая дата отчета по участкам: из GET или вчера по умолчанию
+$defaultDate = date('Y-m-d', strtotime('-1 day'));
+$reportDate = isset($_GET['date']) ? trim($_GET['date']) : $defaultDate;
+
+$isValidDate = static function ($date) {
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        return false;
     }
+    $dt = DateTime::createFromFormat('Y-m-d', $date);
+    return $dt && $dt->format('Y-m-d') === $date;
+};
+
+if (!$isValidDate($reportDate)) {
+    $reportDate = $defaultDate;
+}
+
+// Отдельный период для аналитики по упаковке
+$packagingDateFrom = isset($_GET['packaging_date_from']) ? trim($_GET['packaging_date_from']) : $reportDate;
+$packagingDateTo = isset($_GET['packaging_date_to']) ? trim($_GET['packaging_date_to']) : $reportDate;
+if (!$isValidDate($packagingDateFrom)) {
+    $packagingDateFrom = $reportDate;
+}
+if (!$isValidDate($packagingDateTo)) {
+    $packagingDateTo = $reportDate;
+}
+if ($packagingDateFrom > $packagingDateTo) {
+    $tmp = $packagingDateFrom;
+    $packagingDateFrom = $packagingDateTo;
+    $packagingDateTo = $tmp;
 }
 
 // Подключения к БД участков: код участка => путь к settings.php
@@ -285,6 +305,163 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
     }
 }
 
+// Аналитика по упаковке
+$packagingStats = [
+    'shipped' => [],
+    'manufactured' => [],
+    'shipped_total' => 0,
+    'manufactured_total' => 0,
+    'error' => null,
+];
+try {
+    // 1) Коробки в готовой продукции: по каждому участку — manufactured_production за период
+    //    и поле box из структуры фильтра (таблица filter_structure, если есть, иначе типовая для участка).
+    $structureTableByDept = [
+        'U2' => 'panel_filter_structure',
+        'U3' => 'round_filter_structure',
+        'U4' => 'round_filter_structure',
+        'U5' => 'salon_filter_structure',
+    ];
+    $shippedByBox = [];
+
+    foreach ($planSettingsPaths as $deptCode => $settingsPath) {
+        if (!is_file($settingsPath)) {
+            continue;
+        }
+        $mysql_host = $mysql_user = $mysql_user_pass = $mysql_database = null;
+        require $settingsPath;
+        if (!isset($mysql_host, $mysql_database, $mysql_user, $mysql_user_pass)) {
+            continue;
+        }
+        try {
+            $pm = new mysqli($mysql_host, $mysql_user, $mysql_user_pass ?? '', $mysql_database);
+            if ($pm->connect_errno) {
+                continue;
+            }
+            $pm->set_charset('utf8mb4');
+
+            $structureTable = null;
+            $chkFs = $pm->query("SHOW TABLES LIKE 'filter_structure'");
+            if ($chkFs && $chkFs->num_rows > 0) {
+                $structureTable = 'filter_structure';
+            } elseif (isset($structureTableByDept[$deptCode])) {
+                $fallback = $structureTableByDept[$deptCode];
+                $chkFb = $pm->query("SHOW TABLES LIKE '" . $pm->real_escape_string($fallback) . "'");
+                if ($chkFb && $chkFb->num_rows > 0) {
+                    $structureTable = $fallback;
+                }
+            }
+            if ($structureTable === null) {
+                $pm->close();
+                continue;
+            }
+
+            $boxColChk = $pm->query("SHOW COLUMNS FROM `{$structureTable}` LIKE 'box'");
+            if (!$boxColChk || $boxColChk->num_rows === 0) {
+                $pm->close();
+                continue;
+            }
+
+            $sql = "
+                SELECT
+                    COALESCE(NULLIF(TRIM(fs.box), ''), 'Без коробки') AS box_name,
+                    SUM(mp.count_of_filters) AS total_quantity
+                FROM manufactured_production mp
+                LEFT JOIN (
+                    SELECT TRIM(`filter`) AS f,
+                           MAX(NULLIF(TRIM(`box`), '')) AS box
+                    FROM `{$structureTable}`
+                    GROUP BY TRIM(`filter`)
+                ) fs ON fs.f = TRIM(mp.name_of_filter)
+                WHERE mp.date_of_production BETWEEN ? AND ?
+                GROUP BY box_name
+            ";
+            $stmt = $pm->prepare($sql);
+            if ($stmt) {
+                $stmt->bind_param('ss', $packagingDateFrom, $packagingDateTo);
+                $stmt->execute();
+                $res = $stmt->get_result();
+                while ($row = $res->fetch_assoc()) {
+                    $boxName = (string)($row['box_name'] ?? 'Без коробки');
+                    $qty = (int)($row['total_quantity'] ?? 0);
+                    if (!isset($shippedByBox[$boxName])) {
+                        $shippedByBox[$boxName] = ['total_quantity' => 0, 'depts' => []];
+                    }
+                    $shippedByBox[$boxName]['total_quantity'] += $qty;
+                    if ($qty > 0) {
+                        $shippedByBox[$boxName]['depts'][$deptCode] = true;
+                    }
+                }
+                $stmt->close();
+            }
+            $pm->close();
+        } catch (Throwable $e) {
+            // пропуск участка
+        }
+    }
+
+    foreach ($shippedByBox as $boxName => $info) {
+        $depts = array_keys($info['depts']);
+        sort($depts);
+        $packagingStats['shipped'][] = [
+            'box_name' => $boxName,
+            'brands' => implode(', ', $depts),
+            'total_quantity' => (int)$info['total_quantity'],
+        ];
+        $packagingStats['shipped_total'] += (int)$info['total_quantity'];
+    }
+    usort($packagingStats['shipped'], static function ($a, $b) {
+        if ($b['total_quantity'] !== $a['total_quantity']) {
+            return $b['total_quantity'] <=> $a['total_quantity'];
+        }
+        return strcasecmp($a['box_name'], $b['box_name']);
+    });
+
+    // 2) Список изготовленных коробок из модуля упаковки
+    if (file_exists(__DIR__ . '/../env.php')) {
+        require_once __DIR__ . '/../env.php';
+    }
+    $pressHost = defined('DB_HOST') ? DB_HOST : '127.0.0.1';
+    $pressUser = defined('DB_USER') ? DB_USER : 'root';
+    $pressPass = defined('DB_PASS') ? DB_PASS : '';
+    $pressMysqli = new mysqli($pressHost, $pressUser, $pressPass, 'press_module');
+    if (!$pressMysqli->connect_errno) {
+        $pressMysqli->set_charset('utf8mb4');
+
+        $stmt = $pressMysqli->prepare("
+            SELECT
+                box_name,
+                SUM(quantity) AS total_quantity,
+                COALESCE(NULLIF(TRIM(brand_name), ''), '') AS brand_key
+            FROM press_glued_boxes
+            WHERE shift_date BETWEEN ? AND ?
+            GROUP BY box_name, COALESCE(NULLIF(TRIM(brand_name), ''), '')
+            ORDER BY total_quantity DESC, box_name ASC, brand_key ASC
+        ");
+        if ($stmt) {
+            $stmt->bind_param('ss', $packagingDateFrom, $packagingDateTo);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($row = $res->fetch_assoc()) {
+                $brandKey = (string)($row['brand_key'] ?? '');
+                $packagingStats['manufactured'][] = [
+                    'box_name' => (string)($row['box_name'] ?? ''),
+                    'brand_name' => $brandKey !== '' ? $brandKey : '—',
+                    'total_quantity' => (int)($row['total_quantity'] ?? 0),
+                ];
+                $packagingStats['manufactured_total'] += (int)($row['total_quantity'] ?? 0);
+            }
+            $stmt->close();
+        }
+
+        $pressMysqli->close();
+    } else if (empty($packagingStats['shipped'])) {
+        $packagingStats['error'] = 'Нет подключения к базе упаковки';
+    }
+} catch (Throwable $e) {
+    $packagingStats['error'] = 'Не удалось загрузить аналитику по упаковке';
+}
+
 // Список участков, для которых есть системы планирования
 $departments = [
     'U2' => [
@@ -367,6 +544,32 @@ $departments = [
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 24px;
+        }
+        .analytics-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        .analytics-tab-btn {
+            border: 1px solid var(--gray-300);
+            border-radius: 8px;
+            padding: 8px 14px;
+            font-size: 13px;
+            color: var(--gray-700);
+            background: #fff;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .analytics-tab-btn.is-active {
+            background: var(--primary, #2563eb);
+            color: #fff;
+            border-color: var(--primary, #2563eb);
+        }
+        .analytics-tab-panel {
+            display: none;
+        }
+        .analytics-tab-panel.is-active {
+            display: block;
         }
         .dept-card {
             background: #fff;
@@ -508,6 +711,48 @@ $departments = [
             background: var(--primary-hover, #1d4ed8);
             color: #fff;
         }
+        .packaging-card {
+            background: #fff;
+            border-radius: var(--border-radius-lg);
+            box-shadow: var(--shadow);
+            padding: 18px;
+            margin-bottom: 20px;
+        }
+        .packaging-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        .packaging-subtitle {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--gray-800);
+        }
+        .packaging-total {
+            font-size: 13px;
+            color: var(--gray-600);
+            margin-bottom: 10px;
+        }
+        .packaging-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .packaging-table th, .packaging-table td {
+            border: 1px solid #e5e7eb;
+            padding: 8px;
+            text-align: left;
+        }
+        .packaging-table th {
+            background: #f9fafb;
+            font-weight: 600;
+        }
+        .packaging-empty {
+            color: var(--gray-500);
+            font-size: 13px;
+            padding: 8px 0;
+        }
         @media (max-width: 768px) {
             .analytics-header {
                 flex-direction: column;
@@ -518,6 +763,9 @@ $departments = [
                 grid-template-columns: 1fr;
             }
             .production-stat-u5-machines {
+                grid-template-columns: 1fr;
+            }
+            .packaging-grid {
                 grid-template-columns: 1fr;
             }
         }
@@ -536,12 +784,20 @@ $departments = [
             <form method="get" action="" class="analytics-date-form" id="analyticsDateForm">
                 <label for="analyticsDate" class="analytics-date-label">Дата:</label>
                 <input type="date" id="analyticsDate" name="date" value="<?= htmlspecialchars($reportDate) ?>" class="analytics-date-input" max="<?= date('Y-m-d') ?>" onchange="document.getElementById('analyticsDateForm').submit()">
+                <input type="hidden" name="packaging_date_from" value="<?= htmlspecialchars($packagingDateFrom) ?>">
+                <input type="hidden" name="packaging_date_to" value="<?= htmlspecialchars($packagingDateTo) ?>">
             </form>
         </div>
 
-        <div class="analytics-grid">
-            <?php foreach ($departments as $code => $dept): ?>
-                <div class="dept-card">
+        <div class="analytics-tabs">
+            <button type="button" class="analytics-tab-btn is-active" data-tab-target="departments-tab">Аналитика по участкам</button>
+            <button type="button" class="analytics-tab-btn" data-tab-target="packaging-tab">Аналитика по упаковке</button>
+        </div>
+
+        <div class="analytics-tab-panel is-active" id="departments-tab">
+            <div class="analytics-grid">
+                <?php foreach ($departments as $code => $dept): ?>
+                    <div class="dept-card">
                     <div class="dept-header">
                         <div>
                             <div style="font-weight: 600; font-size: 15px;"><?= htmlspecialchars($dept['name']) ?></div>
@@ -721,8 +977,80 @@ $departments = [
                         </script>
                     </div>
                     <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+
+        <div class="analytics-tab-panel" id="packaging-tab">
+            <div class="packaging-card">
+                <div style="font-weight: 600; font-size: 16px; margin-bottom: 6px;">Аналитика по упаковке</div>
+                <form method="get" action="" class="analytics-date-form" id="packagingDateForm" style="margin-bottom: 14px;">
+                    <label for="packagingDateFrom" class="analytics-date-label">Период:</label>
+                    <input type="date" id="packagingDateFrom" name="packaging_date_from" value="<?= htmlspecialchars($packagingDateFrom) ?>" class="analytics-date-input" max="<?= date('Y-m-d') ?>" onchange="document.getElementById('packagingDateForm').submit()">
+                    <span class="analytics-date-label">—</span>
+                    <input type="date" id="packagingDateTo" name="packaging_date_to" value="<?= htmlspecialchars($packagingDateTo) ?>" class="analytics-date-input" max="<?= date('Y-m-d') ?>" onchange="document.getElementById('packagingDateForm').submit()">
+                    <input type="hidden" name="date" value="<?= htmlspecialchars($reportDate) ?>">
+                </form>
+                <?php if (!empty($packagingStats['error'])): ?>
+                    <div class="packaging-empty"><?= htmlspecialchars($packagingStats['error']) ?></div>
+                <?php else: ?>
+                <div class="packaging-grid">
+                    <div>
+                        <div class="packaging-subtitle">Коробки, отгруженные с выпущенной продукцией</div>
+                        <div class="packaging-total">Итого: <strong><?= number_format((int)$packagingStats['shipped_total'], 0, ',', ' ') ?> шт.</strong></div>
+                        <?php if (!empty($packagingStats['shipped'])): ?>
+                            <table class="packaging-table">
+                                <thead>
+                                    <tr>
+                                        <th>Коробка</th>
+                                        <th>Участки</th>
+                                        <th>Количество</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($packagingStats['shipped'] as $item): ?>
+                                        <tr>
+                                            <td><?= htmlspecialchars($item['box_name']) ?></td>
+                                            <td><?= htmlspecialchars($item['brands'] !== '' ? $item['brands'] : '—') ?></td>
+                                            <td><?= number_format((int)$item['total_quantity'], 0, ',', ' ') ?> шт.</td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        <?php else: ?>
+                            <div class="packaging-empty">Нет данных за выбранную дату.</div>
+                        <?php endif; ?>
+                    </div>
+                    <div>
+                        <div class="packaging-subtitle">Список изготовленных коробок</div>
+                        <div class="packaging-total">Итого: <strong><?= number_format((int)$packagingStats['manufactured_total'], 0, ',', ' ') ?> шт.</strong></div>
+                        <?php if (!empty($packagingStats['manufactured'])): ?>
+                            <table class="packaging-table">
+                                <thead>
+                                    <tr>
+                                        <th>Коробка</th>
+                                        <th>Бренды</th>
+                                        <th>Количество</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($packagingStats['manufactured'] as $item): ?>
+                                        <tr>
+                                            <td><?= htmlspecialchars($item['box_name']) ?></td>
+                                            <td><?= htmlspecialchars($item['brand_name'] ?? '—') ?></td>
+                                            <td><?= number_format((int)$item['total_quantity'], 0, ',', ' ') ?> шт.</td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        <?php else: ?>
+                            <div class="packaging-empty">Нет данных за выбранную дату.</div>
+                        <?php endif; ?>
+                    </div>
                 </div>
-            <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
         </div>
     </div>
 
@@ -802,6 +1130,22 @@ $departments = [
         modal.querySelector('.production-modal-backdrop').addEventListener('click', closeModal);
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
+        });
+    })();
+    </script>
+    <script>
+    (function() {
+        var buttons = document.querySelectorAll('.analytics-tab-btn');
+        var panels = document.querySelectorAll('.analytics-tab-panel');
+        buttons.forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var targetId = this.getAttribute('data-tab-target');
+                buttons.forEach(function(b) { b.classList.remove('is-active'); });
+                panels.forEach(function(p) { p.classList.remove('is-active'); });
+                this.classList.add('is-active');
+                var target = document.getElementById(targetId);
+                if (target) target.classList.add('is-active');
+            });
         });
     })();
     </script>

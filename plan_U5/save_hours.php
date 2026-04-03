@@ -1,13 +1,7 @@
 <?php
 // save_hours.php
 
-// Подключение к БД
-$host = 'localhost';
-$db = 'plan_u5';
-$user = 'root';
-$pass = '';
-$charset = 'utf8mb4';
-$dsn = "mysql:host=$host;dbname=$db;charset=$charset";
+require_once __DIR__ . '/settings.php';
 
 $options = [
     PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
@@ -27,11 +21,9 @@ try {
 $inserted = 0;
 
 if (isset($_POST['hours']) && is_array($_POST['hours'])) {
-    $production_date = null;
-    print_r($_POST['hours']);  // Для отладки: выводим полученные часы
-    // Получаем дату (если передана)
-    if (isset($_POST['selected_date']) && !empty($_POST['selected_date'])) {
-        $production_date = $_POST['selected_date'];
+    // Та же нормализация даты, что и в show_manufactured_filters (reverse_date)
+    if (isset($_POST['selected_date']) && trim((string)$_POST['selected_date']) !== '') {
+        $production_date = date('Y-m-d', strtotime($_POST['selected_date']));
     } else {
         $production_date = date('Y-m-d');
     }
