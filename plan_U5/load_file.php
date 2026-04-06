@@ -238,12 +238,14 @@ echo '</div>'; // закрываем panel
 /** Переменная для сериализации и передачи массива в следующий скрипт */
 $order_json = json_encode($order, JSON_UNESCAPED_UNICODE);
 $order_str = serialize($order);
+/** Как в plan/: base64 надёжно переносит serialize через HTML-поле */
+$order_str_b64 = base64_encode($order_str);
 
 echo '<div class="form-group">';
 echo '<form action="save_order_into_DB.php" method="post" id="saveOrderForm">';
 echo '<label for="order_name">Присвоить номер заявке:</label><br><br>';
 echo '<input name="order_name" type="text" placeholder="№X-X" id="order_name" style="width:200px; margin-right:10px;"/>';
-echo "<input type='hidden' name='order_str' id='order_str' value='" . htmlspecialchars($order_str, ENT_QUOTES, 'UTF-8') . "'/>";
+echo "<input type='hidden' name='order_str' id='order_str' value='" . htmlspecialchars($order_str_b64, ENT_QUOTES, 'UTF-8') . "'/>";
 echo "<input type='hidden' name='workshop' value='$workshop'/>";
 echo "<input type='submit' value=' и сохранить в БД'/>";
 echo "</form>";

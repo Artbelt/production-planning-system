@@ -19,9 +19,9 @@ if ($_POST['action'] === 'serialize_order' && isset($_POST['order_data'])) {
         $order[] = $arr;
     }
     
-    // Сериализуем в PHP формат
+    // Как в plan/: отдаём base64(serialize) для скрытого поля
     $serialized = serialize($order);
-    echo $serialized;
+    echo base64_encode($serialized);
 } else {
     echo '';
 }
