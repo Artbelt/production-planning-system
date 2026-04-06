@@ -93,6 +93,7 @@ try {
     // Факт выполнения: план и собрано по каждой позиции (при ?fact=1)
     $factByFilter = [];
     $slotFills = [];
+    $corrugFactByFilter = [];
     if ($showFact && !empty($order)) {
         // План: сумма по фильтру в build_plan
         $plannedStmt = $pdo->prepare("
@@ -124,6 +125,37 @@ try {
         foreach (array_keys($factByFilter) as $f) {
             $base = (strpos($f, ' [') !== false) ? trim(explode(' [', $f)[0]) : $f;
             $factByFilter[$f]['manufactured'] = $manufacturedByBase[$base] ?? $manufacturedByBase[$f] ?? 0;
+        }
+        // Гофрирование: план corrugation_plan и факт manufactured_corrugated_packages
+        $corrPlannedByFilter = [];
+        $cpStmt = $pdo->prepare("
+            SELECT TRIM(filter_label) AS fl, SUM(COALESCE(`count`, 0)) AS total
+            FROM corrugation_plan
+            WHERE order_number = ?
+            GROUP BY TRIM(filter_label)
+        ");
+        $cpStmt->execute([$order]);
+        while ($r = $cpStmt->fetch(PDO::FETCH_ASSOC)) {
+            $corrPlannedByFilter[trim($r['fl'])] = (int)$r['total'];
+        }
+        $corrDoneByFilter = [];
+        $cdStmt = $pdo->prepare("
+            SELECT TRIM(filter_label) AS fl, SUM(COALESCE(`count`, 0)) AS total
+            FROM manufactured_corrugated_packages
+            WHERE order_number = ?
+            GROUP BY TRIM(filter_label)
+        ");
+        $cdStmt->execute([$order]);
+        while ($r = $cdStmt->fetch(PDO::FETCH_ASSOC)) {
+            $corrDoneByFilter[trim($r['fl'])] = (int)$r['total'];
+        }
+        $corrugFactByFilter = [];
+        foreach (array_keys($factByFilter) as $f) {
+            $base = (strpos($f, ' [') !== false) ? trim(explode(' [', $f)[0]) : $f;
+            $corrugFactByFilter[$f] = [
+                'planned' => $corrPlannedByFilter[$f] ?? $corrPlannedByFilter[$base] ?? 0,
+                'done' => $corrDoneByFilter[$f] ?? $corrDoneByFilter[$base] ?? 0,
+            ];
         }
         // Последовательное закрашивание: идём по плану слева направо, «тратим» выполненное
         // Пример: 500 заказано, 400 сделано, план 100+100+150+150 → первые 3 полностью, последний 50/150
@@ -160,6 +192,7 @@ try {
 } catch (Exception $e) {
     $planByDate = [];
     $activeOrders = [];
+    $corrugFactByFilter = [];
 }
 ?>
 <!DOCTYPE html>
@@ -496,12 +529,13 @@ try {
                                     $slot = $slotFills[$slotKey] ?? null;
                                     $pct = ($showFact && $slot && $slot['total'] > 0) ? $slot['pct'] : 0;
                                     $fact = $factByFilter[$item['filter']] ?? null;
+                                    $corrug = $corrugFactByFilter[$item['filter']] ?? ['planned' => 0, 'done' => 0];
                                 ?>
                                 <div class="item" 
                                      data-filter="<?= h(trim($item['filter'])) ?>"
                                      data-complexity="<?= $item['complexity'] ?>" 
                                      data-count="<?= $item['count'] ?>"
-                                     <?php if ($showFact && $fact): ?>title="Выполнено: <?= $fact['manufactured'] ?> из <?= $fact['planned'] ?>"<?php endif; ?>>
+                                     <?php if ($showFact && $fact): ?>title="<?= h('Собрано: ' . $fact['manufactured'] . ' из ' . $fact['planned'] . "\n" . 'Сгофрировано: ' . $corrug['done'] . ' из ' . $corrug['planned']) ?>"<?php endif; ?>>
                                     <?php if ($showFact && $pct > 0): ?>
                                     <div class="item-fact-fill" style="width: <?= round($pct, 1) ?>%"></div>
                                     <?php endif; ?>
@@ -538,12 +572,13 @@ try {
                                     $slot = $slotFills[$slotKey] ?? null;
                                     $pct = ($showFact && $slot && $slot['total'] > 0) ? $slot['pct'] : 0;
                                     $fact = $factByFilter[$item['filter']] ?? null;
+                                    $corrug = $corrugFactByFilter[$item['filter']] ?? ['planned' => 0, 'done' => 0];
                                 ?>
                                 <div class="item" 
                                      data-filter="<?= h(trim($item['filter'])) ?>"
                                      data-complexity="<?= $item['complexity'] ?>" 
                                      data-count="<?= $item['count'] ?>"
-                                     <?php if ($showFact && $fact): ?>title="Выполнено: <?= $fact['manufactured'] ?> из <?= $fact['planned'] ?>"<?php endif; ?>>
+                                     <?php if ($showFact && $fact): ?>title="<?= h('Собрано: ' . $fact['manufactured'] . ' из ' . $fact['planned'] . "\n" . 'Сгофрировано: ' . $corrug['done'] . ' из ' . $corrug['planned']) ?>"<?php endif; ?>>
                                     <?php if ($showFact && $pct > 0): ?>
                                     <div class="item-fact-fill" style="width: <?= round($pct, 1) ?>%"></div>
                                     <?php endif; ?>
