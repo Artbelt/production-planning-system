@@ -71,6 +71,11 @@ $planSettingsPaths = [
 ];
 
 $statsYesterday = [];
+$paperCutterStats = [
+    'items' => [],
+    'total_plan' => 0,
+    'total_fact' => 0,
+];
 
 foreach ($planSettingsPaths as $code => $settingsPath) {
     $statsYesterday[$code] = ['production' => 0, 'parts' => 0, 'cap_balance' => null];
@@ -176,6 +181,34 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
                 $res = $stmt->get_result();
                 if ($row = $res->fetch_assoc()) {
                     $statsYesterday[$code]['parts'] = (int) $row['total'];
+                }
+                $stmt->close();
+            }
+        }
+
+        // Бумагорезка: план/факт порезки бухт за день (roll_plan)
+        $rollPlanExists = $mysqli->query("SHOW TABLES LIKE 'roll_plan'");
+        if ($rollPlanExists && $rollPlanExists->num_rows > 0) {
+            $stmt = $mysqli->prepare("
+                SELECT
+                    COUNT(*) AS plan_total,
+                    COALESCE(SUM(done = 1), 0) AS fact_total
+                FROM roll_plan
+                WHERE plan_date = ?
+            ");
+            if ($stmt) {
+                $stmt->bind_param('s', $reportDate);
+                $stmt->execute();
+                $res = $stmt->get_result();
+                if ($row = $res->fetch_assoc()) {
+                    $plan = (int)($row['plan_total'] ?? 0);
+                    $fact = (int)($row['fact_total'] ?? 0);
+                    $paperCutterStats['items'][$code] = [
+                        'plan' => $plan,
+                        'fact' => $fact,
+                    ];
+                    $paperCutterStats['total_plan'] += $plan;
+                    $paperCutterStats['total_fact'] += $fact;
                 }
                 $stmt->close();
             }
@@ -753,6 +786,16 @@ $departments = [
             font-size: 13px;
             padding: 8px 0;
         }
+        .papercutter-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        .papercutter-total {
+            font-size: 13px;
+            color: var(--gray-600);
+            margin-bottom: 10px;
+        }
         @media (max-width: 768px) {
             .analytics-header {
                 flex-direction: column;
@@ -792,6 +835,7 @@ $departments = [
         <div class="analytics-tabs">
             <button type="button" class="analytics-tab-btn is-active" data-tab-target="departments-tab">Аналитика по участкам</button>
             <button type="button" class="analytics-tab-btn" data-tab-target="packaging-tab">Аналитика по упаковке</button>
+            <button type="button" class="analytics-tab-btn" data-tab-target="papercutter-tab">Бумагорезка</button>
         </div>
 
         <div class="analytics-tab-panel is-active" id="departments-tab">
@@ -1049,6 +1093,57 @@ $departments = [
                         <?php endif; ?>
                     </div>
                 </div>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <div class="analytics-tab-panel" id="papercutter-tab">
+            <div class="packaging-card">
+                <div class="papercutter-title">Бумагорезка</div>
+                <div class="papercutter-total">
+                    За <?= htmlspecialchars(date('d.m.Y', strtotime($reportDate))) ?>:
+                    план — <strong><?= number_format((int)$paperCutterStats['total_plan'], 0, ',', ' ') ?></strong> бухт,
+                    факт — <strong><?= number_format((int)$paperCutterStats['total_fact'], 0, ',', ' ') ?></strong> бухт
+                </div>
+                <?php if (!empty($paperCutterStats['items'])): ?>
+                    <table class="packaging-table">
+                        <thead>
+                            <tr>
+                                <th>Участок</th>
+                                <th>План, бухт</th>
+                                <th>Факт, бухт</th>
+                                <th>Выполнение</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($paperCutterStats['items'] as $deptCode => $item): ?>
+                                <?php
+                                    $plan = (int)($item['plan'] ?? 0);
+                                    $fact = (int)($item['fact'] ?? 0);
+                                    $percent = $plan > 0 ? round(($fact / $plan) * 100) : 0;
+                                ?>
+                                <tr>
+                                    <td><?= htmlspecialchars($departments[$deptCode]['name'] ?? $deptCode) ?></td>
+                                    <td><?= number_format($plan, 0, ',', ' ') ?></td>
+                                    <td><?= number_format($fact, 0, ',', ' ') ?></td>
+                                    <td><?= (int)$percent ?>%</td>
+                                </tr>
+                            <?php endforeach; ?>
+                            <tr>
+                                <?php
+                                    $totalPlan = (int)$paperCutterStats['total_plan'];
+                                    $totalFact = (int)$paperCutterStats['total_fact'];
+                                    $totalPercent = $totalPlan > 0 ? round(($totalFact / $totalPlan) * 100) : 0;
+                                ?>
+                                <th>Итого</th>
+                                <th><?= number_format($totalPlan, 0, ',', ' ') ?></th>
+                                <th><?= number_format($totalFact, 0, ',', ' ') ?></th>
+                                <th><?= (int)$totalPercent ?>%</th>
+                            </tr>
+                        </tbody>
+                    </table>
+                <?php else: ?>
+                    <div class="packaging-empty">Нет данных по порезке бухт за выбранную дату.</div>
                 <?php endif; ?>
             </div>
         </div>
