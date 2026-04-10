@@ -17,6 +17,10 @@ if (!$session) {
     exit;
 }
 
+require_once __DIR__ . '/daily_auth_load.php';
+laser_operator_load_daily_auth_file();
+laser_operator_require_same_calendar_day($auth);
+
 $db = Database::getInstance();
 $users = $db->select("SELECT * FROM auth_users WHERE id = ?", [$session['user_id']]);
 $user = $users[0] ?? null;

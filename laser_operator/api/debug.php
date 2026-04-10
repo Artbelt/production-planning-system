@@ -24,6 +24,10 @@ try {
         throw new Exception('Unauthorized');
     }
 
+    require_once dirname(__DIR__) . '/daily_auth_load.php';
+    laser_operator_load_daily_auth_file(['json_errors' => true]);
+    laser_operator_require_same_calendar_day($auth, true);
+
     // Получаем информацию о пользователе
     $db = Database::getInstance();
     $users = $db->select("SELECT * FROM auth_users WHERE id = ?", [$session['user_id']]);

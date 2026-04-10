@@ -21,6 +21,10 @@ if (!$session) {
     exit;
 }
 
+require_once dirname(__DIR__) . '/daily_auth_load.php';
+laser_operator_load_daily_auth_file(['json_errors' => true]);
+laser_operator_require_same_calendar_day($auth, true);
+
 // Устанавливаем заголовки для JSON
 header('Content-Type: application/json');
 header('Cache-Control: no-cache, must-revalidate');

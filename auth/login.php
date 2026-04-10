@@ -15,10 +15,26 @@ $auth = new AuthManager();
 $error = '';
 $success = '';
 
+$returnUrl = '';
+$getReturn = $_GET['return'] ?? '';
+if (is_string($getReturn) && preg_match('#^laser_operator(/[a-zA-Z0-9_./\-]+)?/?$#', $getReturn)) {
+    $returnUrl = $getReturn;
+}
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $postReturnEarly = $_POST['return'] ?? '';
+    if (is_string($postReturnEarly) && preg_match('#^laser_operator(/[a-zA-Z0-9_./\-]+)?/?$#', $postReturnEarly)) {
+        $returnUrl = $postReturnEarly;
+    }
+}
+
 // Проверка существующей сессии
 $session = $auth->checkSession();
 if ($session) {
-    header('Location: ../index.php');
+    if ($returnUrl !== '') {
+        header('Location: ../' . $returnUrl);
+    } else {
+        header('Location: ../index.php');
+    }
     exit;
 }
 
@@ -60,8 +76,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['has_default_password'] = false;
                 }
                 
-                // Всегда перенаправляем на главную страницу
-                header('Location: ../index.php');
+                if ($returnUrl !== '') {
+                    header('Location: ../' . $returnUrl);
+                } else {
+                    header('Location: ../index.php');
+                }
                 exit;
             } else {
                 $error = 'Ошибка создания сессии';
@@ -110,6 +129,9 @@ $csrfToken = $_SESSION['csrf_token'];
 
             <form class="auth-form" method="POST" action="">
                 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                <?php if ($returnUrl !== ''): ?>
+                    <input type="hidden" name="return" value="<?= htmlspecialchars($returnUrl) ?>">
+                <?php endif; ?>
                 
                 <div class="form-group">
                     <label class="form-label" for="phone">Номер телефона</label>

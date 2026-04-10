@@ -87,6 +87,8 @@ class AuthManager {
             $_SESSION['auth_user_id'] = $userId;
             $_SESSION['auth_department'] = $departmentCode;
             $_SESSION['auth_expires'] = time() + AUTH_SECURITY['session_lifetime'];
+            // Календарный день входа (общие ПК: новый день — новый парольный вход)
+            $_SESSION['auth_calendar_day'] = date('Y-m-d');
             
             return $sessionId;
         }
