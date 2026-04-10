@@ -265,6 +265,114 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
             transition:width .2s ease;
         }
 
+        /* Плавающая панель поиска */
+        .search-panel {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            width: 260px;
+            background: white;
+            border: 1px solid #667eea;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+            z-index: 1000;
+            max-height: 70vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .search-panel__header {
+            padding: 8px 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 7px 7px 0 0;
+            font-weight: 600;
+            font-size: 12px;
+            cursor: move;
+            user-select: none;
+        }
+        .search-panel__input {
+            padding: 8px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .search-panel__input input {
+            width: 100%;
+            padding: 6px 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 12px;
+            box-sizing: border-box;
+        }
+        .search-panel__input input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+        }
+        .search-panel__results {
+            padding: 6px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        .search-result-item {
+            padding: 6px 8px;
+            background: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            margin-bottom: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .search-result-item:hover {
+            background: #f0f4ff;
+            border-color: #667eea;
+            transform: translateX(-1px);
+        }
+        .search-result-item__bale {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 2px;
+            font-size: 11px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .search-result-item__filters {
+            font-size: 10px;
+            color: #666;
+        }
+        .bale-status-check {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4caf50;
+            color: white;
+            font-size: 10px;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+        .search-result-highlight {
+            background: #fff59d;
+            padding: 1px 2px;
+            border-radius: 2px;
+            font-weight: 600;
+        }
+        .no-results {
+            text-align: center;
+            color: #999;
+            padding: 20px 10px;
+            font-size: 11px;
+        }
+        .bale-name.bale-search-highlight {
+            background: #fee2e2 !important;
+            color: #991b1b !important;
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid #dc2626;
+            box-shadow: 0 0 8px rgba(220,38,38,0.4);
+        }
+
     </style>
 </head>
 <body>
@@ -558,7 +666,7 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
                 badgesHTML += `<div class="complexity-badge" title="Средняя сложность сборки: ${avgComplexity.toFixed(1)}">${displayComplexity}</div>`;
             }
             
-            left.innerHTML = '<strong>Бухта '+b.bale_id+'</strong><div class="bale-label">'
+            left.innerHTML = '<strong class="bale-name" data-bale-id="'+b.bale_id+'">Бухта '+b.bale_id+'</strong><div class="bale-label">'
                 + uniqHeights.map(h=>`<span class="hval" data-h="${h}">[${h}]</span>`).join(' ')
                 + '</div>'
                 + badgesHTML;
@@ -658,6 +766,10 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
             updateLeftMarkers();
             updateHeightProgress();
             updateDateHeaders();
+            const searchInput = document.getElementById('filterSearchInput');
+            if (searchInput && searchInput.value.trim() !== '') {
+                searchFilterInBales();
+            }
         });
 
         // Липкий підсумок годин
@@ -816,6 +928,124 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
         }
     }
 
+    function isBalePlanned(baleId) {
+        return Object.values(selected).some(arr => arr && arr.includes(Number(baleId)));
+    }
+
+    function searchFilterInBales() {
+        const input = document.getElementById('filterSearchInput');
+        const resultsContainer = document.getElementById('searchResults');
+        if (!input || !resultsContainer) return;
+
+        const searchText = input.value.toLowerCase().trim();
+        if (searchText === '') {
+            resultsContainer.innerHTML = '<div class="no-results">Введите название фильтра для поиска</div>';
+            return;
+        }
+
+        const results = [];
+        bales.forEach(bale => {
+            const matchingFilters = [];
+            bale.strips.forEach(strip => {
+                const filterName = String(strip.filter || '');
+                if (filterName.toLowerCase().includes(searchText)) {
+                    matchingFilters.push(filterName);
+                }
+            });
+
+            if (matchingFilters.length > 0) {
+                results.push({
+                    bale_id: bale.bale_id,
+                    filters: matchingFilters,
+                    isPlanned: isBalePlanned(bale.bale_id)
+                });
+            }
+        });
+
+        if (results.length === 0) {
+            resultsContainer.innerHTML = '<div class="no-results">Ничего не найдено</div>';
+            return;
+        }
+
+        resultsContainer.innerHTML = results.map(result => {
+            const uniqueFilters = [...new Set(result.filters)];
+            const filtersHtml = uniqueFilters.map(filter => {
+                const highlighted = filter.replace(new RegExp(searchText, 'gi'), match =>
+                    `<span class="search-result-highlight">${match}</span>`
+                );
+                return highlighted;
+            }).join(', ');
+
+            const statusIcon = result.isPlanned ? '<span class="bale-status-check">✓</span>' : '';
+
+            return `
+                <div class="search-result-item" onclick="scrollToBale(${result.bale_id})">
+                    <div class="search-result-item__bale">
+                        <span>Бухта #${result.bale_id}</span>
+                        ${statusIcon}
+                    </div>
+                    <div class="search-result-item__filters">
+                        ${filtersHtml}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function scrollToBale(baleId) {
+        const baleElement = document.querySelector(`.bale-name[data-bale-id="${baleId}"]`);
+        if (!baleElement) return;
+
+        baleElement.classList.add('bale-search-highlight');
+        baleElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => {
+            baleElement.classList.remove('bale-search-highlight');
+        }, 3000);
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const panel = document.querySelector('.search-panel');
+        const header = document.querySelector('.search-panel__header');
+        if (!panel || !header) return;
+
+        let isDragging = false;
+        let currentX = 0;
+        let currentY = 0;
+        let initialX = 0;
+        let initialY = 0;
+        let xOffset = 0;
+        let yOffset = 0;
+
+        header.addEventListener('mousedown', dragStart);
+        document.addEventListener('mousemove', drag);
+        document.addEventListener('mouseup', dragEnd);
+
+        function dragStart(e) {
+            if (e.target === header || header.contains(e.target)) {
+                isDragging = true;
+                initialX = e.clientX - xOffset;
+                initialY = e.clientY - yOffset;
+            }
+        }
+
+        function drag(e) {
+            if (isDragging) {
+                e.preventDefault();
+                currentX = e.clientX - initialX;
+                currentY = e.clientY - initialY;
+                xOffset = currentX;
+                yOffset = currentY;
+                panel.style.transform = `translate3d(${currentX}px, ${currentY}px, 0)`;
+            }
+        }
+
+        function dragEnd() {
+            initialX = currentX;
+            initialY = currentY;
+            isDragging = false;
+        }
+    });
+
     (function(){
         const inp = document.getElementById('startDate');
         const ds = new Date().toISOString().slice(0,10);
@@ -824,5 +1054,19 @@ while ($r = $st4->fetch(PDO::FETCH_ASSOC)) {
         drawTable();
     })();
 </script>
+<div class="search-panel">
+    <div class="search-panel__header">
+        🔍 Поиск фильтра в бухтах
+    </div>
+    <div class="search-panel__input">
+        <input type="text"
+               id="filterSearchInput"
+               placeholder="Введите название фильтра..."
+               oninput="searchFilterInBales()">
+    </div>
+    <div class="search-panel__results" id="searchResults">
+        <div class="no-results">Введите название фильтра для поиска</div>
+    </div>
+</div>
 </body>
 </html>

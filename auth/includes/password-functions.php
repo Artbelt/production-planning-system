@@ -231,32 +231,45 @@ function createUserWithDefaultPassword($phone, $fullName, $email = null) {
         $defaultPassword = generateDefaultPassword($phone);
         $passwordHash = password_hash($defaultPassword, PASSWORD_DEFAULT);
         
+        $db->beginTransaction();
+        
         // Создаем пользователя
         $userId = $db->insert("
             INSERT INTO auth_users (phone, password_hash, full_name, email, is_active, is_verified, is_default_password, password_changed_at) 
             VALUES (?, ?, ?, ?, 1, 1, 1, NOW())
         ", [$phone, $passwordHash, $fullName, $email]);
         
-        if ($userId) {
-            // Логируем создание
-            $db->insert("INSERT INTO auth_logs (user_id, action, ip_address, user_agent, details) VALUES (?, 'user_created', ?, ?, ?)", [
-                $userId,
-                $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
-                $_SERVER['HTTP_USER_AGENT'] ?? 'System',
-                json_encode(['default_password' => $defaultPassword])
-            ]);
-            
-            return [
-                'success' => true, 
-                'user_id' => $userId,
-                'default_password' => $defaultPassword,
-                'message' => 'Пользователь создан с базовым паролем'
-            ];
-        } else {
+        if (!$userId) {
+            $db->rollback();
             return ['success' => false, 'error' => 'Ошибка создания пользователя'];
         }
         
+        // Логируем создание (должно совпадать с допустимыми значениями auth_logs.action в БД)
+        $logOk = $db->insert("INSERT INTO auth_logs (user_id, action, ip_address, user_agent, details) VALUES (?, 'user_created', ?, ?, ?)", [
+            $userId,
+            $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
+            $_SERVER['HTTP_USER_AGENT'] ?? 'System',
+            json_encode(['default_password' => $defaultPassword])
+        ]);
+        
+        if ($logOk === false) {
+            $db->rollback();
+            return ['success' => false, 'error' => 'Ошибка создания пользователя (лог)'];
+        }
+        
+        $db->commit();
+        
+        return [
+            'success' => true,
+            'user_id' => $userId,
+            'default_password' => $defaultPassword,
+            'message' => 'Пользователь создан с базовым паролем'
+        ];
+        
     } catch (Exception $e) {
+        if ($db->getConnection()->inTransaction()) {
+            $db->rollback();
+        }
         error_log("User creation error: " . $e->getMessage());
         return ['success' => false, 'error' => 'Системная ошибка при создании пользователя'];
     }

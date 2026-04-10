@@ -1,6 +1,7 @@
 <?php
 header('Content-Type: application/json');
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4", "root", "");
+require_once __DIR__ . '/../../auth/includes/db.php';
+$pdo = getPdo('plan_u4');
 
 if (!isset($_POST['id'])) {
     echo json_encode(['success' => false, 'message' => 'Нет ID']);
@@ -8,7 +9,7 @@ if (!isset($_POST['id'])) {
 }
 
 $id = (int)$_POST['id'];
-$stmt = $pdo->prepare("UPDATE roll_plans SET done = 1, fact_cut_date = CURDATE() WHERE id = ?");
+$stmt = $pdo->prepare("UPDATE roll_plan SET done = 1, fact_cut_date = CURDATE() WHERE id = ?");
 $success = $stmt->execute([$id]);
 
 echo json_encode(['success' => $success]);

@@ -186,23 +186,71 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
             }
         }
 
-        // Бумагорезка: план/факт порезки бухт за день (roll_plan)
-        $rollPlanExists = $mysqli->query("SHOW TABLES LIKE 'roll_plan'");
-        if ($rollPlanExists && $rollPlanExists->num_rows > 0) {
-            $stmt = $mysqli->prepare("
-                SELECT
-                    COUNT(*) AS plan_total,
-                    COALESCE(SUM(done = 1), 0) AS fact_total
-                FROM roll_plan
-                WHERE plan_date = ?
-            ");
-            if ($stmt) {
-                $stmt->bind_param('s', $reportDate);
-                $stmt->execute();
-                $res = $stmt->get_result();
-                if ($row = $res->fetch_assoc()) {
-                    $plan = (int)($row['plan_total'] ?? 0);
-                    $fact = (int)($row['fact_total'] ?? 0);
+        // Бумагорезка: план за день по дате в плане; факт — по fact_cut_date (после миграции)
+        $rollTable = null;
+        $chkRp = $mysqli->query("SHOW TABLES LIKE 'roll_plan'");
+        if ($chkRp && $chkRp->num_rows > 0) {
+            $rollTable = 'roll_plan';
+        } else {
+            $chkRps = $mysqli->query("SHOW TABLES LIKE 'roll_plans'");
+            if ($chkRps && $chkRps->num_rows > 0) {
+                $rollTable = 'roll_plans';
+            }
+        }
+        if ($rollTable !== null) {
+            $hasPlanDate = false;
+            $hasWorkDate = false;
+            $hasFactCutDate = false;
+            $colChk = $mysqli->query("SHOW COLUMNS FROM `{$rollTable}` LIKE 'plan_date'");
+            if ($colChk && $colChk->num_rows > 0) {
+                $hasPlanDate = true;
+            }
+            $colChk = $mysqli->query("SHOW COLUMNS FROM `{$rollTable}` LIKE 'work_date'");
+            if ($colChk && $colChk->num_rows > 0) {
+                $hasWorkDate = true;
+            }
+            $colChk = $mysqli->query("SHOW COLUMNS FROM `{$rollTable}` LIKE 'fact_cut_date'");
+            if ($colChk && $colChk->num_rows > 0) {
+                $hasFactCutDate = true;
+            }
+            $planCol = $hasPlanDate ? 'plan_date' : ($hasWorkDate ? 'work_date' : null);
+            if ($planCol !== null) {
+                $stmt = $mysqli->prepare("SELECT COUNT(*) AS plan_total FROM `{$rollTable}` WHERE `{$planCol}` = ?");
+                if ($stmt) {
+                    $stmt->bind_param('s', $reportDate);
+                    $stmt->execute();
+                    $res = $stmt->get_result();
+                    $plan = 0;
+                    if ($row = $res->fetch_assoc()) {
+                        $plan = (int)($row['plan_total'] ?? 0);
+                    }
+                    $stmt->close();
+
+                    $fact = 0;
+                    if ($hasFactCutDate) {
+                        $stmtF = $mysqli->prepare("SELECT COUNT(*) AS fact_total FROM `{$rollTable}` WHERE fact_cut_date = ?");
+                        if ($stmtF) {
+                            $stmtF->bind_param('s', $reportDate);
+                            $stmtF->execute();
+                            $resF = $stmtF->get_result();
+                            if ($rowF = $resF->fetch_assoc()) {
+                                $fact = (int)($rowF['fact_total'] ?? 0);
+                            }
+                            $stmtF->close();
+                        }
+                    } else {
+                        $stmtF = $mysqli->prepare("SELECT COALESCE(SUM(done = 1), 0) AS fact_total FROM `{$rollTable}` WHERE `{$planCol}` = ?");
+                        if ($stmtF) {
+                            $stmtF->bind_param('s', $reportDate);
+                            $stmtF->execute();
+                            $resF = $stmtF->get_result();
+                            if ($rowF = $resF->fetch_assoc()) {
+                                $fact = (int)($rowF['fact_total'] ?? 0);
+                            }
+                            $stmtF->close();
+                        }
+                    }
+
                     $paperCutterStats['items'][$code] = [
                         'plan' => $plan,
                         'fact' => $fact,
@@ -210,7 +258,6 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
                     $paperCutterStats['total_plan'] += $plan;
                     $paperCutterStats['total_fact'] += $fact;
                 }
-                $stmt->close();
             }
         }
 

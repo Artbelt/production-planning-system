@@ -441,7 +441,7 @@ try{
     .pill{border:1px solid #93c5fd;background:#dbeafe;border-radius:10px;padding:8px;margin:4px 0;display:flex;flex-direction:column;gap:6px;position:relative}
     .pill.used{background:#e5e7eb !important;border-color:#cbd5e1 !important;filter:none !important;opacity:0.85}
     .pillTop{display:flex;align-items:center;gap:10px;justify-content:space-between}
-    .pillName{font-weight:600;display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden}
+    .pillName{font-weight:400;display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden}
     .pillNameContainer{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden}
     .pillNameText{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:1;min-width:0}
     .pillHeightBadge{flex-shrink:0;white-space:nowrap}
@@ -509,7 +509,10 @@ try{
     #topGrid .pillName{
         font-family:"Arial Narrow", Arial, "Nimbus Sans Narrow", system-ui, sans-serif;
         font-size:12px; line-height:1.2;
+        font-weight:400;
     }
+    #topGrid .pill .pillSub .av,
+    #topGrid .pill .pillSub .time{ font-weight:400; }
     #topGrid .pillNameContainer{
         max-width:94px;
     }
@@ -527,7 +530,7 @@ try{
         gap:4px;
     }
     .snakeGrid .pill{ margin:0; padding:4px 6px; }
-    .snakeGrid .dayBadge{ 
+    .snakeGrid .dayBadge{
         margin:2px 0;
         padding:4px 8px !important;
         font-size:12px !important;
@@ -535,9 +538,12 @@ try{
         min-height:0 !important;
         max-height:none !important;
         box-sizing:border-box !important;
-    }
-        border:1px solid rgba(55, 65, 81, 0.75); background:#374151; border-radius:8px;
-        padding:4px 8px; font-weight:600; font-size:12px; color:#ffffff;text-align:center;
+        border:1px solid rgba(55, 65, 81, 0.75);
+        background:#374151;
+        border-radius:8px;
+        font-weight:600;
+        color:#ffffff;
+        text-align:center;
     }
 
     /* Плотный режим (низ) */
@@ -967,8 +973,7 @@ try{
                                  data-rate="<?=$p['rate']?>"
                                  data-complexity="<?=$p['rate']?>"
                                  data-height="<?= $htStr !== null ? h($htStr) : '' ?>"
-                                 data-fact-count="<?=$p['fact_count']?>"
-                                 title="Клик — добавить в день сборки<?= $p['is_corrugated'] ? ' ✓ Сгофрировано' : '' ?>">
+                                 data-fact-count="<?=$p['fact_count']?>">
                                 <div class="pillTop">
                                     <div>
                                         <div class="pillName">
@@ -978,7 +983,7 @@ try{
                                             <span class="complexity-indicator" style="display:none"></span>
                                         </div>
                                         <div class="pillSub">
-                                            <b class="av"><?=$p['available']?></b> шт · ~<b class="time">0.0</b>ч
+                                            <span class="av"><?=$p['available']?></span> шт · ~<span class="time">0.0</span>ч
                                             <?= $p['is_corrugated'] ? '<br><span class="muted">✓ Сгофрировано: ' . $p['fact_count'] . ' шт</span>' : '' ?>
                                         </div>
                                     </div>
@@ -1644,6 +1649,7 @@ try{
         pill.dataset.avail = String(newAvail);
         pill.classList.toggle('disabled', newAvail<=0);
         updatePillTime(pill);
+        setPillTooltip(pill);
     }
 
     function collectUsedFromPlan(){
@@ -1666,8 +1672,33 @@ try{
         const tEl = pill.querySelector('.time');
         if (tEl) tEl.textContent = fmtH(hours);
     }
+
+    /** Полная подсказка для верхних плашек (имя из БД, высота, норма и т.д.) */
+    function setPillTooltip(pill){
+        if (!pill || !pill.classList.contains('pill')) return;
+        const fullName = (pill.dataset.filter || '').trim();
+        const src = (pill.dataset.sourceDate || '').trim();
+        const ht = (pill.dataset.height || '').trim();
+        const rate = parseInt(pill.dataset.rate || '0', 10) || 0;
+        const avail = parseInt(pill.dataset.avail || '0', 10) || 0;
+        const fact = parseInt(pill.dataset.factCount || '0', 10) || 0;
+        const w = parsePaperWidthMmFromFilterLabel(fullName);
+        const hours = rate > 0 ? (avail / rate) * SHIFT_HOURS : 0;
+        const lines = [];
+        lines.push('Полное имя: ' + (fullName || '—'));
+        lines.push(ht ? ('Высота бумаги: ' + ht + ' мм') : 'Высота бумаги: —');
+        if (w != null) lines.push('Ширина бумаги (из названия): ' + fmtMM(w) + ' мм');
+        lines.push('Дата гофрирования: ' + (src || '—'));
+        lines.push('Доступно к сборке: ' + avail + ' шт');
+        lines.push(rate ? ('Норма (шт/смену): ' + rate) : 'Норма (шт/смену): —');
+        lines.push('Время на остаток: ~' + fmtH(hours) + ' ч (смена ' + fmtH(SHIFT_HOURS) + ' ч)');
+        if (pill.classList.contains('corrugated')) lines.push('Сгофрировано (факт): ' + fact + ' шт');
+        lines.push('Клик — выбрать день и бригаду');
+        pill.setAttribute('title', lines.join('\n'));
+    }
     document.querySelectorAll('.pill').forEach(p=>{
         updatePillTime(p);
+        setPillTooltip(p);
     });
 
     // ===== строки внизу =====
@@ -1893,20 +1924,39 @@ try{
     dpWrap.addEventListener('click', e=>{ if(e.target===dpWrap) closeDatePicker(); });
     document.addEventListener('keydown', e=>{ if(e.key==='Escape' && dpWrap.style.display==='flex') closeDatePicker(); });
 
+    function getShiftStartDay(pill){
+        const days = getAllDays();
+        if (!days.length) return null;
+        const src = (pill?.dataset?.sourceDate || '').trim();
+
+        // Продолжаем с последнего активного дня, если он все еще валиден
+        if (lastDay && days.includes(lastDay) && (!src || lastDay >= src)) return lastDay;
+
+        // Иначе стартуем с первого допустимого дня для этой позиции
+        const firstAllowed = src ? days.find(d => d >= src) : days[0];
+        return firstAllowed || null;
+    }
+
+    function onPillClick(pill, e){
+        const avail = +pill.dataset.avail || 0;
+        if (avail <= 0) return;
+
+        const qty = avail;
+        if (e.shiftKey) {
+            const startDay = getShiftStartDay(pill);
+            if (startDay) {
+                const added = addToDaysFromActive(startDay, lastTeam || '1', pill, qty);
+                // Если по часовым ограничениям не влезло все — даем быстро добросить вручную
+                if (added < qty) openDatePicker(pill, qty - added);
+                return;
+            }
+        }
+        openDatePicker(pill, qty);
+    }
+
     // клики по верхним плашкам
     document.querySelectorAll('.pill').forEach(pill=>{
-        pill.addEventListener('click', (e)=>{
-            const avail = +pill.dataset.avail || 0;
-            if (avail <= 0) return;
-
-            const qty = avail;
-
-            if (e.shiftKey && lastDay){
-                addToDaysFromActive(lastDay, lastTeam, pill, qty);
-            } else {
-                openDatePicker(pill, qty);
-            }
-        });
+        pill.addEventListener('click', (e)=> onPillClick(pill, e));
     });
 
     // add to day
@@ -2257,16 +2307,8 @@ try{
 
                 topGrid.querySelectorAll('.pill').forEach(pill=>{
                     updatePillTime(pill);
-                    pill.addEventListener('click', (e)=>{
-                        const avail = +pill.dataset.avail || 0;
-                        if (avail <= 0) return;
-                        const qty = avail;
-                        if (e.shiftKey && lastDay){
-                            addToDaysFromActive(lastDay, lastTeam, pill, qty);
-                        } else {
-                            openDatePicker(pill, qty);
-                        }
-                    });
+                    setPillTooltip(pill);
+                    pill.addEventListener('click', (e)=> onPillClick(pill, e));
                 });
                 applyHeightColors();
             }

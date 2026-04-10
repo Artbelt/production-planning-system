@@ -9,7 +9,17 @@ if (!isset($_POST['id'])) {
 }
 
 $id = (int)$_POST['id'];
-$stmt = $pdo->prepare("UPDATE roll_plan SET done = 1 WHERE id = ?");
+// Поддержка обеих схем: roll_plan (нормализованная) и roll_plans (наследие)
+$table = 'roll_plan';
+$chk = $pdo->query("SHOW TABLES LIKE 'roll_plan'");
+if (!$chk || $chk->rowCount() === 0) {
+    $chkLegacy = $pdo->query("SHOW TABLES LIKE 'roll_plans'");
+    if ($chkLegacy && $chkLegacy->rowCount() > 0) {
+        $table = 'roll_plans';
+    }
+}
+
+$stmt = $pdo->prepare("UPDATE {$table} SET done = 1, fact_cut_date = CURDATE() WHERE id = ?");
 $success = $stmt->execute([$id]);
 
 echo json_encode(['success' => $success]);

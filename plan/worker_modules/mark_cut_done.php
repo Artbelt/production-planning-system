@@ -9,7 +9,7 @@ if (!isset($_POST['id'])) {
 }
 
 $id = (int)$_POST['id'];
-$stmt = $pdo->prepare("UPDATE roll_plan SET done = 1 WHERE id = ?");
+$stmt = $pdo->prepare("UPDATE roll_plan SET done = 1, fact_cut_date = CURDATE() WHERE id = ?");
 $success = $stmt->execute([$id]);
 
 echo json_encode(['success' => $success]);
