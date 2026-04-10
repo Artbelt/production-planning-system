@@ -257,6 +257,66 @@ if (isset($_POST['action']) && $_POST['action'] === 'mark_completed' && isset($_
     exit;
 }
 
+// Заявка оператора себе на поддержание складского запаса (в БД выбранного участка)
+if (isset($_POST['action']) && $_POST['action'] === 'create_operator_stock_request') {
+    $target_dept = $_POST['target_department'] ?? '';
+    $component_type = trim($_POST['stock_component_type'] ?? '');
+    $component_detail = trim($_POST['stock_component_detail'] ?? '');
+    $quantity = (int)($_POST['stock_quantity'] ?? 0);
+    $desired_delivery_date = trim($_POST['stock_delivery_date'] ?? '');
+    $desired_delivery_hour = trim($_POST['stock_delivery_hour'] ?? '');
+
+    if (!isset($databases[$target_dept])) {
+        $_SESSION['error_message'] = 'Выберите участок для заявки.';
+    } elseif ($component_type === '' || $quantity <= 0) {
+        $_SESSION['error_message'] = 'Выберите тип комплектующего и укажите количество больше нуля.';
+    } else {
+        $component_name = $component_type;
+        if ($component_detail !== '') {
+            $component_name .= ' - ' . $component_detail;
+        }
+        $component_name = '[Складской запас] ' . $component_name;
+        $datetime = null;
+        if ($desired_delivery_date !== '' && $desired_delivery_hour !== '') {
+            // type="time" отдаёт HH:MM или HH:MM:SS — не дописываем :00:00 (будет 12:15:00:00 и ошибка MySQL)
+            try {
+                $dt = new DateTime($desired_delivery_date . 'T' . $desired_delivery_hour);
+                $datetime = $dt->format('Y-m-d H:i:s');
+            } catch (Exception $e) {
+                $datetime = null;
+            }
+        }
+
+        $operatorName = $user['full_name'] ?? ($user['phone'] ?? 'Оператор лазера');
+
+        $dbConfig = $databases[$target_dept];
+        $mysqli = new mysqli($dbConfig['host'], $dbConfig['user'], $dbConfig['pass'], $dbConfig['name']);
+
+        if ($mysqli->connect_errno) {
+            $_SESSION['error_message'] = 'Ошибка подключения к базе участка ' . htmlspecialchars($target_dept);
+        } else {
+            if ($datetime !== null) {
+                $ins = $mysqli->prepare('INSERT INTO laser_requests (user_name, department, component_name, quantity, desired_delivery_time) VALUES (?, ?, ?, ?, ?)');
+                $ins->bind_param('sssis', $operatorName, $target_dept, $component_name, $quantity, $datetime);
+            } else {
+                $ins = $mysqli->prepare('INSERT INTO laser_requests (user_name, department, component_name, quantity, desired_delivery_time) VALUES (?, ?, ?, ?, NULL)');
+                $ins->bind_param('sssi', $operatorName, $target_dept, $component_name, $quantity);
+            }
+
+            if ($ins->execute()) {
+                $_SESSION['success_message'] = 'Заявка на поддержание складского запаса создана (' . $target_dept . ').';
+            } else {
+                $_SESSION['error_message'] = 'Не удалось сохранить заявку: ' . $mysqli->error;
+            }
+            $ins->close();
+            $mysqli->close();
+        }
+    }
+
+    header('Location: index.php');
+    exit;
+}
+
 // Получаем сообщения из сессии
 $success_message = $_SESSION['success_message'] ?? null;
 $error_message = $_SESSION['error_message'] ?? null;
@@ -358,13 +418,197 @@ $allRequests = getAllLaserRequests($databases);
             border: 1px solid var(--border);
         }
         
+        .section-title-row {
+            position: relative;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--border);
+        }
+
         .section-title {
             color: var(--ink);
             font-size: 20px;
             font-weight: 600;
-            margin-bottom: 20px;
-            padding-bottom: 12px;
-            border-bottom: 2px solid var(--border);
+            margin: 0;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .stock-request-open {
+            flex-shrink: 0;
+            width: 28px;
+            height: 28px;
+            margin-top: 2px;
+            padding: 0;
+            border: none;
+            border-radius: 8px;
+            background: var(--accent-solid);
+            color: var(--accent-ink);
+            font-size: 20px;
+            line-height: 1;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.35);
+            transition: transform 0.15s ease, opacity 0.15s ease;
+        }
+
+        .stock-request-open:hover {
+            opacity: 0.92;
+            transform: scale(1.06);
+        }
+
+        .stock-form-grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        @media (max-width: 480px) {
+            .stock-form-grid-2 {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.45);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            box-sizing: border-box;
+        }
+
+        .modal-overlay.is-open {
+            display: flex;
+        }
+
+        .modal-box {
+            background: var(--panel);
+            border-radius: var(--radius);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+            max-width: 440px;
+            width: 100%;
+            padding: 22px 22px 18px;
+            position: relative;
+        }
+
+        .modal-box h3 {
+            margin: 0 0 6px 0;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--ink);
+        }
+
+        .modal-box .modal-hint {
+            margin: 0 0 18px 0;
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.45;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            width: 32px;
+            height: 32px;
+            border: none;
+            background: transparent;
+            color: var(--muted);
+            font-size: 22px;
+            line-height: 1;
+            cursor: pointer;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-close:hover {
+            background: #f1f5f9;
+            color: var(--ink);
+        }
+
+        .modal-field {
+            margin-bottom: 14px;
+        }
+
+        .modal-field label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--ink);
+            margin-bottom: 6px;
+        }
+
+        .modal-field input,
+        .modal-field select {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: 15px;
+            font-family: inherit;
+        }
+
+        .modal-field input:focus,
+        .modal-field select:focus {
+            outline: none;
+            border-color: var(--accent-solid);
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.12);
+        }
+
+        .modal-row-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+
+        .btn-modal-secondary {
+            padding: 10px 16px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: var(--panel);
+            color: var(--ink);
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .btn-modal-primary {
+            padding: 10px 18px;
+            border-radius: var(--radius-sm);
+            border: none;
+            background: var(--accent);
+            color: var(--accent-ink);
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .btn-modal-primary:hover,
+        .btn-modal-secondary:hover {
+            opacity: 0.92;
         }
         
         .table-wrapper {
@@ -746,12 +990,19 @@ $allRequests = getAllLaserRequests($databases);
         </div>
         
         <div class="panel">
-            <div class="section-title">
-                Все заявки на лазерную резку
-                <span id="status-indicator" style="font-size: 12px; color: var(--muted); margin-left: 10px;">
-                    <span id="connection-status">🟢 Активно</span>
-                    <span id="last-update" style="margin-left: 10px;"></span>
-                </span>
+            <div class="section-title-row">
+                <div class="section-title">
+                    Все заявки на лазерную резку
+                    <span id="status-indicator" style="font-size: 12px; color: var(--muted); margin-left: 10px;">
+                        <span id="connection-status">🟢 Активно</span>
+                        <span id="last-update" style="margin-left: 10px;"></span>
+                    </span>
+                </div>
+                <button type="button"
+                        class="stock-request-open"
+                        id="openStockRequestModal"
+                        title="Заявка на поддержание складского запаса (себе)"
+                        aria-label="Создать заявку на поддержание складского запаса">+</button>
             </div>
             
             <div class="filters">
@@ -850,6 +1101,67 @@ $allRequests = getAllLaserRequests($databases);
                     </tbody>
                 </table>
             </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="stockRequestModal" role="dialog" aria-modal="true" aria-labelledby="stockModalTitle">
+        <div class="modal-box">
+            <button type="button" class="modal-close" id="closeStockRequestModal" aria-label="Закрыть">×</button>
+            <h3 id="stockModalTitle">Заявка на складской запас</h3>
+            <p class="modal-hint">Заявка создаётся от вашего имени в базе выбранного участка — для поддержания запаса на складе.</p>
+            <form method="POST" action="index.php" id="stockRequestForm">
+                <input type="hidden" name="action" value="create_operator_stock_request">
+                <div class="modal-field">
+                    <label for="target_department">Участок (куда пишем заявку)</label>
+                    <select name="target_department" id="target_department" required>
+                        <option value="" disabled selected>— выберите —</option>
+                        <option value="U2">U2</option>
+                        <option value="U3">U3</option>
+                        <option value="U4">U4</option>
+                        <option value="U5">U5</option>
+                    </select>
+                </div>
+                <div class="modal-field">
+                    <div class="stock-form-grid-2">
+                        <div>
+                            <label for="stock_component_type">Комплектующее</label>
+                            <select name="stock_component_type" id="stock_component_type" required>
+                                <option value="">Выберите тип</option>
+                                <option value="Фланец">Фланец</option>
+                                <option value="Вставка">Вставка</option>
+                                <option value="Язычек">Язычек</option>
+                                <option value="Рамка">Рамка</option>
+                                <option value="Коробка">Коробка</option>
+                                <option value="Ящик">Ящик</option>
+                                <option value="Поролон">Поролон</option>
+                                <option value="Форсунка">Форсунка</option>
+                                <option value="Боковая лента">Боковая лента</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="stock_component_detail">Номер</label>
+                            <input type="text" name="stock_component_detail" id="stock_component_detail"
+                                   placeholder="Введите номер…" autocomplete="off">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-field">
+                    <label for="stock_quantity">Количество штук</label>
+                    <input type="number" name="stock_quantity" id="stock_quantity" required
+                           min="1" step="1" value="1" placeholder="Количество">
+                </div>
+                <div class="modal-field">
+                    <label>Желаемое время готовности (необязательно)</label>
+                    <div class="modal-row-2">
+                        <input type="date" name="stock_delivery_date" id="stock_delivery_date" aria-label="Дата">
+                        <input type="time" name="stock_delivery_hour" id="stock_delivery_hour" aria-label="Время">
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-modal-secondary" id="cancelStockRequestModal">Отмена</button>
+                    <button type="submit" class="btn-modal-primary">Создать заявку</button>
+                </div>
+            </form>
         </div>
     </div>
     
@@ -1514,8 +1826,33 @@ $allRequests = getAllLaserRequests($databases);
             loadStatistics();
         }
         
+        // Модальное окно: заявка на складской запас
+        function openStockModal() {
+            const m = document.getElementById('stockRequestModal');
+            if (m) {
+                m.classList.add('is-open');
+                document.getElementById('stock_component_type')?.focus();
+            }
+        }
+
+        function closeStockModal() {
+            const m = document.getElementById('stockRequestModal');
+            if (m) m.classList.remove('is-open');
+        }
+
         // Инициализация
         document.addEventListener('DOMContentLoaded', function() {
+            const stockModal = document.getElementById('stockRequestModal');
+            document.getElementById('openStockRequestModal')?.addEventListener('click', openStockModal);
+            document.getElementById('closeStockRequestModal')?.addEventListener('click', closeStockModal);
+            document.getElementById('cancelStockRequestModal')?.addEventListener('click', closeStockModal);
+            stockModal?.addEventListener('click', function(e) {
+                if (e.target === stockModal) closeStockModal();
+            });
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && stockModal?.classList.contains('is-open')) closeStockModal();
+            });
+
             // Инициализация всплывающего окна
             const toast = document.getElementById('toast');
             if (toast) {
