@@ -4,6 +4,63 @@ require_once('settings.php');
 require_once('tools/ensure_salary_warehouse_tables.php');
 require_once('audit_logger.php');
 
+function parse_enum_values($columnType) {
+    if (!is_string($columnType) || $columnType === '') {
+        return [];
+    }
+    if (!preg_match_all("/'([^']*)'/", $columnType, $matches)) {
+        return [];
+    }
+    return $matches[1] ?? [];
+}
+
+function normalize_tariff_type($mysqli, $requestedType, $currentType = null) {
+    $requestedType = trim((string) $requestedType);
+    if ($requestedType === '') {
+        $requestedType = 'normal';
+    }
+    $allowed = [];
+    $col = $mysqli->query("SHOW COLUMNS FROM salary_tariffs LIKE 'type'");
+    if ($col && ($row = $col->fetch_assoc())) {
+        $allowed = parse_enum_values($row['Type'] ?? '');
+    }
+    if (empty($allowed)) {
+        return $requestedType;
+    }
+    if (in_array($requestedType, $allowed, true)) {
+        return $requestedType;
+    }
+
+    $aliases = [
+        'normal' => ['normal', 'обычный', 'obychnyy', 'standard', 'piece'],
+        'fixed' => ['fixed', 'фиксированный'],
+        'hourly' => ['hourly', 'почасовый', 'почасовой'],
+    ];
+    $canonical = null;
+    foreach ($aliases as $key => $variants) {
+        if (in_array($requestedType, $variants, true)) {
+            $canonical = $key;
+            break;
+        }
+    }
+    if ($canonical !== null) {
+        foreach ($aliases[$canonical] as $candidate) {
+            if (in_array($candidate, $allowed, true)) {
+                return $candidate;
+            }
+        }
+    }
+    if ($currentType !== null && in_array($currentType, $allowed, true)) {
+        return $currentType;
+    }
+    return $allowed[0];
+}
+
+function manage_redirect($locationPath) {
+    header('Location: ' . $locationPath);
+    exit;
+}
+
 $action = $_GET['action'] ?? 'list';
 $tariff_id = $_GET['id'] ?? null;
 $addition_action = $_GET['addition_action'] ?? null;
@@ -40,8 +97,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $error = 'Ошибка подключения к БД: ' . $mysqli->connect_error;
                 } else {
                     $auditLogger = new AuditLogger($mysqli);
-                    
                     if ($action === 'add') {
+                        $type = normalize_tariff_type($mysqli, $type);
                         // Используем отдельные запросы для обработки NULL значений
                         if ($build_complexity !== null) {
                             $stmt = $mysqli->prepare("INSERT INTO salary_tariffs (tariff_name, rate_per_unit, type, build_complexity) VALUES (?, ?, ?, ?)");
@@ -63,13 +120,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $old_values = $old_row;
                         }
                         $old_stmt->close();
+                        $type = normalize_tariff_type($mysqli, $type, $old_values['type'] ?? null);
                         
                         // Обновляем основные поля
                         $stmt = $mysqli->prepare("UPDATE salary_tariffs SET tariff_name = ?, rate_per_unit = ?, type = ? WHERE id = ?");
                         $stmt->bind_param('sdsi', $tariff_name, $rate_per_unit, $type, $tariff_id);
                     }
                     
-                    if ($stmt->execute()) {
+                    $stmt_ok = false;
+                    try {
+                        $stmt_ok = $stmt->execute();
+                    } catch (mysqli_sql_exception $e) {
+                        $error = 'Ошибка сохранения: ' . $e->getMessage();
+                    }
+                    if ($stmt_ok) {
                         // Если редактирование, обновляем build_complexity отдельно
                         if ($action === 'edit') {
                             $tariff_id = intval($_POST['tariff_id']);
@@ -135,8 +199,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             );
                         }
                         
-                        header('Location: manage_tariffs.php?success=' . ($action === 'add' ? 'added' : 'updated'));
-                        exit;
+                        manage_redirect('manage_tariffs.php?success=' . ($action === 'add' ? 'added' : 'updated'));
                     } else {
                         $error = 'Ошибка сохранения: ' . $stmt->error;
                     }
@@ -188,8 +251,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             );
                         }
                         
-                        header('Location: manage_tariffs.php?success=deleted');
-                        exit;
+                        manage_redirect('manage_tariffs.php?success=deleted');
                     } else {
                         $error = 'Ошибка удаления: ' . $stmt->error;
                     }
@@ -312,8 +374,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             );
                         }
                         
-                        header('Location: manage_tariffs.php?success=addition_' . ($addition_action === 'add' ? 'added' : 'updated'));
-                        exit;
+                        manage_redirect('manage_tariffs.php?success=addition_' . ($addition_action === 'add' ? 'added' : 'updated'));
                     } else {
                         $error = 'Ошибка сохранения доплаты: ' . $stmt->error;
                     }
@@ -357,8 +418,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         );
                     }
                     
-                    header('Location: manage_tariffs.php?success=addition_deleted');
-                    exit;
+                    manage_redirect('manage_tariffs.php?success=addition_deleted');
                 } else {
                     $error = 'Ошибка удаления доплаты: ' . $stmt->error;
                 }
@@ -447,8 +507,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 );
                             }
                         }
-                        header('Location: manage_tariffs.php?success=hourly_' . ($hourly_action === 'add' ? 'added' : 'updated'));
-                        exit;
+                        manage_redirect('manage_tariffs.php?success=hourly_' . ($hourly_action === 'add' ? 'added' : 'updated'));
                     } else {
                         $error = 'Ошибка сохранения почасового тарифа: ' . $stmt->error;
                     }
@@ -485,8 +544,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 'Удаление почасового тарифа через manage_tariffs.php'
                             );
                         }
-                        header('Location: manage_tariffs.php?success=hourly_deleted');
-                        exit;
+                        manage_redirect('manage_tariffs.php?success=hourly_deleted');
                     } else {
                         $error = 'Ошибка удаления почасового тарифа: ' . $stmt->error;
                     }
@@ -498,6 +556,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// Таблицы тарифов / доплат / почасовых показываются только на «главной» вкладке страницы
+$show_main_tariff_dashboard = (
+    $action === 'list'
+    && !$addition_action
+    && $hourly_action !== 'add'
+    && $hourly_action !== 'edit'
+);
+
 // Загружаем данные тарифа для редактирования
 $tariff_data = null;
 if ($action === 'edit' && $tariff_id) {
@@ -506,6 +572,7 @@ if ($action === 'edit' && $tariff_id) {
     while ($row = $result->fetch_assoc()) {
         $tariffs[] = $row;
     }
+    $result->free();
     if (!empty($tariffs)) {
         $tariff_data = $tariffs[0];
     } else {
@@ -513,9 +580,9 @@ if ($action === 'edit' && $tariff_id) {
     }
 }
 
-// Загружаем список тарифов
+// Загружаем список тарифов (тяжёлый JOIN — только для главной панели)
 $tariffs_list = [];
-if ($action === 'list' || $addition_action) {
+if ($show_main_tariff_dashboard) {
     try {
         $result = mysql_execute("SELECT st.*, COUNT(sfs.filter) as usage_count 
                                  FROM salary_tariffs st 
@@ -525,6 +592,7 @@ if ($action === 'list' || $addition_action) {
         while ($row = $result->fetch_assoc()) {
             $tariffs_list[] = $row;
         }
+        $result->free();
     } catch (Exception $e) {
         // Если поле build_complexity еще не добавлено, загружаем без него
         $result = mysql_execute("SELECT st.*, COUNT(sfs.filter) as usage_count 
@@ -538,6 +606,7 @@ if ($action === 'list' || $addition_action) {
             }
             $tariffs_list[] = $row;
         }
+        $result->free();
     }
 }
 
@@ -554,6 +623,7 @@ if ($addition_action === 'edit' && $addition_code) {
     while ($row = $result->fetch_assoc()) {
         $additions[] = $row;
     }
+    $result->free();
     if (!empty($additions)) {
         $addition_data = $additions[0];
     } else {
@@ -561,22 +631,25 @@ if ($addition_action === 'edit' && $addition_code) {
     }
 }
 
-// Загружаем список дополнений
+// Списки доплат и почасовых — только для главной панели (формы add/edit их не используют)
 $additions_list = [];
-$result = mysql_execute("SELECT * FROM salary_additions ORDER BY code");
-while ($row = $result->fetch_assoc()) {
-    $additions_list[] = $row;
-}
-
-// Загружаем список почасовых тарифов для рабочих
 $hourly_rates_list = [];
-try {
-    $result = mysql_execute("SELECT * FROM salary_hourly_worker_rates ORDER BY sort_order, name");
+if ($show_main_tariff_dashboard) {
+    $result = mysql_execute("SELECT * FROM salary_additions ORDER BY code");
     while ($row = $result->fetch_assoc()) {
-        $hourly_rates_list[] = $row;
+        $additions_list[] = $row;
     }
-} catch (Exception $e) {
-    // Таблица может отсутствовать до первого запуска ensure_salary_warehouse_tables
+    $result->free();
+
+    try {
+        $result = mysql_execute("SELECT * FROM salary_hourly_worker_rates ORDER BY sort_order, name");
+        while ($row = $result->fetch_assoc()) {
+            $hourly_rates_list[] = $row;
+        }
+        $result->free();
+    } catch (Exception $e) {
+        // Таблица может отсутствовать до первого запуска ensure_salary_warehouse_tables
+    }
 }
 
 // Загружаем данные почасового тарифа для редактирования
@@ -588,6 +661,7 @@ if ($hourly_action === 'edit' && $hourly_id) {
         while ($row = $result->fetch_assoc()) {
             $rows[] = $row;
         }
+        $result->free();
         if (!empty($rows)) {
             $hourly_data = $rows[0];
         } else {
