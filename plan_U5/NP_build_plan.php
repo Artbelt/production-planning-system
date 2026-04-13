@@ -311,6 +311,23 @@ try{
     }
     $srcDates = array_keys($srcDates); sort($srcDates);
 
+    /* уникальные высоты (мм, как в data-height плашек) — для кнопок фильтра */
+    $poolHeightByLabel = [];
+    foreach ($pool as $list) {
+        foreach ($list as $p) {
+            if ($p['height'] === null) {
+                continue;
+            }
+            $lab = fmt_mm($p['height']);
+            if ($lab === null || $lab === '') {
+                continue;
+            }
+            $poolHeightByLabel[$lab] = (float)$p['height'];
+        }
+    }
+    asort($poolHeightByLabel, SORT_NUMERIC);
+    $poolHeightsSorted = array_keys($poolHeightByLabel);
+
     // предварительный план
     $prePlan = [];
     $pre = $pdo->prepare("SELECT plan_date, brigade, source_date, filter, count
@@ -415,7 +432,7 @@ try{
     .wrap{width:100vw;margin:0;padding:0 10px}
 
     .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;margin:10px 0}
-    .head{display:flex;align-items:center;justify-content:space-between;margin:0 0 8px}
+    .head{display:flex;align-items:flex-start;justify-content:space-between;margin:0 0 8px;gap:12px;flex-wrap:wrap}
     .btn{background:var(--accent);color:#fff;border:1px solid var(--accent);border-radius:8px;padding:6px 10px;cursor:pointer}
     .btn.secondary{background:#eef6ff;color:#1e40af;border-color:#c7d2fe}
     .btn:disabled{opacity:.5;cursor:not-allowed}
@@ -489,6 +506,82 @@ try{
     .mv{border:1px solid #ccc;background:#fff;border-radius:8px;padding:2px 6px;cursor:pointer}
     .mv:disabled{opacity:.5;cursor:not-allowed}
     .rowCtrls{display:flex;gap:6px;flex-wrap:wrap}
+
+    .height-buttons{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+    #topPanelToolbar .btn.secondary.active{
+        background:#e0e7ff;border-color:#818cf8;color:#1e3a8a;
+    }
+    /* Плавающая панель фильтра по высоте */
+    .height-float-panel{
+        position:fixed;
+        top:108px;
+        right:16px;
+        left:auto;
+        transform:none;
+        width:min(380px,94vw);
+        max-height:48vh;
+        background:#fff;
+        border-radius:12px;
+        box-shadow:0 4px 12px rgba(0,0,0,.15);
+        z-index:1002;
+        flex-direction:column;
+        overflow:hidden;
+        display:none;
+    }
+    .height-float-header{
+        background:#d97706;
+        color:#fff;
+        padding:6px 10px;
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        cursor:move;
+        user-select:none;
+        flex-shrink:0;
+    }
+    .height-float-title{font-weight:600;font-size:12px}
+    .height-float-controls{display:flex;gap:4px;align-items:center}
+    .height-float-btn{
+        background:rgba(255,255,255,.22);
+        border:none;
+        color:#fff;
+        padding:3px 8px;
+        border-radius:3px;
+        cursor:pointer;
+        font-size:11px;
+        line-height:1;
+    }
+    .height-float-btn:hover{background:rgba(255,255,255,.35)}
+    .height-float-body{
+        padding:10px 10px 12px;
+        overflow-y:auto;
+        display:flex;
+        flex-direction:column;
+        gap:8px;
+    }
+    .height-float-zero-label{
+        display:flex;
+        align-items:center;
+        gap:6px;
+        font-size:12px;
+        color:#374151;
+        cursor:pointer;
+        user-select:none;
+    }
+    .height-float-zero-label input{cursor:pointer}
+    .height-float-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+    .height-btn{
+        font-size:11px;padding:3px 8px;border:1px solid #d97706;border-radius:6px;
+        background:#fff;color:#92400e;cursor:pointer;min-width:36px;line-height:1.2;
+        transition:background .15s ease,border-color .15s ease,color .15s ease;
+    }
+    .height-btn:hover{background:#fef3c7}
+    .height-btn.active{background:#f59e0b;color:#fff;border-color:#d97706}
+    #topGrid .pill.highlighted,
+    #daysGrid .rowItem.highlighted{
+        background:#fecaca !important;border-color:#dc2626 !important;
+        box-shadow:0 0 0 2px rgba(220,38,38,.45);
+    }
 
     .dayFoot{margin-top:6px;font-size:12px;color:#374151}
     .tot,.hrsB,.hrs{font-weight:700}
@@ -687,6 +780,12 @@ try{
         font-size: 11px !important;
         padding: 4px 6px !important;
         margin-bottom: 4px !important;
+    }
+    /* Активный день для Shift+клика по плашке (выбор кликом по колонке сетки) */
+    .floating-panel #daysGrid .col.col-active-day h4 {
+        outline: 2px solid #2563eb;
+        outline-offset: 1px;
+        border-radius: 6px;
     }
     
     .floating-panel .brigWrap {
@@ -939,13 +1038,15 @@ try{
         <div class="head">
             <div>
                 <b>Доступно к сборке (после гофры)</b>
-                <span class="sub">клик по плашке — выбрать день и бригаду</span>
+                <span class="sub">клик по плашке — выбрать день и бригаду; Shift+клик — с активного дня в сетке (клик по колонке снизу задаёт день и бригаду)</span>
             </div>
-            <div style="display:flex;align-items:center;gap:8px">
+            <div id="topPanelToolbar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end">
                 <button class="btn secondary" id="btnSnake">Компактный режим</button>
-                <!-- ПЕРЕКЛЮЧАТЕЛЬ ПОДСВЕТКИ -->
                 <button class="btn secondary" id="btnHeightColors">Цвет по высоте: Вкл</button>
                 <button class="btn secondary" id="btnComplexityIndicator">Индикатор сложности: Выкл</button>
+                <?php if (!empty($poolHeightsSorted)): ?>
+                <button type="button" class="btn secondary" id="btnToggleHeightPanel" title="Показать или скрыть панель выбора высот">Фильтр высоты</button>
+                <?php endif; ?>
                 <div class="muted">
                     <?php
                     $availCount=0; foreach($pool as $list){ foreach($list as $it){ $availCount+=$it['available']; } }
@@ -995,6 +1096,31 @@ try{
             </div>
         </div>
     </div>
+
+    <?php if (!empty($poolHeightsSorted)): ?>
+    <div class="height-float-panel" id="heightFilterFloatingPanel" aria-hidden="true">
+        <div class="height-float-header" id="heightPanelHeader">
+            <div class="height-float-title">Фильтр по высоте</div>
+            <div class="height-float-controls">
+                <button type="button" class="height-float-btn" id="btnHeightPanelMin" title="Свернуть / развернуть">−</button>
+            </div>
+        </div>
+        <div class="height-float-body" id="heightPanelBody">
+            <label class="height-float-zero-label">
+                <input type="checkbox" id="chkHighlightZeroAvail" checked>
+                <span>Подсветка 0 позиций</span>
+            </label>
+            <div class="height-float-actions">
+                <div class="height-buttons" id="heightFilterButtons">
+                    <?php foreach ($poolHeightsSorted as $hLab): ?>
+                        <button type="button" class="height-btn" data-height="<?=h($hLab)?>">h<?=h($hLab)?></button>
+                    <?php endforeach; ?>
+                </div>
+                <button type="button" class="btn secondary" id="btnClearHeightFilter" title="Сбросить подсветку по высоте">✕</button>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <!-- НИЗ: дни сборки (две бригады) в плавающей панели -->
     <div class="floating-panel" id="floating-panel">
@@ -1132,6 +1258,14 @@ try{
     let lastDay  = null;
     let lastTeam = '1';
 
+    /** Подсветка колонки «активного» дня/бригады для Shift+клика по верхним плашкам */
+    function syncActiveAssemblyDayHighlight(){
+        document.querySelectorAll('#daysGrid .col.col-active-day').forEach(c => c.classList.remove('col-active-day'));
+        if (!lastDay) return;
+        const col = document.querySelector(`#daysGrid .col[data-day="${cssEscape(lastDay)}"]`);
+        if (col) col.classList.add('col-active-day');
+    }
+
     const prePlan = <?= json_encode($prePlan, JSON_UNESCAPED_UNICODE) ?>;
     updateLoadingProgress(27);
 
@@ -1208,6 +1342,128 @@ try{
         return [...document.querySelectorAll('#daysGrid .col[data-day]')].map(c=>c.dataset.day);
     }
 
+    (function initActiveAssemblyDayClick(){
+        const grid = document.getElementById('daysGrid');
+        if (!grid) return;
+        grid.addEventListener('click', (e) => {
+            if (e.button !== 0) return;
+            if (e.target.closest('button')) return;
+            if (e.target.closest('.rowItem')) return;
+            const col = e.target.closest('.col[data-day]');
+            if (!col || col.closest('#topGrid')) return;
+            lastDay = col.dataset.day;
+            const brig = e.target.closest('.brig1, .brig2');
+            if (brig) lastTeam = brig.classList.contains('brig2') ? '2' : '1';
+            syncActiveAssemblyDayHighlight();
+        });
+    })();
+
+    
+    /* ===== Кнопки фильтра по высоте (плавающая панель) ===== */
+    const selectedHeights = new Set();
+    /** true — подсвечивать и позиции с остатком 0; false — только верх, остаток > 0 */
+    let highlightZeroAvail = (localStorage.getItem('u5HighlightZeroHeightFilter') ?? '1') !== '0';
+    function applyHeightFilter(){
+        document.querySelectorAll('#topGrid .pill.highlighted, #daysGrid .rowItem.highlighted').forEach(el=>{
+            el.classList.remove('highlighted');
+        });
+        if (selectedHeights.size === 0) return;
+        document.querySelectorAll('#topGrid .pill').forEach(pill=>{
+            const h = (pill.dataset.height || '').trim();
+            if (!h || !selectedHeights.has(h)) return;
+            const avail = parseInt(pill.dataset.avail || '0', 10);
+            if (highlightZeroAvail || avail > 0) pill.classList.add('highlighted');
+        });
+        document.querySelectorAll('#daysGrid .rowItem').forEach(row=>{
+            const h = (row.dataset.height || '').trim();
+            if (h && selectedHeights.has(h)) row.classList.add('highlighted');
+        });
+    }
+    function toggleHeightFilter(height){
+        if (selectedHeights.has(height)) selectedHeights.delete(height);
+        else selectedHeights.add(height);
+        const btn = [...document.querySelectorAll('#heightFilterButtons .height-btn')]
+            .find(b => (b.dataset.height || '').trim() === height);
+        if (btn) btn.classList.toggle('active', selectedHeights.has(height));
+        applyHeightFilter();
+    }
+    function clearHeightFilter(){
+        selectedHeights.clear();
+        document.querySelectorAll('#heightFilterButtons .height-btn').forEach(b=> b.classList.remove('active'));
+        applyHeightFilter();
+    }
+    (function initHeightFilterButtons(){
+        const wrap = document.getElementById('heightFilterButtons');
+        if (!wrap) return;
+        wrap.querySelectorAll('.height-btn').forEach(btn=>{
+            btn.addEventListener('click', ()=>{
+                const h = (btn.dataset.height || '').trim();
+                if (h) toggleHeightFilter(h);
+            });
+        });
+        const clr = document.getElementById('btnClearHeightFilter');
+        if (clr) clr.addEventListener('click', clearHeightFilter);
+        const chkZero = document.getElementById('chkHighlightZeroAvail');
+        if (chkZero) {
+            chkZero.checked = highlightZeroAvail;
+            chkZero.addEventListener('change', ()=>{
+                highlightZeroAvail = !!chkZero.checked;
+                localStorage.setItem('u5HighlightZeroHeightFilter', highlightZeroAvail ? '1' : '0');
+                applyHeightFilter();
+            });
+        }
+    })();
+
+    (function initHeightFloatingPanel(){
+        const panel = document.getElementById('heightFilterFloatingPanel');
+        const btnToggle = document.getElementById('btnToggleHeightPanel');
+        if (!panel || !btnToggle) return;
+
+        function setOpen(open){
+            panel.style.display = open ? 'flex' : 'none';
+            panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+            btnToggle.classList.toggle('active', open);
+            localStorage.setItem('u5HeightFilterPanelOpen', open ? '1' : '0');
+        }
+        btnToggle.addEventListener('click', ()=>{
+            setOpen(panel.style.display === 'none' || panel.style.display === '');
+        });
+        if (localStorage.getItem('u5HeightFilterPanelOpen') === '1') setOpen(true);
+
+        const body = document.getElementById('heightPanelBody');
+        const btnMin = document.getElementById('btnHeightPanelMin');
+        let minimized = false;
+        if (btnMin && body) {
+            btnMin.addEventListener('click', (e)=>{
+                e.stopPropagation();
+                minimized = !minimized;
+                body.style.display = minimized ? 'none' : '';
+                btnMin.textContent = minimized ? '+' : '−';
+            });
+        }
+
+        const header = document.getElementById('heightPanelHeader');
+        if (!header) return;
+        let drag = false, ix = 0, iy = 0;
+        header.addEventListener('mousedown', (e)=>{
+            if (e.button !== 0) return;
+            if (e.target.closest('button')) return;
+            drag = true;
+            const r = panel.getBoundingClientRect();
+            ix = e.clientX - r.left;
+            iy = e.clientY - r.top;
+        });
+        document.addEventListener('mousemove', (e)=>{
+            if (!drag) return;
+            e.preventDefault();
+            panel.style.left = (e.clientX - ix) + 'px';
+            panel.style.top = (e.clientY - iy) + 'px';
+            panel.style.right = 'auto';
+            panel.style.transform = 'none';
+        });
+        document.addEventListener('mouseup', ()=>{ drag = false; });
+    })();
+
     /* ===== ПОДСВЕТКА ПО ВЫСОТЕ + ПЕРЕКЛЮЧАТЕЛЬ ===== */
     /* txt — тёмный цвет шрифта маркера высоты для читаемости */
     const HEIGHT_COLORS_FIXED = {
@@ -1251,6 +1507,7 @@ try{
             topPills.forEach(el=>{ el.style.backgroundColor=''; el.style.borderColor=''; });
             rows.forEach(el=>{ el.style.backgroundColor=''; el.style.borderColor=''; });
             applyWidthColors();
+            applyHeightFilter();
             return;
         }
         topPills.forEach(el=>{
@@ -1269,6 +1526,7 @@ try{
             checkAndHideHeight(el);
         });
         applyWidthColors();
+        applyHeightFilter();
     }
     /* ===== /ПОДСВЕТКА ===== */
 
@@ -1493,7 +1751,10 @@ try{
                 Время: <span class="hrs" data-hrs-day="${escapeHtml(day)}">0.0</span>
               </div>
             `;
-            document.getElementById('daysGrid').appendChild(col);
+            const grid = document.getElementById('daysGrid');
+            const nextCol = [...grid.querySelectorAll('.col[data-day]')].find(c => (c.dataset.day || '') > day);
+            if (nextCol) grid.insertBefore(col, nextCol);
+            else grid.appendChild(col);
 
             if (!busyHours.has(day)) busyHours.set(day, {'1':0,'2':0});
             if (!busyHeights.has(day)) busyHeights.set(day, {'1':[], '2':[]});
@@ -1694,6 +1955,7 @@ try{
         lines.push('Время на остаток: ~' + fmtH(hours) + ' ч (смена ' + fmtH(SHIFT_HOURS) + ' ч)');
         if (pill.classList.contains('corrugated')) lines.push('Сгофрировано (факт): ' + fact + ' шт');
         lines.push('Клик — выбрать день и бригаду');
+        lines.push('Shift+клик — распределить по дням, начиная с активного дня в нижней сетке (клик по колонке задаёт день и бригаду)');
         pill.setAttribute('title', lines.join('\n'));
     }
     document.querySelectorAll('.pill').forEach(p=>{
@@ -1843,6 +2105,7 @@ try{
 
         row.dataset.day = newDay;
         lastDay = newDay;
+        syncActiveAssemblyDayHighlight();
         applyHeightColors();
         applyComplexityIndicator();
     }
@@ -1943,6 +2206,10 @@ try{
 
         const qty = avail;
         if (e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            const sel = window.getSelection && window.getSelection();
+            if (sel && sel.removeAllRanges) sel.removeAllRanges();
             const startDay = getShiftStartDay(pill);
             if (startDay) {
                 const added = addToDaysFromActive(startDay, lastTeam || '1', pill, qty);
@@ -1982,6 +2249,7 @@ try{
 
         lastDay = day;
         lastTeam = team;
+        syncActiveAssemblyDayHighlight();
         return take;
     }
 
@@ -2044,7 +2312,7 @@ try{
 
     // пререндер сохранённого плана
     (function renderPre(){
-        const prePlanKeys = Object.keys(prePlan||{});
+        const prePlanKeys = Object.keys(prePlan||{}).sort();
         const totalDays = prePlanKeys.length;
         let processedDays = 0;
         
@@ -2069,6 +2337,7 @@ try{
                 updateLoadingProgress(progress);
             }
         });
+        syncActiveAssemblyDayHighlight();
         applyHeightColors();
         // Проверяем высоты для всех загруженных строк
         setTimeout(() => {
@@ -2218,6 +2487,7 @@ try{
                 });
                 lastDay = day;
             }
+            syncActiveAssemblyDayHighlight();
 
             document.querySelectorAll('.pill').forEach(p=>{
                 const base = +p.dataset.avail0 || 0;
