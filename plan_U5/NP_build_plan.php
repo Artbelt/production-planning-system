@@ -586,6 +586,20 @@ try{
     .dayFoot{margin-top:6px;font-size:12px;color:#374151}
     .tot,.hrsB,.hrs{font-weight:700}
     .hrsHeights{color:#6b7280;font-weight:600;margin-left:4px}
+    .brigShiftNext{
+        margin-left:4px;
+        padding:0 5px 1px;
+        font-size:12px;
+        line-height:1.1;
+        border:1px solid #94a3b8;
+        background:#f8fafc;
+        border-radius:4px;
+        cursor:pointer;
+        color:#334155;
+        vertical-align:baseline;
+    }
+    .brigShiftNext:hover{background:#e2e8f0;border-color:#64748b}
+    .floating-panel .brigShiftNext{font-size:10px;padding:0 4px}
 
     /* скроллы — слой GPU и ограничение перерисовки для плавности */
     .scrollX{ overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; padding-bottom:4px; contain:paint; }
@@ -1147,18 +1161,20 @@ try{
                         <h4><?=h($d)?></h4>
                         <div class="brigWrap">
                             <div class="brig brig1">
-                                <h5>Бригада 1:
+                                <h5>Б1:
                                     <span class="totB" data-totb="<?=h($d)?>|1">0</span> шт ·
-                                    Время: <span class="hrsB" data-hrsb="<?=h($d)?>|1">0.0</span>
+                                    <span class="hrsB" data-hrsb="<?=h($d)?>|1">0.0</span> ч
                                     <span class="hrsHeights" data-hrsh="<?=h($d)?>|1"></span>
+                                    <button type="button" class="brigShiftNext" title="Перенести все позиции бригады на следующий день" aria-label="На следующий день">→</button>
                                 </h5>
                                 <div class="dropzone" data-day="<?=h($d)?>" data-team="1"></div>
                             </div>
                             <div class="brig brig2">
-                                <h5>Бригада 2:
+                                <h5>Б2:
                                     <span class="totB" data-totb="<?=h($d)?>|2">0</span> шт ·
-                                    Время: <span class="hrsB" data-hrsb="<?=h($d)?>|2">0.0</span>
+                                    <span class="hrsB" data-hrsb="<?=h($d)?>|2">0.0</span> ч
                                     <span class="hrsHeights" data-hrsh="<?=h($d)?>|2"></span>
+                                    <button type="button" class="brigShiftNext" title="Перенести все позиции бригады на следующий день" aria-label="На следующий день">→</button>
                                 </h5>
                                 <div class="dropzone" data-day="<?=h($d)?>" data-team="2"></div>
                             </div>
@@ -1729,18 +1745,20 @@ try{
               <h4>${escapeHtml(day)}</h4>
               <div class="brigWrap">
                 <div class="brig brig1">
-                  <h5>Бригада 1:
+                  <h5>Б1:
                     <span class="totB" data-totb="${escapeHtml(day)}|1">0</span> шт ·
-                    Время: <span class="hrsB" data-hrsb="${escapeHtml(day)}|1">0.0</span>
+                    <span class="hrsB" data-hrsb="${escapeHtml(day)}|1">0.0</span> ч
                     <span class="hrsHeights" data-hrsh="${escapeHtml(day)}|1"></span>
+                    <button type="button" class="brigShiftNext" title="Перенести все позиции бригады на следующий день" aria-label="На следующий день">→</button>
                   </h5>
                   <div class="dropzone" data-day="${escapeHtml(day)}" data-team="1"></div>
                 </div>
                 <div class="brig brig2">
-                  <h5>Бригада 2:
+                  <h5>Б2:
                     <span class="totB" data-totb="${escapeHtml(day)}|2">0</span> шт ·
-                    Время: <span class="hrsB" data-hrsb="${escapeHtml(day)}|2">0.0</span>
+                    <span class="hrsB" data-hrsb="${escapeHtml(day)}|2">0.0</span> ч
                     <span class="hrsHeights" data-hrsh="${escapeHtml(day)}|2"></span>
+                    <button type="button" class="brigShiftNext" title="Перенести все позиции бригады на следующий день" aria-label="На следующий день">→</button>
                   </h5>
                   <div class="dropzone" data-day="${escapeHtml(day)}" data-team="2"></div>
                 </div>
@@ -2109,6 +2127,60 @@ try{
         applyHeightColors();
         applyComplexityIndicator();
     }
+
+    function calendarDayPlusOne(iso){
+        const d = new Date(iso + 'T00:00:00');
+        d.setDate(d.getDate() + 1);
+        return d.toISOString().slice(0, 10);
+    }
+
+    /** Все строки бригады за день → следующая колонка (при необходимости добавляется следующий календарный день). */
+    function moveBrigadeAllToNextDay(day, teamStr){
+        const dz = document.querySelector(`.dropzone[data-day="${cssEscape(day)}"][data-team="${cssEscape(teamStr)}"]`);
+        if (!dz) return;
+        const rows = [...dz.querySelectorAll('.rowItem')];
+        if (!rows.length) return;
+
+        const days = getAllDays();
+        const i = days.indexOf(day);
+        if (i < 0) return;
+
+        const extendGrid = (i + 1 >= days.length);
+        const newDay = extendGrid ? calendarDayPlusOne(day) : days[i + 1];
+
+        const movable = rows.filter(r => {
+            const src = r.dataset.sourceDate || '';
+            return !src || newDay >= src;
+        });
+        if (!movable.length) {
+            alert('Ни одна позиция не может быть перенесена: для следующего дня дата сборки раньше даты гофры.');
+            return;
+        }
+        if (extendGrid) ensureDay(newDay);
+
+        const skipped = rows.length - movable.length;
+        for (const row of movable) moveRow(row, +1);
+        if (skipped > 0) {
+            alert('Не перенесено позиций (дата сборки раньше гофры): ' + skipped);
+        }
+        applyHeightFilter();
+    }
+
+    (function initBrigShiftNext(){
+        const grid = document.getElementById('daysGrid');
+        if (!grid) return;
+        grid.addEventListener('click', (e) => {
+            const btn = e.target.closest('.brigShiftNext');
+            if (!btn) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const brig = btn.closest('.brig1, .brig2');
+            const col = btn.closest('.col[data-day]');
+            if (!brig || !col) return;
+            const team = brig.classList.contains('brig2') ? '2' : '1';
+            moveBrigadeAllToNextDay(col.dataset.day, team);
+        });
+    })();
 
     // ===== модалка дня/бригады =====
     const dpWrap  = document.getElementById('datePicker');
