@@ -6,6 +6,10 @@
 /** Макс. % выполнения для показа (включительно). Строго выше — строка не выводится; порог потом можно завязать на настройки. */
 $activePositionsMaxCompletionPct = 80;
 
+/** Погрешность при сравнении «сумма плана с сегодня» vs «остаток»: не хуже max(абс., % от остатка), но не больше остатка−1. */
+$statePlanToleranceAbs = 2;
+$statePlanTolerancePct = 5;
+
 require_once __DIR__ . '/../auth/includes/config.php';
 require_once __DIR__ . '/../auth/includes/auth-functions.php';
 
@@ -27,6 +31,30 @@ require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/../auth/includes/db.php';
 
 $pdo = getPdo('plan_u3');
+
+/**
+ * Нормализуем имя фильтра для сопоставления позиций заявки и записей планов.
+ */
+function normalizeFilterKey(string $name): string
+{
+    $name = preg_replace('/\[.*$/u', '', $name);
+    $name = trim($name);
+    return mb_strtoupper($name, 'UTF-8');
+}
+
+/**
+ * Допуск при проверке «план с сегодня» покрывает остаток (шт. и %, с ограничением сверху).
+ */
+function activePositionsPlanTolerance(int $remaining, int $absTol, int $pctTol): int
+{
+    if ($remaining <= 0) {
+        return 0;
+    }
+    $fromPct = (int) ceil($remaining * ($pctTol / 100));
+    $raw = max($absTol, $fromPct);
+
+    return min(max(0, $remaining - 1), $raw);
+}
 
 $maxPct = max(0, min(100, (int) $activePositionsMaxCompletionPct));
 
@@ -62,6 +90,58 @@ try {
     $loadError = $e->getMessage();
 }
 
+// План сборки по датам: [order|filter] => [Y-m-d => qty]
+$buildPlanMap = [];
+$buildPlanDates = [];
+$todayIso = (new DateTime())->format('Y-m-d');
+try {
+    $sqlBuildPlan = "
+        SELECT
+            bp.order_number,
+            bp.filter AS filter_name,
+            bp.day_date,
+            SUM(bp.qty) AS qty
+        FROM build_plans bp
+        INNER JOIN (
+            SELECT DISTINCT order_number
+            FROM orders
+            WHERE (hide IS NULL OR hide != 1)
+        ) ao ON ao.order_number = bp.order_number
+        WHERE bp.shift = 'D'
+        GROUP BY bp.order_number, bp.filter, bp.day_date
+        ORDER BY bp.day_date, bp.order_number, bp.filter
+    ";
+    $planRows = $pdo->query($sqlBuildPlan)->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($planRows as $pr) {
+        $order = (string)($pr['order_number'] ?? '');
+        $filter = (string)($pr['filter_name'] ?? '');
+        $date = (string)($pr['day_date'] ?? '');
+        $qty = (int)($pr['qty'] ?? 0);
+        if ($order === '' || $filter === '' || $date === '') {
+            continue;
+        }
+        $key = $order . '|' . normalizeFilterKey($filter);
+        if (!isset($buildPlanMap[$key])) {
+            $buildPlanMap[$key] = [];
+        }
+        if ($date < $todayIso) {
+            continue;
+        }
+        if (!isset($buildPlanMap[$key][$date])) {
+            $buildPlanMap[$key][$date] = 0;
+        }
+        $buildPlanMap[$key][$date] += $qty;
+        if (!isset($buildPlanDates[$date])) {
+            $buildPlanDates[$date] = true;
+        }
+    }
+    $buildPlanDates = array_keys($buildPlanDates);
+    sort($buildPlanDates);
+} catch (Throwable $e) {
+    $buildPlanMap = [];
+    $buildPlanDates = [];
+}
+
 $pageTitle = 'Активные позиции';
 ?>
 <!DOCTYPE html>
@@ -90,9 +170,10 @@ $pageTitle = 'Активные позиции';
             font: 14px/1.45 "Segoe UI", Roboto, Arial, sans-serif;
         }
         .wrap {
-            max-width: 1280px;
-            margin: 0 auto;
-            padding: 24px 16px 48px;
+            width: 100%;
+            max-width: none;
+            margin: 0;
+            padding: 12px 10px 18px;
         }
         .top {
             display: flex;
@@ -106,46 +187,72 @@ $pageTitle = 'Активные позиции';
             font-size: 1.35rem;
             font-weight: 600;
         }
-        .top a.back {
-            color: var(--accent);
-            text-decoration: none;
-            font-weight: 600;
-        }
-        .top a.back:hover { text-decoration: underline; }
         .muted { color: var(--muted); font-size: 13px; }
         .panel {
             background: var(--panel);
             border: 1px solid var(--border);
             border-radius: var(--radius);
             box-shadow: var(--shadow);
-            overflow: hidden;
+            overflow: auto;
+        }
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 0 0 10px;
+        }
+        .toolbar-btn {
+            appearance: none;
+            border: 1px solid var(--border);
+            background: #fff;
+            color: var(--ink);
+            border-radius: 8px;
+            padding: 6px 10px;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background .15s ease, border-color .15s ease, color .15s ease;
+        }
+        .toolbar-btn:hover {
+            border-color: #c7d2fe;
+            background: #f8faff;
+        }
+        .toolbar-btn[aria-pressed="true"] {
+            background: #eff6ff;
+            border-color: #93c5fd;
+            color: #1d4ed8;
         }
         table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 13px;
-            line-height: 1.35;
+            font-size: 12px;
+            line-height: 1.15;
         }
         th, td {
-            padding: 5px 10px;
+            padding: 2px 5px;
             text-align: left;
             border-bottom: 1px solid var(--border);
+            border-right: 1px solid var(--border);
+            white-space: nowrap;
+            width: 1%;
         }
+        th:last-child, td:last-child { border-right: 0; }
         th {
             background: #f9fafb;
             font-weight: 600;
-            font-size: 12px;
+            font-size: 11px;
             color: #374151;
         }
         tr:last-child td { border-bottom: 0; }
         tr:hover td { background: #fafbfc; }
         td.num { text-align: right; font-variant-numeric: tabular-nums; }
+        th.date-col, td.date-col { text-align: center; }
 
         /* Гистограмма выполнения в ячейке «Позиция» */
         td.pos-cell {
             position: relative;
             vertical-align: middle;
-            min-width: 200px;
+            min-width: 0;
             overflow: hidden;
         }
         td.pos-cell .pos-fill {
@@ -194,57 +301,25 @@ $pageTitle = 'Активные позиции';
             text-decoration: underline;
         }
         .order-cell button:hover { color: #1e47c5; }
-        tr.pos-row { cursor: pointer; }
-        tr.pos-row td { user-select: none; }
-        tr.pos-row td.num { user-select: text; }
-        tr.pos-row td.order-cell,
-        tr.pos-row td.order-cell * { user-select: auto; cursor: auto; }
-        tr.pos-row td.order-cell button { cursor: pointer; }
-        tr.pos-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-        tr.pos-row td.pos-cell::before {
-            content: '▸';
+        td.state-cell { white-space: normal; }
+        .state-badge {
             display: inline-block;
-            width: 0.85em;
-            margin-right: 4px;
-            color: var(--muted);
-            font-size: 11px;
-            vertical-align: middle;
-            position: relative;
-            z-index: 2;
-        }
-        tr.pos-row.expanded td.pos-cell::before { content: '▾'; }
-        tr.pos-detail-row td {
-            padding: 0;
-            border-bottom: 1px solid var(--border);
-            background: #fafbfc;
-            vertical-align: top;
-        }
-        tr.pos-detail-row[hidden] { display: none; }
-        .pos-detail-inner {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 10px 16px;
-            padding: 8px 10px 10px 28px;
-            font-size: 12px;
-            line-height: 1.4;
-            color: var(--ink);
-        }
-        .plan-block-title {
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 10px;
             font-weight: 600;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-            color: #4b5563;
-            margin: 0 0 4px;
+            line-height: 1.25;
         }
-        .plan-block ul {
-            margin: 0;
-            padding-left: 1.15em;
+        .state-lag {
+            background: #fef2f2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
         }
-        .plan-block li { margin: 2px 0; }
-        .plan-block .empty { color: var(--muted); font-style: italic; }
-        .pos-detail-loading { padding: 10px 28px; font-size: 12px; color: var(--muted); }
-        .pos-detail-error { padding: 10px 28px; font-size: 12px; color: #b91c1c; }
+        .state-ok {
+            background: #f0fdf4;
+            color: #166534;
+            border: 1px solid #bbf7d0;
+        }
         .alert {
             padding: 14px 16px;
             background: #fef2f2;
@@ -252,23 +327,59 @@ $pageTitle = 'Активные позиции';
             border-radius: var(--radius);
             color: #991b1b;
         }
+        .date-head {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
+            min-width: 34px;
+        }
+        .date-indicators {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            color: #4b5563;
+        }
+        body.show-indicators .date-indicators {
+            display: flex;
+        }
+        .date-indicator {
+            border: 1px solid #d1d5db;
+            background: #f9fafb;
+            border-radius: 4px;
+            padding: 0 5px;
+            font-size: 10px;
+            line-height: 1.3;
+            font-weight: 600;
+            letter-spacing: .01em;
+            text-align: center;
+        }
+        .date-indicator.slim {
+            min-width: 14px;
+            text-align: center;
+            padding: 0 3px;
+        }
     </style>
 </head>
 <body>
 <div class="wrap">
     <div class="top">
-        <a class="back" href="main.php">← На главную</a>
         <h1><?= htmlspecialchars($pageTitle) ?></h1>
     </div>
     <p class="muted" style="margin: 0 0 16px;">
         Позиции по заявкам без признака «скрыта», у которых заказано больше, чем изготовлено фильтров по данным выпуска.
         Показаны позиции с процентом выполнения не выше <?= (int) $maxPct ?>% (включительно).
-        Нажмите на строку (кроме номера заявки), чтобы раскрыть планы: раскрой, гофрирование, сборка.
+        <br>
+        Состояние «Отстаёт»: сумма плана сборки с сегодняшнего дня меньше остатка с допуском (не ниже <?= (int) $statePlanToleranceAbs ?> шт. и не ниже <?= (int) $statePlanTolerancePct ?>% от остатка).
     </p>
 
     <?php if (!empty($loadError)): ?>
         <div class="alert">Ошибка загрузки: <?= htmlspecialchars($loadError) ?></div>
     <?php else: ?>
+        <div class="toolbar">
+            <button type="button" id="toggleIndicatorsBtn" class="toolbar-btn" aria-pressed="false">Индикаторы</button>
+        </div>
         <div class="panel">
             <table>
                 <thead>
@@ -276,13 +387,30 @@ $pageTitle = 'Активные позиции';
                         <th>Позиция</th>
                         <th class="num">Заказано</th>
                         <th class="num">Изготовлено</th>
+                        <th class="num">Остаток</th>
+                        <th>Состояние</th>
                         <th>Заявка</th>
+                        <?php foreach ($buildPlanDates as $planDate):
+                            $dateObj = DateTime::createFromFormat('Y-m-d', (string) $planDate);
+                            $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
+                        ?>
+                            <th class="num date-col" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
+                                <span class="date-head">
+                                    <span><?= htmlspecialchars($dateLabel, ENT_QUOTES, 'UTF-8') ?></span>
+                                    <span class="date-indicators" aria-hidden="true">
+                                        <span class="date-indicator slim">П</span>
+                                        <span class="date-indicator slim">D</span>
+                                        <span class="date-indicator">600</span>
+                                    </span>
+                                </span>
+                            </th>
+                        <?php endforeach; ?>
                     </tr>
                 </thead>
                 <tbody>
                 <?php if (empty($rows)): ?>
                     <tr>
-                        <td colspan="4" class="muted" style="text-align:center;padding:12px;">
+                        <td colspan="<?= 6 + count($buildPlanDates) ?>" class="muted" style="text-align:center;padding:12px;">
                             Нет незакрытых позиций по активным заявкам.
                         </td>
                     </tr>
@@ -297,15 +425,26 @@ $pageTitle = 'Активные позиции';
                         $pct = $ordered > 0 ? min(100, ($produced / $ordered) * 100) : 0;
                         $pctStr = number_format(round($pct, 1), 1, ',', ' ');
                         $hue = (int) round($pct * 1.2);
+                        $planKey = $rawOrder . '|' . normalizeFilterKey($rawFilter);
+                        $planQtyByDate = $buildPlanMap[$planKey] ?? [];
+                        $remaining = max(0, $ordered - $produced);
+                        $plannedFromToday = 0;
+                        foreach ($planQtyByDate as $pq) {
+                            $plannedFromToday += (int) $pq;
+                        }
+                        $planTolerance = activePositionsPlanTolerance(
+                            $remaining,
+                            (int) $statePlanToleranceAbs,
+                            (int) $statePlanTolerancePct
+                        );
+                        $planFloor = max(0, $remaining - $planTolerance);
+                        $isLagging = $remaining > 0 && $plannedFromToday < $planFloor;
+                        $stateTitle = 'План сборки с сегодня: ' . $plannedFromToday
+                            . ' шт.; остаток: ' . $remaining
+                            . ' шт.; допуск: ' . $planTolerance
+                            . ' шт.; нужно не меньше ' . $planFloor . ' шт. в плане.';
                     ?>
-                    <tr
-                        class="pos-row"
-                        tabindex="0"
-                        role="button"
-                        aria-expanded="false"
-                        data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
-                        data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
-                    >
+                    <tr>
                         <td
                             class="pos-cell"
                             style="--pct: <?= htmlspecialchars((string) round($pct, 4), ENT_QUOTES, 'UTF-8') ?>%;"
@@ -319,17 +458,25 @@ $pageTitle = 'Активные позиции';
                         </td>
                         <td class="num"><?= $ordered ?></td>
                         <td class="num"><?= $produced ?></td>
+                        <td class="num"><?= $remaining ?></td>
+                        <td class="state-cell" title="<?= htmlspecialchars($stateTitle, ENT_QUOTES, 'UTF-8') ?>">
+                            <?php if ($isLagging): ?>
+                                <span class="state-badge state-lag">Отстаёт</span>
+                            <?php else: ?>
+                                <span class="state-badge state-ok">В плане</span>
+                            <?php endif; ?>
+                        </td>
                         <td class="order-cell">
                             <form action="show_order.php" method="post" target="_blank" rel="noopener">
                                 <input type="hidden" name="order_number" value="<?= $ord ?>">
                                 <button type="submit"><?= $ord ?></button>
                             </form>
                         </td>
-                    </tr>
-                    <tr class="pos-detail-row" hidden data-loaded="0">
-                        <td colspan="4">
-                            <div class="pos-detail-loading">Загрузка планов…</div>
-                        </td>
+                        <?php foreach ($buildPlanDates as $planDate):
+                            $planQty = (int)($planQtyByDate[$planDate] ?? 0);
+                        ?>
+                            <td class="num date-col"><?= $planQty > 0 ? $planQty : '' ?></td>
+                        <?php endforeach; ?>
                     </tr>
                     <?php endforeach; ?>
                 <?php endif; ?>
@@ -339,89 +486,16 @@ $pageTitle = 'Активные позиции';
     <?php endif; ?>
 </div>
 <script>
-(function () {
-    function fmtDate(iso) {
-        if (!iso || typeof iso !== 'string') return iso;
-        var p = iso.split('-');
-        if (p.length !== 3) return iso;
-        return p[2] + '.' + p[1] + '.' + p[0];
-    }
-    function renderPlans(data) {
-        function block(title, items, withQty) {
-            var h = '<div class="plan-block"><div class="plan-block-title">' + title + '</div>';
-            if (!items || !items.length) {
-                return h + '<div class="empty">Нет данных в плане</div></div>';
-            }
-            h += '<ul>';
-            for (var i = 0; i < items.length; i++) {
-                var it = items[i];
-                var line = fmtDate(it.date);
-                if (withQty && typeof it.qty === 'number' && it.qty > 0) {
-                    line += ' — ' + it.qty + ' шт.';
-                }
-                h += '<li>' + line + '</li>';
-            }
-            h += '</ul></div>';
-            return h;
+    (function () {
+        const btn = document.getElementById('toggleIndicatorsBtn');
+        if (!btn) {
+            return;
         }
-        return (
-            block('Раскрой', data.cut, false) +
-            block('Гофрирование', data.corrugation, true) +
-            block('Сборка (дневная смена)', data.build, true)
-        );
-    }
-    function toggleRow(row, open) {
-        var detail = row.nextElementSibling;
-        if (!detail || !detail.classList.contains('pos-detail-row')) return;
-        var wantOpen = open !== undefined ? open : detail.hidden;
-        detail.hidden = !wantOpen;
-        row.classList.toggle('expanded', wantOpen);
-        row.setAttribute('aria-expanded', wantOpen ? 'true' : 'false');
-        return detail;
-    }
-    function loadPlans(row, detail) {
-        var inner = detail.querySelector('td');
-        inner.innerHTML = '<div class="pos-detail-loading">Загрузка планов…</div>';
-        var fd = new FormData();
-        fd.append('order_number', row.getAttribute('data-order') || '');
-        fd.append('filter', row.getAttribute('data-filter') || '');
-        fetch('active_position_plans.php', { method: 'POST', body: fd, credentials: 'same-origin' })
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                if (!data || !data.ok) {
-                    inner.innerHTML = '<div class="pos-detail-error">' +
-                        (data && data.error ? String(data.error) : 'Не удалось загрузить планы') + '</div>';
-                    return;
-                }
-                inner.innerHTML = '<div class="pos-detail-inner">' + renderPlans(data) + '</div>';
-                detail.setAttribute('data-loaded', '1');
-            })
-            .catch(function () {
-                inner.innerHTML = '<div class="pos-detail-error">Ошибка сети при загрузке планов</div>';
-            });
-    }
-    document.querySelectorAll('tr.pos-row').forEach(function (row) {
-        row.addEventListener('click', function (e) {
-            if (e.target.closest('.order-cell')) return;
-            var detail = row.nextElementSibling;
-            if (!detail || !detail.classList.contains('pos-detail-row')) return;
-            var willOpen = detail.hidden;
-            if (!willOpen) {
-                toggleRow(row, false);
-                return;
-            }
-            toggleRow(row, true);
-            if (detail.getAttribute('data-loaded') === '1') return;
-            loadPlans(row, detail);
+        btn.addEventListener('click', function () {
+            const visible = document.body.classList.toggle('show-indicators');
+            btn.setAttribute('aria-pressed', visible ? 'true' : 'false');
         });
-        row.addEventListener('keydown', function (e) {
-            if (e.key !== 'Enter' && e.key !== ' ') return;
-            if (e.target.closest('.order-cell')) return;
-            e.preventDefault();
-            row.click();
-        });
-    });
-})();
+    })();
 </script>
 </body>
 </html>

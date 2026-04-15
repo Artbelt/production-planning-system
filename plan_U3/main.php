@@ -512,6 +512,7 @@ echo "<!-- Аккуратная панель авторизации -->
                     <form action="summary_plan_U3.php" method="post" target="_blank" class="stack"><input type="submit" value="Сводный план У3"></form>
                     <form action="dimensions_report.php" method="post" target="_blank" class="stack"><input type="submit" value="Таблица размеров для участка"></form>
                     <form action="product_output_view.php" method="post" target="_blank" class="stack"><input type="submit" value="Обзор выпуска продукции"></form>
+                    <form action="parts_output_view.php" method="post" target="_blank" class="stack"><input type="submit" value="Обзор выпуска гофропакетов"></form>
                     <form action="gofra_packages_table.php" method="post" target="_blank" class="stack">
                         <input type="hidden" name="workshop" value="<?= htmlspecialchars($workshop) ?>">
                         <input type="submit" value="Кол-во гофропакетов из рулона">
