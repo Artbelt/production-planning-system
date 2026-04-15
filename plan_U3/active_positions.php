@@ -145,20 +145,9 @@ try {
     $buildPlanDates = [];
 }
 
-$dateIndicators = [];
-foreach ($buildPlanDates as $planDate) {
-    $dateIndicators[(string) $planDate] = [
-        'press_filters' => [],
-        'diameter_qty' => 0,
-        'w600_qty' => 0,
-        'total_qty' => 0,
-    ];
-}
-
-if (!empty($rows) && !empty($buildPlanDates)) {
-    $filterMetaByKey = [];
+$filterMetaByKey = [];
+if (!empty($rows)) {
     $rawFilters = [];
-
     foreach ($rows as $row) {
         $rawFilter = (string)($row['filter_name'] ?? '');
         if ($rawFilter === '') {
@@ -214,7 +203,19 @@ if (!empty($rows) && !empty($buildPlanDates)) {
             $filterMetaByKey = [];
         }
     }
+}
 
+$dateIndicators = [];
+foreach ($buildPlanDates as $planDate) {
+    $dateIndicators[(string) $planDate] = [
+        'press_filters' => [],
+        'diameter_qty' => 0,
+        'w600_qty' => 0,
+        'total_qty' => 0,
+    ];
+}
+
+if (!empty($rows) && !empty($buildPlanDates)) {
     foreach ($rows as $row) {
         $rawOrder = (string)($row['order_number'] ?? '');
         $rawFilter = (string)($row['filter_name'] ?? '');
@@ -397,6 +398,45 @@ $pageTitle = 'Активные позиции';
         td.pos-cell .pos-name {
             font-weight: 500;
             word-break: break-word;
+        }
+        td.pos-cell .pos-indicators {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            flex-wrap: wrap;
+        }
+        body.hide-row-indicators td.pos-cell .pos-indicators {
+            display: none;
+        }
+        td.pos-cell .pos-indicator {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 16px;
+            height: 16px;
+            padding: 0 4px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 1;
+            border: 1px solid #d1d5db;
+            background: #fff;
+            color: #4b5563;
+        }
+        td.pos-cell .pos-indicator.p {
+            border-color: #f59e0b;
+            color: #b45309;
+            background: #fffbeb;
+        }
+        td.pos-cell .pos-indicator.d {
+            border-color: #8b5cf6;
+            color: #6d28d9;
+            background: #f5f3ff;
+        }
+        td.pos-cell .pos-indicator.w600 {
+            border-color: #3b82f6;
+            color: #1d4ed8;
+            background: #eff6ff;
         }
         td.pos-cell .pos-pct {
             flex-shrink: 0;
@@ -651,6 +691,7 @@ $pageTitle = 'Активные позиции';
     <?php else: ?>
         <div class="toolbar">
             <button type="button" id="toggleIndicatorsBtn" class="toolbar-btn" aria-pressed="false">Индикаторы</button>
+            <button type="button" id="toggleRowIndicatorsBtn" class="toolbar-btn secondary" aria-pressed="true">Индикаторы у названий</button>
             <button type="button" id="openIndicatorSettingsBtn" class="toolbar-btn secondary">Настройка индикаторов</button>
         </div>
         <div class="panel">
@@ -782,6 +823,14 @@ $pageTitle = 'Активные позиции';
                             . ' шт.; остаток: ' . $remaining
                             . ' шт.; допуск: ' . $planTolerance
                             . ' шт.; нужно не меньше ' . $planFloor . ' шт. в плане.';
+                        $rowMeta = $filterMetaByKey[normalizeFilterKey($rawFilter)] ?? null;
+                        $rowHasPress = !empty($rowMeta['press']);
+                        $rowHasD = isset($rowMeta['diametr_outer']) && $rowMeta['diametr_outer'] !== null
+                            && (float)$rowMeta['diametr_outer'] > 250
+                            && isset($rowMeta['paper_width_mm']) && $rowMeta['paper_width_mm'] !== null
+                            && (float)$rowMeta['paper_width_mm'] > 400;
+                        $rowHas600 = isset($rowMeta['paper_width_mm']) && $rowMeta['paper_width_mm'] !== null
+                            && (float)$rowMeta['paper_width_mm'] > 450;
                     ?>
                     <tr>
                         <td
@@ -792,6 +841,11 @@ $pageTitle = 'Активные позиции';
                             <span class="pos-fill" style="background: hsla(<?= $hue ?>, 65%, 52%, 0.28);"></span>
                             <div class="pos-meta">
                                 <span class="pos-name"><?= $fil !== '' ? $fil : '—' ?></span>
+                                <span class="pos-indicators">
+                                    <?php if ($rowHasD): ?><span class="pos-indicator d" title="Большой диаметр >250 и ширина бумаги >400">D</span><?php endif; ?>
+                                    <?php if ($rowHasPress): ?><span class="pos-indicator p" title="Фильтр под пресс">П</span><?php endif; ?>
+                                    <?php if ($rowHas600): ?><span class="pos-indicator w600" title="Ширина бумаги >450">600</span><?php endif; ?>
+                                </span>
                                 <span class="pos-pct"><?= htmlspecialchars($pctStr, ENT_QUOTES, 'UTF-8') ?>%</span>
                             </div>
                         </td>
@@ -873,6 +927,7 @@ $pageTitle = 'Активные позиции';
 <script>
     (function () {
         const btn = document.getElementById('toggleIndicatorsBtn');
+        const rowIndicatorsBtn = document.getElementById('toggleRowIndicatorsBtn');
         const openSettingsBtn = document.getElementById('openIndicatorSettingsBtn');
         const modal = document.getElementById('indicatorSettingsModal');
         const saveBtn = document.getElementById('indicatorSettingsSaveBtn');
@@ -882,10 +937,11 @@ $pageTitle = 'Активные позиции';
         const norm600Input = document.getElementById('indNorm600Input');
         const normDInput = document.getElementById('indNormDInput');
         const normTotalInput = document.getElementById('indNormTotalInput');
-        if (!btn || !modal || !openSettingsBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput) {
+        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput) {
             return;
         }
         const storageKey = 'activePositionsIndicatorSettings';
+        const rowIndicatorsStorageKey = 'activePositionsRowIndicatorsVisible';
         const defaults = {
             maxPress: 1,
             norm600: <?= (int)$indicatorNormWidth600 ?>,
@@ -978,10 +1034,28 @@ $pageTitle = 'Активные позиции';
         }
 
         applySettings(getSettings());
+        try {
+            const rowVisibleRaw = localStorage.getItem(rowIndicatorsStorageKey);
+            const rowVisible = rowVisibleRaw === null ? true : rowVisibleRaw === '1';
+            document.body.classList.toggle('hide-row-indicators', !rowVisible);
+            rowIndicatorsBtn.setAttribute('aria-pressed', rowVisible ? 'true' : 'false');
+        } catch (e) {
+            rowIndicatorsBtn.setAttribute('aria-pressed', 'true');
+        }
 
         btn.addEventListener('click', function () {
             const visible = document.body.classList.toggle('show-indicators');
             btn.setAttribute('aria-pressed', visible ? 'true' : 'false');
+        });
+        rowIndicatorsBtn.addEventListener('click', function () {
+            const hidden = document.body.classList.toggle('hide-row-indicators');
+            const visible = !hidden;
+            rowIndicatorsBtn.setAttribute('aria-pressed', visible ? 'true' : 'false');
+            try {
+                localStorage.setItem(rowIndicatorsStorageKey, visible ? '1' : '0');
+            } catch (e) {
+                // ignore storage write errors
+            }
         });
 
         openSettingsBtn.addEventListener('click', openModal);
