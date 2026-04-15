@@ -571,6 +571,43 @@ $pageTitle = 'Активные позиции';
             display: grid;
             gap: 10px;
         }
+        .ind-legend {
+            margin-top: 4px;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: #f9fafb;
+            display: grid;
+            gap: 6px;
+        }
+        .ind-legend__title {
+            font-size: 13px;
+            font-weight: 700;
+            color: #374151;
+        }
+        .ind-legend__line {
+            font-size: 12px;
+            color: #4b5563;
+        }
+        .ind-legend__item {
+            display: grid;
+            grid-template-columns: 32px 1fr;
+            gap: 8px;
+            align-items: start;
+            font-size: 12px;
+            color: #374151;
+        }
+        .ind-legend__marker {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 28px;
+            padding: 1px 5px;
+            border-radius: 6px;
+            border: 1px solid #d1d5db;
+            background: #fff;
+            font-weight: 700;
+        }
         .ind-field {
             display: grid;
             grid-template-columns: 1fr 120px;
@@ -806,6 +843,24 @@ $pageTitle = 'Активные позиции';
             <div class="ind-field">
                 <label for="indNormTotalInput">Количество фильтров в смену, шт</label>
                 <input id="indNormTotalInput" type="number" min="1" step="1" value="<?= (int)$indicatorNormTotal ?>">
+            </div>
+            <div class="ind-legend">
+                <div class="ind-legend__title">Легенда</div>
+                <div class="ind-legend__line">300 фильтров с ППУ.</div>
+                <div class="ind-legend__line">150 фильтров с крышками.</div>
+                <div class="ind-legend__line">1 фильтр под пресс П</div>
+                <div class="ind-legend__item">
+                    <span class="ind-legend__marker">В</span>
+                    <span>Пластиковая вставка</span>
+                </div>
+                <div class="ind-legend__item">
+                    <span class="ind-legend__marker">D</span>
+                    <span>Большой диаметр &gt;250, ширина бумаги &gt;400 мм, алюминиевые формы (до 100 шт)</span>
+                </div>
+                <div class="ind-legend__item">
+                    <span class="ind-legend__marker">600</span>
+                    <span>Ширина бумаги &gt;450 (до 150 шт)</span>
+                </div>
             </div>
         </div>
         <div class="ind-modal__foot">
