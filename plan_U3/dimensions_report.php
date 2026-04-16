@@ -10,7 +10,7 @@ require_once('tools/tools.php') ;
 echo "<table border='1'; style='border-collapse: collapse; font-family: Calibri'>";
 echo "<caption>Параметры фильтров<p></caption>";
 echo "<tr align='center'><td>Фильтр</td><td width='50'>Диаметр наружный</td><td  width='60'>Диаметр внутренний верх</td>
-<td  width='50'>Диаметр внутренний низ</td><td>Высота</td><td  width='50'>Верхняя крышка</td><td  width='50'>Нижняя крышка</td>
+<td  width='50'>Диаметр внутренний низ</td><td>Высота</td><td width='70'>Количество ребер</td><td  width='50'>Верхняя крышка</td><td  width='50'>Нижняя крышка</td>
 <td>РР вставка</td><td>Предфильтр</td><td>Упаковка</td><td>Примечание</td></tr>";
 
 require_once __DIR__ . '/../auth/includes/db.php';
@@ -23,6 +23,7 @@ round_filter_structure.Diametr_outer,
 round_filter_structure.Diametr_inner_1, 
 round_filter_structure.Diametr_inner_2, 
 round_filter_structure.Height,
+paper_package_round.p_p_fold_count,
 round_filter_structure.up_cap,
 round_filter_structure.down_cap,
 round_filter_structure.PU_up_cap,
@@ -31,7 +32,9 @@ round_filter_structure.plastic_insertion,
 round_filter_structure.prefilter,
 round_filter_structure.comment,
 round_filter_structure.packing
-FROM round_filter_structure  WHERE filter NOT LIKE '%pe%' order by filter ASC";
+FROM round_filter_structure
+LEFT JOIN paper_package_round ON paper_package_round.p_p_name = round_filter_structure.filter_package
+WHERE filter NOT LIKE '%pe%' order by filter ASC";
 //FROM round_filter_structure  WHERE filter LIKE '%AF%' AND filter NOT LIKE '%pe%' order by filter ASC";
 
 $rows = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
@@ -43,6 +46,7 @@ foreach ($rows as $filter_params) {
     $diameter_inner_1 = $filter_params['Diametr_inner_1'];
     $diameter_inner_2 = $filter_params['Diametr_inner_2'];
     $height = $filter_params['Height'];
+    $fold_count = $filter_params['p_p_fold_count'];
     $up_cap_metal = $filter_params['up_cap'];
     $down_cap_metal = $filter_params['down_cap'];
     $PU_up_cap = $filter_params['PU_up_cap'];
@@ -76,6 +80,7 @@ foreach ($rows as $filter_params) {
     echo "<td>".$diameter_inner_1."</td>";
     echo "<td>".$diameter_inner_2."</td>";
     echo "<td>".$height."</td>";
+    echo "<td>".$fold_count."</td>";
     echo "<td>".$up_cap."</td>";
     echo "<td>".$down_cap."</td>";
     echo "<td>".$plastic_insertion."</td>";
