@@ -746,75 +746,45 @@ $pageTitle = 'Активные позиции';
             outline-offset: -2px;
             background: #f0f9ff !important;
         }
-        .debt-panel[hidden] { display: none; }
-        .debt-panel {
-            position: fixed;
-            left: 0;
-            top: 0;
-            width: min(130px, calc(100vw - 20px));
-            max-height: min(40vh, 280px);
-            z-index: 1090;
-            display: grid;
-            grid-template-rows: auto 1fr;
-            border: 1px solid #fbcfe8;
-            background: #fff;
-            border-radius: 10px;
-            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
-            overflow: hidden;
+        th.debt-col, td.debt-cell {
+            min-width: 164px;
+            width: 164px;
+            max-width: 164px;
+            text-align: center;
         }
-        .debt-panel__head {
+        td.debt-cell {
+            vertical-align: top;
+            padding: 2px;
+        }
+        .debt-list {
             display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 6px;
-            padding: 6px 8px;
-            border-bottom: 1px solid #f3e8ff;
-            background: #fff7fb;
-            font-size: 11px;
-            font-weight: 700;
-            color: #9d174d;
+            flex-wrap: wrap;
+            gap: 2px;
+            justify-content: flex-start;
         }
-        .debt-panel__sub {
-            display: none;
-            padding: 8px 12px;
-            border-bottom: 1px solid #f3e8ff;
-            font-size: 12px;
-            color: #6b7280;
-        }
-        .debt-panel__body {
-            padding: 6px;
-            overflow: auto;
-            display: grid;
-            gap: 4px;
-            align-content: start;
-        }
-        .debt-panel__empty {
-            margin: 0;
-            font-size: 11px;
-            color: #6b7280;
-        }
-        .debt-item {
+        .debt-shift {
+            appearance: none;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            gap: 6px;
-            border: 1px solid #fbcfe8;
+            width: auto;
+            min-width: 24px;
+            min-height: 18px;
+            padding: 0 4px;
+            border: 1px solid #d1d5db;
             border-radius: 4px;
-            background: #fff1f2;
-            padding: 2px 6px;
+            background: #f9fafb;
+            color: #374151;
             font-size: 10px;
             font-weight: 600;
-            line-height: 1.25;
-            color: #881337;
-            cursor: grab;
+            line-height: 1.2;
+            cursor: default;
             white-space: nowrap;
         }
-        .debt-item:hover {
-            background: #ffe4e6;
-        }
-        .debt-item__meta {
-            color: #9f1239;
-            font-weight: 600;
+        .debt-shift.drag-source-single {
+            outline: 2px solid #93c5fd;
+            outline-offset: -2px;
+            background: #eff6ff;
         }
         .drag-preview[hidden] { display: none; }
         .drag-preview {
@@ -1046,12 +1016,6 @@ $pageTitle = 'Активные позиции';
             font-weight: 600;
             line-height: 1.25;
         }
-        .state-action-btn {
-            appearance: none;
-            cursor: pointer;
-            margin: 0;
-            vertical-align: baseline;
-        }
         .state-lag {
             background: #fef2f2;
             color: #991b1b;
@@ -1281,16 +1245,6 @@ $pageTitle = 'Активные позиции';
                 <ul id="moveQueueList" class="queue-list"></ul>
             </div>
         </div>
-        <div id="debtPanel" class="debt-panel" hidden>
-            <div class="debt-panel__head">
-                <span id="debtPanelTitle">Долг по позиции</span>
-                <button type="button" id="closeDebtPanelBtn" class="toolbar-btn secondary">Закрыть</button>
-            </div>
-            <div id="debtPanelSub" class="debt-panel__sub">Перетащите просроченную смену в нужную будущую дату.</div>
-            <div id="debtPanelBody" class="debt-panel__body">
-                <p id="debtPanelEmpty" class="debt-panel__empty">Просроченных смен нет.</p>
-            </div>
-        </div>
         <div id="dragPreview" class="drag-preview" hidden></div>
         <div class="panel">
             <table>
@@ -1302,6 +1256,7 @@ $pageTitle = 'Активные позиции';
                         <th class="num">Остаток</th>
                         <th>Состояние</th>
                         <th>Заявка</th>
+                        <th class="debt-col">Долг</th>
                         <?php foreach ($buildPlanDates as $planDate):
                             $dateObj = DateTime::createFromFormat('Y-m-d', (string) $planDate);
                             $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
@@ -1388,7 +1343,7 @@ $pageTitle = 'Активные позиции';
                 <tbody>
                 <?php if (empty($rows)): ?>
                     <tr>
-                        <td colspan="<?= 6 + count($buildPlanDates) ?>" class="muted" style="text-align:center;padding:12px;">
+                        <td colspan="<?= 7 + count($buildPlanDates) ?>" class="muted" style="text-align:center;padding:12px;">
                             Нет незакрытых позиций по активным заявкам.
                         </td>
                     </tr>
@@ -1466,11 +1421,7 @@ $pageTitle = 'Активные позиции';
                         <td class="num"><?= $remaining ?></td>
                         <td class="state-cell" title="<?= htmlspecialchars($stateTitle, ENT_QUOTES, 'UTF-8') ?>">
                             <?php if ($isLagging): ?>
-                                <button
-                                    type="button"
-                                    class="state-badge state-lag state-action-btn"
-                                    title="<?= htmlspecialchars('Открыть долг по позиции: ' . $debtShiftCount . ' просроч. смен, ' . $debtShiftQty . ' шт.', ENT_QUOTES, 'UTF-8') ?>"
-                                >Отстаёт</button>
+                                <span class="state-badge state-lag" title="<?= htmlspecialchars('Просроч. смен: ' . $debtShiftCount . '; объём: ' . $debtShiftQty . ' шт.', ENT_QUOTES, 'UTF-8') ?>">Отстаёт</span>
                             <?php else: ?>
                                 <span class="state-badge state-ok">В плане</span>
                             <?php endif; ?>
@@ -1480,6 +1431,35 @@ $pageTitle = 'Активные позиции';
                                 <input type="hidden" name="order_number" value="<?= $ord ?>">
                                 <button type="submit"><?= $ord ?></button>
                             </form>
+                        </td>
+                        <td
+                            class="debt-cell"
+                            data-debt-key="<?= htmlspecialchars($planKey, ENT_QUOTES, 'UTF-8') ?>"
+                            data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
+                            data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
+                        >
+                            <div class="debt-list">
+                                <?php foreach ($debtShifts as $debtShift):
+                                    $debtDate = (string)($debtShift['date'] ?? '');
+                                    $debtQty = (int)($debtShift['qty'] ?? 0);
+                                    if ($debtDate === '' || $debtQty <= 0) {
+                                        continue;
+                                    }
+                                    $debtDateObj = DateTime::createFromFormat('Y-m-d', $debtDate);
+                                    $debtDateLabel = $debtDateObj ? $debtDateObj->format('d.m') : $debtDate;
+                                ?>
+                                    <button
+                                        type="button"
+                                        class="debt-shift"
+                                        draggable="true"
+                                        data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
+                                        data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
+                                        data-date="<?= htmlspecialchars($debtDate, ENT_QUOTES, 'UTF-8') ?>"
+                                        data-qty="<?= $debtQty ?>"
+                                        title="Просроченная смена <?= htmlspecialchars($debtDateLabel, ENT_QUOTES, 'UTF-8') ?>: <?= $debtQty ?> шт"
+                                    ><?= htmlspecialchars($debtDateLabel, ENT_QUOTES, 'UTF-8') ?> • <?= $debtQty ?></button>
+                                <?php endforeach; ?>
+                            </div>
                         </td>
                         <?php foreach ($buildPlanDates as $planDate):
                             $planQty = (int)($planQtyByDate[$planDate] ?? 0);
@@ -1506,6 +1486,7 @@ $pageTitle = 'Активные позиции';
                         <th class="num">Остаток</th>
                         <th>Состояние</th>
                         <th>Заявка</th>
+                        <th class="debt-col">Долг</th>
                         <?php foreach ($buildPlanDates as $planDate):
                             $dateObj = DateTime::createFromFormat('Y-m-d', (string) $planDate);
                             $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
@@ -1660,18 +1641,12 @@ $pageTitle = 'Активные позиции';
         const closeQueuePanelBtn = document.getElementById('closeQueuePanelBtn');
         const moveQueueEmpty = document.getElementById('moveQueueEmpty');
         const moveQueueList = document.getElementById('moveQueueList');
-        const debtPanel = document.getElementById('debtPanel');
-        const debtPanelTitle = document.getElementById('debtPanelTitle');
-        const debtPanelSub = document.getElementById('debtPanelSub');
-        const debtPanelBody = document.getElementById('debtPanelBody');
-        const debtPanelEmpty = document.getElementById('debtPanelEmpty');
-        const closeDebtPanelBtn = document.getElementById('closeDebtPanelBtn');
         const dragPreview = document.getElementById('dragPreview');
         const normalizePlanBtn = document.getElementById('normalizePlanBtn');
         const applyPendingMovesBtn = document.getElementById('applyPendingMovesBtn');
         const undoPendingMoveBtn = document.getElementById('undoPendingMoveBtn');
         const clearPendingMovesBtn = document.getElementById('clearPendingMovesBtn');
-        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !moveQueueEmpty || !moveQueueList || !debtPanel || !debtPanelTitle || !debtPanelSub || !debtPanelBody || !debtPanelEmpty || !closeDebtPanelBtn || !dragPreview || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearPendingMovesBtn) {
+        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearPendingMovesBtn) {
             return;
         }
         const storageKey = 'activePositionsIndicatorSettings';
@@ -1847,8 +1822,6 @@ $pageTitle = 'Активные позиции';
         let isMoving = false;
         let isApplyingPendingMoves = false;
         let isQueuePanelOpen = false;
-        let selectedDebtKey = '';
-        let debtPanelAnchor = null;
         let previewedTargetCell = null;
         const pendingMoves = [];
 
@@ -2192,114 +2165,67 @@ $pageTitle = 'Активные позиции';
             });
         }
 
-        function closeDebtPanel() {
-            selectedDebtKey = '';
-            debtPanelAnchor = null;
-            debtPanel.hidden = true;
+        function bindDebtShiftDrag(item) {
+            item.addEventListener('dragstart', function (e) {
+                const order = item.dataset.order || '';
+                const filter = item.dataset.filter || '';
+                const fromDate = item.dataset.date || '';
+                const qty = Math.max(0, parseInt(item.dataset.qty || '0', 10) || 0);
+                if (!order || !filter || !fromDate || qty <= 0) {
+                    e.preventDefault();
+                    return;
+                }
+                dragContext = {
+                    mode: 'single',
+                    sourceType: 'debt',
+                    order: order,
+                    filter: filter,
+                    fromDate: fromDate,
+                    movedQty: qty,
+                    debtKey: getPlanKey(order, filter),
+                };
+                item.classList.add('drag-source-single');
+                if (e.dataTransfer) {
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', `${order}|${filter}|${fromDate}|debt`);
+                }
+            });
+            item.addEventListener('dragend', function () {
+                item.classList.remove('drag-source-single');
+                clearDragState();
+            });
         }
 
-        function positionDebtPanel() {
-            if (debtPanel.hidden || !debtPanelAnchor) {
+        function renderDebtCellByKey(planKey) {
+            if (!planKey) {
                 return;
             }
-            const rect = debtPanelAnchor.getBoundingClientRect();
-            const panelRect = debtPanel.getBoundingClientRect();
-            const gap = 6;
-            const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
-            const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-            let left = rect.left;
-            let top = rect.top - panelRect.height - gap;
-
-            if (left + panelRect.width > viewportWidth - 8) {
-                left = Math.max(8, viewportWidth - panelRect.width - 8);
-            }
-            if (left < 8) {
-                left = 8;
-            }
-            if (top < 8) {
-                top = Math.min(viewportHeight - panelRect.height - 8, rect.bottom + gap);
-            }
-            if (top < 8) {
-                top = 8;
-            }
-
-            debtPanel.style.left = `${Math.round(left)}px`;
-            debtPanel.style.top = `${Math.round(top)}px`;
-        }
-
-        function renderDebtPanel() {
-            debtPanelBody.innerHTML = '';
-            const selectedRow = selectedDebtKey
-                ? Array.from(document.querySelectorAll('tr.plan-row')).find(function (oneRow) {
-                    return getPlanKey(oneRow.dataset.order || '', oneRow.dataset.filter || '') === selectedDebtKey;
-                })
-                : null;
-
-            if (!selectedDebtKey || !selectedRow) {
-                debtPanelTitle.textContent = 'Долг по позиции';
-                debtPanelSub.textContent = 'Перетащите просроченную смену в нужную будущую дату.';
-                debtPanelEmpty.hidden = false;
-                debtPanelBody.appendChild(debtPanelEmpty);
+            const debtCell = document.querySelector(`td.debt-cell[data-debt-key="${CSS.escape(planKey)}"]`);
+            if (!debtCell) {
                 return;
             }
-
-            const order = selectedRow.dataset.order || '';
-            const filter = selectedRow.dataset.filter || '';
-            const shifts = getDebtShiftsForKey(selectedDebtKey);
-            debtPanelTitle.textContent = `Долг: ${order} / ${filter}`;
-            debtPanelSub.textContent = 'Список просроченных смен из прошлых дат. Перетащите нужную смену в свободную ячейку этой позиции.';
-
-            if (shifts.length === 0) {
-                debtPanelEmpty.hidden = false;
-                debtPanelBody.appendChild(debtPanelEmpty);
+            const list = debtCell.querySelector('.debt-list');
+            if (!list) {
                 return;
             }
-
-            debtPanelEmpty.hidden = true;
+            const order = debtCell.dataset.order || '';
+            const filter = debtCell.dataset.filter || '';
+            const shifts = getDebtShiftsForKey(planKey);
+            list.innerHTML = '';
             shifts.forEach(function (shift) {
                 const item = document.createElement('button');
                 item.type = 'button';
-                item.className = 'debt-item';
+                item.className = 'debt-shift';
                 item.draggable = true;
                 item.dataset.order = order;
                 item.dataset.filter = filter;
                 item.dataset.date = shift.date;
                 item.dataset.qty = String(shift.qty);
-                item.innerHTML = `<span>${toShortDate(shift.date)}</span><span class="debt-item__meta">${shift.qty} шт</span>`;
-                item.addEventListener('dragstart', function (e) {
-                    dragContext = {
-                        mode: 'single',
-                        sourceType: 'debt',
-                        order: order,
-                        filter: filter,
-                        fromDate: shift.date,
-                        movedQty: shift.qty,
-                        debtKey: selectedDebtKey,
-                    };
-                    item.classList.add('drag-source-single');
-                    if (e.dataTransfer) {
-                        e.dataTransfer.effectAllowed = 'move';
-                        e.dataTransfer.setData('text/plain', `${order}|${filter}|${shift.date}|debt`);
-                    }
-                });
-                item.addEventListener('dragend', function () {
-                    item.classList.remove('drag-source-single');
-                    clearDragState();
-                });
-                debtPanelBody.appendChild(item);
+                item.title = `Просроченная смена ${toShortDate(shift.date)}: ${shift.qty} шт`;
+                item.textContent = `${shift.qty}`;
+                bindDebtShiftDrag(item);
+                list.appendChild(item);
             });
-            positionDebtPanel();
-        }
-
-        function openDebtPanelForRow(row, anchorBtn) {
-            if (!row || !anchorBtn) {
-                return;
-            }
-            selectedDebtKey = getPlanKey(row.dataset.order || '', row.dataset.filter || '');
-            debtPanelAnchor = anchorBtn;
-            debtPanel.hidden = false;
-            renderDebtPanel();
-            positionDebtPanel();
         }
 
         function clearQueuePreview() {
@@ -2863,9 +2789,7 @@ $pageTitle = 'Активные позиции';
                         shifts.push({ date: shift.date, qty: shift.qty });
                         setDebtShiftsForKey(debtKey, shifts);
                     }
-                    if (selectedDebtKey === debtKey) {
-                        renderDebtPanel();
-                    }
+                    renderDebtCellByKey(debtKey);
                 }
             }
             recalcHeaderIndicatorsFromTable();
@@ -3102,15 +3026,6 @@ $pageTitle = 'Активные позиции';
                 flashPressConflictForDate(date);
             });
         });
-        document.querySelectorAll('.state-action-btn').forEach(function (btnEl) {
-            btnEl.addEventListener('click', function () {
-                const row = btnEl.closest('tr.plan-row');
-                if (!row) {
-                    return;
-                }
-                openDebtPanelForRow(row, btnEl);
-            });
-        });
         toggleQueuePanelBtn.addEventListener('click', function () {
             setQueuePanelOpen(!isQueuePanelOpen);
         });
@@ -3118,12 +3033,12 @@ $pageTitle = 'Активные позиции';
             setQueuePanelOpen(false);
             clearQueuePreview();
         });
-        closeDebtPanelBtn.addEventListener('click', function () {
-            closeDebtPanel();
-        });
         updatePendingBarState();
         recalcHeaderIndicatorsFromTable();
         renderMoveQueuePanel();
+        document.querySelectorAll('td.debt-cell[data-debt-key]').forEach(function (cell) {
+            renderDebtCellByKey(cell.dataset.debtKey || '');
+        });
         try {
             const savedQueuePanelState = localStorage.getItem(queuePanelStorageKey);
             setQueuePanelOpen(savedQueuePanelState === '1');
@@ -3160,12 +3075,7 @@ $pageTitle = 'Активные позиции';
                 closeModal();
                 return;
             }
-            if (e.key === 'Escape' && !debtPanel.hidden) {
-                closeDebtPanel();
-            }
         });
-        window.addEventListener('resize', positionDebtPanel);
-        window.addEventListener('scroll', positionDebtPanel, true);
         window.addEventListener('resize', function () {
             if (previewedTargetCell) {
                 positionDragPreview(previewedTargetCell);
