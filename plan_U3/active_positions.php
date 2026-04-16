@@ -1104,11 +1104,6 @@ $pageTitle = 'Активные позиции';
         .date-indicator.active {
             opacity: 1;
         }
-        .date-indicator.marker-p.active {
-            border-color: #f59e0b;
-            color: #b45309;
-            background: #fffbeb;
-        }
         .date-indicator.meter {
             position: relative;
             overflow: hidden;
@@ -1125,34 +1120,27 @@ $pageTitle = 'Активные позиции';
             opacity: .85;
             z-index: 0;
         }
-        .date-indicator.marker-d.active {
-            border-color: #8b5cf6;
-            color: #6d28d9;
-            background: #f5f3ff;
-            --meter-color: #ddd6fe;
+        .date-indicator.level-info.active {
+            border-color: #cbd5e1;
+            color: #475569;
+            background: #f8fafc;
+            --meter-color: #cbd5e1;
         }
-        .date-indicator.marker-600.active {
-            border-color: #3b82f6;
-            color: #1d4ed8;
-            background: #eff6ff;
-            --meter-color: #bfdbfe;
+        .date-indicator.level-warning.active {
+            border-color: #f59e0b;
+            color: #92400e;
+            background: #fef3c7;
+            --meter-color: #fbbf24;
         }
-        .date-indicator.marker-total.active {
-            border-color: #14b8a6;
-            color: #0f766e;
-            background: #f0fdfa;
-            --meter-color: #99f6e4;
-        }
-        .date-indicator.over {
-            border-color: #dc2626 !important;
-            color: #ffffff !important;
-            background: #ef4444 !important;
+        .date-indicator.level-critical.active {
+            border-color: #dc2626;
+            color: #ffffff;
+            background: #ef4444;
             --meter-color: rgba(127, 29, 29, 0.45);
         }
-        .date-indicator.marker-600.over,
-        .date-indicator.marker-d.over,
-        .date-indicator.marker-total.over {
-            --meter-color: rgba(127, 29, 29, 0.45);
+        .date-indicator.priority-muted {
+            opacity: .32 !important;
+            filter: saturate(.45);
         }
         .date-indicator:not(.active) {
             opacity: .45;
@@ -1727,48 +1715,96 @@ $pageTitle = 'Активные позиции';
         }
 
         function applySettings(settings) {
-            document.querySelectorAll('.date-indicator[data-kind="press"]').forEach(function (el) {
-                const count = parseInt(el.getAttribute('data-press-count') || '0', 10) || 0;
-                const isOver = count > settings.maxPress;
-                el.classList.toggle('active', count > 0);
-                el.classList.toggle('over', isOver);
-                if (count <= 0) {
-                    el.title = 'Нет позиций под пресс';
-                } else if (isOver) {
-                    el.title = `В смене ${count} фильтра(ов) под пресс (норма: до ${settings.maxPress})`;
-                } else {
-                    el.title = `В смене ${count} фильтра(ов) под пресс (норма: до ${settings.maxPress})`;
+            function setIndicatorState(el, params) {
+                if (!el) {
+                    return;
                 }
-            });
+                const level = params.level || 'info';
+                const active = !!params.active;
+                const over = !!params.over;
+                const muted = !!params.muted;
+                el.classList.toggle('active', active);
+                el.classList.toggle('over', over);
+                el.classList.toggle('level-info', active && level === 'info');
+                el.classList.toggle('level-warning', active && level === 'warning');
+                el.classList.toggle('level-critical', active && level === 'critical');
+                el.classList.toggle('priority-muted', muted);
+                if (typeof params.pct === 'number') {
+                    setFill(el, params.pct);
+                }
+                if (typeof params.title === 'string') {
+                    el.title = params.title;
+                }
+            }
 
-            document.querySelectorAll('.date-indicator[data-kind="w600"]').forEach(function (el) {
-                const qty = parseInt(el.getAttribute('data-qty') || '0', 10) || 0;
-                const pct = settings.norm600 > 0 ? (qty / settings.norm600) * 100 : 0;
-                const isOver = qty > settings.norm600;
-                el.classList.toggle('active', qty > 0);
-                el.classList.toggle('over', isOver);
-                setFill(el, pct);
-                el.title = `600: ${qty} шт из нормы ${settings.norm600} шт`;
-            });
+            document.querySelectorAll('th[data-plan-date]').forEach(function (th) {
+                const pressEl = th.querySelector('.date-indicator[data-kind="press"]');
+                const dEl = th.querySelector('.date-indicator[data-kind="d"]');
+                const w600El = th.querySelector('.date-indicator[data-kind="w600"]');
+                const totalEl = th.querySelector('.date-indicator[data-kind="total"]');
 
-            document.querySelectorAll('.date-indicator[data-kind="d"]').forEach(function (el) {
-                const qty = parseInt(el.getAttribute('data-qty') || '0', 10) || 0;
-                const pct = settings.normD > 0 ? (qty / settings.normD) * 100 : 0;
-                const isOver = qty > settings.normD;
-                el.classList.toggle('active', qty > 0);
-                el.classList.toggle('over', isOver);
-                setFill(el, pct);
-                el.title = `D (>250 и >400): ${qty} шт из нормы ${settings.normD} шт`;
-            });
+                const pressCount = parseInt((pressEl && pressEl.getAttribute('data-press-count')) || '0', 10) || 0;
+                const dQty = parseInt((dEl && dEl.getAttribute('data-qty')) || '0', 10) || 0;
+                const w600Qty = parseInt((w600El && w600El.getAttribute('data-qty')) || '0', 10) || 0;
+                const totalQty = parseInt((totalEl && totalEl.getAttribute('data-qty')) || '0', 10) || 0;
 
-            document.querySelectorAll('.date-indicator[data-kind="total"]').forEach(function (el) {
-                const qty = parseInt(el.getAttribute('data-qty') || '0', 10) || 0;
-                const pct = settings.normTotal > 0 ? (qty / settings.normTotal) * 100 : 0;
-                const isOver = qty > settings.normTotal;
-                el.classList.toggle('active', qty > 0);
-                el.classList.toggle('over', isOver);
-                setFill(el, pct);
-                el.title = `Всего в смену: ${qty} шт из нормы ${settings.normTotal} шт`;
+                const pressCritical = pressCount > settings.maxPress;
+                const dCritical = dQty > settings.normD;
+                const totalWarning = totalQty > settings.normTotal;
+                const w600Warning = w600Qty > settings.norm600;
+                const hasCritical = pressCritical || dCritical;
+
+                const pressTitle = pressCount <= 0
+                    ? 'П: нет позиций под пресс.'
+                    : pressCritical
+                        ? `П: ${pressCount} прессовых фильтра при норме ${settings.maxPress} (critical: конфликт пресса).`
+                        : `П: ${pressCount} прессовый фильтр(ов) при норме ${settings.maxPress}.`;
+                setIndicatorState(pressEl, {
+                    active: pressCount > 0,
+                    over: pressCritical,
+                    level: pressCritical ? 'critical' : 'info',
+                    muted: hasCritical && !pressCritical,
+                    title: pressTitle,
+                });
+
+                const dPct = settings.normD > 0 ? (dQty / settings.normD) * 100 : 0;
+                const dTitle = dCritical
+                    ? `D: ${dQty} шт при норме ${settings.normD} (critical: превышение на ${Math.max(0, dQty - settings.normD)} шт).`
+                    : `D (>250 и >400): ${dQty} шт из нормы ${settings.normD} шт.`;
+                setIndicatorState(dEl, {
+                    active: dQty > 0,
+                    over: dCritical,
+                    level: dCritical ? 'critical' : 'info',
+                    muted: hasCritical && !dCritical,
+                    pct: dPct,
+                    title: dTitle,
+                });
+
+                const totalPct = settings.normTotal > 0 ? (totalQty / settings.normTotal) * 100 : 0;
+                const totalTitle = totalWarning
+                    ? `Всего: ${totalQty} шт при норме ${settings.normTotal} (warning: перегруз на ${Math.max(0, totalQty - settings.normTotal)} шт).`
+                    : `Всего в смену: ${totalQty} шт из нормы ${settings.normTotal} шт.`;
+                setIndicatorState(totalEl, {
+                    active: totalQty > 0,
+                    over: totalWarning,
+                    level: totalWarning ? 'warning' : 'info',
+                    muted: hasCritical,
+                    pct: totalPct,
+                    title: totalTitle,
+                });
+
+                const w600Pct = settings.norm600 > 0 ? (w600Qty / settings.norm600) * 100 : 0;
+                const w600Title = w600Warning
+                    ? `600: ${w600Qty} шт при норме ${settings.norm600} (warning: превышение на ${Math.max(0, w600Qty - settings.norm600)} шт).`
+                    : `600: ${w600Qty} шт из нормы ${settings.norm600} шт.`;
+                setIndicatorState(w600El, {
+                    active: w600Qty > 0,
+                    over: w600Warning,
+                    level: w600Warning ? 'warning' : 'info',
+                    muted: hasCritical,
+                    pct: w600Pct,
+                    title: w600Title,
+                });
             });
         }
 
