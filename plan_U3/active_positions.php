@@ -709,6 +709,43 @@ $pageTitle = 'Активные позиции';
             color: #111827;
             word-break: break-word;
         }
+        .queue-item__row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .queue-item__text {
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+        .queue-item__remove {
+            flex: 0 0 auto;
+            appearance: none;
+            border: 1px solid #fecaca;
+            border-radius: 6px;
+            background: #fff1f2;
+            color: #9f1239;
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1.2;
+            padding: 4px 6px;
+            cursor: pointer;
+        }
+        .queue-item__remove:hover {
+            background: #ffe4e6;
+        }
+        .queue-group {
+            padding: 2px 4px 0;
+            font-size: 11px;
+            font-weight: 700;
+            color: #4b5563;
+        }
+        tr.plan-row.queue-row {
+            outline: 2px solid #93c5fd;
+            outline-offset: -2px;
+            background: #f0f9ff !important;
+        }
         .debt-panel[hidden] { display: none; }
         .debt-panel {
             position: fixed;
@@ -778,6 +815,36 @@ $pageTitle = 'Активные позиции';
         .debt-item__meta {
             color: #9f1239;
             font-weight: 600;
+        }
+        .drag-preview[hidden] { display: none; }
+        .drag-preview {
+            position: fixed;
+            left: 0;
+            top: 0;
+            z-index: 1100;
+            min-width: 168px;
+            max-width: 220px;
+            padding: 6px 8px;
+            border-radius: 8px;
+            border: 1px solid #bbf7d0;
+            background: #f0fdf4;
+            color: #166534;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+            font-size: 11px;
+            line-height: 1.3;
+            pointer-events: none;
+        }
+        .drag-preview.is-conflict {
+            border-color: #fca5a5;
+            background: #fef2f2;
+            color: #991b1b;
+        }
+        .drag-preview__title {
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .drag-preview__line + .drag-preview__line {
+            margin-top: 2px;
         }
         .queue-item:hover {
             border-color: #93c5fd;
@@ -1236,6 +1303,7 @@ $pageTitle = 'Активные позиции';
                 <p id="debtPanelEmpty" class="debt-panel__empty">Просроченных смен нет.</p>
             </div>
         </div>
+        <div id="dragPreview" class="drag-preview" hidden></div>
         <div class="panel">
             <table>
                 <thead>
@@ -1610,11 +1678,12 @@ $pageTitle = 'Активные позиции';
         const debtPanelBody = document.getElementById('debtPanelBody');
         const debtPanelEmpty = document.getElementById('debtPanelEmpty');
         const closeDebtPanelBtn = document.getElementById('closeDebtPanelBtn');
+        const dragPreview = document.getElementById('dragPreview');
         const normalizePlanBtn = document.getElementById('normalizePlanBtn');
         const applyPendingMovesBtn = document.getElementById('applyPendingMovesBtn');
         const undoPendingMoveBtn = document.getElementById('undoPendingMoveBtn');
         const clearPendingMovesBtn = document.getElementById('clearPendingMovesBtn');
-        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !moveQueueEmpty || !moveQueueList || !debtPanel || !debtPanelTitle || !debtPanelSub || !debtPanelBody || !debtPanelEmpty || !closeDebtPanelBtn || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearPendingMovesBtn) {
+        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !moveQueueEmpty || !moveQueueList || !debtPanel || !debtPanelTitle || !debtPanelSub || !debtPanelBody || !debtPanelEmpty || !closeDebtPanelBtn || !dragPreview || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearPendingMovesBtn) {
             return;
         }
         const storageKey = 'activePositionsIndicatorSettings';
@@ -1744,6 +1813,7 @@ $pageTitle = 'Активные позиции';
         let isQueuePanelOpen = false;
         let selectedDebtKey = '';
         let debtPanelAnchor = null;
+        let previewedTargetCell = null;
         const pendingMoves = [];
 
         function normalizeFilterKeyJs(value) {
@@ -1891,8 +1961,151 @@ $pageTitle = 'Активные позиции';
             });
         }
 
+        function hideDragPreview() {
+            previewedTargetCell = null;
+            dragPreview.hidden = true;
+            dragPreview.classList.remove('is-conflict');
+            dragPreview.innerHTML = '';
+        }
+
+        function positionDragPreview(targetCell) {
+            if (!targetCell || dragPreview.hidden) {
+                return;
+            }
+            const rect = targetCell.getBoundingClientRect();
+            const panelRect = dragPreview.getBoundingClientRect();
+            const gap = 8;
+            const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+            const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+            let left = rect.right + gap;
+            let top = rect.top - 2;
+            if (left + panelRect.width > viewportWidth - 8) {
+                left = rect.left - panelRect.width - gap;
+            }
+            if (left < 8) {
+                left = Math.max(8, viewportWidth - panelRect.width - 8);
+            }
+            if (top + panelRect.height > viewportHeight - 8) {
+                top = Math.max(8, viewportHeight - panelRect.height - 8);
+            }
+            if (top < 8) {
+                top = 8;
+            }
+            dragPreview.style.left = `${Math.round(left)}px`;
+            dragPreview.style.top = `${Math.round(top)}px`;
+        }
+
+        function getDateStateWithOverrides(date, changeMap) {
+            const state = {
+                totalQty: 0,
+                dQty: 0,
+                pressFilters: new Set(),
+            };
+            dateCells.forEach(function (cell) {
+                if ((cell.dataset.date || '') !== date) {
+                    return;
+                }
+                const nextQty = changeMap.has(cell)
+                    ? Math.max(0, parseInt(changeMap.get(cell), 10) || 0)
+                    : (parseInt(cell.dataset.qty || '0', 10) || 0);
+                if (nextQty <= 0) {
+                    return;
+                }
+                const row = cell.closest('tr.plan-row');
+                if (!row) {
+                    return;
+                }
+                state.totalQty += nextQty;
+                if ((row.dataset.hasD || '') === '1' || !!row.querySelector('.pos-indicator.d')) {
+                    state.dQty += nextQty;
+                }
+                if ((row.dataset.hasPress || '') === '1' || !!row.querySelector('.pos-indicator.p')) {
+                    state.pressFilters.add(normalizeFilterKeyJs(row.dataset.filter || ''));
+                }
+            });
+            return state;
+        }
+
+        function renderDragPreview(targetCell, previewState) {
+            const hasConflict = !!previewState.hasConflict;
+            const lines = [
+                `<div class="drag-preview__title">${hasConflict ? 'Конфликт' : 'Перенос возможен'}</div>`,
+                `<div class="drag-preview__line">Итого: ${previewState.totalQty} / ${previewState.normTotal}${previewState.totalOver ? ' • перегруз' : ''}</div>`,
+                `<div class="drag-preview__line">D: ${previewState.dQty} / ${previewState.normD}${previewState.dConflict ? ' • конфликт' : ''}</div>`,
+                `<div class="drag-preview__line">П: ${previewState.pressCount} / ${previewState.maxPress}${previewState.pressConflict ? ' • конфликт' : ''}</div>`,
+            ];
+            if (previewState.message) {
+                lines.push(`<div class="drag-preview__line">${previewState.message}</div>`);
+            }
+            dragPreview.classList.toggle('is-conflict', hasConflict);
+            dragPreview.innerHTML = lines.join('');
+            dragPreview.hidden = false;
+            positionDragPreview(targetCell);
+        }
+
+        function updateDragPreview(targetCell) {
+            if (!dragContext || !targetCell || !canDropOn(targetCell)) {
+                hideDragPreview();
+                return;
+            }
+            if (previewedTargetCell === targetCell) {
+                positionDragPreview(targetCell);
+                return;
+            }
+            const queuedMove = buildQueuedMove(targetCell);
+            if (!queuedMove) {
+                hideDragPreview();
+                return;
+            }
+            const settings = getSettings();
+            if (queuedMove.error) {
+                previewedTargetCell = targetCell;
+                renderDragPreview(targetCell, {
+                    hasConflict: true,
+                    totalQty: getDateTotalQty(targetCell.dataset.date || ''),
+                    normTotal: Math.max(1, parseInt(settings.normTotal, 10) || 1),
+                    totalOver: 0,
+                    dQty: getDateDQty(targetCell.dataset.date || ''),
+                    normD: Math.max(1, parseInt(settings.normD, 10) || 1),
+                    dConflict: false,
+                    pressCount: 0,
+                    maxPress: Math.max(1, parseInt(settings.maxPress, 10) || 1),
+                    pressConflict: true,
+                    message: queuedMove.error,
+                });
+                return;
+            }
+            const changeMap = new Map();
+            queuedMove.changes.forEach(function (change) {
+                changeMap.set(change.cell, change.next);
+            });
+            const targetDate = targetCell.dataset.date || '';
+            const nextState = getDateStateWithOverrides(targetDate, changeMap);
+            const normTotal = Math.max(1, parseInt(settings.normTotal, 10) || 1);
+            const normD = Math.max(1, parseInt(settings.normD, 10) || 1);
+            const maxPress = Math.max(1, parseInt(settings.maxPress, 10) || 1);
+            const totalOver = Math.max(0, nextState.totalQty - normTotal);
+            const dConflict = nextState.dQty > normD;
+            const pressCount = nextState.pressFilters.size;
+            const pressConflict = pressCount > maxPress;
+            previewedTargetCell = targetCell;
+            renderDragPreview(targetCell, {
+                hasConflict: totalOver > 0 || dConflict || pressConflict,
+                totalQty: nextState.totalQty,
+                normTotal: normTotal,
+                totalOver: totalOver,
+                dQty: nextState.dQty,
+                normD: normD,
+                dConflict: dConflict,
+                pressCount: pressCount,
+                maxPress: maxPress,
+                pressConflict: pressConflict,
+            });
+        }
+
         function clearDragState() {
             clearHoverPreview();
+            hideDragPreview();
             dateCells.forEach(function (cell) {
                 cell.classList.remove('drag-source-single', 'drag-source-row', 'drag-drop-target', 'drag-busy');
             });
@@ -2057,6 +2270,9 @@ $pageTitle = 'Активные позиции';
             dateCells.forEach(function (cell) {
                 cell.classList.remove('queue-src', 'queue-dst');
             });
+            document.querySelectorAll('tr.plan-row.queue-row').forEach(function (row) {
+                row.classList.remove('queue-row');
+            });
         }
 
         function clearPressConflictFlash() {
@@ -2099,6 +2315,10 @@ $pageTitle = 'Активные позиции';
             if (rowCells.length === 0) {
                 return;
             }
+            const row = rowCells[0].closest('tr.plan-row');
+            if (row) {
+                row.classList.add('queue-row');
+            }
             if ((payload.mode || '') === 'block') {
                 const srcCell = getCellByDate(rowCells, fromDate);
                 if (!srcCell) {
@@ -2128,6 +2348,29 @@ $pageTitle = 'Активные позиции';
             }
         }
 
+        function scrollToQueuedMove(queuedMove) {
+            const payload = queuedMove && queuedMove.payload ? queuedMove.payload : null;
+            if (!payload) {
+                return;
+            }
+            const order = payload.order_number || '';
+            const filter = payload.filter_name || '';
+            const toDate = payload.to_date || '';
+            if (!order || !filter || !toDate) {
+                return;
+            }
+            const rowCells = getRowDateCellsByOrderFilter(order, filter);
+            if (rowCells.length === 0) {
+                return;
+            }
+            const targetCell = getCellByDate(rowCells, toDate);
+            if (targetCell) {
+                targetCell.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                return;
+            }
+            rowCells[0].scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+        }
+
         function renderMoveQueuePanel() {
             moveQueueList.innerHTML = '';
             if (pendingMoves.length === 0) {
@@ -2135,22 +2378,52 @@ $pageTitle = 'Активные позиции';
                 return;
             }
             moveQueueEmpty.hidden = true;
+            let prevGroupKey = '';
             pendingMoves.forEach(function (queuedMove, idx) {
                 const payload = queuedMove.payload || {};
-                const item = document.createElement('li');
-                item.className = 'queue-item';
                 const order = payload.order_number || '—';
                 const filter = payload.filter_name || '—';
+                const groupKey = `${order}|${filter}`;
+                if (groupKey !== prevGroupKey) {
+                    const groupHeader = document.createElement('li');
+                    groupHeader.className = 'queue-group';
+                    groupHeader.textContent = `${order} • ${filter}`;
+                    moveQueueList.appendChild(groupHeader);
+                    prevGroupKey = groupKey;
+                }
+                const item = document.createElement('li');
+                item.className = 'queue-item';
                 const fromDate = toShortDate(payload.from_date || '');
                 const toDate = toShortDate(payload.to_date || '');
                 const mode = queuedMove.debtChange ? 'Долг' : modeLabel(payload.mode || 'single');
                 const movedQty = Math.max(0, parseInt(queuedMove.movedQty || 0, 10) || 0);
-                item.textContent = `${idx + 1}. [${mode}] ${order} • ${filter}: ${fromDate} -> ${toDate}, ${movedQty} шт`;
+                const rowWrap = document.createElement('div');
+                rowWrap.className = 'queue-item__row';
+                const text = document.createElement('div');
+                text.className = 'queue-item__text';
+                text.textContent = `${idx + 1}. [${mode}] ${fromDate} -> ${toDate}, ${movedQty} шт`;
+                const removeBtn = document.createElement('button');
+                removeBtn.type = 'button';
+                removeBtn.className = 'queue-item__remove';
+                removeBtn.textContent = 'Отменить';
+                removeBtn.title = 'Отменить этот перенос';
+                removeBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    removePendingMoveAt(idx);
+                });
+                rowWrap.appendChild(text);
+                rowWrap.appendChild(removeBtn);
+                item.appendChild(rowWrap);
                 item.addEventListener('mouseenter', function () {
                     previewQueueMove(queuedMove);
                 });
                 item.addEventListener('mouseleave', function () {
                     clearQueuePreview();
+                });
+                item.addEventListener('click', function () {
+                    previewQueueMove(queuedMove);
+                    scrollToQueuedMove(queuedMove);
                 });
                 moveQueueList.appendChild(item);
             });
@@ -2579,6 +2852,32 @@ $pageTitle = 'Активные позиции';
             renderMoveQueuePanel();
         }
 
+        function removePendingMoveAt(index) {
+            const removeIdx = parseInt(index, 10);
+            if (isApplyingPendingMoves || Number.isNaN(removeIdx) || removeIdx < 0 || removeIdx >= pendingMoves.length) {
+                return;
+            }
+            const tail = [];
+            while (pendingMoves.length - 1 >= removeIdx) {
+                const move = pendingMoves.pop();
+                tail.push(move);
+                applyQueuedMoveChanges(move, 'backward');
+            }
+            if (tail.length === 0) {
+                return;
+            }
+            // Удаляем выбранный перенос, остальные возвращаем обратно в исходном порядке.
+            tail.pop();
+            for (let i = tail.length - 1; i >= 0; i -= 1) {
+                const move = tail[i];
+                applyQueuedMoveChanges(move, 'forward');
+                pendingMoves.push(move);
+            }
+            updatePendingBarState();
+            renderMoveQueuePanel();
+            clearQueuePreview();
+        }
+
         function clearPendingMoves() {
             while (pendingMoves.length > 0) {
                 const oneMove = pendingMoves.pop();
@@ -2684,6 +2983,7 @@ $pageTitle = 'Активные позиции';
 
             cell.addEventListener('dragover', function (e) {
                 if (!canDropOn(cell)) {
+                    hideDragPreview();
                     return;
                 }
                 e.preventDefault();
@@ -2691,18 +2991,24 @@ $pageTitle = 'Активные позиции';
                     e.dataTransfer.dropEffect = 'move';
                 }
                 cell.classList.add('drag-drop-target');
+                updateDragPreview(cell);
             });
 
             cell.addEventListener('dragenter', function (e) {
                 if (!canDropOn(cell)) {
+                    hideDragPreview();
                     return;
                 }
                 e.preventDefault();
                 cell.classList.add('drag-drop-target');
+                updateDragPreview(cell);
             });
 
             cell.addEventListener('dragleave', function () {
                 cell.classList.remove('drag-drop-target');
+                if (previewedTargetCell === cell) {
+                    hideDragPreview();
+                }
             });
 
             cell.addEventListener('drop', function (e) {
@@ -2710,6 +3016,7 @@ $pageTitle = 'Активные позиции';
                     return;
                 }
                 e.preventDefault();
+                hideDragPreview();
                 queueMoveFromDrop(cell);
             });
 
@@ -2823,6 +3130,16 @@ $pageTitle = 'Активные позиции';
         });
         window.addEventListener('resize', positionDebtPanel);
         window.addEventListener('scroll', positionDebtPanel, true);
+        window.addEventListener('resize', function () {
+            if (previewedTargetCell) {
+                positionDragPreview(previewedTargetCell);
+            }
+        });
+        window.addEventListener('scroll', function () {
+            if (previewedTargetCell) {
+                positionDragPreview(previewedTargetCell);
+            }
+        }, true);
     })();
 </script>
 </body>
