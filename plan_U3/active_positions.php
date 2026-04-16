@@ -64,7 +64,7 @@ $todayIso = (new DateTime())->format('Y-m-d');
 /**
  * AJAX: перенос распланированных позиций между датами.
  * mode=single — переносит количество выбранной смены;
- * mode=row — сдвигает всю позицию по датам на дельту.
+ * mode=block — сдвигает только непрерывный блок смен вокруг выбранной даты.
  */
 function applyBuildPlanMove(
     PDO $pdo,
@@ -86,6 +86,11 @@ function applyBuildPlanMove(
         if ($qtyFrom <= 0) {
             throw new RuntimeException('В исходной смене нет количества для переноса.');
         }
+        $qtyStmt->execute([$order, $filter, $toDate]);
+        $qtyTo = (int)($qtyStmt->fetchColumn() ?: 0);
+        if ($qtyTo > 0) {
+            throw new RuntimeException('Нельзя складывать смены одной позиции: целевая дата уже содержит план.');
+        }
 
         $delStmt = $pdo->prepare("
             DELETE FROM build_plans
@@ -99,6 +104,107 @@ function applyBuildPlanMove(
             ON DUPLICATE KEY UPDATE qty = qty + VALUES(qty)
         ");
         $insStmt->execute([$order, $filter, $toDate, $qtyFrom]);
+        return;
+    }
+
+    if ($mode === 'block') {
+        $allStmt = $pdo->prepare("
+            SELECT day_date, SUM(qty) AS qty
+            FROM build_plans
+            WHERE shift='D' AND order_number=? AND filter=? AND day_date>=?
+            GROUP BY day_date
+            ORDER BY day_date
+        ");
+        $allStmt->execute([$order, $filter, $todayIso]);
+        $allRows = $allStmt->fetchAll(PDO::FETCH_ASSOC);
+        if (empty($allRows)) {
+            throw new RuntimeException('Нет данных для сдвига блока.');
+        }
+
+        $allMap = [];
+        foreach ($allRows as $row) {
+            $date = (string)($row['day_date'] ?? '');
+            $qty = (int)($row['qty'] ?? 0);
+            if ($date === '' || $qty <= 0) {
+                continue;
+            }
+            $allMap[$date] = $qty;
+        }
+        $sourceQty = (int)($allMap[$fromDate] ?? 0);
+        if ($sourceQty <= 0) {
+            throw new RuntimeException('В выбранной смене нет количества для сдвига блока.');
+        }
+
+        $fromDt = new DateTimeImmutable($fromDate);
+        $toDt = new DateTimeImmutable($toDate);
+        $offsetDays = (int)$fromDt->diff($toDt)->format('%r%a');
+        if ($offsetDays === 0) {
+            throw new RuntimeException('Для сдвига блока нужна другая целевая дата.');
+        }
+
+        $blockDates = [];
+        $cursor = $fromDt;
+        while (isset($allMap[$cursor->format('Y-m-d')]) && (int)$allMap[$cursor->format('Y-m-d')] > 0) {
+            array_unshift($blockDates, $cursor->format('Y-m-d'));
+            $cursor = $cursor->modify('-1 day');
+        }
+        $cursor = $fromDt->modify('+1 day');
+        while (isset($allMap[$cursor->format('Y-m-d')]) && (int)$allMap[$cursor->format('Y-m-d')] > 0) {
+            $blockDates[] = $cursor->format('Y-m-d');
+            $cursor = $cursor->modify('+1 day');
+        }
+        if (empty($blockDates)) {
+            throw new RuntimeException('Не удалось определить блок смен для сдвига.');
+        }
+
+        $resultMap = $allMap;
+        $shiftedBlock = [];
+        foreach ($blockDates as $date) {
+            $qty = (int)($allMap[$date] ?? 0);
+            if ($qty <= 0) {
+                continue;
+            }
+            unset($resultMap[$date]);
+            $targetDate = (new DateTimeImmutable($date))
+                ->modify(($offsetDays >= 0 ? '+' : '') . $offsetDays . ' days')
+                ->format('Y-m-d');
+            if ($targetDate < $todayIso) {
+                throw new RuntimeException('Сдвиг блока уводит часть позиции в прошлые даты.');
+            }
+            if (isset($resultMap[$targetDate]) && (int)$resultMap[$targetDate] > 0) {
+                throw new RuntimeException('Нельзя складывать смены одной позиции: при сдвиге блока возникло наложение на дату ' . $targetDate . '.');
+            }
+            if (!isset($shiftedBlock[$targetDate])) {
+                $shiftedBlock[$targetDate] = 0;
+            }
+            $shiftedBlock[$targetDate] += $qty;
+        }
+        foreach ($shiftedBlock as $date => $qty) {
+            if (!isset($resultMap[$date])) {
+                $resultMap[$date] = 0;
+            }
+            $resultMap[$date] += (int)$qty;
+        }
+
+        $delAllStmt = $pdo->prepare("
+            DELETE FROM build_plans
+            WHERE shift='D' AND order_number=? AND filter=? AND day_date>=?
+        ");
+        $delAllStmt->execute([$order, $filter, $todayIso]);
+
+        $insStmt = $pdo->prepare("
+            INSERT INTO build_plans (order_number, filter, day_date, shift, qty)
+            VALUES (?, ?, ?, 'D', ?)
+            ON DUPLICATE KEY UPDATE qty = qty + VALUES(qty)
+        ");
+        ksort($resultMap);
+        foreach ($resultMap as $date => $qty) {
+            $qtyInt = (int)$qty;
+            if ($qtyInt <= 0) {
+                continue;
+            }
+            $insStmt->execute([$order, $filter, (string)$date, $qtyInt]);
+        }
         return;
     }
 
@@ -216,7 +322,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $fromDate = trim((string)($move['from_date'] ?? ''));
                 $toDate = trim((string)($move['to_date'] ?? ''));
                 $mode = trim((string)($move['mode'] ?? 'single'));
-                if (!in_array($mode, ['single', 'row'], true)) {
+                if (!in_array($mode, ['single', 'row', 'block'], true)) {
                     $mode = 'single';
                 }
 
@@ -330,6 +436,16 @@ try {
     }
     $buildPlanDates = array_keys($buildPlanDates);
     sort($buildPlanDates);
+    if (!empty($buildPlanDates)) {
+        $fullDateRange = [];
+        $cursor = new DateTimeImmutable((string)$buildPlanDates[0]);
+        $lastDate = new DateTimeImmutable((string)$buildPlanDates[count($buildPlanDates) - 1]);
+        while ($cursor <= $lastDate) {
+            $fullDateRange[] = $cursor->format('Y-m-d');
+            $cursor = $cursor->modify('+1 day');
+        }
+        $buildPlanDates = $fullDateRange;
+    }
 } catch (Throwable $e) {
     $buildPlanMap = [];
     $buildPlanDates = [];
@@ -526,6 +642,75 @@ $pageTitle = 'Активные позиции';
             color: #1e3a8a;
             margin-right: auto;
         }
+        .queue-panel[hidden] { display: none; }
+        .queue-panel {
+            position: fixed;
+            right: 14px;
+            bottom: 14px;
+            width: min(520px, calc(100vw - 28px));
+            max-height: min(55vh, 520px);
+            z-index: 1100;
+            display: grid;
+            grid-template-rows: auto 1fr;
+            border: 1px solid #c7d2fe;
+            background: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 14px 32px rgba(15, 23, 42, 0.22);
+            overflow: hidden;
+        }
+        .queue-panel__head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            justify-content: space-between;
+            padding: 10px 12px;
+            border-bottom: 1px solid #e5e7eb;
+            background: #f8faff;
+            font-size: 13px;
+            font-weight: 700;
+            color: #1e3a8a;
+        }
+        .queue-panel__body {
+            padding: 8px 10px;
+            overflow: auto;
+            background: #fff;
+        }
+        .queue-panel__empty {
+            margin: 4px 0;
+            font-size: 12px;
+            color: #6b7280;
+        }
+        .queue-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: grid;
+            gap: 6px;
+        }
+        .queue-item {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 6px 8px;
+            background: #fafafa;
+            font-size: 12px;
+            line-height: 1.35;
+            color: #111827;
+            word-break: break-word;
+        }
+        .queue-item:hover {
+            border-color: #93c5fd;
+            background: #eff6ff;
+        }
+        td.date-cell.queue-src {
+            outline: 2px solid #f59e0b !important;
+            outline-offset: -2px;
+            background: #fffbeb !important;
+        }
+        td.date-cell.queue-dst {
+            outline: 2px solid #3b82f6 !important;
+            outline-offset: -2px;
+            background: #eff6ff !important;
+        }
         .toolbar-btn {
             appearance: none;
             border: 1px solid var(--border);
@@ -594,9 +779,6 @@ $pageTitle = 'Активные позиции';
             outline: 2px solid #93c5fd;
             outline-offset: -2px;
             background: #eff6ff !important;
-        }
-        tr.plan-row.row-drag-mode td.date-cell {
-            background: #fff7ed !important;
         }
         td.date-cell.drag-drop-target {
             outline: 2px dashed #60a5fa;
@@ -708,6 +890,12 @@ $pageTitle = 'Активные позиции';
             font-size: 10px;
             font-weight: 600;
             line-height: 1.25;
+        }
+        .state-action-btn {
+            appearance: none;
+            cursor: pointer;
+            margin: 0;
+            vertical-align: baseline;
         }
         .state-lag {
             background: #fef2f2;
@@ -934,9 +1122,21 @@ $pageTitle = 'Активные позиции';
         </div>
         <div id="pendingMovesBar" class="pending-bar">
             <span id="pendingMovesText" class="pending-text">Изменений в очереди: 0</span>
+            <button type="button" id="toggleQueuePanelBtn" class="toolbar-btn secondary" aria-pressed="false">Очередь</button>
+            <button type="button" id="normalizePlanBtn" class="toolbar-btn secondary">Нормализовать план</button>
             <button type="button" id="undoPendingMoveBtn" class="toolbar-btn secondary">Отменить последнее</button>
             <button type="button" id="clearPendingMovesBtn" class="toolbar-btn secondary">Сбросить все</button>
             <button type="button" id="applyPendingMovesBtn" class="toolbar-btn">Применить</button>
+        </div>
+        <div id="moveQueuePanel" class="queue-panel" hidden>
+            <div class="queue-panel__head">
+                <span>Очередь переносов</span>
+                <button type="button" id="closeQueuePanelBtn" class="toolbar-btn secondary">Закрыть</button>
+            </div>
+            <div class="queue-panel__body">
+                <p id="moveQueueEmpty" class="queue-panel__empty">Очередь пуста.</p>
+                <ul id="moveQueueList" class="queue-list"></ul>
+            </div>
         </div>
         <div class="panel">
             <table>
@@ -1083,6 +1283,7 @@ $pageTitle = 'Активные позиции';
                         data-has-press="<?= $rowHasPress ? '1' : '0' ?>"
                         data-has-d="<?= $rowHasD ? '1' : '0' ?>"
                         data-has-600="<?= $rowHas600 ? '1' : '0' ?>"
+                        data-priority="<?= $isLagging ? 'A' : 'C' ?>"
                     >
                         <td
                             class="pos-cell"
@@ -1105,7 +1306,7 @@ $pageTitle = 'Активные позиции';
                         <td class="num"><?= $remaining ?></td>
                         <td class="state-cell" title="<?= htmlspecialchars($stateTitle, ENT_QUOTES, 'UTF-8') ?>">
                             <?php if ($isLagging): ?>
-                                <span class="state-badge state-lag">Отстаёт</span>
+                                <button type="button" class="state-badge state-lag state-action-btn">Отстаёт</button>
                             <?php else: ?>
                                 <span class="state-badge state-ok">В плане</span>
                             <?php endif; ?>
@@ -1126,13 +1327,104 @@ $pageTitle = 'Активные позиции';
                                 data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>"
                                 data-qty="<?= (int)$planQty ?>"
                                 draggable="<?= $planQty > 0 ? 'true' : 'false' ?>"
-                                title="<?= $planQty > 0 ? 'Перетащите: обычный перенос — одна смена; Shift — сдвиг всей позиции по датам. Удерживайте Shift, чтобы подсветить непрерывный блок смен с планом' : 'Сюда можно перенести план этой позиции' ?>"
+                                title="<?= $planQty > 0 ? 'Перетащите: обычный перенос — одна смена; Shift — сдвиг непрерывного блока смен по датам' : 'Сюда можно перенести план этой позиции' ?>"
                             ><?= $planQty > 0 ? $planQty : '' ?></td>
                         <?php endforeach; ?>
                     </tr>
                     <?php endforeach; ?>
                 <?php endif; ?>
                 </tbody>
+                <tfoot>
+                    <tr>
+                        <th>Позиция</th>
+                        <th class="num">Заказано</th>
+                        <th class="num">Изготовлено</th>
+                        <th class="num">Остаток</th>
+                        <th>Состояние</th>
+                        <th>Заявка</th>
+                        <?php foreach ($buildPlanDates as $planDate):
+                            $dateObj = DateTime::createFromFormat('Y-m-d', (string) $planDate);
+                            $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
+                            $indicatorState = $dateIndicators[(string)$planDate] ?? ['press_filters' => [], 'diameter_qty' => 0, 'w600_qty' => 0, 'total_qty' => 0];
+                            $pressCount = count($indicatorState['press_filters'] ?? []);
+                            $pressClass = 'date-indicator slim marker-p';
+                            $pressTitle = 'Нет позиций под пресс';
+                            if ($pressCount === 1) {
+                                $pressClass .= ' active';
+                                $pressTitle = 'В смене 1 фильтр под пресс (норма)';
+                            } elseif ($pressCount > 1) {
+                                $pressClass .= ' active over';
+                                $pressTitle = 'В смене ' . $pressCount . ' фильтра(ов) под пресс (должен быть только 1)';
+                            }
+
+                            $w600Qty = (int)($indicatorState['w600_qty'] ?? 0);
+                            $w600Pct = $indicatorNormWidth600 > 0
+                                ? min(100, ($w600Qty / (float)$indicatorNormWidth600) * 100)
+                                : 0;
+                            $w600Class = 'date-indicator marker-600 meter';
+                            if ($w600Qty > 0) {
+                                $w600Class .= ' active';
+                            }
+                            if ($w600Qty > (int)$indicatorNormWidth600) {
+                                $w600Class .= ' over';
+                            }
+                            $w600Title = '600: ' . $w600Qty . ' шт из нормы ' . (int)$indicatorNormWidth600 . ' шт';
+
+                            $diameterQty = (int)($indicatorState['diameter_qty'] ?? 0);
+                            $diameterPct = $indicatorNormDiameter > 0
+                                ? min(100, ($diameterQty / (float)$indicatorNormDiameter) * 100)
+                                : 0;
+                            $diameterClass = 'date-indicator slim marker-d meter';
+                            if ($diameterQty > 0) {
+                                $diameterClass .= ' active';
+                            }
+                            if ($diameterQty > (int)$indicatorNormDiameter) {
+                                $diameterClass .= ' over';
+                            }
+                            $diameterTitle = 'D (>250 и >400): ' . $diameterQty . ' шт из нормы ' . (int)$indicatorNormDiameter . ' шт';
+
+                            $totalQty = (int)($indicatorState['total_qty'] ?? 0);
+                            $totalPct = $indicatorNormTotal > 0
+                                ? min(100, ($totalQty / (float)$indicatorNormTotal) * 100)
+                                : 0;
+                            $totalClass = 'date-indicator marker-total meter' . ($totalQty > 0 ? ' active' : '');
+                            if ($totalQty > (int)$indicatorNormTotal) {
+                                $totalClass .= ' over';
+                            }
+                            $totalTitle = 'Всего в смену: ' . $totalQty . ' шт из нормы ' . (int)$indicatorNormTotal . ' шт';
+                        ?>
+                            <th class="num date-col" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
+                                <span class="date-head">
+                                    <span><?= htmlspecialchars($dateLabel, ENT_QUOTES, 'UTF-8') ?></span>
+                                    <span class="date-indicators" aria-hidden="true">
+                                        <span class="<?= $pressClass ?>" data-kind="press" data-press-count="<?= $pressCount ?>" title="<?= htmlspecialchars($pressTitle, ENT_QUOTES, 'UTF-8') ?>"><span class="txt">П</span></span>
+                                        <span
+                                            class="<?= $diameterClass ?>"
+                                            data-kind="d"
+                                            data-qty="<?= $diameterQty ?>"
+                                            style="--fill: <?= htmlspecialchars(number_format($diameterPct, 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>%;"
+                                            title="<?= htmlspecialchars($diameterTitle, ENT_QUOTES, 'UTF-8') ?>"
+                                        ><span class="txt">D</span></span>
+                                        <span
+                                            class="<?= $w600Class ?>"
+                                            data-kind="w600"
+                                            data-qty="<?= $w600Qty ?>"
+                                            style="--fill: <?= htmlspecialchars(number_format($w600Pct, 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>%;"
+                                            title="<?= htmlspecialchars($w600Title, ENT_QUOTES, 'UTF-8') ?>"
+                                        ><span class="txt">600</span></span>
+                                        <span
+                                            class="<?= $totalClass ?>"
+                                            data-kind="total"
+                                            data-qty="<?= $totalQty ?>"
+                                            style="--fill: <?= htmlspecialchars(number_format($totalPct, 2, '.', ''), ENT_QUOTES, 'UTF-8') ?>%;"
+                                            title="<?= htmlspecialchars($totalTitle, ENT_QUOTES, 'UTF-8') ?>"
+                                        ><span class="txt"><?= $totalQty ?></span></span>
+                                    </span>
+                                </span>
+                            </th>
+                        <?php endforeach; ?>
+                    </tr>
+                </tfoot>
             </table>
         </div>
     <?php endif; ?>
@@ -1198,14 +1490,21 @@ $pageTitle = 'Активные позиции';
         const normTotalInput = document.getElementById('indNormTotalInput');
         const pendingMovesBar = document.getElementById('pendingMovesBar');
         const pendingMovesText = document.getElementById('pendingMovesText');
+        const toggleQueuePanelBtn = document.getElementById('toggleQueuePanelBtn');
+        const moveQueuePanel = document.getElementById('moveQueuePanel');
+        const closeQueuePanelBtn = document.getElementById('closeQueuePanelBtn');
+        const moveQueueEmpty = document.getElementById('moveQueueEmpty');
+        const moveQueueList = document.getElementById('moveQueueList');
+        const normalizePlanBtn = document.getElementById('normalizePlanBtn');
         const applyPendingMovesBtn = document.getElementById('applyPendingMovesBtn');
         const undoPendingMoveBtn = document.getElementById('undoPendingMoveBtn');
         const clearPendingMovesBtn = document.getElementById('clearPendingMovesBtn');
-        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !pendingMovesBar || !pendingMovesText || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearPendingMovesBtn) {
+        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !moveQueueEmpty || !moveQueueList || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearPendingMovesBtn) {
             return;
         }
         const storageKey = 'activePositionsIndicatorSettings';
         const rowIndicatorsStorageKey = 'activePositionsRowIndicatorsVisible';
+        const queuePanelStorageKey = 'activePositionsQueuePanelOpen';
         const defaults = {
             maxPress: 1,
             norm600: <?= (int)$indicatorNormWidth600 ?>,
@@ -1326,11 +1625,12 @@ $pageTitle = 'Активные позиции';
         let dragContext = null;
         let isMoving = false;
         let isApplyingPendingMoves = false;
+        let isQueuePanelOpen = false;
         const pendingMoves = [];
 
         function getCellTitle(qty) {
             if (qty > 0) {
-                return 'Перетащите: обычный перенос — одна смена; Shift — сдвиг всей позиции по датам. Удерживайте Shift, чтобы подсветить непрерывный блок смен с планом';
+                return 'Перетащите: обычный перенос — одна смена; Shift — сдвиг непрерывного блока смен по датам';
             }
             return 'Сюда можно перенести план этой позиции';
         }
@@ -1424,9 +1724,6 @@ $pageTitle = 'Активные позиции';
             dateCells.forEach(function (cell) {
                 cell.classList.remove('drag-source-single', 'drag-source-row', 'drag-drop-target', 'drag-busy');
             });
-            document.querySelectorAll('tr.plan-row.row-drag-mode').forEach(function (tr) {
-                tr.classList.remove('row-drag-mode');
-            });
             dragContext = null;
         }
 
@@ -1435,13 +1732,137 @@ $pageTitle = 'Активные позиции';
             pendingMovesBar.hidden = false;
             pendingMovesText.textContent = `Изменений в очереди: ${count}`;
             const disabled = count === 0 || isApplyingPendingMoves;
+            normalizePlanBtn.disabled = isApplyingPendingMoves;
             applyPendingMovesBtn.disabled = disabled;
             undoPendingMoveBtn.disabled = disabled;
             clearPendingMovesBtn.disabled = disabled;
+            toggleQueuePanelBtn.textContent = `Очередь (${count})`;
             if (isApplyingPendingMoves) {
                 applyPendingMovesBtn.textContent = 'Применение...';
             } else {
                 applyPendingMovesBtn.textContent = `Применить (${count})`;
+            }
+        }
+
+        function toShortDate(isoDate) {
+            if (typeof isoDate !== 'string' || isoDate.length < 10) {
+                return isoDate || '';
+            }
+            return `${isoDate.slice(8, 10)}.${isoDate.slice(5, 7)}`;
+        }
+
+        function modeLabel(mode) {
+            if (mode === 'block') {
+                return 'Блок';
+            }
+            if (mode === 'row') {
+                return 'Позиция';
+            }
+            return 'Смена';
+        }
+
+        function clearQueuePreview() {
+            dateCells.forEach(function (cell) {
+                cell.classList.remove('queue-src', 'queue-dst');
+            });
+        }
+
+        function getRowDateCellsByOrderFilter(order, filter) {
+            const row = document.querySelector(`tr.plan-row[data-order="${CSS.escape(order)}"][data-filter="${CSS.escape(filter)}"]`);
+            if (!row) {
+                return [];
+            }
+            return Array.from(row.querySelectorAll('td.date-cell'));
+        }
+
+        function getCellByDate(cells, date) {
+            return cells.find(function (c) {
+                return (c.dataset.date || '') === date;
+            }) || null;
+        }
+
+        function previewQueueMove(queuedMove) {
+            clearQueuePreview();
+            const payload = queuedMove && queuedMove.payload ? queuedMove.payload : null;
+            if (!payload) {
+                return;
+            }
+            const order = payload.order_number || '';
+            const filter = payload.filter_name || '';
+            const fromDate = payload.from_date || '';
+            const toDate = payload.to_date || '';
+            if (!order || !filter || !fromDate || !toDate) {
+                return;
+            }
+            const rowCells = getRowDateCellsByOrderFilter(order, filter);
+            if (rowCells.length === 0) {
+                return;
+            }
+            if ((payload.mode || '') === 'block') {
+                const srcCell = getCellByDate(rowCells, fromDate);
+                if (!srcCell) {
+                    return;
+                }
+                const sourceBlock = getContiguousBlockCells(srcCell);
+                const shift = getDateShiftInDays(fromDate, toDate);
+                sourceBlock.forEach(function (cell) {
+                    cell.classList.add('queue-src');
+                    const date = cell.dataset.date || '';
+                    const dstDate = addDaysIso(date, shift);
+                    const dstCell = getCellByDate(rowCells, dstDate);
+                    if (dstCell) {
+                        dstCell.classList.add('queue-dst');
+                    }
+                });
+                return;
+            }
+
+            const srcCell = getCellByDate(rowCells, fromDate);
+            const dstCell = getCellByDate(rowCells, toDate);
+            if (srcCell) {
+                srcCell.classList.add('queue-src');
+            }
+            if (dstCell) {
+                dstCell.classList.add('queue-dst');
+            }
+        }
+
+        function renderMoveQueuePanel() {
+            moveQueueList.innerHTML = '';
+            if (pendingMoves.length === 0) {
+                moveQueueEmpty.hidden = false;
+                return;
+            }
+            moveQueueEmpty.hidden = true;
+            pendingMoves.forEach(function (queuedMove, idx) {
+                const payload = queuedMove.payload || {};
+                const item = document.createElement('li');
+                item.className = 'queue-item';
+                const order = payload.order_number || '—';
+                const filter = payload.filter_name || '—';
+                const fromDate = toShortDate(payload.from_date || '');
+                const toDate = toShortDate(payload.to_date || '');
+                const mode = modeLabel(payload.mode || 'single');
+                const movedQty = Math.max(0, parseInt(queuedMove.movedQty || 0, 10) || 0);
+                item.textContent = `${idx + 1}. [${mode}] ${order} • ${filter}: ${fromDate} -> ${toDate}, ${movedQty} шт`;
+                item.addEventListener('mouseenter', function () {
+                    previewQueueMove(queuedMove);
+                });
+                item.addEventListener('mouseleave', function () {
+                    clearQueuePreview();
+                });
+                moveQueueList.appendChild(item);
+            });
+        }
+
+        function setQueuePanelOpen(open) {
+            isQueuePanelOpen = !!open;
+            moveQueuePanel.hidden = !isQueuePanelOpen;
+            toggleQueuePanelBtn.setAttribute('aria-pressed', isQueuePanelOpen ? 'true' : 'false');
+            try {
+                localStorage.setItem(queuePanelStorageKey, isQueuePanelOpen ? '1' : '0');
+            } catch (e) {
+                // ignore storage write errors
             }
         }
 
@@ -1529,18 +1950,7 @@ $pageTitle = 'Активные позиции';
             };
 
             if (dragContext.mode === 'single') {
-                const sourceQty = parseInt(sourceCell.dataset.qty || '0', 10) || 0;
-                const targetQty = parseInt(targetCell.dataset.qty || '0', 10) || 0;
-                if (sourceQty <= 0) {
-                    return null;
-                }
-                return {
-                    payload,
-                    changes: [
-                        { cell: sourceCell, prev: sourceQty, next: 0 },
-                        { cell: targetCell, prev: targetQty, next: targetQty + sourceQty },
-                    ],
-                };
+                return buildQueuedSingleMove(sourceCell, targetCell);
             }
 
             const sourceRow = sourceCell.closest('tr.plan-row');
@@ -1555,6 +1965,14 @@ $pageTitle = 'Активные позиции';
                 cellByDate[date] = cell;
                 qtyByDate[date] = parseInt(cell.dataset.qty || '0', 10) || 0;
             });
+            const blockCells = getContiguousBlockCells(sourceCell);
+            const blockDates = blockCells
+                .map(function (cell) { return cell.dataset.date || ''; })
+                .filter(function (date) { return date !== ''; });
+            if (blockDates.length === 0) {
+                return null;
+            }
+            const blockDateSet = new Set(blockDates);
             const offsetDays = getDateShiftInDays(dragContext.fromDate, toDate);
             if (offsetDays === 0) {
                 return null;
@@ -1562,16 +1980,21 @@ $pageTitle = 'Активные позиции';
 
             const nextQtyByDate = {};
             Object.keys(qtyByDate).forEach(function (date) {
-                nextQtyByDate[date] = 0;
+                nextQtyByDate[date] = qtyByDate[date];
             });
 
-            for (const [date, qty] of Object.entries(qtyByDate)) {
+            for (const date of blockDates) {
+                const qty = parseInt(qtyByDate[date] || '0', 10) || 0;
                 if (qty <= 0) {
                     continue;
                 }
+                nextQtyByDate[date] = Math.max(0, (nextQtyByDate[date] || 0) - qty);
                 const targetDate = addDaysIso(date, offsetDays);
                 if (!Object.prototype.hasOwnProperty.call(nextQtyByDate, targetDate)) {
-                    return { error: 'Сдвиг выводит часть позиции за пределы текущего диапазона дат. Примените изменения или расширьте диапазон.' };
+                    return { error: 'Сдвиг блока выводит часть позиции за пределы текущего диапазона дат. Примените изменения или расширьте диапазон.' };
+                }
+                if (!blockDateSet.has(targetDate) && (parseInt(qtyByDate[targetDate] || '0', 10) || 0) > 0) {
+                    return { error: 'Нельзя складывать смены одной позиции: при сдвиге блока целевая дата уже занята.' };
                 }
                 nextQtyByDate[targetDate] += qty;
             }
@@ -1587,7 +2010,164 @@ $pageTitle = 'Активные позиции';
             if (changes.length === 0) {
                 return null;
             }
-            return { payload, changes };
+            let movedQty = 0;
+            blockDates.forEach(function (date) {
+                movedQty += parseInt(qtyByDate[date] || '0', 10) || 0;
+            });
+            return { payload, movedQty: movedQty, changes };
+        }
+
+        function buildQueuedSingleMove(sourceCell, targetCell) {
+            const sourceQty = parseInt(sourceCell.dataset.qty || '0', 10) || 0;
+            const targetQty = parseInt(targetCell.dataset.qty || '0', 10) || 0;
+            const order = sourceCell.dataset.order || '';
+            const filter = sourceCell.dataset.filter || '';
+            const fromDate = sourceCell.dataset.date || '';
+            const toDate = targetCell.dataset.date || '';
+            if (sourceQty <= 0 || order === '' || filter === '' || fromDate === '' || toDate === '' || fromDate === toDate) {
+                return null;
+            }
+            if (targetQty > 0) {
+                return { error: 'Нельзя складывать смены одной позиции: целевая дата уже занята.' };
+            }
+            return {
+                payload: {
+                    mode: 'single',
+                    order_number: order,
+                    filter_name: filter,
+                    from_date: fromDate,
+                    to_date: toDate,
+                },
+                movedQty: sourceQty,
+                changes: [
+                    { cell: sourceCell, prev: sourceQty, next: 0 },
+                    { cell: targetCell, prev: targetQty, next: targetQty + sourceQty },
+                ],
+            };
+        }
+
+        function getUniquePlanDates() {
+            const unique = new Set();
+            dateCells.forEach(function (cell) {
+                const date = cell.dataset.date || '';
+                if (date !== '') {
+                    unique.add(date);
+                }
+            });
+            return Array.from(unique).sort();
+        }
+
+        function getDateTotalQty(date) {
+            let total = 0;
+            dateCells.forEach(function (cell) {
+                if ((cell.dataset.date || '') !== date) {
+                    return;
+                }
+                total += parseInt(cell.dataset.qty || '0', 10) || 0;
+            });
+            return total;
+        }
+
+        function normalizePlanIntoQueue() {
+            if (isApplyingPendingMoves) {
+                return;
+            }
+            const settings = getSettings();
+            const normTotal = Math.max(1, parseInt(settings.normTotal, 10) || 1);
+            const dates = getUniquePlanDates();
+            if (dates.length === 0) {
+                return;
+            }
+
+            const unresolved = new Set();
+            let createdMoves = 0;
+            let guard = 0;
+            for (let i = 0; i < dates.length; i += 1) {
+                const date = dates[i];
+                let overload = getDateTotalQty(date) - normTotal;
+                while (overload > 0) {
+                    guard += 1;
+                    if (guard > 5000) {
+                        unresolved.add(date);
+                        break;
+                    }
+
+                    const candidates = dateCells.filter(function (cell) {
+                        if ((cell.dataset.date || '') !== date) {
+                            return false;
+                        }
+                        const qty = parseInt(cell.dataset.qty || '0', 10) || 0;
+                        if (qty <= 0) {
+                            return false;
+                        }
+                        const row = cell.closest('tr.plan-row');
+                        return !!row && (row.dataset.priority || 'C') === 'C';
+                    }).sort(function (a, b) {
+                        return (parseInt(b.dataset.qty || '0', 10) || 0) - (parseInt(a.dataset.qty || '0', 10) || 0);
+                    });
+
+                    if (candidates.length === 0) {
+                        unresolved.add(date);
+                        break;
+                    }
+
+                    let moved = false;
+                    for (const sourceCell of candidates) {
+                        const qty = parseInt(sourceCell.dataset.qty || '0', 10) || 0;
+                        if (qty <= 0) {
+                            continue;
+                        }
+                        const row = sourceCell.closest('tr.plan-row');
+                        if (!row) {
+                            continue;
+                        }
+                        const rowCells = Array.from(row.querySelectorAll('td.date-cell'));
+                        for (let j = i + 1; j < dates.length; j += 1) {
+                            const targetDate = dates[j];
+                            const targetCell = rowCells.find(function (c) {
+                                return (c.dataset.date || '') === targetDate;
+                            });
+                            if (!targetCell) {
+                                continue;
+                            }
+                            if ((parseInt(targetCell.dataset.qty || '0', 10) || 0) > 0) {
+                                continue;
+                            }
+                            if (getDateTotalQty(targetDate) + qty > normTotal) {
+                                continue;
+                            }
+                            const queuedMove = buildQueuedSingleMove(sourceCell, targetCell);
+                            if (!queuedMove) {
+                                continue;
+                            }
+                            pushPendingMove(queuedMove);
+                            createdMoves += 1;
+                            moved = true;
+                            break;
+                        }
+                        if (moved) {
+                            break;
+                        }
+                    }
+
+                    if (!moved) {
+                        unresolved.add(date);
+                        break;
+                    }
+                    overload = getDateTotalQty(date) - normTotal;
+                }
+            }
+
+            if (createdMoves === 0 && unresolved.size === 0) {
+                alert('Нормализация: перегрузов по текущей норме не найдено.');
+                return;
+            }
+            if (createdMoves > 0 && unresolved.size === 0) {
+                alert(`Нормализация: в очередь добавлено ${createdMoves} переносов.`);
+                return;
+            }
+            const unresolvedList = Array.from(unresolved).join(', ');
+            alert(`Нормализация: добавлено ${createdMoves} переносов, но остались перегрузы по датам: ${unresolvedList}.`);
         }
 
         function applyQueuedMoveChanges(queuedMove, direction) {
@@ -1601,6 +2181,7 @@ $pageTitle = 'Активные позиции';
             applyQueuedMoveChanges(queuedMove, 'forward');
             pendingMoves.push(queuedMove);
             updatePendingBarState();
+            renderMoveQueuePanel();
         }
 
         function undoLastPendingMove() {
@@ -1610,6 +2191,7 @@ $pageTitle = 'Активные позиции';
             const lastMove = pendingMoves.pop();
             applyQueuedMoveChanges(lastMove, 'backward');
             updatePendingBarState();
+            renderMoveQueuePanel();
         }
 
         function clearPendingMoves() {
@@ -1618,6 +2200,7 @@ $pageTitle = 'Активные позиции';
                 applyQueuedMoveChanges(oneMove, 'backward');
             }
             updatePendingBarState();
+            renderMoveQueuePanel();
         }
 
         async function applyPendingMovesToServer() {
@@ -1691,21 +2274,20 @@ $pageTitle = 'Активные позиции';
                     e.preventDefault();
                     return;
                 }
-                const mode = e.shiftKey ? 'row' : 'single';
+                const mode = e.shiftKey ? 'block' : 'single';
                 dragContext = {
-                    mode: mode === 'row' ? 'row' : 'single',
+                    mode: mode === 'block' ? 'block' : 'single',
                     order: cell.dataset.order || '',
                     filter: cell.dataset.filter || '',
                     fromDate: cell.dataset.date || '',
                     sourceCell: cell,
                 };
 
-                if (dragContext.mode === 'row') {
-                    cell.classList.add('drag-source-row');
-                    const row = cell.closest('tr.plan-row');
-                    if (row) {
-                        row.classList.add('row-drag-mode');
-                    }
+                if (dragContext.mode === 'block') {
+                    const blockCells = getContiguousBlockCells(cell);
+                    blockCells.forEach(function (oneCell) {
+                        oneCell.classList.add('drag-source-row');
+                    });
                 } else {
                     cell.classList.add('drag-source-single');
                 }
@@ -1776,11 +2358,28 @@ $pageTitle = 'Активные позиции';
             }
             clearPendingMoves();
         });
+        normalizePlanBtn.addEventListener('click', function () {
+            normalizePlanIntoQueue();
+        });
         applyPendingMovesBtn.addEventListener('click', function () {
             applyPendingMovesToServer();
         });
+        toggleQueuePanelBtn.addEventListener('click', function () {
+            setQueuePanelOpen(!isQueuePanelOpen);
+        });
+        closeQueuePanelBtn.addEventListener('click', function () {
+            setQueuePanelOpen(false);
+            clearQueuePreview();
+        });
         updatePendingBarState();
         recalcHeaderIndicatorsFromTable();
+        renderMoveQueuePanel();
+        try {
+            const savedQueuePanelState = localStorage.getItem(queuePanelStorageKey);
+            setQueuePanelOpen(savedQueuePanelState === '1');
+        } catch (e) {
+            setQueuePanelOpen(false);
+        }
 
         openSettingsBtn.addEventListener('click', openModal);
         cancelBtn.addEventListener('click', closeModal);
