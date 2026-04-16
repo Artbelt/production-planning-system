@@ -711,6 +711,12 @@ $pageTitle = 'Активные позиции';
             outline-offset: -2px;
             background: #eff6ff !important;
         }
+        tr.plan-row.press-conflict-flash td.pos-cell,
+        tr.plan-row.press-conflict-flash td.date-cell[data-date-conflict="1"] {
+            background: #fff7ed !important;
+            outline: 2px solid #f59e0b;
+            outline-offset: -2px;
+        }
         .toolbar-btn {
             appearance: none;
             border: 1px solid var(--border);
@@ -1713,6 +1719,33 @@ $pageTitle = 'Активные позиции';
             applySettings(getSettings());
         }
 
+        function flashPressConflictForDate(date) {
+            clearPressConflictFlash();
+            if (!date) {
+                return;
+            }
+            let count = 0;
+            document.querySelectorAll('tr.plan-row').forEach(function (row) {
+                if ((row.dataset.hasPress || '') !== '1') {
+                    return;
+                }
+                const conflictCell = Array.from(row.querySelectorAll('td.date-cell')).find(function (cell) {
+                    return (cell.dataset.date || '') === date && (parseInt(cell.dataset.qty || '0', 10) || 0) > 0;
+                });
+                if (!conflictCell) {
+                    return;
+                }
+                count += 1;
+                row.classList.add('press-conflict-flash');
+                conflictCell.dataset.dateConflict = '1';
+            });
+            if (count < 2) {
+                clearPressConflictFlash();
+                return;
+            }
+            window.setTimeout(clearPressConflictFlash, 2200);
+        }
+
         function clearHoverPreview() {
             dateCells.forEach(function (cell) {
                 cell.classList.remove('hover-dnd-center', 'hover-dnd-block');
@@ -1764,6 +1797,15 @@ $pageTitle = 'Активные позиции';
         function clearQueuePreview() {
             dateCells.forEach(function (cell) {
                 cell.classList.remove('queue-src', 'queue-dst');
+            });
+        }
+
+        function clearPressConflictFlash() {
+            document.querySelectorAll('tr.plan-row.press-conflict-flash').forEach(function (row) {
+                row.classList.remove('press-conflict-flash');
+            });
+            dateCells.forEach(function (cell) {
+                delete cell.dataset.dateConflict;
             });
         }
 
@@ -2068,12 +2110,44 @@ $pageTitle = 'Активные позиции';
             return total;
         }
 
+        function getDateDQty(date) {
+            let total = 0;
+            dateCells.forEach(function (cell) {
+                if ((cell.dataset.date || '') !== date) {
+                    return;
+                }
+                const qty = parseInt(cell.dataset.qty || '0', 10) || 0;
+                if (qty <= 0) {
+                    return;
+                }
+                const row = cell.closest('tr.plan-row');
+                if (!row) {
+                    return;
+                }
+                if ((row.dataset.hasD || '') === '1') {
+                    total += qty;
+                }
+            });
+            return total;
+        }
+
+        function getDateOverload(date, normTotal, normD) {
+            const totalOver = Math.max(0, getDateTotalQty(date) - normTotal);
+            const dOver = Math.max(0, getDateDQty(date) - normD);
+            return {
+                totalOver: totalOver,
+                dOver: dOver,
+                hasOverload: totalOver > 0 || dOver > 0,
+            };
+        }
+
         function normalizePlanIntoQueue() {
             if (isApplyingPendingMoves) {
                 return;
             }
             const settings = getSettings();
             const normTotal = Math.max(1, parseInt(settings.normTotal, 10) || 1);
+            const normD = Math.max(1, parseInt(settings.normD, 10) || 1);
             const dates = getUniquePlanDates();
             if (dates.length === 0) {
                 return;
@@ -2084,8 +2158,11 @@ $pageTitle = 'Активные позиции';
             let guard = 0;
             for (let i = 0; i < dates.length; i += 1) {
                 const date = dates[i];
-                let overload = getDateTotalQty(date) - normTotal;
-                while (overload > 0) {
+                while (true) {
+                    const overloadState = getDateOverload(date, normTotal, normD);
+                    if (!overloadState.hasOverload) {
+                        break;
+                    }
                     guard += 1;
                     if (guard > 5000) {
                         unresolved.add(date);
@@ -2106,6 +2183,20 @@ $pageTitle = 'Активные позиции';
                         return (parseInt(b.dataset.qty || '0', 10) || 0) - (parseInt(a.dataset.qty || '0', 10) || 0);
                     });
 
+                    // Если перегружен индикатор D, сначала можно вытеснять только D-позиции.
+                    if (overloadState.dOver > 0) {
+                        const dCandidates = candidates.filter(function (cell) {
+                            const row = cell.closest('tr.plan-row');
+                            return !!row && (row.dataset.hasD || '') === '1';
+                        });
+                        if (dCandidates.length > 0) {
+                            candidates.splice(0, candidates.length, ...dCandidates);
+                        } else {
+                            unresolved.add(date);
+                            break;
+                        }
+                    }
+
                     if (candidates.length === 0) {
                         unresolved.add(date);
                         break;
@@ -2121,6 +2212,7 @@ $pageTitle = 'Активные позиции';
                         if (!row) {
                             continue;
                         }
+                        const sourceIsD = (row.dataset.hasD || '') === '1';
                         const rowCells = Array.from(row.querySelectorAll('td.date-cell'));
                         for (let j = i + 1; j < dates.length; j += 1) {
                             const targetDate = dates[j];
@@ -2136,8 +2228,14 @@ $pageTitle = 'Активные позиции';
                             if (getDateTotalQty(targetDate) + qty > normTotal) {
                                 continue;
                             }
+                            if (sourceIsD && (getDateDQty(targetDate) + qty > normD)) {
+                                continue;
+                            }
                             const queuedMove = buildQueuedSingleMove(sourceCell, targetCell);
                             if (!queuedMove) {
+                                continue;
+                            }
+                            if (queuedMove.error) {
                                 continue;
                             }
                             pushPendingMove(queuedMove);
@@ -2154,12 +2252,11 @@ $pageTitle = 'Активные позиции';
                         unresolved.add(date);
                         break;
                     }
-                    overload = getDateTotalQty(date) - normTotal;
                 }
             }
 
             if (createdMoves === 0 && unresolved.size === 0) {
-                alert('Нормализация: перегрузов по текущей норме не найдено.');
+                alert('Нормализация: перегрузов по нормам total/D не найдено.');
                 return;
             }
             if (createdMoves > 0 && unresolved.size === 0) {
@@ -2363,6 +2460,16 @@ $pageTitle = 'Активные позиции';
         });
         applyPendingMovesBtn.addEventListener('click', function () {
             applyPendingMovesToServer();
+        });
+        document.querySelectorAll('th[data-plan-date] .date-indicator[data-kind="press"]').forEach(function (indicator) {
+            indicator.addEventListener('click', function () {
+                if (!indicator.classList.contains('over')) {
+                    return;
+                }
+                const th = indicator.closest('th[data-plan-date]');
+                const date = th ? (th.getAttribute('data-plan-date') || '') : '';
+                flashPressConflictForDate(date);
+            });
         });
         toggleQueuePanelBtn.addEventListener('click', function () {
             setQueuePanelOpen(!isQueuePanelOpen);
