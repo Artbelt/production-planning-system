@@ -890,10 +890,12 @@ function load_filters_into_select(){
     $pdo = _planPdo();
     $st = $pdo->query("SELECT DISTINCT filter FROM round_filter_structure ORDER BY filter");
     if (!$st) { echo "Ошибка загрузки фильтров"; return; }
-    echo "<select name='analog_filter'>";
-    echo "<option value=''>выбор аналога</option>";
+    echo "<select id=\"filterSelect\" name=\"analog_filter\" autocomplete=\"off\">";
+    echo "<option value=\"\">выбор аналога</option>";
     while ($row = $st->fetch(PDO::FETCH_ASSOC)){
-        echo "<option value=".$row['filter'].">".$row['filter']."</option>";
+        $f = (string) $row['filter'];
+        $v = htmlspecialchars($f, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        echo "<option value=\"{$v}\">{$v}</option>";
     }
     echo "</select>";
 }

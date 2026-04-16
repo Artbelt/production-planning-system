@@ -59,6 +59,197 @@ function activePositionsPlanTolerance(int $remaining, int $absTol, int $pctTol):
     return min(max(0, $remaining - 1), $raw);
 }
 
+$todayIso = (new DateTime())->format('Y-m-d');
+
+/**
+ * AJAX: перенос распланированных позиций между датами.
+ * mode=single — переносит количество выбранной смены;
+ * mode=row — сдвигает всю позицию по датам на дельту.
+ */
+function applyBuildPlanMove(
+    PDO $pdo,
+    string $todayIso,
+    string $order,
+    string $filter,
+    string $fromDate,
+    string $toDate,
+    string $mode
+): void {
+    if ($mode === 'single') {
+        $qtyStmt = $pdo->prepare("
+            SELECT COALESCE(SUM(qty), 0) AS qty
+            FROM build_plans
+            WHERE shift='D' AND order_number=? AND filter=? AND day_date=?
+        ");
+        $qtyStmt->execute([$order, $filter, $fromDate]);
+        $qtyFrom = (int)($qtyStmt->fetchColumn() ?: 0);
+        if ($qtyFrom <= 0) {
+            throw new RuntimeException('В исходной смене нет количества для переноса.');
+        }
+
+        $delStmt = $pdo->prepare("
+            DELETE FROM build_plans
+            WHERE shift='D' AND order_number=? AND filter=? AND day_date=?
+        ");
+        $delStmt->execute([$order, $filter, $fromDate]);
+
+        $insStmt = $pdo->prepare("
+            INSERT INTO build_plans (order_number, filter, day_date, shift, qty)
+            VALUES (?, ?, ?, 'D', ?)
+            ON DUPLICATE KEY UPDATE qty = qty + VALUES(qty)
+        ");
+        $insStmt->execute([$order, $filter, $toDate, $qtyFrom]);
+        return;
+    }
+
+    $srcStmt = $pdo->prepare("
+        SELECT day_date, SUM(qty) AS qty
+        FROM build_plans
+        WHERE shift='D' AND order_number=? AND filter=? AND day_date>=?
+        GROUP BY day_date
+        ORDER BY day_date
+    ");
+    $srcStmt->execute([$order, $filter, $todayIso]);
+    $sourceRows = $srcStmt->fetchAll(PDO::FETCH_ASSOC);
+    if (empty($sourceRows)) {
+        throw new RuntimeException('Нет данных для сдвига по позиции.');
+    }
+
+    $fromDt = new DateTimeImmutable($fromDate);
+    $toDt = new DateTimeImmutable($toDate);
+    $offsetDays = (int)$fromDt->diff($toDt)->format('%r%a');
+    if ($offsetDays === 0) {
+        throw new RuntimeException('Для сдвига позиции нужна другая целевая дата.');
+    }
+
+    $shifted = [];
+    foreach ($sourceRows as $src) {
+        $srcDate = (string)($src['day_date'] ?? '');
+        $qty = (int)($src['qty'] ?? 0);
+        if ($srcDate === '' || $qty <= 0) {
+            continue;
+        }
+        $targetDate = (new DateTimeImmutable($srcDate))
+            ->modify(($offsetDays >= 0 ? '+' : '') . $offsetDays . ' days')
+            ->format('Y-m-d');
+        if ($targetDate < $todayIso) {
+            throw new RuntimeException('Сдвиг уводит часть позиции в прошлые даты.');
+        }
+        if (!isset($shifted[$targetDate])) {
+            $shifted[$targetDate] = 0;
+        }
+        $shifted[$targetDate] += $qty;
+    }
+    if (empty($shifted)) {
+        throw new RuntimeException('После сдвига не осталось данных для записи.');
+    }
+
+    $delAllStmt = $pdo->prepare("
+        DELETE FROM build_plans
+        WHERE shift='D' AND order_number=? AND filter=? AND day_date>=?
+    ");
+    $delAllStmt->execute([$order, $filter, $todayIso]);
+
+    $insStmt = $pdo->prepare("
+        INSERT INTO build_plans (order_number, filter, day_date, shift, qty)
+        VALUES (?, ?, ?, 'D', ?)
+        ON DUPLICATE KEY UPDATE qty = qty + VALUES(qty)
+    ");
+    foreach ($shifted as $targetDate => $qty) {
+        $insStmt->execute([$order, $filter, (string)$targetDate, (int)$qty]);
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $rawBody = file_get_contents('php://input');
+    $payload = [];
+    if (is_string($rawBody) && trim($rawBody) !== '') {
+        $decoded = json_decode($rawBody, true);
+        if (is_array($decoded)) {
+            $payload = $decoded;
+        }
+    }
+    if (empty($payload)) {
+        $payload = $_POST;
+    }
+    $action = (string)($payload['action'] ?? '');
+    if ($action === 'move_plan' || $action === 'apply_moves') {
+        header('Content-Type: application/json; charset=utf-8');
+
+        $isDate = static function (string $value): bool {
+            return (bool) preg_match('/^\d{4}-\d{2}-\d{2}$/', $value);
+        };
+
+        try {
+            $moves = [];
+            if ($action === 'move_plan') {
+                $moves[] = [
+                    'order_number' => (string)($payload['order_number'] ?? ''),
+                    'filter_name' => (string)($payload['filter_name'] ?? ''),
+                    'from_date' => (string)($payload['from_date'] ?? ''),
+                    'to_date' => (string)($payload['to_date'] ?? ''),
+                    'mode' => (string)($payload['mode'] ?? 'single'),
+                ];
+            } else {
+                $rawMoves = $payload['moves'] ?? [];
+                if (!is_array($rawMoves) || empty($rawMoves)) {
+                    throw new RuntimeException('Нет операций для применения.');
+                }
+                foreach ($rawMoves as $oneMove) {
+                    if (!is_array($oneMove)) {
+                        throw new RuntimeException('Некорректный формат списка операций.');
+                    }
+                    $moves[] = [
+                        'order_number' => (string)($oneMove['order_number'] ?? ''),
+                        'filter_name' => (string)($oneMove['filter_name'] ?? ''),
+                        'from_date' => (string)($oneMove['from_date'] ?? ''),
+                        'to_date' => (string)($oneMove['to_date'] ?? ''),
+                        'mode' => (string)($oneMove['mode'] ?? 'single'),
+                    ];
+                }
+            }
+
+            $pdo->beginTransaction();
+            foreach ($moves as $idx => $move) {
+                $order = trim((string)($move['order_number'] ?? ''));
+                $filter = trim((string)($move['filter_name'] ?? ''));
+                $fromDate = trim((string)($move['from_date'] ?? ''));
+                $toDate = trim((string)($move['to_date'] ?? ''));
+                $mode = trim((string)($move['mode'] ?? 'single'));
+                if (!in_array($mode, ['single', 'row'], true)) {
+                    $mode = 'single';
+                }
+
+                if ($order === '' || $filter === '' || !$isDate($fromDate) || !$isDate($toDate)) {
+                    throw new RuntimeException('Операция #' . ($idx + 1) . ': некорректные параметры переноса.');
+                }
+                if ($fromDate === $toDate) {
+                    throw new RuntimeException('Операция #' . ($idx + 1) . ': дата источника и назначения совпадают.');
+                }
+                if ($fromDate < $todayIso || $toDate < $todayIso) {
+                    throw new RuntimeException('Операция #' . ($idx + 1) . ': перенос в прошлые даты недоступен.');
+                }
+
+                try {
+                    applyBuildPlanMove($pdo, $todayIso, $order, $filter, $fromDate, $toDate, $mode);
+                } catch (Throwable $moveError) {
+                    throw new RuntimeException('Операция #' . ($idx + 1) . ': ' . $moveError->getMessage(), 0, $moveError);
+                }
+            }
+            $pdo->commit();
+
+            echo json_encode(['ok' => true, 'applied' => count($moves)], JSON_UNESCAPED_UNICODE);
+            exit;
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+    }
+}
+
 $maxPct = max(0, min(100, (int) $activePositionsMaxCompletionPct));
 
 $sql = "
@@ -96,7 +287,6 @@ try {
 // План сборки по датам: [order|filter] => [Y-m-d => qty]
 $buildPlanMap = [];
 $buildPlanDates = [];
-$todayIso = (new DateTime())->format('Y-m-d');
 try {
     $sqlBuildPlan = "
         SELECT
@@ -320,6 +510,22 @@ $pageTitle = 'Активные позиции';
             gap: 10px;
             margin: 0 0 10px;
         }
+        .pending-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0 0 10px;
+            padding: 8px 10px;
+            border: 1px solid #bfdbfe;
+            background: #eff6ff;
+            border-radius: 10px;
+        }
+        .pending-bar[hidden] { display: none; }
+        .pending-text {
+            font-size: 12px;
+            color: #1e3a8a;
+            margin-right: auto;
+        }
         .toolbar-btn {
             appearance: none;
             border: 1px solid var(--border);
@@ -369,6 +575,38 @@ $pageTitle = 'Активные позиции';
         tr:hover td { background: #fafbfc; }
         td.num { text-align: right; font-variant-numeric: tabular-nums; }
         th.date-col, td.date-col { text-align: center; }
+        td.date-cell {
+            cursor: default;
+            transition: background-color .12s ease, outline-color .12s ease;
+        }
+        td.date-cell.hover-dnd-center {
+            outline: 2px solid #818cf8;
+            outline-offset: -2px;
+            background: #eef2ff !important;
+        }
+        td.date-cell.hover-dnd-block {
+            outline: 1px solid #fbbf24;
+            outline-offset: -1px;
+            background: #fffbeb !important;
+        }
+        td.date-cell.drag-source-single,
+        td.date-cell.drag-source-row {
+            outline: 2px solid #93c5fd;
+            outline-offset: -2px;
+            background: #eff6ff !important;
+        }
+        tr.plan-row.row-drag-mode td.date-cell {
+            background: #fff7ed !important;
+        }
+        td.date-cell.drag-drop-target {
+            outline: 2px dashed #60a5fa;
+            outline-offset: -2px;
+            background: #e0f2fe !important;
+        }
+        td.date-cell.drag-busy {
+            opacity: .6;
+            pointer-events: none;
+        }
 
         /* Гистограмма выполнения в ячейке «Позиция» */
         td.pos-cell {
@@ -694,6 +932,12 @@ $pageTitle = 'Активные позиции';
             <button type="button" id="toggleRowIndicatorsBtn" class="toolbar-btn secondary" aria-pressed="true">Индикаторы у названий</button>
             <button type="button" id="openIndicatorSettingsBtn" class="toolbar-btn secondary">Настройка индикаторов</button>
         </div>
+        <div id="pendingMovesBar" class="pending-bar">
+            <span id="pendingMovesText" class="pending-text">Изменений в очереди: 0</span>
+            <button type="button" id="undoPendingMoveBtn" class="toolbar-btn secondary">Отменить последнее</button>
+            <button type="button" id="clearPendingMovesBtn" class="toolbar-btn secondary">Сбросить все</button>
+            <button type="button" id="applyPendingMovesBtn" class="toolbar-btn">Применить</button>
+        </div>
         <div class="panel">
             <table>
                 <thead>
@@ -755,7 +999,7 @@ $pageTitle = 'Активные позиции';
                             }
                             $totalTitle = 'Всего в смену: ' . $totalQty . ' шт из нормы ' . (int)$indicatorNormTotal . ' шт';
                         ?>
-                            <th class="num date-col" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
+                            <th class="num date-col" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
                                 <span class="date-head">
                                     <span><?= htmlspecialchars($dateLabel, ENT_QUOTES, 'UTF-8') ?></span>
                                     <span class="date-indicators" aria-hidden="true">
@@ -832,7 +1076,14 @@ $pageTitle = 'Активные позиции';
                         $rowHas600 = isset($rowMeta['paper_width_mm']) && $rowMeta['paper_width_mm'] !== null
                             && (float)$rowMeta['paper_width_mm'] > 450;
                     ?>
-                    <tr>
+                    <tr
+                        class="plan-row"
+                        data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
+                        data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
+                        data-has-press="<?= $rowHasPress ? '1' : '0' ?>"
+                        data-has-d="<?= $rowHasD ? '1' : '0' ?>"
+                        data-has-600="<?= $rowHas600 ? '1' : '0' ?>"
+                    >
                         <td
                             class="pos-cell"
                             style="--pct: <?= htmlspecialchars((string) round($pct, 4), ENT_QUOTES, 'UTF-8') ?>%;"
@@ -868,7 +1119,15 @@ $pageTitle = 'Активные позиции';
                         <?php foreach ($buildPlanDates as $planDate):
                             $planQty = (int)($planQtyByDate[$planDate] ?? 0);
                         ?>
-                            <td class="num date-col"><?= $planQty > 0 ? $planQty : '' ?></td>
+                            <td
+                                class="num date-col date-cell"
+                                data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
+                                data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
+                                data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>"
+                                data-qty="<?= (int)$planQty ?>"
+                                draggable="<?= $planQty > 0 ? 'true' : 'false' ?>"
+                                title="<?= $planQty > 0 ? 'Перетащите: обычный перенос — одна смена; Shift — сдвиг всей позиции по датам. Удерживайте Shift, чтобы подсветить непрерывный блок смен с планом' : 'Сюда можно перенести план этой позиции' ?>"
+                            ><?= $planQty > 0 ? $planQty : '' ?></td>
                         <?php endforeach; ?>
                     </tr>
                     <?php endforeach; ?>
@@ -937,7 +1196,12 @@ $pageTitle = 'Активные позиции';
         const norm600Input = document.getElementById('indNorm600Input');
         const normDInput = document.getElementById('indNormDInput');
         const normTotalInput = document.getElementById('indNormTotalInput');
-        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput) {
+        const pendingMovesBar = document.getElementById('pendingMovesBar');
+        const pendingMovesText = document.getElementById('pendingMovesText');
+        const applyPendingMovesBtn = document.getElementById('applyPendingMovesBtn');
+        const undoPendingMoveBtn = document.getElementById('undoPendingMoveBtn');
+        const clearPendingMovesBtn = document.getElementById('clearPendingMovesBtn');
+        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !pendingMovesBar || !pendingMovesText || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearPendingMovesBtn) {
             return;
         }
         const storageKey = 'activePositionsIndicatorSettings';
@@ -1057,6 +1321,466 @@ $pageTitle = 'Активные позиции';
                 // ignore storage write errors
             }
         });
+
+        const dateCells = Array.from(document.querySelectorAll('td.date-cell'));
+        let dragContext = null;
+        let isMoving = false;
+        let isApplyingPendingMoves = false;
+        const pendingMoves = [];
+
+        function getCellTitle(qty) {
+            if (qty > 0) {
+                return 'Перетащите: обычный перенос — одна смена; Shift — сдвиг всей позиции по датам. Удерживайте Shift, чтобы подсветить непрерывный блок смен с планом';
+            }
+            return 'Сюда можно перенести план этой позиции';
+        }
+
+        function setCellQty(cell, qty) {
+            const normalizedQty = Math.max(0, parseInt(qty, 10) || 0);
+            cell.dataset.qty = String(normalizedQty);
+            cell.textContent = normalizedQty > 0 ? String(normalizedQty) : '';
+            cell.setAttribute('draggable', normalizedQty > 0 ? 'true' : 'false');
+            cell.title = getCellTitle(normalizedQty);
+        }
+
+        function recalcHeaderIndicatorsFromTable() {
+            const byDate = new Map();
+            dateCells.forEach(function (cell) {
+                const date = cell.dataset.date || '';
+                if (!date) {
+                    return;
+                }
+                if (!byDate.has(date)) {
+                    byDate.set(date, {
+                        totalQty: 0,
+                        w600Qty: 0,
+                        dQty: 0,
+                        pressFilters: new Set(),
+                    });
+                }
+                const qty = parseInt(cell.dataset.qty || '0', 10) || 0;
+                if (qty <= 0) {
+                    return;
+                }
+                const state = byDate.get(date);
+                const row = cell.closest('tr.plan-row');
+                if (!state || !row) {
+                    return;
+                }
+                state.totalQty += qty;
+                if ((row.dataset.has600 || '') === '1') {
+                    state.w600Qty += qty;
+                }
+                if ((row.dataset.hasD || '') === '1') {
+                    state.dQty += qty;
+                }
+                if ((row.dataset.hasPress || '') === '1') {
+                    state.pressFilters.add(((row.dataset.filter || '').trim()).toUpperCase());
+                }
+            });
+
+            document.querySelectorAll('th[data-plan-date]').forEach(function (th) {
+                const date = th.getAttribute('data-plan-date') || '';
+                const state = byDate.get(date) || {
+                    totalQty: 0,
+                    w600Qty: 0,
+                    dQty: 0,
+                    pressFilters: new Set(),
+                };
+                const pressEl = th.querySelector('.date-indicator[data-kind="press"]');
+                const dEl = th.querySelector('.date-indicator[data-kind="d"]');
+                const w600El = th.querySelector('.date-indicator[data-kind="w600"]');
+                const totalEl = th.querySelector('.date-indicator[data-kind="total"]');
+
+                if (pressEl) {
+                    pressEl.setAttribute('data-press-count', String(state.pressFilters.size));
+                }
+                if (dEl) {
+                    dEl.setAttribute('data-qty', String(state.dQty));
+                }
+                if (w600El) {
+                    w600El.setAttribute('data-qty', String(state.w600Qty));
+                }
+                if (totalEl) {
+                    totalEl.setAttribute('data-qty', String(state.totalQty));
+                    const txt = totalEl.querySelector('.txt');
+                    if (txt) {
+                        txt.textContent = String(state.totalQty);
+                    }
+                }
+            });
+
+            applySettings(getSettings());
+        }
+
+        function clearHoverPreview() {
+            dateCells.forEach(function (cell) {
+                cell.classList.remove('hover-dnd-center', 'hover-dnd-block');
+            });
+        }
+
+        function clearDragState() {
+            clearHoverPreview();
+            dateCells.forEach(function (cell) {
+                cell.classList.remove('drag-source-single', 'drag-source-row', 'drag-drop-target', 'drag-busy');
+            });
+            document.querySelectorAll('tr.plan-row.row-drag-mode').forEach(function (tr) {
+                tr.classList.remove('row-drag-mode');
+            });
+            dragContext = null;
+        }
+
+        function updatePendingBarState() {
+            const count = pendingMoves.length;
+            pendingMovesBar.hidden = false;
+            pendingMovesText.textContent = `Изменений в очереди: ${count}`;
+            const disabled = count === 0 || isApplyingPendingMoves;
+            applyPendingMovesBtn.disabled = disabled;
+            undoPendingMoveBtn.disabled = disabled;
+            clearPendingMovesBtn.disabled = disabled;
+            if (isApplyingPendingMoves) {
+                applyPendingMovesBtn.textContent = 'Применение...';
+            } else {
+                applyPendingMovesBtn.textContent = `Применить (${count})`;
+            }
+        }
+
+        function getContiguousBlockCells(cell) {
+            const tr = cell.closest('tr.plan-row');
+            if (!tr) {
+                return [cell];
+            }
+            const cells = Array.from(tr.querySelectorAll('td.date-cell'));
+            const idx = cells.indexOf(cell);
+            if (idx < 0) {
+                return [cell];
+            }
+            const qtys = cells.map(function (c) {
+                return parseInt(c.dataset.qty || '0', 10) || 0;
+            });
+            if (qtys[idx] <= 0) {
+                return [cell];
+            }
+            let left = idx;
+            while (left > 0 && qtys[left - 1] > 0) {
+                left -= 1;
+            }
+            let right = idx;
+            while (right < cells.length - 1 && qtys[right + 1] > 0) {
+                right += 1;
+            }
+            return cells.slice(left, right + 1);
+        }
+
+        let lastHoveredDateCell = null;
+
+        function applyDateCellHover(cell, shiftKey) {
+            if (dragContext || isMoving || !cell) {
+                return;
+            }
+            clearHoverPreview();
+            if (shiftKey) {
+                const block = getContiguousBlockCells(cell);
+                block.forEach(function (c) {
+                    c.classList.add('hover-dnd-block');
+                });
+            } else {
+                cell.classList.add('hover-dnd-center');
+            }
+        }
+
+        function canDropOn(targetCell) {
+            if (!dragContext || !targetCell) {
+                return false;
+            }
+            if (targetCell.dataset.order !== dragContext.order || targetCell.dataset.filter !== dragContext.filter) {
+                return false;
+            }
+            return targetCell.dataset.date !== dragContext.fromDate;
+        }
+
+        function getDateShiftInDays(fromDate, toDate) {
+            const from = new Date(fromDate + 'T00:00:00');
+            const to = new Date(toDate + 'T00:00:00');
+            return Math.round((to.getTime() - from.getTime()) / 86400000);
+        }
+
+        function addDaysIso(dateIso, days) {
+            const date = new Date(dateIso + 'T00:00:00');
+            date.setDate(date.getDate() + days);
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
+
+        function buildQueuedMove(targetCell) {
+            if (!dragContext) {
+                return null;
+            }
+            const sourceCell = dragContext.sourceCell;
+            const toDate = targetCell.dataset.date || '';
+            const payload = {
+                mode: dragContext.mode,
+                order_number: dragContext.order,
+                filter_name: dragContext.filter,
+                from_date: dragContext.fromDate,
+                to_date: toDate,
+            };
+
+            if (dragContext.mode === 'single') {
+                const sourceQty = parseInt(sourceCell.dataset.qty || '0', 10) || 0;
+                const targetQty = parseInt(targetCell.dataset.qty || '0', 10) || 0;
+                if (sourceQty <= 0) {
+                    return null;
+                }
+                return {
+                    payload,
+                    changes: [
+                        { cell: sourceCell, prev: sourceQty, next: 0 },
+                        { cell: targetCell, prev: targetQty, next: targetQty + sourceQty },
+                    ],
+                };
+            }
+
+            const sourceRow = sourceCell.closest('tr.plan-row');
+            if (!sourceRow) {
+                return null;
+            }
+            const rowCells = Array.from(sourceRow.querySelectorAll('td.date-cell'));
+            const qtyByDate = {};
+            const cellByDate = {};
+            rowCells.forEach(function (cell) {
+                const date = cell.dataset.date || '';
+                cellByDate[date] = cell;
+                qtyByDate[date] = parseInt(cell.dataset.qty || '0', 10) || 0;
+            });
+            const offsetDays = getDateShiftInDays(dragContext.fromDate, toDate);
+            if (offsetDays === 0) {
+                return null;
+            }
+
+            const nextQtyByDate = {};
+            Object.keys(qtyByDate).forEach(function (date) {
+                nextQtyByDate[date] = 0;
+            });
+
+            for (const [date, qty] of Object.entries(qtyByDate)) {
+                if (qty <= 0) {
+                    continue;
+                }
+                const targetDate = addDaysIso(date, offsetDays);
+                if (!Object.prototype.hasOwnProperty.call(nextQtyByDate, targetDate)) {
+                    return { error: 'Сдвиг выводит часть позиции за пределы текущего диапазона дат. Примените изменения или расширьте диапазон.' };
+                }
+                nextQtyByDate[targetDate] += qty;
+            }
+
+            const changes = [];
+            Object.keys(qtyByDate).forEach(function (date) {
+                const prev = qtyByDate[date];
+                const next = nextQtyByDate[date];
+                if (prev !== next) {
+                    changes.push({ cell: cellByDate[date], prev: prev, next: next });
+                }
+            });
+            if (changes.length === 0) {
+                return null;
+            }
+            return { payload, changes };
+        }
+
+        function applyQueuedMoveChanges(queuedMove, direction) {
+            queuedMove.changes.forEach(function (change) {
+                setCellQty(change.cell, direction === 'forward' ? change.next : change.prev);
+            });
+            recalcHeaderIndicatorsFromTable();
+        }
+
+        function pushPendingMove(queuedMove) {
+            applyQueuedMoveChanges(queuedMove, 'forward');
+            pendingMoves.push(queuedMove);
+            updatePendingBarState();
+        }
+
+        function undoLastPendingMove() {
+            if (pendingMoves.length === 0) {
+                return;
+            }
+            const lastMove = pendingMoves.pop();
+            applyQueuedMoveChanges(lastMove, 'backward');
+            updatePendingBarState();
+        }
+
+        function clearPendingMoves() {
+            while (pendingMoves.length > 0) {
+                const oneMove = pendingMoves.pop();
+                applyQueuedMoveChanges(oneMove, 'backward');
+            }
+            updatePendingBarState();
+        }
+
+        async function applyPendingMovesToServer() {
+            if (pendingMoves.length === 0 || isApplyingPendingMoves) {
+                return;
+            }
+            isApplyingPendingMoves = true;
+            updatePendingBarState();
+            try {
+                const response = await fetch(window.location.pathname + window.location.search, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'fetch',
+                    },
+                    body: JSON.stringify({
+                        action: 'apply_moves',
+                        moves: pendingMoves.map(function (move) { return move.payload; }),
+                    }),
+                });
+                const data = await response.json();
+                if (!response.ok || !data || !data.ok) {
+                    throw new Error((data && data.error) ? data.error : 'Не удалось применить пакет изменений.');
+                }
+                window.location.reload();
+            } catch (err) {
+                alert((err && err.message) ? err.message : 'Ошибка применения изменений');
+                isApplyingPendingMoves = false;
+                updatePendingBarState();
+            }
+        }
+
+        function queueMoveFromDrop(targetCell) {
+            if (!dragContext || isMoving || isApplyingPendingMoves) {
+                return;
+            }
+            const queuedMove = buildQueuedMove(targetCell);
+            if (!queuedMove) {
+                clearDragState();
+                return;
+            }
+            if (queuedMove.error) {
+                alert(queuedMove.error);
+                clearDragState();
+                return;
+            }
+            pushPendingMove(queuedMove);
+            clearDragState();
+        }
+
+        dateCells.forEach(function (cell) {
+            cell.addEventListener('mousemove', function (e) {
+                if (dragContext || isMoving) {
+                    return;
+                }
+                lastHoveredDateCell = cell;
+                applyDateCellHover(cell, e.shiftKey);
+            });
+
+            cell.addEventListener('mouseleave', function () {
+                if (!dragContext && !isMoving) {
+                    clearHoverPreview();
+                    lastHoveredDateCell = null;
+                }
+            });
+
+            cell.addEventListener('dragstart', function (e) {
+                clearHoverPreview();
+                const qty = parseInt(cell.dataset.qty || '0', 10) || 0;
+                if (qty <= 0) {
+                    e.preventDefault();
+                    return;
+                }
+                const mode = e.shiftKey ? 'row' : 'single';
+                dragContext = {
+                    mode: mode === 'row' ? 'row' : 'single',
+                    order: cell.dataset.order || '',
+                    filter: cell.dataset.filter || '',
+                    fromDate: cell.dataset.date || '',
+                    sourceCell: cell,
+                };
+
+                if (dragContext.mode === 'row') {
+                    cell.classList.add('drag-source-row');
+                    const row = cell.closest('tr.plan-row');
+                    if (row) {
+                        row.classList.add('row-drag-mode');
+                    }
+                } else {
+                    cell.classList.add('drag-source-single');
+                }
+                if (e.dataTransfer) {
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', `${dragContext.order}|${dragContext.filter}|${dragContext.fromDate}`);
+                }
+            });
+
+            cell.addEventListener('dragover', function (e) {
+                if (!canDropOn(cell)) {
+                    return;
+                }
+                e.preventDefault();
+                if (e.dataTransfer) {
+                    e.dataTransfer.dropEffect = 'move';
+                }
+                cell.classList.add('drag-drop-target');
+            });
+
+            cell.addEventListener('dragenter', function (e) {
+                if (!canDropOn(cell)) {
+                    return;
+                }
+                e.preventDefault();
+                cell.classList.add('drag-drop-target');
+            });
+
+            cell.addEventListener('dragleave', function () {
+                cell.classList.remove('drag-drop-target');
+            });
+
+            cell.addEventListener('drop', function (e) {
+                if (!canDropOn(cell)) {
+                    return;
+                }
+                e.preventDefault();
+                queueMoveFromDrop(cell);
+            });
+
+            cell.addEventListener('dragend', function () {
+                clearDragState();
+            });
+        });
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key !== 'Shift' || !lastHoveredDateCell || dragContext || isMoving) {
+                return;
+            }
+            applyDateCellHover(lastHoveredDateCell, true);
+        });
+        document.addEventListener('keyup', function (e) {
+            if (e.key !== 'Shift' || !lastHoveredDateCell || dragContext || isMoving) {
+                return;
+            }
+            applyDateCellHover(lastHoveredDateCell, false);
+        });
+
+        undoPendingMoveBtn.addEventListener('click', function () {
+            if (isApplyingPendingMoves) {
+                return;
+            }
+            undoLastPendingMove();
+        });
+        clearPendingMovesBtn.addEventListener('click', function () {
+            if (isApplyingPendingMoves) {
+                return;
+            }
+            clearPendingMoves();
+        });
+        applyPendingMovesBtn.addEventListener('click', function () {
+            applyPendingMovesToServer();
+        });
+        updatePendingBarState();
+        recalcHeaderIndicatorsFromTable();
 
         openSettingsBtn.addEventListener('click', openModal);
         cancelBtn.addEventListener('click', closeModal);

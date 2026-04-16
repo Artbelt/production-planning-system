@@ -734,21 +734,36 @@ echo "<!-- Аккуратная панель авторизации -->
                 <script>
                     (function(){
                         const resultBox = document.getElementById('filterSearchResult');
-                        function getSelectEl(){ return document.querySelector('select[name="analog_filter"]'); }
+                        function getSelectEl(){
+                            // На проде может быть старый tools.php без id="filterSelect"
+                            return document.getElementById('filterSelect') || document.querySelector('select[name="analog_filter"]');
+                        }
+                        /** Полное имя фильтра: при старом HTML без кавычек в value= браузер обрезает sel.value до первого слова. */
+                        function selectedFilterName(sel){
+                            if(!sel || sel.selectedIndex < 0) return '';
+                            const opt = sel.options[sel.selectedIndex];
+                            const value = String(opt.value || '').trim();
+                            const label = String(opt.textContent || '').trim();
+                            if(!label) return value;
+                            if(value && label.length > value.length && label.indexOf(value) === 0) return label;
+                            return value || label;
+                        }
                         async function runSearch(){
                             const sel = getSelectEl();
                             if(!sel){ resultBox.innerHTML = '<div class="muted">Не найден выпадающий список.</div>'; return; }
-                            const val = sel.value.trim();
-                            if(!val){ resultBox.innerHTML = '<div class="muted">Выберите фильтр…</div>'; return; }
+                            const val = selectedFilterName(sel);
+                            if(!val || val === 'выбор аналога'){ resultBox.innerHTML = '<div class="muted">Выберите фильтр…</div>'; return; }
                             resultBox.textContent = 'Загрузка…';
                             try{
                                 const formData = new FormData(); formData.append('filter', val);
-                                const resp = await fetch('search_filter_in_the_orders.php', { method:'POST', body:formData });
+                                const resp = await fetch('search_filter_in_the_orders.php', { method:'POST', body:formData, credentials:'same-origin' });
+                                const text = await resp.text();
                                 if(!resp.ok){ resultBox.innerHTML = `<div class="alert">Ошибка запроса: ${resp.status} ${resp.statusText}</div>`; return; }
-                                resultBox.innerHTML = await resp.text();
+                                resultBox.innerHTML = text;
                             }catch(e){ resultBox.innerHTML = `<div class="alert">Ошибка: ${e}</div>`; }
                         }
-                        const sel = getSelectEl(); if(sel){ sel.id='filterSelect'; sel.addEventListener('change', runSearch); }
+                        const sel = getSelectEl();
+                        if(sel){ sel.addEventListener('change', runSearch); }
                     })();
                 </script>
             </td>
