@@ -747,20 +747,48 @@ $pageTitle = 'Активные позиции';
             background: #f0f9ff !important;
         }
         th.debt-col, td.debt-cell {
-            min-width: 164px;
-            width: 164px;
-            max-width: 164px;
+            width: 0.1%;
+            min-width: 56px;
+            max-width: 88px;
             text-align: center;
+            box-sizing: border-box;
         }
         td.debt-cell {
-            vertical-align: top;
-            padding: 2px;
+            vertical-align: middle;
+            padding: 1px 3px;
+            height: 24px;
+            max-height: 24px;
+            min-height: 24px;
+            overflow: hidden;
+            position: relative;
+            box-sizing: border-box;
+        }
+        td.debt-cell.debt-cell--warn {
+            background: #fffbeb;
+            padding-right: 14px;
+        }
+        td.debt-cell.debt-cell--warn::after {
+            content: "⏳";
+            position: absolute;
+            right: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 10px;
+            line-height: 1;
+            opacity: 0.75;
+            pointer-events: none;
         }
         .debt-list {
             display: flex;
-            flex-wrap: wrap;
+            flex-direction: row;
+            flex-wrap: nowrap;
+            align-items: center;
+            justify-content: center;
             gap: 2px;
-            justify-content: flex-start;
+            height: 22px;
+            max-height: 22px;
+            overflow: hidden;
+            white-space: nowrap;
         }
         .debt-shift {
             appearance: none;
@@ -770,6 +798,7 @@ $pageTitle = 'Активные позиции';
             width: auto;
             min-width: 24px;
             min-height: 18px;
+            max-height: 20px;
             padding: 0 4px;
             border: 1px solid #d1d5db;
             border-radius: 4px;
@@ -780,6 +809,51 @@ $pageTitle = 'Активные позиции';
             line-height: 1.2;
             cursor: default;
             white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .debt-more {
+            appearance: none;
+            flex-shrink: 0;
+            border: 1px dashed #94a3b8;
+            border-radius: 4px;
+            background: #f1f5f9;
+            color: #475569;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 1.2;
+            padding: 0 4px;
+            min-height: 18px;
+            max-height: 20px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .debt-more:hover {
+            background: #e2e8f0;
+        }
+        .debt-popover[hidden] { display: none; }
+        .debt-popover {
+            position: fixed;
+            z-index: 1150;
+            min-width: 140px;
+            max-width: 240px;
+            max-height: min(60vh, 360px);
+            overflow-y: auto;
+            padding: 8px;
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+        }
+        .debt-popover__inner {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            align-items: stretch;
+        }
+        .debt-shift.debt-shift--popover {
+            width: 100%;
+            min-height: 22px;
+            justify-content: center;
         }
         .debt-shift.drag-source-single {
             outline: 2px solid #93c5fd;
@@ -835,6 +909,14 @@ $pageTitle = 'Активные позиции';
             background: #fff7ed !important;
             outline: 2px solid #f59e0b;
             outline-offset: -2px;
+        }
+        tr.plan-row.diameter-conflict-flash td.pos-cell,
+        tr.plan-row.diameter-conflict-flash td.date-cell.diameter-flash-cell,
+        tr.plan-row.diameter-conflict-flash td.date-cell[data-diameter-conflict="1"] {
+            background: #fef2f2 !important;
+            outline: 2px solid #f87171 !important;
+            outline-offset: -2px;
+            box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.9);
         }
         .toolbar-btn {
             appearance: none;
@@ -1205,6 +1287,85 @@ $pageTitle = 'Активные позиции';
             gap: 8px;
             justify-content: flex-end;
         }
+        .norm-modal[hidden] { display: none; }
+        .norm-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 1200;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(15, 23, 42, .45);
+            padding: 16px;
+        }
+        .norm-modal__dialog {
+            width: min(760px, 100%);
+            max-height: min(80vh, 760px);
+            background: #fff;
+            border: 1px solid #dbeafe;
+            border-radius: 12px;
+            box-shadow: 0 18px 42px rgba(15, 23, 42, .22);
+            display: grid;
+            grid-template-rows: auto auto 1fr auto;
+            overflow: hidden;
+        }
+        .norm-modal__head {
+            padding: 12px 14px;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 14px;
+            font-weight: 700;
+            color: #1e3a8a;
+            background: #f8faff;
+        }
+        .norm-modal__sub {
+            padding: 8px 14px;
+            font-size: 12px;
+            color: #6b7280;
+            border-bottom: 1px solid #eef2ff;
+        }
+        .norm-list {
+            margin: 0;
+            padding: 10px 12px;
+            list-style: none;
+            display: grid;
+            gap: 6px;
+            overflow: auto;
+            align-content: start;
+        }
+        .norm-item {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            background: #fafafa;
+            padding: 6px 8px;
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 8px;
+            align-items: start;
+        }
+        .norm-item__text {
+            font-size: 12px;
+            line-height: 1.35;
+            color: #111827;
+        }
+        .norm-item__reason {
+            display: inline-block;
+            margin-top: 2px;
+            font-size: 11px;
+            color: #92400e;
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            border-radius: 6px;
+            padding: 1px 6px;
+        }
+        .norm-modal__foot {
+            padding: 10px 12px;
+            border-top: 1px solid #e5e7eb;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            justify-content: flex-end;
+            background: #f9fafb;
+        }
     </style>
 </head>
 <body>
@@ -1438,28 +1599,7 @@ $pageTitle = 'Активные позиции';
                             data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
                             data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
                         >
-                            <div class="debt-list">
-                                <?php foreach ($debtShifts as $debtShift):
-                                    $debtDate = (string)($debtShift['date'] ?? '');
-                                    $debtQty = (int)($debtShift['qty'] ?? 0);
-                                    if ($debtDate === '' || $debtQty <= 0) {
-                                        continue;
-                                    }
-                                    $debtDateObj = DateTime::createFromFormat('Y-m-d', $debtDate);
-                                    $debtDateLabel = $debtDateObj ? $debtDateObj->format('d.m') : $debtDate;
-                                ?>
-                                    <button
-                                        type="button"
-                                        class="debt-shift"
-                                        draggable="true"
-                                        data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
-                                        data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
-                                        data-date="<?= htmlspecialchars($debtDate, ENT_QUOTES, 'UTF-8') ?>"
-                                        data-qty="<?= $debtQty ?>"
-                                        title="Просроченная смена <?= htmlspecialchars($debtDateLabel, ENT_QUOTES, 'UTF-8') ?>: <?= $debtQty ?> шт"
-                                    ><?= htmlspecialchars($debtDateLabel, ENT_QUOTES, 'UTF-8') ?> • <?= $debtQty ?></button>
-                                <?php endforeach; ?>
-                            </div>
+                            <div class="debt-list"></div>
                         </td>
                         <?php foreach ($buildPlanDates as $planDate):
                             $planQty = (int)($planQtyByDate[$planDate] ?? 0);
@@ -1620,6 +1760,20 @@ $pageTitle = 'Активные позиции';
         </div>
     </div>
 </div>
+<div id="normalizePreviewModal" class="norm-modal" hidden>
+    <div class="norm-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="normalizePreviewTitle">
+        <div id="normalizePreviewTitle" class="norm-modal__head">Предлагаемые изменения</div>
+        <div class="norm-modal__sub">Выберите, какие переносы добавить в очередь.</div>
+        <ul id="normalizePreviewList" class="norm-list"></ul>
+        <div class="norm-modal__foot">
+            <button type="button" id="normalizePreviewCancelBtn" class="toolbar-btn secondary">Отмена</button>
+            <button type="button" id="normalizePreviewApplyBtn" class="toolbar-btn">Применить выбранные</button>
+        </div>
+    </div>
+</div>
+<div id="debtExpandPopover" class="debt-popover" hidden>
+    <div id="debtExpandPopoverInner" class="debt-popover__inner"></div>
+</div>
 <script>
     (function () {
         const initialDebtShiftMap = <?= json_encode($debtShiftMap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
@@ -1634,6 +1788,10 @@ $pageTitle = 'Активные позиции';
         const norm600Input = document.getElementById('indNorm600Input');
         const normDInput = document.getElementById('indNormDInput');
         const normTotalInput = document.getElementById('indNormTotalInput');
+        const normalizePreviewModal = document.getElementById('normalizePreviewModal');
+        const normalizePreviewList = document.getElementById('normalizePreviewList');
+        const normalizePreviewApplyBtn = document.getElementById('normalizePreviewApplyBtn');
+        const normalizePreviewCancelBtn = document.getElementById('normalizePreviewCancelBtn');
         const pendingMovesBar = document.getElementById('pendingMovesBar');
         const pendingMovesText = document.getElementById('pendingMovesText');
         const toggleQueuePanelBtn = document.getElementById('toggleQueuePanelBtn');
@@ -1642,11 +1800,13 @@ $pageTitle = 'Активные позиции';
         const moveQueueEmpty = document.getElementById('moveQueueEmpty');
         const moveQueueList = document.getElementById('moveQueueList');
         const dragPreview = document.getElementById('dragPreview');
+        const debtExpandPopover = document.getElementById('debtExpandPopover');
+        const debtExpandPopoverInner = document.getElementById('debtExpandPopoverInner');
         const normalizePlanBtn = document.getElementById('normalizePlanBtn');
         const applyPendingMovesBtn = document.getElementById('applyPendingMovesBtn');
         const undoPendingMoveBtn = document.getElementById('undoPendingMoveBtn');
         const clearPendingMovesBtn = document.getElementById('clearPendingMovesBtn');
-        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearPendingMovesBtn) {
+        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !normalizePreviewModal || !normalizePreviewList || !normalizePreviewApplyBtn || !normalizePreviewCancelBtn || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !debtExpandPopover || !debtExpandPopoverInner || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearPendingMovesBtn) {
             return;
         }
         const storageKey = 'activePositionsIndicatorSettings';
@@ -1824,6 +1984,9 @@ $pageTitle = 'Активные позиции';
         let isQueuePanelOpen = false;
         let previewedTargetCell = null;
         const pendingMoves = [];
+        let debtPopoverAnchorCell = null;
+        const DEBT_COMPACT_VISIBLE = 2;
+        let normalizationDraftMoves = [];
 
         function normalizeFilterKeyJs(value) {
             return String(value || '')
@@ -1937,8 +2100,12 @@ $pageTitle = 'Активные позиции';
             applySettings(getSettings());
         }
 
+        function rowHasDiameterFlag(row) {
+            return (row.dataset.hasD || '') === '1' || !!row.querySelector('.pos-indicator.d');
+        }
+
         function flashPressConflictForDate(date) {
-            clearPressConflictFlash();
+            clearIndicatorConflictFlash();
             if (!date) {
                 return;
             }
@@ -1958,10 +2125,40 @@ $pageTitle = 'Активные позиции';
                 conflictCell.dataset.dateConflict = '1';
             });
             if (count < 2) {
-                clearPressConflictFlash();
+                clearIndicatorConflictFlash();
                 return;
             }
-            window.setTimeout(clearPressConflictFlash, 2200);
+            window.setTimeout(clearIndicatorConflictFlash, 2200);
+        }
+
+        function flashDiameterConflictForDate(date) {
+            clearIndicatorConflictFlash();
+            const dateKey = String(date || '').trim();
+            if (!dateKey) {
+                return;
+            }
+            let count = 0;
+            document.querySelectorAll('tr.plan-row').forEach(function (row) {
+                if (!rowHasDiameterFlag(row)) {
+                    return;
+                }
+                const conflictCell = Array.from(row.querySelectorAll('td.date-cell')).find(function (cell) {
+                    const cellDate = String(cell.dataset.date || '').trim();
+                    return cellDate === dateKey && (parseInt(cell.dataset.qty || '0', 10) || 0) > 0;
+                });
+                if (!conflictCell) {
+                    return;
+                }
+                count += 1;
+                row.classList.add('diameter-conflict-flash');
+                conflictCell.classList.add('diameter-flash-cell');
+                conflictCell.dataset.diameterConflict = '1';
+            });
+            if (count < 1) {
+                clearIndicatorConflictFlash();
+                return;
+            }
+            window.setTimeout(clearIndicatorConflictFlash, 2200);
         }
 
         function clearHoverPreview() {
@@ -2196,6 +2393,94 @@ $pageTitle = 'Активные позиции';
             });
         }
 
+        function closeDebtExpandPopover() {
+            debtPopoverAnchorCell = null;
+            debtExpandPopover.hidden = true;
+            debtExpandPopoverInner.innerHTML = '';
+        }
+
+        function positionDebtExpandPopover(anchorCell) {
+            if (!anchorCell || debtExpandPopover.hidden) {
+                return;
+            }
+            const rect = anchorCell.getBoundingClientRect();
+            const popRect = debtExpandPopover.getBoundingClientRect();
+            const gap = 6;
+            const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+            const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+            let left = rect.left + (rect.width - popRect.width) / 2;
+            let top = rect.bottom + gap;
+            if (left + popRect.width > vw - 8) {
+                left = Math.max(8, vw - popRect.width - 8);
+            }
+            if (left < 8) {
+                left = 8;
+            }
+            if (top + popRect.height > vh - 8) {
+                top = Math.max(8, rect.top - popRect.height - gap);
+            }
+            if (top < 8) {
+                top = 8;
+            }
+            debtExpandPopover.style.left = `${Math.round(left)}px`;
+            debtExpandPopover.style.top = `${Math.round(top)}px`;
+        }
+
+        function fillDebtPopoverShifts(debtCell) {
+            debtExpandPopoverInner.innerHTML = '';
+            const planKey = debtCell.dataset.debtKey || '';
+            const order = debtCell.dataset.order || '';
+            const filter = debtCell.dataset.filter || '';
+            const shifts = getDebtShiftsForKey(planKey);
+            shifts.forEach(function (shift) {
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'debt-shift debt-shift--popover';
+                item.draggable = true;
+                item.dataset.order = order;
+                item.dataset.filter = filter;
+                item.dataset.date = shift.date;
+                item.dataset.qty = String(shift.qty);
+                item.title = `Просроченная смена ${toShortDate(shift.date)}: ${shift.qty} шт`;
+                item.textContent = `${toShortDate(shift.date)} • ${shift.qty}`;
+                bindDebtShiftDrag(item);
+                debtExpandPopoverInner.appendChild(item);
+            });
+        }
+
+        function openDebtExpandPopover(debtCell) {
+            if (!debtCell) {
+                return;
+            }
+            const planKey = debtCell.dataset.debtKey || '';
+            const shifts = getDebtShiftsForKey(planKey);
+            if (shifts.length === 0) {
+                closeDebtExpandPopover();
+                return;
+            }
+            debtPopoverAnchorCell = debtCell;
+            fillDebtPopoverShifts(debtCell);
+            debtExpandPopover.hidden = false;
+            positionDebtExpandPopover(debtCell);
+            window.requestAnimationFrame(function () {
+                positionDebtExpandPopover(debtCell);
+            });
+        }
+
+        function refreshDebtExpandPopoverIfOpen(debtCell) {
+            if (!debtPopoverAnchorCell || debtCell !== debtPopoverAnchorCell) {
+                return;
+            }
+            const planKey = debtCell.dataset.debtKey || '';
+            const shifts = getDebtShiftsForKey(planKey);
+            if (shifts.length === 0) {
+                closeDebtExpandPopover();
+                return;
+            }
+            fillDebtPopoverShifts(debtCell);
+            positionDebtExpandPopover(debtCell);
+        }
+
         function renderDebtCellByKey(planKey) {
             if (!planKey) {
                 return;
@@ -2211,8 +2496,16 @@ $pageTitle = 'Активные позиции';
             const order = debtCell.dataset.order || '';
             const filter = debtCell.dataset.filter || '';
             const shifts = getDebtShiftsForKey(planKey);
+            const total = shifts.length;
+            debtCell.classList.toggle('debt-cell--warn', total > 3);
+            if (total === 0) {
+                debtCell.title = '';
+            } else {
+                debtCell.title = `Просрочено ${total} смен`;
+            }
             list.innerHTML = '';
-            shifts.forEach(function (shift) {
+            const visible = shifts.slice(0, DEBT_COMPACT_VISIBLE);
+            visible.forEach(function (shift) {
                 const item = document.createElement('button');
                 item.type = 'button';
                 item.className = 'debt-shift';
@@ -2226,6 +2519,21 @@ $pageTitle = 'Активные позиции';
                 bindDebtShiftDrag(item);
                 list.appendChild(item);
             });
+            const hidden = total - DEBT_COMPACT_VISIBLE;
+            if (hidden > 0) {
+                const moreBtn = document.createElement('button');
+                moreBtn.type = 'button';
+                moreBtn.className = 'debt-more';
+                moreBtn.textContent = `+${hidden}`;
+                moreBtn.title = `Ещё ${hidden} смен — открыть список`;
+                moreBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openDebtExpandPopover(debtCell);
+                });
+                list.appendChild(moreBtn);
+            }
+            refreshDebtExpandPopoverIfOpen(debtCell);
         }
 
         function clearQueuePreview() {
@@ -2237,12 +2545,17 @@ $pageTitle = 'Активные позиции';
             });
         }
 
-        function clearPressConflictFlash() {
+        function clearIndicatorConflictFlash() {
             document.querySelectorAll('tr.plan-row.press-conflict-flash').forEach(function (row) {
                 row.classList.remove('press-conflict-flash');
             });
+            document.querySelectorAll('tr.plan-row.diameter-conflict-flash').forEach(function (row) {
+                row.classList.remove('diameter-conflict-flash');
+            });
             dateCells.forEach(function (cell) {
                 delete cell.dataset.dateConflict;
+                delete cell.dataset.diameterConflict;
+                cell.classList.remove('diameter-flash-cell');
             });
         }
 
@@ -2646,6 +2959,142 @@ $pageTitle = 'Активные позиции';
             };
         }
 
+        function getCellQtyVirtual(cell, overrides) {
+            if (overrides && overrides.has(cell)) {
+                return Math.max(0, parseInt(overrides.get(cell), 10) || 0);
+            }
+            return Math.max(0, parseInt(cell.dataset.qty || '0', 10) || 0);
+        }
+
+        function getDateTotalQtyVirtual(date, overrides) {
+            let total = 0;
+            dateCells.forEach(function (cell) {
+                if ((cell.dataset.date || '') !== date) {
+                    return;
+                }
+                total += getCellQtyVirtual(cell, overrides);
+            });
+            return total;
+        }
+
+        function getDateDQtyVirtual(date, overrides) {
+            let total = 0;
+            dateCells.forEach(function (cell) {
+                if ((cell.dataset.date || '') !== date) {
+                    return;
+                }
+                const qty = getCellQtyVirtual(cell, overrides);
+                if (qty <= 0) {
+                    return;
+                }
+                const row = cell.closest('tr.plan-row');
+                if (!row) {
+                    return;
+                }
+                if ((row.dataset.hasD || '') === '1') {
+                    total += qty;
+                }
+            });
+            return total;
+        }
+
+        function buildQueuedSingleMoveVirtual(sourceCell, targetCell, overrides) {
+            if (!sourceCell || !targetCell) {
+                return null;
+            }
+            const sourceQty = getCellQtyVirtual(sourceCell, overrides);
+            const targetQty = getCellQtyVirtual(targetCell, overrides);
+            const order = sourceCell.dataset.order || '';
+            const filter = sourceCell.dataset.filter || '';
+            const fromDate = sourceCell.dataset.date || '';
+            const toDate = targetCell.dataset.date || '';
+            if (sourceQty <= 0 || order === '' || filter === '' || fromDate === '' || toDate === '' || fromDate === toDate) {
+                return null;
+            }
+            if (targetQty > 0) {
+                return { error: 'Нельзя складывать смены одной позиции: целевая дата уже занята.' };
+            }
+            return {
+                payload: {
+                    mode: 'single',
+                    order_number: order,
+                    filter_name: filter,
+                    from_date: fromDate,
+                    to_date: toDate,
+                },
+                movedQty: sourceQty,
+                changes: [
+                    { cell: sourceCell, prev: sourceQty, next: 0 },
+                    { cell: targetCell, prev: targetQty, next: targetQty + sourceQty },
+                ],
+            };
+        }
+
+        function closeNormalizePreviewModal() {
+            normalizationDraftMoves = [];
+            normalizePreviewList.innerHTML = '';
+            normalizePreviewModal.hidden = true;
+        }
+
+        function renderNormalizePreviewModal(draftMoves) {
+            normalizePreviewList.innerHTML = '';
+            draftMoves.forEach(function (draft, idx) {
+                const item = document.createElement('li');
+                item.className = 'norm-item';
+                const check = document.createElement('input');
+                check.type = 'checkbox';
+                check.checked = true;
+                check.dataset.idx = String(idx);
+                const text = document.createElement('div');
+                text.className = 'norm-item__text';
+                const payload = draft.payload || {};
+                const order = payload.order_number || '—';
+                const filter = payload.filter_name || '—';
+                const fromDate = toShortDate(payload.from_date || '');
+                const toDate = toShortDate(payload.to_date || '');
+                text.innerHTML = `${order} • ${filter}: ${fromDate} -> ${toDate}, ${draft.movedQty} шт<br><span class="norm-item__reason">${draft.reason}</span>`;
+                item.appendChild(check);
+                item.appendChild(text);
+                normalizePreviewList.appendChild(item);
+            });
+            normalizePreviewModal.hidden = false;
+        }
+
+        function applySelectedNormalizationDraftMoves() {
+            const selectedIndexes = Array.from(normalizePreviewList.querySelectorAll('input[type="checkbox"][data-idx]:checked'))
+                .map(function (el) { return parseInt(el.dataset.idx || '-1', 10); })
+                .filter(function (idx) { return !Number.isNaN(idx) && idx >= 0 && idx < normalizationDraftMoves.length; });
+            if (selectedIndexes.length === 0) {
+                closeNormalizePreviewModal();
+                return;
+            }
+            const skipped = [];
+            selectedIndexes.forEach(function (idx) {
+                const draft = normalizationDraftMoves[idx];
+                if (!draft || !draft.payload) {
+                    return;
+                }
+                const payload = draft.payload;
+                const rowCells = getRowDateCellsByOrderFilter(payload.order_number || '', payload.filter_name || '');
+                if (rowCells.length === 0) {
+                    skipped.push(`${payload.order_number || '—'} / ${payload.filter_name || '—'} (${toShortDate(payload.from_date || '')} -> ${toShortDate(payload.to_date || '')})`);
+                    return;
+                }
+                const sourceCell = getCellByDate(rowCells, payload.from_date || '');
+                const targetCell = getCellByDate(rowCells, payload.to_date || '');
+                const queuedMove = buildQueuedSingleMove(sourceCell, targetCell);
+                if (!queuedMove || queuedMove.error) {
+                    skipped.push(`${payload.order_number || '—'} / ${payload.filter_name || '—'} (${toShortDate(payload.from_date || '')} -> ${toShortDate(payload.to_date || '')})`);
+                    return;
+                }
+                pushPendingMove(queuedMove);
+            });
+            closeNormalizePreviewModal();
+            if (skipped.length > 0) {
+                alert(`Часть предложений не применена: ${skipped.join(', ')}`);
+            }
+        }
+
         function normalizePlanIntoQueue() {
             if (isApplyingPendingMoves) {
                 return;
@@ -2658,13 +3107,18 @@ $pageTitle = 'Активные позиции';
                 return;
             }
 
+            const virtualQty = new Map();
+            const draftMoves = [];
             const unresolved = new Set();
-            let createdMoves = 0;
             let guard = 0;
             for (let i = 0; i < dates.length; i += 1) {
                 const date = dates[i];
                 while (true) {
-                    const overloadState = getDateOverload(date, normTotal, normD);
+                    const overloadState = {
+                        totalOver: Math.max(0, getDateTotalQtyVirtual(date, virtualQty) - normTotal),
+                        dOver: Math.max(0, getDateDQtyVirtual(date, virtualQty) - normD),
+                    };
+                    overloadState.hasOverload = overloadState.totalOver > 0 || overloadState.dOver > 0;
                     if (!overloadState.hasOverload) {
                         break;
                     }
@@ -2678,7 +3132,7 @@ $pageTitle = 'Активные позиции';
                         if ((cell.dataset.date || '') !== date) {
                             return false;
                         }
-                        const qty = parseInt(cell.dataset.qty || '0', 10) || 0;
+                        const qty = getCellQtyVirtual(cell, virtualQty);
                         if (qty <= 0) {
                             return false;
                         }
@@ -2709,7 +3163,7 @@ $pageTitle = 'Активные позиции';
 
                     let moved = false;
                     for (const sourceCell of candidates) {
-                        const qty = parseInt(sourceCell.dataset.qty || '0', 10) || 0;
+                        const qty = getCellQtyVirtual(sourceCell, virtualQty);
                         if (qty <= 0) {
                             continue;
                         }
@@ -2730,21 +3184,31 @@ $pageTitle = 'Активные позиции';
                             if ((parseInt(targetCell.dataset.qty || '0', 10) || 0) > 0) {
                                 continue;
                             }
-                            if (getDateTotalQty(targetDate) + qty > normTotal) {
+                            if (getCellQtyVirtual(targetCell, virtualQty) > 0) {
                                 continue;
                             }
-                            if (sourceIsD && (getDateDQty(targetDate) + qty > normD)) {
+                            if (getDateTotalQtyVirtual(targetDate, virtualQty) + qty > normTotal) {
                                 continue;
                             }
-                            const queuedMove = buildQueuedSingleMove(sourceCell, targetCell);
+                            if (sourceIsD && (getDateDQtyVirtual(targetDate, virtualQty) + qty > normD)) {
+                                continue;
+                            }
+                            const queuedMove = buildQueuedSingleMoveVirtual(sourceCell, targetCell, virtualQty);
                             if (!queuedMove) {
                                 continue;
                             }
                             if (queuedMove.error) {
                                 continue;
                             }
-                            pushPendingMove(queuedMove);
-                            createdMoves += 1;
+                            queuedMove.changes.forEach(function (change) {
+                                virtualQty.set(change.cell, change.next);
+                            });
+                            const reason = overloadState.dOver > 0 ? 'конфликт D' : 'перегруз total';
+                            draftMoves.push({
+                                payload: queuedMove.payload,
+                                movedQty: queuedMove.movedQty,
+                                reason: reason,
+                            });
                             moved = true;
                             break;
                         }
@@ -2760,16 +3224,19 @@ $pageTitle = 'Активные позиции';
                 }
             }
 
-            if (createdMoves === 0 && unresolved.size === 0) {
+            if (draftMoves.length === 0 && unresolved.size === 0) {
                 alert('Нормализация: перегрузов по нормам total/D не найдено.');
                 return;
             }
-            if (createdMoves > 0 && unresolved.size === 0) {
-                alert(`Нормализация: в очередь добавлено ${createdMoves} переносов.`);
+            if (draftMoves.length > 0) {
+                normalizationDraftMoves = draftMoves;
+                renderNormalizePreviewModal(draftMoves);
+            }
+            if (draftMoves.length > 0 && unresolved.size === 0) {
                 return;
             }
             const unresolvedList = Array.from(unresolved).join(', ');
-            alert(`Нормализация: добавлено ${createdMoves} переносов, но остались перегрузы по датам: ${unresolvedList}.`);
+            alert(`Нормализация: найдено ${draftMoves.length} предложений, но остались перегрузы по датам: ${unresolvedList}.`);
         }
 
         function applyQueuedMoveChanges(queuedMove, direction) {
@@ -3013,6 +3480,17 @@ $pageTitle = 'Активные позиции';
         normalizePlanBtn.addEventListener('click', function () {
             normalizePlanIntoQueue();
         });
+        normalizePreviewApplyBtn.addEventListener('click', function () {
+            applySelectedNormalizationDraftMoves();
+        });
+        normalizePreviewCancelBtn.addEventListener('click', function () {
+            closeNormalizePreviewModal();
+        });
+        normalizePreviewModal.addEventListener('click', function (e) {
+            if (e.target === normalizePreviewModal) {
+                closeNormalizePreviewModal();
+            }
+        });
         applyPendingMovesBtn.addEventListener('click', function () {
             applyPendingMovesToServer();
         });
@@ -3075,15 +3553,66 @@ $pageTitle = 'Активные позиции';
                 closeModal();
                 return;
             }
+            if (e.key === 'Escape' && !normalizePreviewModal.hidden) {
+                closeNormalizePreviewModal();
+                return;
+            }
+            if (e.key === 'Escape' && !debtExpandPopover.hidden) {
+                closeDebtExpandPopover();
+            }
+        });
+        document.addEventListener('click', function (e) {
+            const dInd = e.target.closest('.date-indicator[data-kind="d"]');
+            const dTh = dInd ? dInd.closest('th[data-plan-date]') : null;
+            if (dInd && dTh) {
+                const dQty = parseInt(dInd.getAttribute('data-qty') || '0', 10) || 0;
+                const normD = Math.max(1, parseInt(getSettings().normD, 10) || 1);
+                if (dQty > normD) {
+                    const planDate = String(dTh.getAttribute('data-plan-date') || '').trim();
+                    flashDiameterConflictForDate(planDate);
+                }
+            }
+            if (!debtExpandPopover.hidden) {
+                if (debtExpandPopover.contains(e.target)) {
+                    return;
+                }
+                const clickedCell = e.target.closest('td.debt-cell');
+                if (clickedCell && clickedCell === debtPopoverAnchorCell && !e.target.closest('.debt-shift')) {
+                    closeDebtExpandPopover();
+                    return;
+                }
+                closeDebtExpandPopover();
+            }
+            const debtCell = e.target.closest('td.debt-cell');
+            if (!debtCell) {
+                return;
+            }
+            if (e.target.closest('.debt-shift')) {
+                return;
+            }
+            if (e.target.closest('.debt-more')) {
+                return;
+            }
+            const planKey = debtCell.dataset.debtKey || '';
+            if (getDebtShiftsForKey(planKey).length === 0) {
+                return;
+            }
+            openDebtExpandPopover(debtCell);
         });
         window.addEventListener('resize', function () {
             if (previewedTargetCell) {
                 positionDragPreview(previewedTargetCell);
             }
+            if (!debtExpandPopover.hidden && debtPopoverAnchorCell) {
+                positionDebtExpandPopover(debtPopoverAnchorCell);
+            }
         });
         window.addEventListener('scroll', function () {
             if (previewedTargetCell) {
                 positionDragPreview(previewedTargetCell);
+            }
+            if (!debtExpandPopover.hidden && debtPopoverAnchorCell) {
+                positionDebtExpandPopover(debtPopoverAnchorCell);
             }
         }, true);
     })();

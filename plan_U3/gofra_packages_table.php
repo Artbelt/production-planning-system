@@ -1,7 +1,18 @@
 <?php
 require_once __DIR__ . '/../auth/includes/db.php';
-$pdo = getPdo('plan_u3');
-$rows = $pdo->query("SELECT p_p_name, p_p_fold_height, p_p_fold_count FROM paper_package_round")->fetchAll(PDO::FETCH_ASSOC);
+$rows = [];
+$pageLogs = [];
+
+try {
+    $pdo = getPdo('plan_u3');
+    $rows = $pdo
+        ->query("SELECT p_p_name, p_p_fold_height, p_p_fold_count FROM paper_package_round")
+        ->fetchAll(PDO::FETCH_ASSOC);
+    $pageLogs[] = 'БД plan_u3: подключение успешно, строк получено: ' . count($rows);
+} catch (Throwable $e) {
+    $pageLogs[] = 'Ошибка БД: ' . $e->getMessage();
+    $pageLogs[] = 'Файл: ' . $e->getFile() . ':' . $e->getLine();
+}
 ?>
 
 <!DOCTYPE html>
@@ -27,6 +38,16 @@ $rows = $pdo->query("SELECT p_p_name, p_p_fold_height, p_p_fold_count FROM paper
         th {
             background-color: #f3f4f6;
         }
+        .debug-panel {
+            margin: 12px 0;
+            padding: 10px 12px;
+            border: 1px solid #f59e0b;
+            border-radius: 6px;
+            background-color: #fffbeb;
+            color: #92400e;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
     </style>
     <script>
         function filterTable() {
@@ -46,6 +67,9 @@ $rows = $pdo->query("SELECT p_p_name, p_p_fold_height, p_p_fold_count FROM paper
 <body>
 <h2>Фильтр таблицы</h2>
 <input type="text" id="filterInput" onkeyup="filterTable()" placeholder="Введите название для фильтрации...">
+<?php if (!empty($pageLogs)): ?>
+    <div class="debug-panel"><?= htmlspecialchars(implode("\n", $pageLogs)) ?></div>
+<?php endif; ?>
 
 <table>
     <thead>
