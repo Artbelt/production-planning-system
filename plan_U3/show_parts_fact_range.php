@@ -37,7 +37,7 @@ if (!$rows) {
     exit;
 }
 
-function tooltipForRange(PDO $pdo, string $order, string $part, string $start, string $end): string
+function rangeDetails(PDO $pdo, string $order, string $part, string $start, string $end): array
 {
     $q = $pdo->prepare("
         SELECT date_of_production, SUM(COALESCE(count_of_parts, 0)) AS qty
@@ -57,34 +57,46 @@ function tooltipForRange(PDO $pdo, string $order, string $part, string $start, s
     ]);
     $items = $q->fetchAll(PDO::FETCH_ASSOC);
     if (!$items) {
-        return '';
+        return ['dates' => '', 'tooltip' => ''];
     }
 
     $tip = '';
+    $dates = [];
     foreach ($items as $it) {
-        $tip .= $it['date_of_production'] . ' — ' . $it['qty'] . " шт\n";
+        $date = (string)($it['date_of_production'] ?? '');
+        if ($date !== '') {
+            $dates[] = $date;
+        }
+        $tip .= $date . ' — ' . $it['qty'] . " шт\n";
     }
-    return htmlspecialchars(trim($tip), ENT_QUOTES, 'UTF-8');
+    return [
+        'dates' => htmlspecialchars(implode(', ', $dates), ENT_QUOTES, 'UTF-8'),
+        'tooltip' => htmlspecialchars(trim($tip), ENT_QUOTES, 'UTF-8')
+    ];
 }
 
 echo '<table>';
-echo '<tr><th>Заявка</th><th>Гофропакет</th><th>Факт, шт</th></tr>';
+echo '<tr><th>Заявка</th><th>Гофропакет</th><th>Даты выпуска</th><th>Факт, шт</th></tr>';
 foreach ($rows as $r) {
     $order = (string)($r['name_of_order'] ?? '');
     $part = (string)($r['name_of_parts'] ?? '');
     $fact = (int)($r['fact_sum'] ?? 0);
-    $tip = tooltipForRange($pdo, $order, $part, $start, $end);
+    $details = rangeDetails($pdo, $order, $part, $start, $end);
+    $dates = $details['dates'];
+    $tip = $details['tooltip'];
 
     if ($tip !== '') {
         echo '<tr>'
             . '<td>' . htmlspecialchars($order, ENT_QUOTES, 'UTF-8') . '</td>'
             . '<td>' . htmlspecialchars($part, ENT_QUOTES, 'UTF-8') . '</td>'
+            . '<td>' . $dates . '</td>'
             . '<td><div class="tooltip">' . $fact . '<span class="tooltiptext">' . $tip . '</span></div></td>'
             . '</tr>';
     } else {
         echo '<tr>'
             . '<td>' . htmlspecialchars($order, ENT_QUOTES, 'UTF-8') . '</td>'
             . '<td>' . htmlspecialchars($part, ENT_QUOTES, 'UTF-8') . '</td>'
+            . '<td>—</td>'
             . '<td>' . $fact . '</td>'
             . '</tr>';
     }

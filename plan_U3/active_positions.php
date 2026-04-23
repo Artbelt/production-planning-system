@@ -45,6 +45,12 @@ function normalizeFilterKey(string $name): string
     return mb_strtoupper($name, 'UTF-8');
 }
 
+function normalizeTextKey(string $name): string
+{
+    $name = preg_replace('/\s+/u', ' ', trim($name));
+    return mb_strtoupper($name, 'UTF-8');
+}
+
 /**
  * Допуск при проверке «план с сегодня» покрывает остаток (шт. и %, с ограничением сверху).
  */
@@ -556,6 +562,7 @@ if (!empty($rows)) {
                     rfs.filter AS filter_name,
                     rfs.press AS press,
                     rfs.analog AS analog,
+                    rfs.filter_package AS filter_package,
                     rfs.Diametr_outer AS diametr_outer,
                     ppr.p_p_paper_width AS paper_width_mm
                 FROM round_filter_structure rfs
@@ -577,6 +584,7 @@ if (!empty($rows)) {
                     $filterMetaByKey[$metaKey] = [
                         'press' => false,
                         'analog' => null,
+                        'filter_package' => null,
                         'diametr_outer' => null,
                         'paper_width_mm' => null,
                     ];
@@ -595,9 +603,89 @@ if (!empty($rows)) {
                 if ($metaAnalog !== '' && $filterMetaByKey[$metaKey]['analog'] === null) {
                     $filterMetaByKey[$metaKey]['analog'] = $metaAnalog;
                 }
+                $metaPackage = trim((string)($metaRow['filter_package'] ?? ''));
+                if ($metaPackage !== '' && $filterMetaByKey[$metaKey]['filter_package'] === null) {
+                    $filterMetaByKey[$metaKey]['filter_package'] = $metaPackage;
+                }
             }
         } catch (Throwable $e) {
             $filterMetaByKey = [];
+        }
+    }
+}
+
+$gofroProducedByOrderPackage = [];
+$gofroProducedDatesByOrderPackage = [];
+if (!empty($rows) && !empty($filterMetaByKey)) {
+    $ordersForGofro = [];
+    $packagesForGofro = [];
+    foreach ($rows as $row) {
+        $rawOrder = trim((string)($row['order_number'] ?? ''));
+        $rawFilter = (string)($row['filter_name'] ?? '');
+        if ($rawOrder === '' || $rawFilter === '') {
+            continue;
+        }
+        $meta = $filterMetaByKey[normalizeFilterKey($rawFilter)] ?? null;
+        $packageName = trim((string)($meta['filter_package'] ?? ''));
+        if ($packageName === '') {
+            continue;
+        }
+        $ordersForGofro[$rawOrder] = true;
+        $packagesForGofro[$packageName] = true;
+    }
+
+    if (!empty($ordersForGofro) && !empty($packagesForGofro)) {
+        try {
+            $orderList = array_keys($ordersForGofro);
+            $packageList = array_keys($packagesForGofro);
+            $orderPlaceholders = implode(',', array_fill(0, count($orderList), '?'));
+            $packagePlaceholders = implode(',', array_fill(0, count($packageList), '?'));
+
+            $sqlGofroProduced = "
+                SELECT
+                    mp.name_of_order,
+                    mp.name_of_parts,
+                    mp.date_of_production,
+                    SUM(COALESCE(mp.count_of_parts, 0)) AS qty
+                FROM manufactured_parts mp
+                WHERE mp.name_of_order IN ($orderPlaceholders)
+                  AND mp.name_of_parts IN ($packagePlaceholders)
+                GROUP BY mp.name_of_order, mp.name_of_parts, mp.date_of_production
+            ";
+            $stmtGofroProduced = $pdo->prepare($sqlGofroProduced);
+            $stmtGofroProduced->execute(array_merge($orderList, $packageList));
+            foreach ($stmtGofroProduced->fetchAll(PDO::FETCH_ASSOC) as $gr) {
+                $order = trim((string)($gr['name_of_order'] ?? ''));
+                $partKey = normalizeTextKey((string)($gr['name_of_parts'] ?? ''));
+                $date = trim((string)($gr['date_of_production'] ?? ''));
+                $qty = (int)($gr['qty'] ?? 0);
+                if ($order === '' || $partKey === '') {
+                    continue;
+                }
+                if (!isset($gofroProducedByOrderPackage[$order])) {
+                    $gofroProducedByOrderPackage[$order] = [];
+                }
+                if (!isset($gofroProducedByOrderPackage[$order][$partKey])) {
+                    $gofroProducedByOrderPackage[$order][$partKey] = 0;
+                }
+                $gofroProducedByOrderPackage[$order][$partKey] += $qty;
+
+                if ($date !== '') {
+                    if (!isset($gofroProducedDatesByOrderPackage[$order])) {
+                        $gofroProducedDatesByOrderPackage[$order] = [];
+                    }
+                    if (!isset($gofroProducedDatesByOrderPackage[$order][$partKey])) {
+                        $gofroProducedDatesByOrderPackage[$order][$partKey] = [];
+                    }
+                    if (!isset($gofroProducedDatesByOrderPackage[$order][$partKey][$date])) {
+                        $gofroProducedDatesByOrderPackage[$order][$partKey][$date] = 0;
+                    }
+                    $gofroProducedDatesByOrderPackage[$order][$partKey][$date] += $qty;
+                }
+            }
+        } catch (Throwable $e) {
+            $gofroProducedByOrderPackage = [];
+            $gofroProducedDatesByOrderPackage = [];
         }
     }
 }
@@ -1026,6 +1114,9 @@ $pageTitle = 'Активные позиции';
         .toolbar-btn.secondary {
             font-weight: 500;
         }
+        body.hide-gofro-cols .gofro-col {
+            display: none;
+        }
         table {
             width: 100%;
             border-collapse: collapse;
@@ -1108,6 +1199,14 @@ $pageTitle = 'Активные позиции';
         td.date-cell.drag-busy {
             opacity: .6;
             pointer-events: none;
+        }
+        td.date-cell.gofro-coverage-cell {
+            background: #dcfce7;
+            box-shadow: inset 0 0 0 1px rgba(22, 163, 74, 0.35);
+        }
+        td.date-cell.gofro-coverage-cell-partial {
+            background: #fef3c7;
+            box-shadow: inset 0 0 0 1px rgba(217, 119, 6, 0.35);
         }
 
         /* Гистограмма выполнения в ячейке «Позиция» */
@@ -1511,12 +1610,15 @@ $pageTitle = 'Активные позиции';
             <button type="button" id="toggleIndicatorsBtn" class="toolbar-btn" aria-pressed="false">Индикаторы</button>
             <button type="button" id="toggleRowIndicatorsBtn" class="toolbar-btn secondary" aria-pressed="true">Индикаторы у названий</button>
             <button type="button" id="openIndicatorSettingsBtn" class="toolbar-btn secondary">Настройка индикаторов</button>
+            <button type="button" id="openGofroPackagesBtn" class="toolbar-btn secondary">Гофропакеты</button>
+            <button type="button" id="toggleGofroCoverageBtn" class="toolbar-btn secondary" aria-pressed="false">Покрытие гофропакетами</button>
             <button type="button" id="addPlanDayBtn" class="toolbar-btn secondary" title="Добавить колонку следующего дня в конец таблицы (только в интерфейсе; в БД не пишется)">+ день</button>
         </div>
         <div id="pendingMovesBar" class="pending-bar">
             <span id="pendingMovesText" class="pending-text">Изменений в очереди: 0</span>
             <button type="button" id="toggleQueuePanelBtn" class="toolbar-btn secondary" aria-pressed="false">Очередь</button>
             <button type="button" id="normalizePlanBtn" class="toolbar-btn secondary">Нормализовать план</button>
+            <button type="button" id="clearLocksBtn" class="toolbar-btn secondary">Снять блокировку</button>
             <button type="button" id="undoPendingMoveBtn" class="toolbar-btn secondary">Отменить последнее</button>
             <button type="button" id="clearPendingMovesBtn" class="toolbar-btn secondary">Сбросить все</button>
             <button type="button" id="applyPendingMovesBtn" class="toolbar-btn">Применить</button>
@@ -1547,6 +1649,8 @@ $pageTitle = 'Активные позиции';
                         <th>Состояние</th>
                         <th>Заявка</th>
                         <th class="debt-col">Долг</th>
+                        <th class="num gofro-col">Г/п изготовлено</th>
+                        <th class="num gofro-col">Г/п в наличии</th>
                         <?php foreach ($buildPlanDates as $planDate):
                             $dateObj = DateTime::createFromFormat('Y-m-d', (string) $planDate);
                             $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
@@ -1633,7 +1737,7 @@ $pageTitle = 'Активные позиции';
                 <tbody>
                 <?php if (empty($rows)): ?>
                     <tr>
-                        <td colspan="<?= 8 + count($buildPlanDates) ?>" class="muted" style="text-align:center;padding:12px;">
+                        <td colspan="<?= 10 + count($buildPlanDates) ?>" class="muted" style="text-align:center;padding:12px;">
                             Нет незакрытых позиций по активным заявкам.
                         </td>
                     </tr>
@@ -1681,6 +1785,28 @@ $pageTitle = 'Активные позиции';
                             && (float)$rowMeta['paper_width_mm'] > 400;
                         $rowHas600 = isset($rowMeta['paper_width_mm']) && $rowMeta['paper_width_mm'] !== null
                             && (float)$rowMeta['paper_width_mm'] > 450;
+                        $rowGofroPackage = trim((string)($rowMeta['filter_package'] ?? ''));
+                        $rowGofroPackageKey = normalizeTextKey($rowGofroPackage);
+                        $rowGofroProduced = $rowGofroPackageKey !== '' && $rawOrder !== ''
+                            ? (int)($gofroProducedByOrderPackage[$rawOrder][$rowGofroPackageKey] ?? 0)
+                            : null;
+                        $rowGofroDates = $rowGofroPackageKey !== '' && $rawOrder !== ''
+                            ? ($gofroProducedDatesByOrderPackage[$rawOrder][$rowGofroPackageKey] ?? [])
+                            : [];
+                        if (!empty($rowGofroDates)) {
+                            ksort($rowGofroDates);
+                        }
+                        $rowGofroProducedTip = '';
+                        if (!empty($rowGofroDates)) {
+                            $tipParts = [];
+                            foreach ($rowGofroDates as $shiftDate => $shiftQty) {
+                                $tipParts[] = $shiftDate . ' — ' . (int)$shiftQty . ' шт';
+                            }
+                            $rowGofroProducedTip = implode("\n", $tipParts);
+                        }
+                        $rowGofroAvailable = $rowGofroProduced !== null
+                            ? ((int)$rowGofroProduced - (int)$produced)
+                            : null;
                     ?>
                     <tr
                         class="plan-row"
@@ -1690,6 +1816,7 @@ $pageTitle = 'Активные позиции';
                         data-has-d="<?= $rowHasD ? '1' : '0' ?>"
                         data-has-600="<?= $rowHas600 ? '1' : '0' ?>"
                         data-priority="<?= $isLagging ? 'A' : 'C' ?>"
+                        data-gofro-available="<?= $rowGofroAvailable !== null ? (int)$rowGofroAvailable : 0 ?>"
                     >
                         <td
                             class="pos-cell"
@@ -1736,6 +1863,12 @@ $pageTitle = 'Активные позиции';
                         >
                             <div class="debt-list"></div>
                         </td>
+                        <td class="num gofro-col" title="<?= $rowGofroPackage !== '' ? ('Гофропакет: ' . htmlspecialchars($rowGofroPackage, ENT_QUOTES, 'UTF-8') . ($rowGofroProducedTip !== '' ? "\n" . htmlspecialchars($rowGofroProducedTip, ENT_QUOTES, 'UTF-8') : '')) : 'Для фильтра не задан гофропакет' ?>">
+                            <?= $rowGofroProduced !== null ? (int)$rowGofroProduced : '—' ?>
+                        </td>
+                        <td class="num gofro-col" title="<?= $rowGofroPackage !== '' ? ('Гофропакет: ' . htmlspecialchars($rowGofroPackage, ENT_QUOTES, 'UTF-8') . '; разница = изготовлено г/п (' . (int)($rowGofroProduced ?? 0) . ') - изготовлено фильтров (' . (int)$produced . ')') : 'Для фильтра не задан гофропакет' ?>">
+                            <?= $rowGofroAvailable !== null ? (int)$rowGofroAvailable : '—' ?>
+                        </td>
                         <?php foreach ($buildPlanDates as $planDate):
                             $planQty = (int)($planQtyByDate[$planDate] ?? 0);
                         ?>
@@ -1763,6 +1896,8 @@ $pageTitle = 'Активные позиции';
                         <th>Состояние</th>
                         <th>Заявка</th>
                         <th class="debt-col">Долг</th>
+                        <th class="num gofro-col">Г/п изготовлено</th>
+                        <th class="num gofro-col">Г/п в наличии</th>
                         <?php foreach ($buildPlanDates as $planDate):
                             $dateObj = DateTime::createFromFormat('Y-m-d', (string) $planDate);
                             $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
@@ -1922,6 +2057,8 @@ $pageTitle = 'Активные позиции';
         const btn = document.getElementById('toggleIndicatorsBtn');
         const rowIndicatorsBtn = document.getElementById('toggleRowIndicatorsBtn');
         const openSettingsBtn = document.getElementById('openIndicatorSettingsBtn');
+        const openGofroPackagesBtn = document.getElementById('openGofroPackagesBtn');
+        const toggleGofroCoverageBtn = document.getElementById('toggleGofroCoverageBtn');
         const modal = document.getElementById('indicatorSettingsModal');
         const saveBtn = document.getElementById('indicatorSettingsSaveBtn');
         const cancelBtn = document.getElementById('indicatorSettingsCancelBtn');
@@ -1949,16 +2086,20 @@ $pageTitle = 'Активные позиции';
         const normalizePlanBtn = document.getElementById('normalizePlanBtn');
         const applyPendingMovesBtn = document.getElementById('applyPendingMovesBtn');
         const undoPendingMoveBtn = document.getElementById('undoPendingMoveBtn');
+        const clearLocksBtn = document.getElementById('clearLocksBtn');
         const clearPendingMovesBtn = document.getElementById('clearPendingMovesBtn');
         const addPlanDayBtn = document.getElementById('addPlanDayBtn');
-        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !maxListPctInput || !normalizePreviewModal || !normalizePreviewList || !normalizePreviewApplyBtn || !normalizePreviewCancelBtn || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !applyPendingMovesPanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !debtExpandPopover || !debtExpandPopoverInner || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearPendingMovesBtn || !addPlanDayBtn) {
+        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !openGofroPackagesBtn || !toggleGofroCoverageBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !maxListPctInput || !normalizePreviewModal || !normalizePreviewList || !normalizePreviewApplyBtn || !normalizePreviewCancelBtn || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !applyPendingMovesPanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !debtExpandPopover || !debtExpandPopoverInner || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearLocksBtn || !clearPendingMovesBtn || !addPlanDayBtn) {
             return;
         }
         const storageKey = 'activePositionsIndicatorSettings';
         const indicatorsVisibleStorageKey = 'activePositionsHeaderIndicatorsVisible';
         const rowIndicatorsStorageKey = 'activePositionsRowIndicatorsVisible';
+        const gofroColumnsVisibleStorageKey = 'activePositionsGofroColumnsVisible';
+        const gofroCoverageVisibleStorageKey = 'activePositionsGofroCoverageVisible';
         const queuePanelStorageKey = 'activePositionsQueuePanelOpen';
         const lockStorageKey = `activePositionsLockedShifts:${window.location.pathname}`;
+        const FROZEN_COL_COUNT = 8;
         const debtStateMap = Object.assign({}, initialDebtShiftMap || {});
         const serverDefaultMaxListPct = <?= (int)$activePositionsMaxCompletionPct ?>;
         const currentPageMaxListPct = <?= (int)$maxPct ?>;
@@ -1969,6 +2110,12 @@ $pageTitle = 'Активные позиции';
             normTotal: <?= (int)$indicatorNormTotal ?>,
             maxListPct: serverDefaultMaxListPct,
         };
+        let isGofroCoverageVisible = false;
+        let dateCells = [];
+
+        function refreshDateCellsCache() {
+            dateCells = Array.from(document.querySelectorAll('td.date-cell'));
+        }
 
         function getSettings() {
             try {
@@ -2116,6 +2263,64 @@ $pageTitle = 'Активные позиции';
             });
         }
 
+        function setGofroColumnsVisible(visible) {
+            const isVisible = !!visible;
+            document.body.classList.toggle('hide-gofro-cols', !isVisible);
+            openGofroPackagesBtn.setAttribute('aria-pressed', isVisible ? 'true' : 'false');
+            openGofroPackagesBtn.textContent = isVisible ? 'Гофропакеты: вкл' : 'Гофропакеты: выкл';
+            try {
+                localStorage.setItem(gofroColumnsVisibleStorageKey, isVisible ? '1' : '0');
+            } catch (e) {
+                // ignore storage write errors
+            }
+            applyFrozenColumns();
+        }
+
+        function clearGofroCoverageHighlight() {
+            dateCells.forEach(function (cell) {
+                cell.classList.remove('gofro-coverage-cell', 'gofro-coverage-cell-partial');
+            });
+        }
+
+        function applyGofroCoverageHighlight() {
+            clearGofroCoverageHighlight();
+            if (!isGofroCoverageVisible) {
+                return;
+            }
+            document.querySelectorAll('tr.plan-row').forEach(function (row) {
+                let remaining = parseInt(row.dataset.gofroAvailable || '0', 10) || 0;
+                if (remaining <= 0) {
+                    return;
+                }
+                const rowCells = Array.from(row.querySelectorAll('td.date-cell'));
+                rowCells.forEach(function (cell) {
+                    const qty = Math.max(0, parseInt(cell.dataset.qty || '0', 10) || 0);
+                    if (qty <= 0 || remaining <= 0) {
+                        return;
+                    }
+                    if (remaining >= qty) {
+                        cell.classList.add('gofro-coverage-cell');
+                        remaining -= qty;
+                        return;
+                    }
+                    cell.classList.add('gofro-coverage-cell-partial');
+                    remaining = 0;
+                });
+            });
+        }
+
+        function setGofroCoverageVisible(visible) {
+            isGofroCoverageVisible = !!visible;
+            toggleGofroCoverageBtn.setAttribute('aria-pressed', isGofroCoverageVisible ? 'true' : 'false');
+            toggleGofroCoverageBtn.textContent = isGofroCoverageVisible ? 'Покрытие гофропакетами: вкл' : 'Покрытие гофропакетами: выкл';
+            try {
+                localStorage.setItem(gofroCoverageVisibleStorageKey, isGofroCoverageVisible ? '1' : '0');
+            } catch (e) {
+                // ignore storage write errors
+            }
+            applyGofroCoverageHighlight();
+        }
+
         function openModal() {
             syncForm(getSettings());
             modal.hidden = false;
@@ -2142,6 +2347,19 @@ $pageTitle = 'Активные позиции';
         } catch (e) {
             rowIndicatorsBtn.setAttribute('aria-pressed', 'true');
         }
+        try {
+            const gofroVisibleRaw = localStorage.getItem(gofroColumnsVisibleStorageKey);
+            const gofroVisible = gofroVisibleRaw === null ? true : gofroVisibleRaw === '1';
+            setGofroColumnsVisible(gofroVisible);
+        } catch (e) {
+            setGofroColumnsVisible(true);
+        }
+        try {
+            const gofroCoverageRaw = localStorage.getItem(gofroCoverageVisibleStorageKey);
+            setGofroCoverageVisible(gofroCoverageRaw === '1');
+        } catch (e) {
+            setGofroCoverageVisible(false);
+        }
 
         btn.addEventListener('click', function () {
             const visible = document.body.classList.toggle('show-indicators');
@@ -2163,12 +2381,7 @@ $pageTitle = 'Активные позиции';
             }
         });
 
-        let dateCells = [];
-        function refreshDateCellsCache() {
-            dateCells = Array.from(document.querySelectorAll('td.date-cell'));
-        }
         refreshDateCellsCache();
-        const FROZEN_COL_COUNT = 8;
 
         function applyFrozenColumns() {
             const table = document.querySelector('.panel table');
@@ -2430,6 +2643,17 @@ $pageTitle = 'Активные позиции';
             }
             persistLockedShiftKeys();
             refreshCellLockState(cell);
+        }
+
+        function clearAllCellLocks() {
+            if (lockedShiftKeys.size === 0) {
+                return;
+            }
+            lockedShiftKeys.clear();
+            persistLockedShiftKeys();
+            dateCells.forEach(function (cell) {
+                refreshCellLockState(cell);
+            });
         }
 
         function recalcHeaderIndicatorsFromTable() {
@@ -2732,6 +2956,7 @@ $pageTitle = 'Активные позиции';
             applyPendingMovesBtn.disabled = disabled;
             applyPendingMovesPanelBtn.disabled = disabled;
             undoPendingMoveBtn.disabled = disabled;
+            clearLocksBtn.disabled = isApplyingPendingMoves;
             clearPendingMovesBtn.disabled = disabled;
             toggleQueuePanelBtn.textContent = `Очередь (${count})`;
             if (isApplyingPendingMoves) {
@@ -3747,6 +3972,7 @@ $pageTitle = 'Активные позиции';
                 }
             }
             recalcHeaderIndicatorsFromTable();
+            applyGofroCoverageHighlight();
         }
 
         function pushPendingMove(queuedMove) {
@@ -3985,6 +4211,7 @@ $pageTitle = 'Активные позиции';
             refreshDateCellsCache();
             recalcHeaderIndicatorsFromTable();
             applyFrozenColumns();
+            applyGofroCoverageHighlight();
         }
 
         function bindDateCellInteractions(cell) {
@@ -4116,11 +4343,24 @@ $pageTitle = 'Активные позиции';
             }
             clearPendingMoves();
         });
+        clearLocksBtn.addEventListener('click', function () {
+            if (isApplyingPendingMoves) {
+                return;
+            }
+            clearAllCellLocks();
+        });
         addPlanDayBtn.addEventListener('click', function () {
             if (isApplyingPendingMoves) {
                 return;
             }
             addPlanDayColumn();
+        });
+        openGofroPackagesBtn.addEventListener('click', function () {
+            const currentlyVisible = !document.body.classList.contains('hide-gofro-cols');
+            setGofroColumnsVisible(!currentlyVisible);
+        });
+        toggleGofroCoverageBtn.addEventListener('click', function () {
+            setGofroCoverageVisible(!isGofroCoverageVisible);
         });
         normalizePlanBtn.addEventListener('click', function () {
             normalizePlanIntoQueue();
@@ -4154,6 +4394,7 @@ $pageTitle = 'Активные позиции';
         recalcHeaderIndicatorsFromTable();
         renderMoveQueuePanel();
         applyFrozenColumns();
+        applyGofroCoverageHighlight();
         document.querySelectorAll('td.debt-cell[data-debt-key]').forEach(function (cell) {
             renderDebtCellByKey(cell.dataset.debtKey || '');
         });
