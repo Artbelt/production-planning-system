@@ -278,6 +278,43 @@ $advertisement = 'Информация';
             text-align: center;
             font-weight: 500;
         }
+        .modal-overlay{
+            display:none;
+            position:fixed;
+            inset:0;
+            background:rgba(15,23,42,.45);
+            z-index:1200;
+            align-items:center;
+            justify-content:center;
+            padding:16px;
+        }
+        .modal-overlay.is-open{ display:flex; }
+        .modal-card{
+            width:100%;
+            max-width:560px;
+            max-height:90vh;
+            overflow-y:auto;
+            background:#fff;
+            border:1px solid var(--border);
+            border-radius:12px;
+            box-shadow:var(--shadow);
+            padding:14px;
+        }
+        .modal-grid{ display:grid; gap:8px; margin:10px 0 12px; }
+        .modal-row{ display:flex; align-items:center; gap:8px; }
+        .modal-row label{
+            min-width:150px;
+            font-size:12px;
+            font-weight:600;
+            color:#374151;
+        }
+        .modal-row input,
+        .modal-row select{
+            min-width:0;
+            width:100%;
+            font-size:12px;
+            padding:6px 8px;
+        }
     </style>
 </head>
 <body>
@@ -667,6 +704,7 @@ $advertisement = 'Информация';
                 <div class="section-title" style="margin-top:14px;">Управление заявками</div>
                 <section class="stack">
                     <form action="new_order.php" method="post" target="_blank"  class="stack"><input type="submit" value="Создать заявку вручную"></form>
+                    <button type="button" onclick="openAddToOrderModal()">Добавить к заявке...</button>
                     <form action="archived_orders.php" target="_blank"  class="stack"><input type="submit" value="Архив заявок"></form>
                     <form action="NP_cut_index.php" method="post" target="_blank"  class="stack"><input type="submit" value="Менеджер планирования"></form>
                     <form action="NP_supply_requirements.php" method="post" target="_blank"  class="stack"><input type="submit" value="Потребность в комплектации"></form>
@@ -690,6 +728,175 @@ $advertisement = 'Информация';
         </tr>
     </table>
 </div>
+
+<div id="addToOrderModal" class="modal-overlay" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="addToOrderTitle">
+        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:8px;">
+            <h3 id="addToOrderTitle" style="margin:0;font-size:16px;">Добавить позицию к заявке</h3>
+            <button type="button" onclick="closeAddToOrderModal()" style="background:transparent;color:#6b7280;padding:2px 8px;">&times;</button>
+        </div>
+        <form id="addToOrderForm" onsubmit="submitAddToOrder(event)">
+            <div class="modal-grid">
+                <div class="modal-row">
+                    <label for="selectOrderNumber">Выберите заявку:</label>
+                    <select id="selectOrderNumber" required>
+                        <option value="">-- Выберите заявку --</option>
+                    </select>
+                </div>
+                <div class="modal-row">
+                    <label for="inputFilter">Фильтр:</label>
+                    <select id="inputFilter" required>
+                        <option value="">-- Выберите фильтр --</option>
+                    </select>
+                </div>
+                <div class="modal-row">
+                    <label for="inputCount">Количество, шт:</label>
+                    <input type="number" id="inputCount" min="1" required placeholder="0">
+                </div>
+                <div class="modal-row">
+                    <label for="inputMarking">Маркировка:</label>
+                    <input type="text" id="inputMarking" value="стандарт">
+                </div>
+                <div class="modal-row">
+                    <label for="inputPersonalPackaging">Упаковка инд.:</label>
+                    <input type="text" id="inputPersonalPackaging" value="стандарт">
+                </div>
+                <div class="modal-row">
+                    <label for="inputPersonalLabel">Этикетка инд.:</label>
+                    <input type="text" id="inputPersonalLabel" value="стандарт">
+                </div>
+                <div class="modal-row">
+                    <label for="inputGroupPackaging">Упаковка групп.:</label>
+                    <input type="text" id="inputGroupPackaging" value="стандарт">
+                </div>
+                <div class="modal-row">
+                    <label for="inputPackagingRate">Норма упаковки:</label>
+                    <input type="number" id="inputPackagingRate" min="1" value="10">
+                </div>
+                <div class="modal-row">
+                    <label for="inputGroupLabel">Этикетка групп.:</label>
+                    <input type="text" id="inputGroupLabel" value="стандарт">
+                </div>
+                <div class="modal-row">
+                    <label for="inputRemark">Примечание:</label>
+                    <input type="text" id="inputRemark" value="дополнение">
+                </div>
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;">
+                <button type="button" onclick="closeAddToOrderModal()" style="background:#6b7280;">Отмена</button>
+                <button type="submit">Добавить позицию</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function openAddToOrderModal() {
+    const modal = document.getElementById('addToOrderModal');
+    modal.classList.add('is-open');
+    modal.setAttribute('aria-hidden', 'false');
+    loadOrdersAndFiltersForAddToOrder();
+}
+
+function closeAddToOrderModal() {
+    const modal = document.getElementById('addToOrderModal');
+    modal.classList.remove('is-open');
+    modal.setAttribute('aria-hidden', 'true');
+
+    const form = document.getElementById('addToOrderForm');
+    form.reset();
+    document.getElementById('inputMarking').value = 'стандарт';
+    document.getElementById('inputPersonalPackaging').value = 'стандарт';
+    document.getElementById('inputPersonalLabel').value = 'стандарт';
+    document.getElementById('inputGroupPackaging').value = 'стандарт';
+    document.getElementById('inputPackagingRate').value = '10';
+    document.getElementById('inputGroupLabel').value = 'стандарт';
+    document.getElementById('inputRemark').value = 'дополнение';
+}
+
+async function loadOrdersAndFiltersForAddToOrder() {
+    try {
+        const ordersResponse = await fetch('add_to_order_api.php?action=get_orders');
+        const ordersData = await ordersResponse.json();
+        if (ordersData.ok) {
+            const orderSelect = document.getElementById('selectOrderNumber');
+            orderSelect.innerHTML = '<option value="">-- Выберите заявку --</option>';
+            ordersData.orders.forEach((orderNumber) => {
+                const option = document.createElement('option');
+                option.value = orderNumber;
+                option.textContent = orderNumber;
+                orderSelect.appendChild(option);
+            });
+        }
+
+        const filtersResponse = await fetch('add_to_order_api.php?action=get_filters');
+        const filtersData = await filtersResponse.json();
+        if (filtersData.ok) {
+            const filterSelect = document.getElementById('inputFilter');
+            filterSelect.innerHTML = '<option value="">-- Выберите фильтр --</option>';
+            filtersData.filters.forEach((filterName) => {
+                const option = document.createElement('option');
+                option.value = filterName;
+                option.textContent = filterName;
+                filterSelect.appendChild(option);
+            });
+        }
+    } catch (error) {
+        alert('Ошибка загрузки данных: ' + error.message);
+    }
+}
+
+async function submitAddToOrder(event) {
+    event.preventDefault();
+    const submitBtn = event.target.querySelector('button[type="submit"]');
+    const originalText = submitBtn.textContent;
+    submitBtn.textContent = 'Добавление...';
+    submitBtn.disabled = true;
+
+    const payload = {
+        order_number: document.getElementById('selectOrderNumber').value,
+        filter: document.getElementById('inputFilter').value,
+        count: parseInt(document.getElementById('inputCount').value, 10) || 0,
+        marking: document.getElementById('inputMarking').value.trim(),
+        personal_packaging: document.getElementById('inputPersonalPackaging').value.trim(),
+        personal_label: document.getElementById('inputPersonalLabel').value.trim(),
+        group_packaging: document.getElementById('inputGroupPackaging').value.trim(),
+        packaging_rate: parseInt(document.getElementById('inputPackagingRate').value, 10) || 10,
+        group_label: document.getElementById('inputGroupLabel').value.trim(),
+        remark: document.getElementById('inputRemark').value.trim()
+    };
+
+    try {
+        const response = await fetch('add_to_order_api.php?action=add_position', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+
+        if (data.ok) {
+            alert('Позиция успешно добавлена к заявке');
+            closeAddToOrderModal();
+        } else {
+            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+        }
+    } catch (error) {
+        alert('Ошибка при добавлении: ' + error.message);
+    } finally {
+        submitBtn.textContent = originalText;
+        submitBtn.disabled = false;
+    }
+}
+
+document.addEventListener('click', (event) => {
+    const modal = document.getElementById('addToOrderModal');
+    if (event.target === modal) {
+        closeAddToOrderModal();
+    }
+});
+</script>
 
 
 </body>

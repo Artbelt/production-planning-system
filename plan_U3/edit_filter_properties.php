@@ -27,22 +27,17 @@ try {
 // Текущий выбранный прототип (или загруженный фильтр)
 $analog_filter = (isset($_POST['analog_filter']) && $_POST['analog_filter'] !== '') ? $_POST['analog_filter'] : '';
 
-// Получаем данные прототипа (если выбран)
-// Если в режиме редактирования и есть аналог в данных, используем его как прототип
+// Данные для заполнения формы:
+// - в режиме редактирования всегда загружаем выбранный фильтр,
+// - в режиме добавления (с прототипом) загружаем данные прототипа.
 if ($work_mode === 'edit' && $filter_name !== '') {
-    $temp_data = get_filter_data($filter_name);
-    // Если у редактируемого фильтра есть аналог, используем его как прототип для загрузки данных
-    if (!empty($temp_data['analog'])) {
-        $analog_filter = $temp_data['analog'];
+    $analog_data = get_filter_data($filter_name);
+    // Сохраняем связь с аналогом в отдельном поле, но не подменяем им данные формы.
+    if (!empty($analog_data['analog'])) {
+        $analog_filter = $analog_data['analog'];
     }
-}
-
-if ($analog_filter !== '') {
+} elseif ($analog_filter !== '') {
     $analog_data = get_filter_data($analog_filter);
-    // Если загружаем по имени фильтра, используем его как filter_name
-    if (isset($_POST['load_from_db']) && !empty($_POST['filter_name'])) {
-        $filter_name = $analog_filter;
-    }
 } else {
     $analog_data = array();
     $analog_data['paper_package_name'] ='';
@@ -315,8 +310,8 @@ if ($analog_filter !== '') {
 
     <?php if ($work_mode === 'edit'): ?>
         <!-- Режим редактирования -->
-        <?php if ($analog_filter !== ''): ?>
-            <p class='muted' style='margin:8px 2px 18px'>Загружен фильтр: <b><?= htmlspecialchars($analog_filter) ?></b></p>
+        <?php if ($filter_name !== ''): ?>
+            <p class='muted' style='margin:8px 2px 18px'>Загружен фильтр: <b><?= htmlspecialchars($filter_name) ?></b></p>
         <?php else: ?>
             <p class='muted' style='margin:8px 2px 18px'>Выберите фильтр из списка и нажмите "Загрузить" для редактирования его параметров.</p>
         <?php endif; ?>
@@ -393,6 +388,13 @@ if ($analog_filter !== '') {
                         </select>
                     </div>
                 </div>
+                <?php if ($work_mode === 'edit' && !empty($analog_data['analog'])): ?>
+                    <div style="margin-top:12px">
+                        <label>Прототип</label>
+                        <input type="text" value="<?= htmlspecialchars($analog_data['analog']) ?>" readonly>
+                        <div class="help">Прототип этого фильтра (поле только для просмотра).</div>
+                    </div>
+                <?php endif; ?>
             </section>
 
             <!-- Размеры -->

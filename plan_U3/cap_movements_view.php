@@ -70,15 +70,74 @@ if (!empty($selected_order)) {
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $movements[] = $row;
             
-            // Подсчитываем итоги по крышкам
-            $cap_name = $row['cap_name'];
-            if (!isset($summary[$cap_name])) {
-                $summary[$cap_name] = 0;
+            // Подсчитываем движение по крышкам из фактических операций
+            $cap_name = trim((string)($row['cap_name'] ?? ''));
+            if ($cap_name === '') {
+                continue;
             }
-            if ($row['operation_type'] == 'PRODUCTION_OUT') {
-                $summary[$cap_name] += abs($row['quantity']);
+            if (!isset($summary[$cap_name])) {
+                $summary[$cap_name] = [
+                    'ordered' => 0,
+                    'income' => 0,
+                    'written_off' => 0
+                ];
+            }
+
+            $quantity = abs((float)($row['quantity'] ?? 0));
+            if ($row['operation_type'] === 'INCOME') {
+                $summary[$cap_name]['income'] += $quantity;
+            } elseif ($row['operation_type'] === 'PRODUCTION_OUT') {
+                $summary[$cap_name]['written_off'] += $quantity;
             }
         }
+    }
+
+    // Добавляем "Заказано" по заявке: сумма количества фильтров, использующих каждую крышку
+    $stmt_ordered_caps = $pdo->prepare("
+        SELECT cap_name, SUM(order_qty) AS ordered_qty
+        FROM (
+            SELECT TRIM(rfs.up_cap) AS cap_name, SUM(COALESCE(o.`count`, 0)) AS order_qty
+            FROM orders o
+            JOIN round_filter_structure rfs ON rfs.filter = o.`filter`
+            WHERE o.order_number = ?
+              AND rfs.up_cap IS NOT NULL
+              AND TRIM(rfs.up_cap) <> ''
+            GROUP BY TRIM(rfs.up_cap)
+
+            UNION ALL
+
+            SELECT TRIM(rfs.down_cap) AS cap_name, SUM(COALESCE(o.`count`, 0)) AS order_qty
+            FROM orders o
+            JOIN round_filter_structure rfs ON rfs.filter = o.`filter`
+            WHERE o.order_number = ?
+              AND rfs.down_cap IS NOT NULL
+              AND TRIM(rfs.down_cap) <> ''
+            GROUP BY TRIM(rfs.down_cap)
+        ) caps_union
+        GROUP BY cap_name
+    ");
+
+    if ($stmt_ordered_caps && $stmt_ordered_caps->execute([$selected_order, $selected_order])) {
+        while ($ordered_row = $stmt_ordered_caps->fetch(PDO::FETCH_ASSOC)) {
+            $cap_name = trim((string)($ordered_row['cap_name'] ?? ''));
+            if ($cap_name === '') {
+                continue;
+            }
+
+            if (!isset($summary[$cap_name])) {
+                $summary[$cap_name] = [
+                    'ordered' => 0,
+                    'income' => 0,
+                    'written_off' => 0
+                ];
+            }
+
+            $summary[$cap_name]['ordered'] += abs((float)($ordered_row['ordered_qty'] ?? 0));
+        }
+    }
+
+    if (!empty($summary)) {
+        ksort($summary, SORT_NATURAL | SORT_FLAG_CASE);
     }
     
     $stmt2 = $pdo->prepare("SELECT COUNT(*) as cnt FROM orders WHERE order_number = ?");
@@ -228,27 +287,35 @@ if (!empty($selected_order)) {
                     <h3>Заявка: <?php echo htmlspecialchars($selected_order); ?></h3>
                     
                     <?php if (!empty($summary)): ?>
-                        <h4>Итого списано крышек по заявке:</h4>
+                        <h4>Движение крышек по заявке:</h4>
                         <table class="summary-table">
                             <thead>
                                 <tr>
                                     <th>Название крышки</th>
-                                    <th style="text-align: right;">Количество</th>
+                                    <th style="text-align: right;">Заказано</th>
+                                    <th style="text-align: right;">Поступило</th>
+                                    <th style="text-align: right;">Списано</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php foreach ($summary as $cap_name => $total_qty): ?>
+                                <?php foreach ($summary as $cap_name => $totals): ?>
                                     <tr>
                                         <td><?php echo htmlspecialchars($cap_name); ?></td>
                                         <td style="text-align: right; font-weight: bold;">
-                                            <?php echo number_format($total_qty, 0, ',', ' '); ?> шт
+                                            <?php echo number_format((float)($totals['ordered'] ?? 0), 0, ',', ' '); ?> шт
+                                        </td>
+                                        <td style="text-align: right; font-weight: bold;">
+                                            <?php echo number_format((float)($totals['income'] ?? 0), 0, ',', ' '); ?> шт
+                                        </td>
+                                        <td style="text-align: right; font-weight: bold;">
+                                            <?php echo number_format((float)($totals['written_off'] ?? 0), 0, ',', ' '); ?> шт
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
                             </tbody>
                         </table>
                     <?php else: ?>
-                        <p>По этой заявке еще не было списания крышек.</p>
+                        <p>По этой заявке еще нет данных по движению крышек.</p>
                     <?php endif; ?>
                 </div>
                 
