@@ -36,6 +36,109 @@ function normalizeTextKeyLocal(string $name): string
     return mb_strtoupper($name, 'UTF-8');
 }
 
+function ensureCorrugationPlanV2Table(PDO $pdo): void
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS corrugation_plan_v2 (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            source_row_key VARCHAR(255) NOT NULL,
+            order_number VARCHAR(64) NOT NULL,
+            filter_name VARCHAR(255) NOT NULL,
+            package_key VARCHAR(255) NOT NULL,
+            package_name VARCHAR(255) NOT NULL,
+            plan_date DATE NOT NULL,
+            group_id VARCHAR(128) NOT NULL,
+            strip_id VARCHAR(128) NOT NULL,
+            qty INT NOT NULL DEFAULT 0,
+            created_by INT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_cp2_row_date (source_row_key, plan_date),
+            KEY idx_cp2_order (order_number),
+            KEY idx_cp2_group (group_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
+if (isset($_GET['api']) && $_GET['api'] === 'load_plan_v2') {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        ensureCorrugationPlanV2Table($pdo);
+        $stmt = $pdo->query("
+            SELECT
+                source_row_key,
+                order_number,
+                filter_name,
+                package_key,
+                package_name,
+                plan_date,
+                group_id,
+                strip_id,
+                qty
+            FROM corrugation_plan_v2
+            WHERE qty > 0
+            ORDER BY plan_date, source_row_key, group_id, id
+        ");
+        echo json_encode(['ok' => true, 'items' => $stmt->fetchAll(PDO::FETCH_ASSOC)], JSON_UNESCAPED_UNICODE);
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
+
+if (isset($_GET['api']) && $_GET['api'] === 'save_plan_v2' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        ensureCorrugationPlanV2Table($pdo);
+        $raw = file_get_contents('php://input');
+        $data = json_decode((string)$raw, true);
+        $items = isset($data['items']) && is_array($data['items']) ? $data['items'] : [];
+
+        $pdo->beginTransaction();
+        $pdo->exec("DELETE FROM corrugation_plan_v2");
+        $ins = $pdo->prepare("
+            INSERT INTO corrugation_plan_v2
+            (source_row_key, order_number, filter_name, package_key, package_name, plan_date, group_id, strip_id, qty, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ");
+        $userId = isset($session['user_id']) ? (int)$session['user_id'] : null;
+        $saved = 0;
+        foreach ($items as $it) {
+            $rowKey = trim((string)($it['source_row_key'] ?? ''));
+            $order = trim((string)($it['order_number'] ?? ''));
+            $filterName = trim((string)($it['filter_name'] ?? ''));
+            $packageKey = trim((string)($it['package_key'] ?? ''));
+            $packageName = trim((string)($it['package_name'] ?? ''));
+            $planDate = trim((string)($it['plan_date'] ?? ''));
+            $groupId = trim((string)($it['group_id'] ?? ''));
+            $stripId = trim((string)($it['strip_id'] ?? ''));
+            $qty = (int)($it['qty'] ?? 0);
+            if (
+                $rowKey === '' || $order === '' || $filterName === '' || $packageKey === '' ||
+                $planDate === '' || $groupId === '' || $stripId === '' || $qty <= 0 ||
+                !preg_match('/^\d{4}-\d{2}-\d{2}$/', $planDate)
+            ) {
+                continue;
+            }
+            $ins->execute([$rowKey, $order, $filterName, $packageKey, $packageName, $planDate, $groupId, $stripId, $qty, $userId]);
+            $saved++;
+        }
+        if ($pdo->inTransaction()) {
+            $pdo->commit();
+        }
+        echo json_encode(['ok' => true, 'saved' => $saved], JSON_UNESCAPED_UNICODE);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
+
 $rows = [];
 try {
     $sql = "
@@ -254,6 +357,8 @@ $pageTitle = 'Планирование сборки гофропакетов';
             --ok-line: #16a34a;
             --warn-bg: #fef3c7;
             --warn-line: #d97706;
+            --plan-bg: #dbeafe;
+            --plan-line: #2563eb;
         }
         body {
             margin: 0;
@@ -324,11 +429,34 @@ $pageTitle = 'Планирование сборки гофропакетов';
             position: absolute;
             right: 2px;
             bottom: 1px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 2px;
+            max-width: calc(100% - 4px);
+            pointer-events: auto;
+        }
+        .cell-supply-item {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 14px;
+            height: 10px;
+            padding: 0 3px;
+            border: 1px solid #0ea5e9;
+            border-radius: 2px;
+            background: #e0f2fe;
+            color: #075985;
             font-size: 8px;
             line-height: 1;
-            color: #0369a1;
-            font-weight: 600;
-            pointer-events: none;
+            font-weight: 700;
+            box-sizing: border-box;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+        .cell-supply-item:hover {
+            background: #bae6fd;
+            border-color: #0284c7;
         }
         td.date-cell.gantt-full {
             background: var(--ok-bg);
@@ -337,6 +465,14 @@ $pageTitle = 'Планирование сборки гофропакетов';
         td.date-cell.gantt-partial {
             background: var(--warn-bg);
             box-shadow: inset 0 0 0 1px rgba(217, 119, 6, .2);
+        }
+        td.date-cell.gantt-plan-full {
+            background: var(--plan-bg);
+            box-shadow: inset 0 0 0 1px rgba(37, 99, 235, .22);
+        }
+        td.date-cell.gantt-plan-partial {
+            background: #eff6ff;
+            box-shadow: inset 0 0 0 1px rgba(37, 99, 235, .35);
         }
         .muted {
             color: var(--muted);
@@ -377,6 +513,11 @@ $pageTitle = 'Планирование сборки гофропакетов';
             cursor: grab;
         }
         .strip:active { cursor: grabbing; }
+        .strip.strip-selected {
+            border-color: #2563eb;
+            background: #eff6ff;
+            box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.2);
+        }
         .strip-meta {
             font-size: 11px;
             color: #334155;
@@ -411,6 +552,15 @@ $pageTitle = 'Планирование сборки гофропакетов';
 <body>
 <div class="wrap">
     <h1 style="margin:0 0 8px; font-size:20px;"><?= htmlspecialchars($pageTitle, ENT_QUOTES, 'UTF-8') ?></h1>
+    <div style="display:flex; gap:8px; align-items:center; margin:0 0 10px;">
+        <button id="save-plan-btn" type="button" style="border:1px solid #2563eb; background:#2563eb; color:#fff; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">
+            Сохранить план V2
+        </button>
+        <button id="task-sheet-btn" type="button" style="border:1px solid #0f766e; background:#0f766e; color:#fff; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">
+            Задание
+        </button>
+        <span id="save-plan-status" class="muted" style="font-size:12px;"></span>
+    </div>
     <p class="muted" style="margin:0 0 12px;">
         Линия/заливка показывает покрытие смен оставшимися гофропакетами. Число сборки фильтров показано маленьким фоновым текстом в левом верхнем углу ячейки.
     </p>
@@ -430,7 +580,10 @@ $pageTitle = 'Планирование сборки гофропакетов';
                     <th class="num">Потребность в г/п</th>
                     <?php foreach ($buildPlanDates as $planDate): ?>
                         <?php $d = DateTime::createFromFormat('Y-m-d', (string)$planDate); ?>
-                        <th class="date-col"><?= htmlspecialchars($d ? $d->format('d.m') : (string)$planDate, ENT_QUOTES, 'UTF-8') ?></th>
+                        <th class="date-col" data-date-total="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="Суммарно распределено гофропакетов из пула: 0">
+                            <?= htmlspecialchars($d ? $d->format('d.m') : (string)$planDate, ENT_QUOTES, 'UTF-8') ?><br>
+                            <span class="muted date-total-value" style="font-size:10px;">0</span>
+                        </th>
                     <?php endforeach; ?>
                 </tr>
                 </thead>
@@ -494,6 +647,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                         <tr
                             data-row-key="<?= htmlspecialchars($planKey, ENT_QUOTES, 'UTF-8') ?>"
                             data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
+                            data-filter-name="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
                             data-package-key="<?= htmlspecialchars($packageKey, ENT_QUOTES, 'UTF-8') ?>"
                             data-package-name="<?= htmlspecialchars($package, ENT_QUOTES, 'UTF-8') ?>"
                             data-base-available="<?= (int)$gofroAvailable ?>"
@@ -540,6 +694,25 @@ $pageTitle = 'Планирование сборки гофропакетов';
     <?php endif; ?>
 </div>
 <div id="drag-preview" class="drag-preview"></div>
+<div id="task-sheet-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:10000; align-items:center; justify-content:center; padding:14px;">
+    <div style="background:#fff; border-radius:12px; width:360px; max-width:100%; box-shadow:0 16px 40px rgba(2,6,23,.25); border:1px solid #e2e8f0;">
+        <div style="padding:12px; border-bottom:1px solid #e2e8f0; font-weight:700; font-size:14px;">Печать задания сборщицам</div>
+        <div style="padding:12px; display:grid; gap:8px;">
+            <label style="font-size:12px; color:#334155;">
+                С даты
+                <input id="task-date-from" type="date" style="display:block; width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:6px 8px; margin-top:4px;">
+            </label>
+            <label style="font-size:12px; color:#334155;">
+                По дату
+                <input id="task-date-to" type="date" style="display:block; width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:6px 8px; margin-top:4px;">
+            </label>
+        </div>
+        <div style="padding:10px 12px; display:flex; justify-content:flex-end; gap:8px; border-top:1px solid #e2e8f0;">
+            <button id="task-sheet-cancel" type="button" style="border:1px solid #cbd5e1; background:#fff; color:#334155; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">Отмена</button>
+            <button id="task-sheet-print" type="button" style="border:1px solid #0f766e; background:#0f766e; color:#fff; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">Сформировать и печатать</button>
+        </div>
+    </div>
+</div>
 <?php if ($loadError === ''): ?>
 <script>
 (() => {
@@ -547,6 +720,14 @@ $pageTitle = 'Планирование сборки гофропакетов';
     const packageCatalog = <?= json_encode($packageCatalog, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?> || {};
     const stripPool = document.getElementById('strip-pool');
     const dragPreview = document.getElementById('drag-preview');
+    const savePlanBtn = document.getElementById('save-plan-btn');
+    const savePlanStatus = document.getElementById('save-plan-status');
+    const taskSheetBtn = document.getElementById('task-sheet-btn');
+    const taskSheetModal = document.getElementById('task-sheet-modal');
+    const taskDateFrom = document.getElementById('task-date-from');
+    const taskDateTo = document.getElementById('task-date-to');
+    const taskSheetCancel = document.getElementById('task-sheet-cancel');
+    const taskSheetPrint = document.getElementById('task-sheet-print');
     if (!stripPool || !dragPreview) {
         return;
     }
@@ -557,6 +738,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
         rowStateMap.set(row.dataset.rowKey, {
             row,
             order: String(row.dataset.order || ''),
+            filterName: String(row.dataset.filterName || ''),
             packageKey: String(row.dataset.packageKey || ''),
             packageName: String(row.dataset.packageName || ''),
             baseAvailable: parseInt(row.dataset.baseAvailable || '0', 10) || 0,
@@ -564,14 +746,30 @@ $pageTitle = 'Планирование сборки гофропакетов';
             packagesPerRoll: Math.max(0, parseInt(row.dataset.packagesPerRoll || '0', 10) || 0),
             dateCells: Array.from(row.querySelectorAll('td.date-cell[data-date]')),
             allocatedByDate: {},
+            allocatedObjectsByDate: {},
         });
     });
 
     let strips = [];
     let stripSeq = 1;
+    let allocationGroupSeq = 1;
     let allocations = [];
     let dragContext = null;
     const supplyMap = {};
+    let selectedSourceRow = '';
+    const selectedStripIds = new Set();
+    const dateHeaderTotals = {};
+    document.querySelectorAll('th.date-col[data-date-total]').forEach((th) => {
+        const date = String(th.dataset.dateTotal || '');
+        if (!date) {
+            return;
+        }
+        const valueEl = th.querySelector('.date-total-value');
+        if (!valueEl) {
+            return;
+        }
+        dateHeaderTotals[date] = { th, valueEl };
+    });
 
     function bootstrapStrips() {
         strips = [];
@@ -588,7 +786,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                     length,
                     qty_capacity: qtyFromRoll,
                     package_type: state.packageKey,
-                    package_label: state.packageName || getPackageLabel(state.packageKey),
+                    package_label: state.filterName || state.packageName || getPackageLabel(state.packageKey),
                     order: state.order || '',
                     source_row: rowKey,
                 });
@@ -609,6 +807,183 @@ $pageTitle = 'Планирование сборки гофропакетов';
     function computeQtyFromLength(length) {
         const safeLength = Math.max(0, Number(length) || 0);
         return Math.max(0, Math.floor(safeLength / NORM_PER_UNIT));
+    }
+
+    function getAllocatedObjectQty(obj) {
+        if (obj && typeof obj === 'object') {
+            return Math.max(0, parseInt(obj.qty || 0, 10) || 0);
+        }
+        return Math.max(0, parseInt(obj || 0, 10) || 0);
+    }
+
+    function getAllocatedObjectItems(obj) {
+        if (obj && typeof obj === 'object' && Array.isArray(obj.items) && obj.items.length > 0) {
+            return obj.items
+                .map((item) => ({
+                    strip_id: String(item.strip_id || ''),
+                    qty: Math.max(0, parseInt(item.qty || 0, 10) || 0),
+                }))
+                .filter((item) => item.qty > 0);
+        }
+        const qty = getAllocatedObjectQty(obj);
+        if (qty <= 0) {
+            return [];
+        }
+        const stripId = obj && typeof obj === 'object' ? String(obj.strip_id || '') : '';
+        return [{ strip_id: stripId, qty }];
+    }
+
+    function setSaveStatus(text, isError = false) {
+        if (!savePlanStatus) {
+            return;
+        }
+        savePlanStatus.textContent = text;
+        savePlanStatus.style.color = isError ? '#b91c1c' : '#6b7280';
+    }
+
+    function formatDateRu(iso) {
+        if (!iso) {
+            return '';
+        }
+        const parts = String(iso).split('-');
+        if (parts.length !== 3) {
+            return String(iso);
+        }
+        return `${parts[2]}.${parts[1]}.${parts[0]}`;
+    }
+
+    function htmlEscape(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    function collectTaskSheetRows(dateFrom, dateTo) {
+        const rowsOut = [];
+        rowStateMap.forEach((state) => {
+            Object.keys(state.allocatedByDate).forEach((date) => {
+                if (date < dateFrom || date > dateTo) {
+                    return;
+                }
+                const qty = Math.max(0, parseInt(state.allocatedByDate[date] || 0, 10) || 0);
+                if (qty <= 0) {
+                    return;
+                }
+                rowsOut.push({
+                    date,
+                    order: String(state.order || ''),
+                    filter: String(state.filterName || ''),
+                    qty,
+                });
+            });
+        });
+        rowsOut.sort((a, b) => {
+            if (a.date !== b.date) return a.date.localeCompare(b.date);
+            if (a.order !== b.order) return a.order.localeCompare(b.order, 'ru');
+            return a.filter.localeCompare(b.filter, 'ru');
+        });
+        return rowsOut;
+    }
+
+    function openTaskSheetModal() {
+        if (!taskSheetModal || !taskDateFrom || !taskDateTo) {
+            return;
+        }
+        const now = new Date();
+        const fromIso = now.toISOString().slice(0, 10);
+        const toDate = new Date(now.getTime());
+        toDate.setDate(toDate.getDate() + 6);
+        const toIso = toDate.toISOString().slice(0, 10);
+        taskDateFrom.value = taskDateFrom.value || fromIso;
+        taskDateTo.value = taskDateTo.value || toIso;
+        taskSheetModal.style.display = 'flex';
+    }
+
+    function closeTaskSheetModal() {
+        if (!taskSheetModal) {
+            return;
+        }
+        taskSheetModal.style.display = 'none';
+    }
+
+    function printTaskSheet(dateFrom, dateTo) {
+        const rowsForPrint = collectTaskSheetRows(dateFrom, dateTo);
+        const totalQty = rowsForPrint.reduce((acc, row) => acc + row.qty, 0);
+        const bodyRows = rowsForPrint.length > 0
+            ? rowsForPrint.map((row, idx) => `
+                <tr>
+                    <td>${idx + 1}</td>
+                    <td>${htmlEscape(formatDateRu(row.date))}</td>
+                    <td>${htmlEscape(row.order)}</td>
+                    <td>${htmlEscape(row.filter)}</td>
+                    <td style="text-align:right;">${row.qty}</td>
+                    <td></td>
+                </tr>
+            `).join('')
+            : '<tr><td colspan="6" style="text-align:center;color:#64748b;">Нет распланированных позиций за выбранный период</td></tr>';
+
+        const printHtml = `
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Задание сборщицам</title>
+  <style>
+    body { font: 13px/1.35 "Segoe UI", Arial, sans-serif; color:#0f172a; margin:16px; }
+    h1 { margin:0 0 6px; font-size:18px; }
+    .meta { margin:0 0 10px; color:#475569; font-size:12px; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { border:1px solid #cbd5e1; padding:4px 6px; }
+    th { background:#f1f5f9; text-align:left; }
+    @media print { body { margin:8mm; } }
+  </style>
+</head>
+<body>
+  <h1>Задание сборщицам</h1>
+  <div class="meta">Период: ${htmlEscape(formatDateRu(dateFrom))} - ${htmlEscape(formatDateRu(dateTo))}. Всего г/п: ${totalQty}</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:34px;">#</th>
+        <th style="width:90px;">Дата</th>
+        <th style="width:120px;">Заявка</th>
+        <th>Фильтр</th>
+        <th style="width:90px; text-align:right;">Кол-во г/п</th>
+        <th style="width:120px;">Примечание</th>
+      </tr>
+    </thead>
+    <tbody>${bodyRows}</tbody>
+  </table>
+</body>
+</html>`;
+        let frame = document.getElementById('task-sheet-print-frame');
+        if (!frame) {
+            frame = document.createElement('iframe');
+            frame.id = 'task-sheet-print-frame';
+            frame.style.position = 'fixed';
+            frame.style.right = '0';
+            frame.style.bottom = '0';
+            frame.style.width = '0';
+            frame.style.height = '0';
+            frame.style.border = '0';
+            frame.setAttribute('aria-hidden', 'true');
+            document.body.appendChild(frame);
+        }
+        const doc = frame.contentWindow ? frame.contentWindow.document : null;
+        if (!doc || !frame.contentWindow) {
+            alert('Не удалось подготовить печать.');
+            return;
+        }
+        doc.open();
+        doc.write(printHtml);
+        doc.close();
+        setTimeout(() => {
+            frame.contentWindow.focus();
+            frame.contentWindow.print();
+        }, 100);
     }
 
     function renderStrips() {
@@ -638,6 +1013,10 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 stripEl.dataset.stripId = strip.id;
                 stripEl.dataset.length = String(strip.length);
                 stripEl.dataset.package = strip.package_type;
+                stripEl.dataset.sourceRow = String(strip.source_row || '');
+                if (selectedStripIds.has(strip.id)) {
+                    stripEl.classList.add('strip-selected');
+                }
                 const qty = Math.max(0, parseInt(strip.qty_capacity || computeQtyFromLength(strip.length), 10) || 0);
                 stripEl.innerHTML = `
                     <div class="strip-meta">
@@ -645,20 +1024,60 @@ $pageTitle = 'Планирование сборки гофропакетов';
                         <span>${qty} шт</span>
                     </div>
                 `;
+                stripEl.addEventListener('click', (e) => {
+                    const sourceRow = String(strip.source_row || '');
+                    if (!sourceRow) {
+                        return;
+                    }
+                    if (selectedSourceRow && selectedSourceRow !== sourceRow) {
+                        selectedStripIds.clear();
+                    }
+                    selectedSourceRow = sourceRow;
+                    if (selectedStripIds.has(strip.id)) {
+                        selectedStripIds.delete(strip.id);
+                    } else {
+                        selectedStripIds.add(strip.id);
+                    }
+                    if (selectedStripIds.size === 0) {
+                        selectedSourceRow = '';
+                    }
+                    e.preventDefault();
+                    e.stopPropagation();
+                    renderStrips();
+                });
                 stripEl.addEventListener('dragstart', (e) => {
-                    const length = Number(strip.length) || 0;
-                    const capQty = Math.max(0, parseInt(strip.qty_capacity || computeQtyFromLength(length), 10) || 0);
+                    let bundleIds = [strip.id];
+                    if (selectedStripIds.has(strip.id) && selectedSourceRow === String(strip.source_row || '')) {
+                        bundleIds = strips
+                            .filter((s) => selectedStripIds.has(s.id) && String(s.source_row || '') === selectedSourceRow)
+                            .map((s) => s.id);
+                    }
+                    if (bundleIds.length === 0) {
+                        bundleIds = [strip.id];
+                    }
+                    let totalLength = 0;
+                    let totalQty = 0;
+                    bundleIds.forEach((id) => {
+                        const s = strips.find((x) => x.id === id);
+                        if (!s) {
+                            return;
+                        }
+                        const length = Number(s.length) || 0;
+                        const capQty = Math.max(0, parseInt(s.qty_capacity || computeQtyFromLength(length), 10) || 0);
+                        totalLength += length;
+                        totalQty += capQty;
+                    });
                     dragContext = {
-                        strip_id: strip.id,
+                        strip_ids: bundleIds,
                         package_type: strip.package_type,
                         order: String(strip.order || ''),
-                        length,
-                        qty: capQty,
-                        used_length: capQty * NORM_PER_UNIT,
+                        length: totalLength,
+                        qty: totalQty,
+                        used_length: totalQty * NORM_PER_UNIT,
                     };
                     if (e.dataTransfer) {
                         e.dataTransfer.effectAllowed = 'move';
-                        e.dataTransfer.setData('text/plain', strip.id);
+                        e.dataTransfer.setData('text/plain', bundleIds.join(','));
                     }
                     highlightValidCells();
                 });
@@ -718,15 +1137,18 @@ $pageTitle = 'Планирование сборки гофропакетов';
     }
 
     function updateCoverage() {
+        const dailyTotals = {};
         rowStateMap.forEach((state, rowKey) => {
             let allocated = 0;
             Object.keys(state.allocatedByDate).forEach((d) => {
                 allocated += parseInt(state.allocatedByDate[d] || 0, 10) || 0;
             });
-            const available = state.baseAvailable + allocated;
-            let coverageNeed = Math.max(0, available);
-            let endIdx = -1;
-            let partialIdx = -1;
+            const baseCoverageNeed = Math.max(0, state.baseAvailable);
+            const totalCoverageNeed = Math.max(0, state.baseAvailable + allocated);
+            let baseEndIdx = -1;
+            let basePartialIdx = -1;
+            let totalEndIdx = -1;
+            let totalPartialIdx = -1;
             let startIdx = 0;
 
             const allocatedDates = Object.keys(state.allocatedByDate).filter((d) => (parseInt(state.allocatedByDate[d] || 0, 10) || 0) > 0);
@@ -753,47 +1175,296 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 }
             }
 
-            let acc = 0;
-            for (let i = startIdx; i < state.dateCells.length; i += 1) {
-                const cell = state.dateCells[i];
-                const planQty = parseInt(cell.dataset.planQty || '0', 10) || 0;
-                if (planQty <= 0) {
-                    continue;
-                }
-                if (acc < coverageNeed && acc + planQty >= coverageNeed) {
-                    endIdx = i;
-                    if (acc + planQty > coverageNeed) {
-                        partialIdx = i;
+            function findCoverageWindow(needQty) {
+                let acc = 0;
+                let endIdx = -1;
+                let partialIdx = -1;
+                for (let i = startIdx; i < state.dateCells.length; i += 1) {
+                    const cell = state.dateCells[i];
+                    const planQty = parseInt(cell.dataset.planQty || '0', 10) || 0;
+                    if (planQty <= 0) {
+                        continue;
                     }
-                    break;
+                    if (acc < needQty && acc + planQty >= needQty) {
+                        endIdx = i;
+                        if (acc + planQty > needQty) {
+                            partialIdx = i;
+                        }
+                        break;
+                    }
+                    acc += planQty;
                 }
-                acc += planQty;
+                if (needQty > 0 && endIdx < 0 && lastPlanIdx >= startIdx) {
+                    endIdx = lastPlanIdx;
+                }
+                return { endIdx, partialIdx };
             }
-            if (coverageNeed > 0 && endIdx < 0 && lastPlanIdx >= startIdx) {
-                endIdx = lastPlanIdx;
-            }
+            const baseWindow = findCoverageWindow(baseCoverageNeed);
+            baseEndIdx = baseWindow.endIdx;
+            basePartialIdx = baseWindow.partialIdx;
+            const totalWindow = findCoverageWindow(totalCoverageNeed);
+            totalEndIdx = totalWindow.endIdx;
+            totalPartialIdx = totalWindow.partialIdx;
 
             state.dateCells.forEach((cell, idx) => {
-                cell.classList.remove('gantt-full', 'gantt-partial');
-                if (endIdx >= 0 && idx >= startIdx && idx <= endIdx) {
-                    cell.classList.add(idx === partialIdx ? 'gantt-partial' : 'gantt-full');
+                cell.classList.remove('gantt-full', 'gantt-partial', 'gantt-plan-full', 'gantt-plan-partial');
+                const inBase = baseEndIdx >= 0 && idx >= startIdx && idx <= baseEndIdx;
+                const inTotal = totalEndIdx >= 0 && idx >= startIdx && idx <= totalEndIdx;
+                if (inBase) {
+                    cell.classList.add(idx === basePartialIdx ? 'gantt-partial' : 'gantt-full');
+                } else if (inTotal) {
+                    cell.classList.add(idx === totalPartialIdx ? 'gantt-plan-partial' : 'gantt-plan-full');
                 }
 
                 const date = cell.dataset.date || '';
                 const qty = parseInt(state.allocatedByDate[date] || 0, 10) || 0;
-                let supplyEl = cell.querySelector('.cell-supply');
                 if (qty > 0) {
+                    dailyTotals[date] = (parseInt(dailyTotals[date] || 0, 10) || 0) + qty;
+                }
+                let supplyEl = cell.querySelector('.cell-supply');
+                const objects = Array.isArray(state.allocatedObjectsByDate[date])
+                    ? state.allocatedObjectsByDate[date]
+                    : [];
+
+                if (objects.length > 0) {
                     if (!supplyEl) {
                         supplyEl = document.createElement('div');
                         supplyEl.className = 'cell-supply';
                         cell.appendChild(supplyEl);
                     }
-                    supplyEl.textContent = `+${qty}`;
+                    supplyEl.innerHTML = '';
+                    objects.forEach((obj, objIdx) => {
+                        const objQty = getAllocatedObjectQty(obj);
+                        if (objQty <= 0) {
+                            return;
+                        }
+                        const item = document.createElement('span');
+                        item.className = 'cell-supply-item';
+                        item.textContent = String(objQty);
+                        item.title = 'Клик: вернуть в пул';
+                        item.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            returnAllocationToPool(rowKey, date, objIdx);
+                        });
+                        supplyEl.appendChild(item);
+                    });
                 } else if (supplyEl) {
                     supplyEl.remove();
                 }
             });
         });
+
+        Object.keys(dateHeaderTotals).forEach((date) => {
+            const total = parseInt(dailyTotals[date] || 0, 10) || 0;
+            const entry = dateHeaderTotals[date];
+            entry.valueEl.textContent = String(total);
+            entry.th.title = `Суммарно распределено гофропакетов из пула: ${total}`;
+        });
+    }
+
+    function returnAllocationToPool(rowKey, date, objIdx) {
+        const state = rowStateMap.get(rowKey);
+        if (!state) {
+            return;
+        }
+        const list = Array.isArray(state.allocatedObjectsByDate[date]) ? state.allocatedObjectsByDate[date] : [];
+        if (objIdx < 0 || objIdx >= list.length) {
+            return;
+        }
+        const allocObj = list[objIdx];
+        const qty = getAllocatedObjectQty(allocObj);
+        if (qty <= 0) {
+            return;
+        }
+        const itemsToRestore = getAllocatedObjectItems(allocObj);
+        if (itemsToRestore.length === 0) {
+            return;
+        }
+
+        list.splice(objIdx, 1);
+        state.allocatedByDate[date] = Math.max(0, (parseInt(state.allocatedByDate[date] || 0, 10) || 0) - qty);
+        if (list.length === 0) {
+            delete state.allocatedObjectsByDate[date];
+        }
+
+        if (supplyMap[rowKey]) {
+            supplyMap[rowKey][date] = Math.max(0, (parseInt(supplyMap[rowKey][date] || 0, 10) || 0) - qty);
+            if ((parseInt(supplyMap[rowKey][date] || 0, 10) || 0) <= 0) {
+                delete supplyMap[rowKey][date];
+            }
+        }
+
+        itemsToRestore.forEach((entry) => {
+            allocations.push({
+                strip_id: entry.strip_id || `RETURN-${stripSeq}`,
+                row_key: rowKey,
+                date,
+                qty: -entry.qty,
+                used_length: -(entry.qty * NORM_PER_UNIT),
+                action: 'return_to_pool',
+            });
+        });
+
+        itemsToRestore.forEach((entry) => {
+            strips.push({
+                id: entry.strip_id || `S${stripSeq++}`,
+                length: entry.qty * NORM_PER_UNIT,
+                qty_capacity: entry.qty,
+                package_type: state.packageKey,
+                package_label: state.filterName || state.packageName || getPackageLabel(state.packageKey),
+                order: state.order || '',
+                source_row: rowKey,
+            });
+        });
+
+        renderStrips();
+        updateCoverage();
+    }
+
+    function buildSavePayload() {
+        const items = [];
+        rowStateMap.forEach((state, rowKey) => {
+            Object.keys(state.allocatedObjectsByDate).forEach((date) => {
+                const objects = Array.isArray(state.allocatedObjectsByDate[date]) ? state.allocatedObjectsByDate[date] : [];
+                objects.forEach((obj, idx) => {
+                    const groupId = (obj && typeof obj === 'object' && String(obj.group_id || '') !== '')
+                        ? String(obj.group_id)
+                        : `ROW:${rowKey}|DATE:${date}|IDX:${idx}`;
+                    const entries = getAllocatedObjectItems(obj);
+                    entries.forEach((entry) => {
+                        items.push({
+                            source_row_key: rowKey,
+                            order_number: state.order || '',
+                            filter_name: state.filterName || '',
+                            package_key: state.packageKey || '',
+                            package_name: state.packageName || '',
+                            plan_date: date,
+                            group_id: groupId,
+                            strip_id: entry.strip_id || '',
+                            qty: entry.qty,
+                        });
+                    });
+                });
+            });
+        });
+        return { items };
+    }
+
+    async function savePlanV2() {
+        if (!savePlanBtn) {
+            return;
+        }
+        savePlanBtn.disabled = true;
+        setSaveStatus('Сохраняем...');
+        try {
+            const payload = buildSavePayload();
+            const res = await fetch('?api=save_plan_v2', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!res.ok || !data || !data.ok) {
+                throw new Error((data && data.error) ? data.error : 'Ошибка сохранения');
+            }
+            setSaveStatus(`Сохранено: ${Number(data.saved || 0)} строк`);
+        } catch (err) {
+            setSaveStatus(`Ошибка сохранения: ${err.message || err}`, true);
+        } finally {
+            savePlanBtn.disabled = false;
+        }
+    }
+
+    function removeStripFromPoolByIdOrQty(state, stripId, qty) {
+        let idx = strips.findIndex((s) => s.id === stripId);
+        if (idx < 0) {
+            idx = strips.findIndex((s) =>
+                String(s.source_row || '') === String(state.row.dataset.rowKey || '')
+                && (Math.max(0, parseInt(s.qty_capacity || 0, 10) || 0) === qty)
+            );
+        }
+        if (idx < 0) {
+            return null;
+        }
+        const removed = strips[idx];
+        selectedStripIds.delete(removed.id);
+        strips.splice(idx, 1);
+        return removed;
+    }
+
+    function applyLoadedPlanRows(rows) {
+        const grouped = new Map();
+        rows.forEach((r) => {
+            const rowKey = String(r.source_row_key || '').trim();
+            const date = String(r.plan_date || '').trim();
+            const groupId = String(r.group_id || '').trim();
+            const stripId = String(r.strip_id || '').trim();
+            const qty = Math.max(0, parseInt(r.qty || 0, 10) || 0);
+            if (!rowKey || !date || !groupId || !stripId || qty <= 0) {
+                return;
+            }
+            const mapKey = `${rowKey}||${date}||${groupId}`;
+            if (!grouped.has(mapKey)) {
+                grouped.set(mapKey, { rowKey, date, groupId, items: [] });
+            }
+            grouped.get(mapKey).items.push({ strip_id: stripId, qty });
+        });
+
+        grouped.forEach((group) => {
+            const state = rowStateMap.get(group.rowKey);
+            if (!state) {
+                return;
+            }
+            const restoredItems = [];
+            group.items.forEach((item) => {
+                const removed = removeStripFromPoolByIdOrQty(state, item.strip_id, item.qty);
+                if (!removed) {
+                    return;
+                }
+                restoredItems.push({
+                    strip_id: item.strip_id || removed.id,
+                    qty: item.qty,
+                });
+            });
+            if (restoredItems.length === 0) {
+                return;
+            }
+            const totalQty = restoredItems.reduce((acc, x) => acc + (parseInt(x.qty || 0, 10) || 0), 0);
+            if (!Array.isArray(state.allocatedObjectsByDate[group.date])) {
+                state.allocatedObjectsByDate[group.date] = [];
+            }
+            state.allocatedObjectsByDate[group.date].push({
+                qty: totalQty,
+                group_id: group.groupId,
+                items: restoredItems,
+            });
+            state.allocatedByDate[group.date] = (parseInt(state.allocatedByDate[group.date] || 0, 10) || 0) + totalQty;
+            if (!supplyMap[group.rowKey]) {
+                supplyMap[group.rowKey] = {};
+            }
+            supplyMap[group.rowKey][group.date] = (parseInt(supplyMap[group.rowKey][group.date] || 0, 10) || 0) + totalQty;
+        });
+        if (selectedStripIds.size === 0) {
+            selectedSourceRow = '';
+        }
+    }
+
+    async function loadPlanV2() {
+        setSaveStatus('Загружаем сохраненный план...');
+        try {
+            const res = await fetch('?api=load_plan_v2');
+            const data = await res.json();
+            if (!res.ok || !data || !data.ok) {
+                throw new Error((data && data.error) ? data.error : 'Ошибка загрузки');
+            }
+            applyLoadedPlanRows(Array.isArray(data.items) ? data.items : []);
+            renderStrips();
+            updateCoverage();
+            setSaveStatus('Сохраненный план загружен');
+        } catch (err) {
+            setSaveStatus(`Ошибка загрузки: ${err.message || err}`, true);
+        }
     }
 
     function applyDrop(cell) {
@@ -809,40 +1480,83 @@ $pageTitle = 'Планирование сборки гофропакетов';
         if (!rowKey || !date) {
             return;
         }
-        const stripIdx = strips.findIndex((s) => s.id === dragContext.strip_id);
-        if (stripIdx < 0) {
-            return;
-        }
-        const strip = strips[stripIdx];
-        const qty = computeQtyFromLength(strip.length);
-        if (qty <= 0) {
-            return;
-        }
-        const usedLength = qty * NORM_PER_UNIT;
-        if (usedLength > strip.length + 1e-9) {
+        const stripIds = Array.isArray(dragContext.strip_ids) && dragContext.strip_ids.length > 0
+            ? dragContext.strip_ids
+            : [];
+        if (stripIds.length === 0) {
             return;
         }
 
-        allocations.push({
-            strip_id: strip.id,
-            row_key: rowKey,
-            date,
-            qty,
-            used_length: usedLength,
+        const selectedStripData = [];
+        stripIds.forEach((id) => {
+            const idx = strips.findIndex((s) => s.id === id);
+            if (idx < 0) {
+                return;
+            }
+            const strip = strips[idx];
+            const qty = computeQtyFromLength(strip.length);
+            if (qty <= 0) {
+                return;
+            }
+            const usedLength = qty * NORM_PER_UNIT;
+            if (usedLength > strip.length + 1e-9) {
+                return;
+            }
+            selectedStripData.push({
+                id: strip.id,
+                qty,
+                usedLength,
+                index: idx,
+            });
+        });
+        if (selectedStripData.length === 0) {
+            return;
+        }
+        let totalQty = 0;
+        selectedStripData.forEach((entry) => {
+            totalQty += entry.qty;
+            allocations.push({
+                strip_id: entry.id,
+                row_key: rowKey,
+                date,
+                qty: entry.qty,
+                used_length: entry.usedLength,
+            });
         });
         if (!supplyMap[rowKey]) {
             supplyMap[rowKey] = {};
         }
-        supplyMap[rowKey][date] = (parseInt(supplyMap[rowKey][date] || 0, 10) || 0) + qty;
+        supplyMap[rowKey][date] = (parseInt(supplyMap[rowKey][date] || 0, 10) || 0) + totalQty;
 
         const state = rowStateMap.get(rowKey);
         if (state) {
-            state.allocatedByDate[date] = (parseInt(state.allocatedByDate[date] || 0, 10) || 0) + qty;
+            state.allocatedByDate[date] = (parseInt(state.allocatedByDate[date] || 0, 10) || 0) + totalQty;
+            if (!Array.isArray(state.allocatedObjectsByDate[date])) {
+                state.allocatedObjectsByDate[date] = [];
+            }
+            const groupId = `G${allocationGroupSeq++}`;
+            state.allocatedObjectsByDate[date].push({
+                qty: totalQty,
+                group_id: groupId,
+                items: selectedStripData.map((entry) => ({
+                    strip_id: entry.id,
+                    qty: entry.qty,
+                })),
+            });
         }
 
-        strip.length = Math.max(0, strip.length - usedLength);
-        if (strip.length <= 0.0001) {
-            strips.splice(stripIdx, 1);
+        selectedStripData
+            .map((entry) => entry.index)
+            .sort((a, b) => b - a)
+            .forEach((idx) => {
+                if (idx >= 0 && idx < strips.length) {
+                    const removed = strips[idx];
+                    selectedStripIds.delete(removed.id);
+                    strips.splice(idx, 1);
+                }
+            });
+        if (selectedStripIds.size === 0) {
+            selectedSourceRow = '';
         }
 
         renderStrips();
@@ -886,6 +1600,39 @@ $pageTitle = 'Планирование сборки гофропакетов';
     bootstrapStrips();
     renderStrips();
     updateCoverage();
+    if (savePlanBtn) {
+        savePlanBtn.addEventListener('click', savePlanV2);
+    }
+    if (taskSheetBtn) {
+        taskSheetBtn.addEventListener('click', openTaskSheetModal);
+    }
+    if (taskSheetCancel) {
+        taskSheetCancel.addEventListener('click', closeTaskSheetModal);
+    }
+    if (taskSheetPrint) {
+        taskSheetPrint.addEventListener('click', () => {
+            const dateFrom = taskDateFrom ? String(taskDateFrom.value || '') : '';
+            const dateTo = taskDateTo ? String(taskDateTo.value || '') : '';
+            if (!dateFrom || !dateTo) {
+                alert('Укажите период задания.');
+                return;
+            }
+            if (dateFrom > dateTo) {
+                alert('Дата начала больше даты окончания.');
+                return;
+            }
+            closeTaskSheetModal();
+            printTaskSheet(dateFrom, dateTo);
+        });
+    }
+    if (taskSheetModal) {
+        taskSheetModal.addEventListener('click', (e) => {
+            if (e.target === taskSheetModal) {
+                closeTaskSheetModal();
+            }
+        });
+    }
+    loadPlanV2();
 })();
 </script>
 <?php endif; ?>
