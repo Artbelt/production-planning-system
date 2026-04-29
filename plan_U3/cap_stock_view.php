@@ -92,6 +92,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit;
 }
 
+// Обработка AJAX запроса на историю операций
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'history') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    $cap_name = trim($_POST['cap_name'] ?? '');
+    $limit = intval($_POST['limit'] ?? 200);
+    $limit = max(1, min($limit, 500));
+
+    if (empty($cap_name)) {
+        echo json_encode(['success' => false, 'error' => 'Не указано название крышки'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT date, operation_type, quantity, user_name, comment
+        FROM cap_movements
+        WHERE cap_name = ?
+        ORDER BY date DESC
+        LIMIT {$limit}
+    ");
+
+    $ok = $stmt->execute([$cap_name]);
+    if (!$ok) {
+        echo json_encode(['success' => false, 'error' => 'Ошибка выборки истории'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $history = [];
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $dateFormatted = '-';
+        try {
+            if (!empty($row['date'])) {
+                $dt = new DateTime($row['date']);
+                $dateFormatted = $dt->format('d.m.Y H:i');
+            }
+        } catch (Exception $e) {
+            // Оставляем '-'
+        }
+
+        $history[] = [
+            'date_formatted' => $dateFormatted,
+            'operation_type' => $row['operation_type'] ?? '',
+            'quantity' => isset($row['quantity']) ? (int)$row['quantity'] : 0,
+            'user_name' => $row['user_name'] ?? '',
+            'comment' => $row['comment'] ?? '',
+        ];
+    }
+
+    echo json_encode(['success' => true, 'history' => $history], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 $result = $pdo->query("SELECT cap_name, current_quantity, last_updated FROM cap_stock ORDER BY cap_name ASC");
 
 $total_caps = 0;
@@ -373,6 +425,127 @@ $capHintText = implode("\n", $capHintLines);
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
+
+        .history-btn {
+            margin-left: 0;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.45);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            padding: 12px;
+        }
+
+        .modal {
+            background: #fff;
+            border-radius: 6px;
+            width: 100%;
+            max-width: 720px;
+            max-height: 80vh;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            padding: 10px 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #eee;
+            background: #f8f9fa;
+        }
+
+        .modal-title {
+            font-weight: 700;
+            font-size: 14px;
+            color: #333;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 85%;
+        }
+
+        .modal-close {
+            border: 1px solid #ccc;
+            background: transparent;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 28px;
+            height: 28px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+
+        .modal-body {
+            padding: 10px 12px;
+            overflow: auto;
+        }
+
+        .modal-empty {
+            padding: 12px;
+            color: #666;
+            font-size: 13px;
+        }
+
+        .history-qty-positive {
+            color: #28a745;
+            font-weight: 700;
+        }
+
+        .history-qty-negative {
+            color: #dc3545;
+            font-weight: 700;
+        }
+
+        .history-row-in {
+            background: #d4edda;
+        }
+
+        .history-row-out {
+            background: #f8d7da;
+        }
+
+        tr.history-row-in:hover {
+            background: #d4edda;
+        }
+
+        tr.history-row-out:hover {
+            background: #f8d7da;
+        }
+
+        .history-totals {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            justify-content: flex-start;
+            margin-bottom: 10px;
+            font-size: 13px;
+            padding: 8px 10px;
+            background: #f8f9fa;
+            border: 1px solid #eee;
+            border-radius: 6px;
+        }
+
+        .history-total-in {
+            color: #155724;
+            font-weight: 700;
+        }
+
+        .history-total-out {
+            color: #721c24;
+            font-weight: 700;
+        }
     </style>
 </head>
 <body>
@@ -398,6 +571,7 @@ $capHintText = implode("\n", $capHintLines);
                     <tr>
                         <th>Название крышки</th>
                         <th style="text-align: right;">Количество</th>
+                        <th style="text-align: center;">История</th>
                         <th>Последнее обновление</th>
                     </tr>
                 </thead>
@@ -416,6 +590,19 @@ $capHintText = implode("\n", $capHintLines);
                                     </svg>
                                 </button>
                             </td>
+                            <td style="text-align: center;">
+                                <button
+                                    class="edit-btn history-btn"
+                                    onclick="showCapHistory(this)"
+                                    title="История операций"
+                                    type="button"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <polyline points="12 6 12 12 16 14"></polyline>
+                                    </svg>
+                                </button>
+                            </td>
                             <td>
                                 <?php 
                                 if ($row['last_updated']) {
@@ -431,6 +618,42 @@ $capHintText = implode("\n", $capHintLines);
                 </tbody>
             </table>
         <?php endif; ?>
+    </div>
+
+    <div
+        id="historyModal"
+        class="modal-overlay"
+        role="dialog"
+        aria-modal="true"
+        onclick="historyModalOverlayClick(event)"
+    >
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">История операций по крышке: <span id="historyCapName"></span></div>
+                <button type="button" class="modal-close" onclick="closeHistoryModal()" aria-label="Закрыть">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="historyLoading" style="display:none; font-size:13px; color:#666; margin-bottom:8px;">Загрузка...</div>
+                <div id="historyEmpty" class="modal-empty" style="display:none;">История операций не найдена.</div>
+                <div id="historyTotals" class="history-totals" style="display:none;">
+                    <span>Пришло за период: <span id="historyQtyIn" class="history-total-in">0</span> шт</span>
+                    <span>Ушло за период: <span id="historyQtyOut" class="history-total-out">0</span> шт</span>
+                </div>
+
+                <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                    <thead>
+                        <tr>
+                            <th style="width: 160px;">Дата</th>
+                            <th style="width: 140px;">Тип</th>
+                            <th style="width: 120px; text-align:right;">Количество</th>
+                            <th style="width: 140px;">Пользователь</th>
+                            <th>Комментарий</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyTableBody"></tbody>
+                </table>
+            </div>
+        </div>
     </div>
     
     <script>
@@ -576,6 +799,166 @@ $capHintText = implode("\n", $capHintLines);
             messageDiv.style.display = 'none';
         }, 3000);
     }
+
+    function openHistoryModal() {
+        const modal = document.getElementById('historyModal');
+        modal.style.display = 'flex';
+    }
+
+    function closeHistoryModal() {
+        const modal = document.getElementById('historyModal');
+        modal.style.display = 'none';
+    }
+
+    function historyModalOverlayClick(event) {
+        const modal = document.getElementById('historyModal');
+        if (event.target === modal) {
+            closeHistoryModal();
+        }
+    }
+
+    function showCapHistory(btn) {
+        const row = btn.closest('tr');
+        const capName = row ? row.getAttribute('data-cap-name') : '';
+
+        if (!capName) {
+            showMessage('Не удалось определить крышку для истории', 'error');
+            return;
+        }
+
+        document.getElementById('historyCapName').textContent = capName;
+        document.getElementById('historyLoading').style.display = 'block';
+        document.getElementById('historyEmpty').style.display = 'none';
+        document.getElementById('historyTotals').style.display = 'none';
+        document.getElementById('historyQtyIn').textContent = '0';
+        document.getElementById('historyQtyOut').textContent = '0';
+        document.getElementById('historyTableBody').innerHTML = '';
+
+        openHistoryModal();
+
+        const formData = new FormData();
+        formData.append('action', 'history');
+        formData.append('cap_name', capName);
+
+        fetch('cap_stock_view.php', {
+            method: 'POST',
+            body: formData
+        })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('historyLoading').style.display = 'none';
+
+                if (!data.success) {
+                    showMessage('Ошибка: ' + (data.error || 'неизвестная'), 'error');
+                    return;
+                }
+
+                const history = Array.isArray(data.history) ? data.history : [];
+                if (history.length === 0) {
+                    document.getElementById('historyEmpty').style.display = 'block';
+                    return;
+                }
+
+                // Подсчитываем итоги по загруженной истории.
+                // Логика направления берется из operation_type:
+                // INCOME -> пришло
+                // PRODUCTION_OUT -> ушло
+                // ADJUSTMENT -> направление по знаку quantity
+                let qtyIn = 0;
+                let qtyOut = 0;
+                history.forEach(item => {
+                    const q = parseInt(item.quantity, 10);
+                    const qtyAbs = Math.abs(isNaN(q) ? 0 : q);
+                    const opType = String(item.operation_type || '').toUpperCase();
+
+                    if (qtyAbs === 0) return;
+
+                    if (opType === 'INCOME') {
+                        qtyIn += qtyAbs;
+                        return;
+                    }
+                    if (opType === 'PRODUCTION_OUT') {
+                        qtyOut += qtyAbs;
+                        return;
+                    }
+                    if (opType === 'ADJUSTMENT') {
+                        if (q >= 0) qtyIn += qtyAbs;
+                        else qtyOut += qtyAbs;
+                    }
+                });
+
+                document.getElementById('historyQtyIn').textContent = numberFormat(qtyIn);
+                document.getElementById('historyQtyOut').textContent = numberFormat(qtyOut);
+                document.getElementById('historyTotals').style.display = 'flex';
+
+                const tbody = document.getElementById('historyTableBody');
+                history.forEach(item => {
+                    const tr = document.createElement('tr');
+
+                    const tdDate = document.createElement('td');
+                    tdDate.textContent = item.date_formatted || '-';
+                    tr.appendChild(tdDate);
+
+                    const tdType = document.createElement('td');
+                    tdType.textContent = item.operation_type || '';
+                    tr.appendChild(tdType);
+
+                    const tdQty = document.createElement('td');
+                    tdQty.style.textAlign = 'right';
+                    const qtyVal = parseInt(item.quantity, 10);
+                    const qtyAbs = Math.abs(isNaN(qtyVal) ? 0 : qtyVal);
+                    const opType = String(item.operation_type || '').toUpperCase();
+
+                    let isIn = false;
+                    let isOut = false;
+                    if (opType === 'INCOME') {
+                        isIn = true;
+                    } else if (opType === 'PRODUCTION_OUT') {
+                        isOut = true;
+                    } else if (opType === 'ADJUSTMENT') {
+                        if (qtyVal >= 0) isIn = true;
+                        else isOut = true;
+                    } else {
+                        // fallback: по знаку quantity
+                        if (qtyVal > 0) isIn = true;
+                        if (qtyVal < 0) isOut = true;
+                    }
+
+                    const sign = isIn ? '+' : (isOut ? '-' : '');
+                    tdQty.textContent = sign + numberFormat(qtyAbs) + ' шт';
+
+                    if (isIn) {
+                        tdQty.classList.add('history-qty-positive');
+                        tr.classList.add('history-row-in');
+                    }
+                    if (isOut) {
+                        tdQty.classList.add('history-qty-negative');
+                        tr.classList.add('history-row-out');
+                    }
+                    tr.appendChild(tdQty);
+
+                    const tdUser = document.createElement('td');
+                    tdUser.textContent = item.user_name || '';
+                    tr.appendChild(tdUser);
+
+                    const tdComment = document.createElement('td');
+                    tdComment.textContent = item.comment || '';
+                    tr.appendChild(tdComment);
+
+                    tbody.appendChild(tr);
+                });
+            })
+            .catch(error => {
+                document.getElementById('historyLoading').style.display = 'none';
+                showMessage('Ошибка при загрузке истории: ' + error.message, 'error');
+            });
+    }
+
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeHistoryModal();
+        }
+    });
     </script>
 </body>
 </html>

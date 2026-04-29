@@ -690,6 +690,37 @@ if (!empty($rows) && !empty($filterMetaByKey)) {
     }
 }
 
+$gofroPlannedByRowDate = [];
+try {
+    $sqlGofroPlanned = "
+        SELECT
+            source_row_key,
+            plan_date,
+            SUM(qty) AS qty
+        FROM corrugation_plan_v2
+        WHERE qty > 0
+        GROUP BY source_row_key, plan_date
+    ";
+    $stmtGofroPlanned = $pdo->query($sqlGofroPlanned);
+    foreach ($stmtGofroPlanned->fetchAll(PDO::FETCH_ASSOC) as $gp) {
+        $rowKey = trim((string)($gp['source_row_key'] ?? ''));
+        $planDate = trim((string)($gp['plan_date'] ?? ''));
+        $qty = (int)($gp['qty'] ?? 0);
+        if ($rowKey === '' || $planDate === '' || $qty <= 0) {
+            continue;
+        }
+        if (!isset($gofroPlannedByRowDate[$rowKey])) {
+            $gofroPlannedByRowDate[$rowKey] = [];
+        }
+        if (!isset($gofroPlannedByRowDate[$rowKey][$planDate])) {
+            $gofroPlannedByRowDate[$rowKey][$planDate] = 0;
+        }
+        $gofroPlannedByRowDate[$rowKey][$planDate] += $qty;
+    }
+} catch (Throwable $e) {
+    $gofroPlannedByRowDate = [];
+}
+
 $dateIndicators = [];
 foreach ($buildPlanDates as $planDate) {
     $dateIndicators[(string) $planDate] = [
@@ -1207,6 +1238,14 @@ $pageTitle = 'Активные позиции';
         td.date-cell.gofro-coverage-cell-partial {
             background: #fef3c7;
             box-shadow: inset 0 0 0 1px rgba(217, 119, 6, 0.35);
+        }
+        td.date-cell.gofro-coverage-planned-cell {
+            background: #dbeafe;
+            box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.35);
+        }
+        td.date-cell.gofro-coverage-planned-cell-partial {
+            background: #eff6ff;
+            box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.5);
         }
 
         /* Гистограмма выполнения в ячейке «Позиция» */
@@ -1807,6 +1846,7 @@ $pageTitle = 'Активные позиции';
                         $rowGofroAvailable = $rowGofroProduced !== null
                             ? ((int)$rowGofroProduced - (int)$produced)
                             : null;
+                        $rowPlannedGofroByDate = $gofroPlannedByRowDate[$planKey] ?? [];
                     ?>
                     <tr
                         class="plan-row"
@@ -1817,6 +1857,7 @@ $pageTitle = 'Активные позиции';
                         data-has-600="<?= $rowHas600 ? '1' : '0' ?>"
                         data-priority="<?= $isLagging ? 'A' : 'C' ?>"
                         data-gofro-available="<?= $rowGofroAvailable !== null ? (int)$rowGofroAvailable : 0 ?>"
+                        data-gofro-planned="<?= htmlspecialchars((string)json_encode($rowPlannedGofroByDate, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ENT_QUOTES, 'UTF-8') ?>"
                     >
                         <td
                             class="pos-cell"
@@ -2278,7 +2319,12 @@ $pageTitle = 'Активные позиции';
 
         function clearGofroCoverageHighlight() {
             dateCells.forEach(function (cell) {
-                cell.classList.remove('gofro-coverage-cell', 'gofro-coverage-cell-partial');
+                cell.classList.remove(
+                    'gofro-coverage-cell',
+                    'gofro-coverage-cell-partial',
+                    'gofro-coverage-planned-cell',
+                    'gofro-coverage-planned-cell-partial'
+                );
             });
         }
 
@@ -2288,23 +2334,65 @@ $pageTitle = 'Активные позиции';
                 return;
             }
             document.querySelectorAll('tr.plan-row').forEach(function (row) {
-                let remaining = parseInt(row.dataset.gofroAvailable || '0', 10) || 0;
-                if (remaining <= 0) {
-                    return;
+                let baseRemaining = parseInt(row.dataset.gofroAvailable || '0', 10) || 0;
+                let plannedByDate = {};
+                try {
+                    const raw = String(row.dataset.gofroPlanned || '');
+                    plannedByDate = raw ? (JSON.parse(raw) || {}) : {};
+                } catch (e) {
+                    plannedByDate = {};
                 }
                 const rowCells = Array.from(row.querySelectorAll('td.date-cell'));
-                rowCells.forEach(function (cell) {
+                let plannedTotal = 0;
+                let firstPlannedIdx = null;
+                rowCells.forEach(function (cell, idx) {
+                    const date = String(cell.dataset.date || '');
+                    const q = Math.max(0, parseInt((plannedByDate && plannedByDate[date]) || 0, 10) || 0);
+                    if (q > 0) {
+                        plannedTotal += q;
+                        if (firstPlannedIdx === null) {
+                            firstPlannedIdx = idx;
+                        }
+                    }
+                });
+                const startIdx = firstPlannedIdx !== null ? firstPlannedIdx : 0;
+                let totalRemaining = Math.max(0, baseRemaining) + plannedTotal;
+                if (totalRemaining <= 0) {
+                    return;
+                }
+
+                rowCells.forEach(function (cell, idx) {
                     const qty = Math.max(0, parseInt(cell.dataset.qty || '0', 10) || 0);
-                    if (qty <= 0 || remaining <= 0) {
+                    if (idx < startIdx || qty <= 0 || totalRemaining <= 0) {
                         return;
                     }
-                    if (remaining >= qty) {
-                        cell.classList.add('gofro-coverage-cell');
-                        remaining -= qty;
+                    const baseUsed = Math.max(0, Math.min(baseRemaining, qty));
+                    if (baseUsed > 0) {
+                        if (baseUsed >= qty) {
+                            cell.classList.add('gofro-coverage-cell');
+                        } else {
+                            cell.classList.add('gofro-coverage-cell-partial');
+                        }
+                        baseRemaining -= baseUsed;
+                        totalRemaining -= baseUsed;
+                    }
+                    if (totalRemaining <= 0) {
                         return;
                     }
-                    cell.classList.add('gofro-coverage-cell-partial');
-                    remaining = 0;
+                    const leftoverInCell = qty - baseUsed;
+                    if (leftoverInCell <= 0) {
+                        return;
+                    }
+                    const plannedUsed = Math.max(0, Math.min(totalRemaining, leftoverInCell));
+                    if (plannedUsed <= 0) {
+                        return;
+                    }
+                    if (plannedUsed >= leftoverInCell) {
+                        cell.classList.add('gofro-coverage-planned-cell');
+                    } else {
+                        cell.classList.add('gofro-coverage-planned-cell-partial');
+                    }
+                    totalRemaining -= plannedUsed;
                 });
             });
         }

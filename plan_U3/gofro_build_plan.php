@@ -241,6 +241,7 @@ if (!empty($rows)) {
                 SELECT
                     rfs.filter AS filter_name,
                     rfs.filter_package AS filter_package,
+                    ppr.p_p_paper_width AS paper_width_mm,
                     ppr.p_p_fold_height AS fold_height,
                     ppr.p_p_fold_count AS fold_count
                 FROM round_filter_structure rfs
@@ -258,6 +259,7 @@ if (!empty($rows)) {
                 if (!isset($filterMetaByKey[$metaKey])) {
                     $filterMetaByKey[$metaKey] = [
                         'filter_package' => null,
+                        'paper_width_mm' => null,
                         'fold_height' => null,
                         'fold_count' => null,
                     ];
@@ -265,6 +267,9 @@ if (!empty($rows)) {
                 $pkg = trim((string)($metaRow['filter_package'] ?? ''));
                 if ($pkg !== '' && $filterMetaByKey[$metaKey]['filter_package'] === null) {
                     $filterMetaByKey[$metaKey]['filter_package'] = $pkg;
+                }
+                if ($metaRow['paper_width_mm'] !== null && $filterMetaByKey[$metaKey]['paper_width_mm'] === null) {
+                    $filterMetaByKey[$metaKey]['paper_width_mm'] = (float)$metaRow['paper_width_mm'];
                 }
                 if ($metaRow['fold_height'] !== null && $filterMetaByKey[$metaKey]['fold_height'] === null) {
                     $filterMetaByKey[$metaKey]['fold_height'] = (float)$metaRow['fold_height'];
@@ -614,6 +619,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                         $gofroNeed = max(0, $remaining - $gofroAvailable);
                         $foldHeight = (float)($meta['fold_height'] ?? 0);
                         $foldCount = (float)($meta['fold_count'] ?? 0);
+                        $paperWidthMm = (float)($meta['paper_width_mm'] ?? 0);
                         $packLengthM = ($foldHeight > 0 && $foldCount > 0)
                             ? (($foldHeight * 2 + 1) * $foldCount) / 1000
                             : 0.0;
@@ -648,6 +654,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
                             data-row-key="<?= htmlspecialchars($planKey, ENT_QUOTES, 'UTF-8') ?>"
                             data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
                             data-filter-name="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
+                            data-paper-width-mm="<?= htmlspecialchars((string)$paperWidthMm, ENT_QUOTES, 'UTF-8') ?>"
+                            data-fold-height="<?= htmlspecialchars((string)$foldHeight, ENT_QUOTES, 'UTF-8') ?>"
+                            data-fold-count="<?= htmlspecialchars((string)$foldCount, ENT_QUOTES, 'UTF-8') ?>"
                             data-package-key="<?= htmlspecialchars($packageKey, ENT_QUOTES, 'UTF-8') ?>"
                             data-package-name="<?= htmlspecialchars($package, ENT_QUOTES, 'UTF-8') ?>"
                             data-base-available="<?= (int)$gofroAvailable ?>"
@@ -739,6 +748,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
             row,
             order: String(row.dataset.order || ''),
             filterName: String(row.dataset.filterName || ''),
+            paperWidthMm: Math.max(0, Number(row.dataset.paperWidthMm || 0) || 0),
+            foldHeight: Math.max(0, Number(row.dataset.foldHeight || 0) || 0),
+            foldCount: Math.max(0, Number(row.dataset.foldCount || 0) || 0),
             packageKey: String(row.dataset.packageKey || ''),
             packageName: String(row.dataset.packageName || ''),
             baseAvailable: parseInt(row.dataset.baseAvailable || '0', 10) || 0,
@@ -877,6 +889,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
                     order: String(state.order || ''),
                     filter: String(state.filterName || ''),
                     qty,
+                    paperWidthMm: Math.max(0, Number(state.paperWidthMm || 0) || 0),
+                    foldHeight: Math.max(0, Number(state.foldHeight || 0) || 0),
+                    foldCount: Math.max(0, Number(state.foldCount || 0) || 0),
                 });
             });
         });
@@ -919,11 +934,14 @@ $pageTitle = 'Планирование сборки гофропакетов';
                     <td>${htmlEscape(formatDateRu(row.date))}</td>
                     <td>${htmlEscape(row.order)}</td>
                     <td>${htmlEscape(row.filter)}</td>
+                    <td style="text-align:right;">${row.paperWidthMm > 0 ? htmlEscape(String(row.paperWidthMm)) : '—'}</td>
+                    <td style="text-align:right;">${row.foldHeight > 0 ? htmlEscape(String(row.foldHeight)) : '—'}</td>
+                    <td style="text-align:right;">${row.foldCount > 0 ? htmlEscape(String(row.foldCount)) : '—'}</td>
                     <td style="text-align:right;">${row.qty}</td>
                     <td></td>
                 </tr>
             `).join('')
-            : '<tr><td colspan="6" style="text-align:center;color:#64748b;">Нет распланированных позиций за выбранный период</td></tr>';
+            : '<tr><td colspan="9" style="text-align:center;color:#64748b;">Нет распланированных позиций за выбранный период</td></tr>';
 
         const printHtml = `
 <!doctype html>
@@ -951,6 +969,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
         <th style="width:90px;">Дата</th>
         <th style="width:120px;">Заявка</th>
         <th>Фильтр</th>
+        <th style="width:95px; text-align:right;">Ширина, мм</th>
+        <th style="width:95px; text-align:right;">Высота ребра</th>
+        <th style="width:105px; text-align:right;">Кол-во ребер</th>
         <th style="width:90px; text-align:right;">Кол-во г/п</th>
         <th style="width:120px;">Примечание</th>
       </tr>

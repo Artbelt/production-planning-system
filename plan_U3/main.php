@@ -528,6 +528,7 @@ echo "<!-- Аккуратная панель авторизации -->
                     </form>
                     <a href="NP_supply_requirements.php" target="_blank" rel="noopener" class="stack"><button>Потребность комплектующих по заявке</button></a>
                     <a href="active_positions.php" target="_blank" rel="noopener" class="stack"><button type="button" class="zu-tag">Активные позиции</button></a>
+                    <button type="button" class="zu-tag" onclick="openRrInsertAnalysisModal()">Анализ потребности РР вставок</button>
                 </div>
 
                 <div class="section-title" style="margin-top:14px">Управление данными</div>
@@ -960,6 +961,7 @@ document.addEventListener('keydown', function(event) {
         document.getElementById('partsEditorModal').style.display = 'none';
         document.getElementById('addPositionModal').style.display = 'none';
         document.getElementById('addPartPositionModal').style.display = 'none';
+        document.getElementById('rrInsertAnalysisModal').style.display = 'none';
         closeLoadFileModal();
     }
 });
@@ -1024,6 +1026,7 @@ window.onclick = function(event) {
     const addPositionModal = document.getElementById('addPositionModal');
     const addPartPositionModal = document.getElementById('addPartPositionModal');
     const loadFileModal = document.getElementById('loadFileModal');
+    const rrInsertModal = document.getElementById('rrInsertAnalysisModal');
     
     if (event.target == capModal) {
         closeCapManagementModal();
@@ -1048,6 +1051,9 @@ window.onclick = function(event) {
     }
     if (event.target === loadFileModal) {
         closeLoadFileModal();
+    }
+    if (event.target === rrInsertModal) {
+        closeRrInsertAnalysisModal();
     }
 }
 
@@ -1868,6 +1874,68 @@ function submitAddPartPosition() {
     });
 }
 
+function openRrInsertAnalysisModal() {
+    const m = document.getElementById('rrInsertAnalysisModal');
+    m.style.display = 'block';
+    const today = new Date();
+    const y = today.getFullYear();
+    const mon = today.getMonth() + 1;
+    const pad = function (n) { return String(n).padStart(2, '0'); };
+    document.getElementById('rrInsertDateTo').value = y + '-' + pad(mon) + '-' + pad(today.getDate());
+    document.getElementById('rrInsertDateFrom').value = y + '-' + pad(mon) + '-01';
+    document.getElementById('rrInsertResults').innerHTML = '';
+}
+
+function closeRrInsertAnalysisModal() {
+    document.getElementById('rrInsertAnalysisModal').style.display = 'none';
+}
+
+function escapeHtmlRrInsert(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+function loadRrInsertConsumption() {
+    var df = document.getElementById('rrInsertDateFrom').value;
+    var dt = document.getElementById('rrInsertDateTo').value;
+    if (!df || !dt) {
+        alert('Выберите даты начала и окончания периода');
+        return;
+    }
+    var box = document.getElementById('rrInsertResults');
+    box.innerHTML = '<p style="color:#6b7280;margin:0">Загрузка...</p>';
+    var u = new URL('rr_insert_consumption_api.php', window.location.href);
+    u.searchParams.set('date_from', df);
+    u.searchParams.set('date_to', dt);
+    fetch(u.toString(), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (!data.ok) {
+                box.innerHTML = '<p style="color:#b91c1c;margin:0">' + escapeHtmlRrInsert(data.error || 'Ошибка') + '</p>';
+                return;
+            }
+            var rows = data.rows || [];
+            var html = '';
+            if (rows.length === 0) {
+                html = '<p style="color:#6b7280;margin:0">За выбранный период нет выпуска с указанной РР вставкой в справочнике фильтров.</p>';
+            } else {
+                html = '<table style="width:100%;border-collapse:collapse;margin-top:4px;font-size:13px"><thead><tr><th style="text-align:left;padding:8px;border:1px solid #e5e7eb;background:#f8fafc">Наименование вставки</th><th style="text-align:right;padding:8px;border:1px solid #e5e7eb;background:#f8fafc">Расход, шт.</th></tr></thead><tbody>';
+                rows.forEach(function (row) {
+                    html += '<tr><td style="padding:8px;border:1px solid #e5e7eb">' + escapeHtmlRrInsert(row.insertion_name) + '</td><td style="text-align:right;padding:8px;border:1px solid #e5e7eb">' + row.total_qty + '</td></tr>';
+                });
+                html += '</tbody><tfoot><tr><td style="padding:8px;border:1px solid #e5e7eb;font-weight:600">Итого (фильтров с вставкой)</td><td style="text-align:right;padding:8px;border:1px solid #e5e7eb;font-weight:600">' + (data.total_with_insert || 0) + '</td></tr></tfoot></table>';
+            }
+            if (data.skipped_filters_qty > 0) {
+                html += '<p style="font-size:12px;color:#6b7280;margin:10px 0 0 0">Выпуск фильтров без РР вставки в справочнике: <strong>' + data.skipped_filters_qty + '</strong> шт.</p>';
+            }
+            box.innerHTML = html;
+        })
+        .catch(function () {
+            box.innerHTML = '<p style="color:#b91c1c;margin:0">Не удалось загрузить данные</p>';
+        });
+}
+
 // Функции для модального окна загрузки файла
 function openLoadFileModal() {
     document.getElementById('loadFileModal').style.display = 'block';
@@ -2193,6 +2261,34 @@ document.addEventListener('DOMContentLoaded', function() {
                     </button>
                 </div>
             </form>
+        </div>
+    </div>
+</div>
+
+<!-- Анализ расхода РР вставок по факту выпуска -->
+<div id="rrInsertAnalysisModal" class="modal">
+    <div class="modal-content" style="max-width: 640px;">
+        <div class="modal-header">
+            <div class="modal-title">Анализ потребности РР вставок</div>
+            <span class="close" onclick="closeRrInsertAnalysisModal()">&times;</span>
+        </div>
+        <p style="margin:0 0 12px 0;color:var(--muted);font-size:13px;line-height:1.4">
+            Расход считается по таблице выпуска продукции: на каждый выпущенный фильтр — одна пластиковая вставка из справочника (поле «пластиковая вставка»).
+        </p>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:12px">
+            <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600">
+                С даты
+                <input type="date" id="rrInsertDateFrom" style="padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px">
+            </label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600">
+                По дату
+                <input type="date" id="rrInsertDateTo" style="padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px">
+            </label>
+            <button type="button" onclick="loadRrInsertConsumption()" style="margin-bottom:1px">Показать расход</button>
+        </div>
+        <div id="rrInsertResults"></div>
+        <div style="display:flex;justify-content:flex-end;margin-top:16px;gap:8px">
+            <button type="button" onclick="closeRrInsertAnalysisModal()" style="background:var(--muted)">Закрыть</button>
         </div>
     </div>
 </div>
