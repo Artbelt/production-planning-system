@@ -12,6 +12,8 @@ $statePlanTolerancePct = 5;
 $indicatorNormWidth600 = 150;
 $indicatorNormDiameter = 100;
 $indicatorNormTotal = 300;
+/** Норма прессовых фильтров в смену (совпадает с дефолтом в JS localStorage; после загрузки страницы пересчитывается из настроек). */
+$indicatorMaxPressDefault = 1;
 
 require_once __DIR__ . '/../auth/includes/config.php';
 require_once __DIR__ . '/../auth/includes/auth-functions.php';
@@ -1446,6 +1448,12 @@ $pageTitle = 'Активные позиции';
             background: #ef4444;
             --meter-color: rgba(127, 29, 29, 0.45);
         }
+        .date-indicator.level-ok.active {
+            border-color: #15803d;
+            color: #ffffff;
+            background: #22c55e;
+            --meter-color: rgba(21, 128, 61, 0.35);
+        }
         .date-indicator.priority-muted {
             opacity: .32 !important;
             filter: saturate(.45);
@@ -1695,14 +1703,18 @@ $pageTitle = 'Активные позиции';
                             $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
                             $indicatorState = $dateIndicators[(string)$planDate] ?? ['press_filters' => [], 'diameter_qty' => 0, 'w600_qty' => 0, 'total_qty' => 0];
                             $pressCount = count($indicatorState['press_filters'] ?? []);
+                            $pressNorm = max(1, (int) $indicatorMaxPressDefault);
                             $pressClass = 'date-indicator slim marker-p';
                             $pressTitle = 'Нет позиций под пресс';
-                            if ($pressCount === 1) {
-                                $pressClass .= ' active';
-                                $pressTitle = 'В смене 1 фильтр под пресс (норма)';
-                            } elseif ($pressCount > 1) {
-                                $pressClass .= ' active over';
-                                $pressTitle = 'В смене ' . $pressCount . ' фильтра(ов) под пресс (должен быть только 1)';
+                            if ($pressCount > $pressNorm) {
+                                $pressClass .= ' active over level-critical';
+                                $pressTitle = 'В смене ' . $pressCount . ' фильтра(ов) под пресс при норме ' . $pressNorm . ' (превышение)';
+                            } elseif ($pressCount === $pressNorm && $pressCount > 0) {
+                                $pressClass .= ' active level-ok';
+                                $pressTitle = 'В смене ' . $pressNorm . ' прессовый(ых) фильтр(ов) — норма';
+                            } elseif ($pressCount > 0) {
+                                $pressClass .= ' active level-warning';
+                                $pressTitle = 'В смене ' . $pressCount . ' прессовый(ых) при норме ' . $pressNorm . ' (меньше нормы)';
                             }
 
                             $w600Qty = (int)($indicatorState['w600_qty'] ?? 0);
@@ -1944,14 +1956,18 @@ $pageTitle = 'Активные позиции';
                             $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
                             $indicatorState = $dateIndicators[(string)$planDate] ?? ['press_filters' => [], 'diameter_qty' => 0, 'w600_qty' => 0, 'total_qty' => 0];
                             $pressCount = count($indicatorState['press_filters'] ?? []);
+                            $pressNorm = max(1, (int) $indicatorMaxPressDefault);
                             $pressClass = 'date-indicator slim marker-p';
                             $pressTitle = 'Нет позиций под пресс';
-                            if ($pressCount === 1) {
-                                $pressClass .= ' active';
-                                $pressTitle = 'В смене 1 фильтр под пресс (норма)';
-                            } elseif ($pressCount > 1) {
-                                $pressClass .= ' active over';
-                                $pressTitle = 'В смене ' . $pressCount . ' фильтра(ов) под пресс (должен быть только 1)';
+                            if ($pressCount > $pressNorm) {
+                                $pressClass .= ' active over level-critical';
+                                $pressTitle = 'В смене ' . $pressCount . ' фильтра(ов) под пресс при норме ' . $pressNorm . ' (превышение)';
+                            } elseif ($pressCount === $pressNorm && $pressCount > 0) {
+                                $pressClass .= ' active level-ok';
+                                $pressTitle = 'В смене ' . $pressNorm . ' прессовый(ых) фильтр(ов) — норма';
+                            } elseif ($pressCount > 0) {
+                                $pressClass .= ' active level-warning';
+                                $pressTitle = 'В смене ' . $pressCount . ' прессовый(ых) при норме ' . $pressNorm . ' (меньше нормы)';
                             }
 
                             $w600Qty = (int)($indicatorState['w600_qty'] ?? 0);
@@ -2224,6 +2240,7 @@ $pageTitle = 'Активные позиции';
                 el.classList.toggle('level-info', active && level === 'info');
                 el.classList.toggle('level-warning', active && level === 'warning');
                 el.classList.toggle('level-critical', active && level === 'critical');
+                el.classList.toggle('level-ok', active && level === 'ok');
                 el.classList.toggle('priority-muted', muted);
                 if (typeof params.pct === 'number') {
                     setFill(el, params.pct);
@@ -2245,21 +2262,33 @@ $pageTitle = 'Активные позиции';
                 const totalQty = parseInt((totalEl && totalEl.getAttribute('data-qty')) || '0', 10) || 0;
 
                 const pressCritical = pressCount > settings.maxPress;
+                const pressNormOk = pressCount > 0 && pressCount === settings.maxPress;
                 const dCritical = dQty > settings.normD;
                 const totalWarning = totalQty > settings.normTotal;
                 const w600Warning = w600Qty > settings.norm600;
                 const hasCritical = pressCritical || dCritical;
 
+                let pressLevel = 'info';
+                if (pressCritical) {
+                    pressLevel = 'critical';
+                } else if (pressNormOk) {
+                    pressLevel = 'ok';
+                } else if (pressCount > 0) {
+                    pressLevel = 'warning';
+                }
                 const pressTitle = pressCount <= 0
                     ? 'П: нет позиций под пресс.'
                     : pressCritical
-                        ? `П: ${pressCount} прессовых фильтра при норме ${settings.maxPress} (critical: конфликт пресса).`
-                        : `П: ${pressCount} прессовый фильтр(ов) при норме ${settings.maxPress}.`;
+                        ? `П: ${pressCount} прессовых фильтра при норме ${settings.maxPress} (превышение).`
+                        : pressNormOk
+                            ? `П: ${pressCount} прессовый(ых) фильтр(ов) в смене — норма (${settings.maxPress}).`
+                            : `П: ${pressCount} прессовый(ых) при норме ${settings.maxPress} (меньше нормы).`;
                 setIndicatorState(pressEl, {
                     active: pressCount > 0,
                     over: pressCritical,
-                    level: pressCritical ? 'critical' : 'info',
-                    muted: hasCritical && !pressCritical,
+                    level: pressLevel,
+                    // Не приглушаем «П» в норме: иначе при критическом D зелёный пресс выглядит «тусклым».
+                    muted: hasCritical && !pressCritical && !pressNormOk,
                     title: pressTitle,
                 });
 
