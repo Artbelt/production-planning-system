@@ -407,6 +407,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
             font-size: 11px;
         }
         td.num, th.num { text-align: right; }
+        th.num-left, td.num-left { text-align: left; }
         td.date-cell, th.date-col {
             text-align: left;
             min-width: 28px;
@@ -482,6 +483,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
         .muted {
             color: var(--muted);
         }
+        .muted-light {
+            color: #d1d5db;
+        }
         .strip-pool {
             background: #fff;
             border: 1px solid var(--border);
@@ -552,6 +556,28 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 max-height: none;
             }
         }
+        th.row-dismiss-col, td.row-dismiss-col {
+            width: 28px;
+            min-width: 28px;
+            max-width: 28px;
+            text-align: center;
+            padding: 2px;
+            vertical-align: middle;
+        }
+        .row-dismiss-btn {
+            border: none;
+            background: transparent;
+            color: #94a3b8;
+            font-size: 16px;
+            line-height: 1;
+            padding: 0 2px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        .row-dismiss-btn:hover {
+            color: #b91c1c;
+            background: #fee2e2;
+        }
     </style>
 </head>
 <body>
@@ -577,9 +603,10 @@ $pageTitle = 'Планирование сборки гофропакетов';
             <table>
                 <thead>
                 <tr>
+                    <th class="row-dismiss-col" title="Скрыть позицию (только у вас в браузере)"></th>
                     <th>Фильтр</th>
                     <th>Заявка</th>
-                    <th class="num">Остаток фильтров</th>
+                    <th class="num-left">Остаток фильтров</th>
                     <th class="num">Г/п изготовлено</th>
                     <th class="num">Г/п доступно</th>
                     <th class="num">Потребность в г/п</th>
@@ -595,7 +622,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 <tbody>
                 <?php if (empty($rows)): ?>
                     <tr>
-                        <td colspan="<?= 6 + count($buildPlanDates) ?>" class="muted" style="text-align:center;padding:12px;">
+                        <td colspan="<?= 7 + count($buildPlanDates) ?>" class="muted" style="text-align:center;padding:12px;">
                             Нет данных для отображения.
                         </td>
                     </tr>
@@ -663,14 +690,17 @@ $pageTitle = 'Планирование сборки гофропакетов';
                             data-gofro-need="<?= (int)$gofroNeed ?>"
                             data-packages-per-roll="<?= (int)$packagesPerRoll ?>"
                         >
+                            <td class="row-dismiss-col">
+                                <button type="button" class="row-dismiss-btn" data-dismiss-row="<?= htmlspecialchars($planKey, ENT_QUOTES, 'UTF-8') ?>" title="Скрыть позицию и убрать её полосы из пула (сохраняется в браузере)" aria-label="Скрыть позицию">×</button>
+                            </td>
                             <td><?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?></td>
                             <td><?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?></td>
-                            <td class="num"><?= $remaining ?></td>
+                            <td class="num-left" title="Остаток к производству из заказанного по позиции"><?= (int)$remaining ?><span class="muted-light"> из <?= (int)$ordered ?></span></td>
                             <td class="num"><?= $gofroProduced ?></td>
                             <td class="num"><?= $gofroAvailable ?></td>
                             <td
                                 class="num"
-                                title="Остаток фильтров: <?= (int)$remaining ?>; доступно г/п: <?= (int)$gofroAvailable ?>; потребность: <?= (int)$gofroNeed ?>"
+                                title="Остаток фильтров: <?= (int)$remaining ?> из <?= (int)$ordered ?>; доступно г/п: <?= (int)$gofroAvailable ?>; потребность: <?= (int)$gofroNeed ?>"
                             ><?= (int)$gofroNeed ?></td>
                             <?php foreach ($buildPlanDates as $idx => $planDate):
                                 $qty = (int)($planQtyByDate[$planDate] ?? 0);
@@ -726,6 +756,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
 <script>
 (() => {
     const NORM_PER_UNIT = 2.5; // м на 1 гофропакет
+    const DISMISSED_ROWS_STORAGE_KEY = 'gofroBuildPlanDismissedRowKeys';
     const packageCatalog = <?= json_encode($packageCatalog, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?> || {};
     const stripPool = document.getElementById('strip-pool');
     const dragPreview = document.getElementById('drag-preview');
@@ -746,6 +777,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
     rows.forEach((row) => {
         rowStateMap.set(row.dataset.rowKey, {
             row,
+            dismissed: false,
             order: String(row.dataset.order || ''),
             filterName: String(row.dataset.filterName || ''),
             paperWidthMm: Math.max(0, Number(row.dataset.paperWidthMm || 0) || 0),
@@ -761,6 +793,43 @@ $pageTitle = 'Планирование сборки гофропакетов';
             allocatedObjectsByDate: {},
         });
     });
+
+    function loadDismissedRowKeys() {
+        try {
+            const raw = localStorage.getItem(DISMISSED_ROWS_STORAGE_KEY);
+            if (!raw) {
+                return new Set();
+            }
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) {
+                return new Set();
+            }
+            return new Set(parsed.filter((k) => typeof k === 'string' && k));
+        } catch {
+            return new Set();
+        }
+    }
+
+    function persistDismissedRowKeys(set) {
+        try {
+            localStorage.setItem(DISMISSED_ROWS_STORAGE_KEY, JSON.stringify([...set]));
+        } catch (_) {
+            /* ignore quota */
+        }
+    }
+
+    let dismissedRowKeys = loadDismissedRowKeys();
+
+    function applyStoredDismissedRows() {
+        dismissedRowKeys.forEach((rowKey) => {
+            const state = rowStateMap.get(rowKey);
+            if (!state) {
+                return;
+            }
+            state.dismissed = true;
+            state.row.style.display = 'none';
+        });
+    }
 
     let strips = [];
     let stripSeq = 1;
@@ -786,6 +855,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
     function bootstrapStrips() {
         strips = [];
         rowStateMap.forEach((state, rowKey) => {
+            if (state.dismissed) {
+                return;
+            }
             if (!state.packageKey || state.gofroNeed <= 0 || state.packagesPerRoll <= 0) {
                 return;
             }
@@ -876,6 +948,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
     function collectTaskSheetRows(dateFrom, dateTo) {
         const rowsOut = [];
         rowStateMap.forEach((state) => {
+            if (state.dismissed) {
+                return;
+            }
             Object.keys(state.allocatedByDate).forEach((date) => {
                 if (date < dateFrom || date > dateTo) {
                     return;
@@ -1120,6 +1195,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
             return;
         }
         rowStateMap.forEach((state) => {
+            if (state.dismissed) {
+                return;
+            }
             const validRow = state.packageKey !== ''
                 && state.packageKey === dragContext.package_type
                 && state.order !== ''
@@ -1149,6 +1227,11 @@ $pageTitle = 'Планирование сборки гофропакетов';
         if (!row) {
             return false;
         }
+        const dropRowKey = String(row.dataset.rowKey || '');
+        const dropState = rowStateMap.get(dropRowKey);
+        if (!dropState || dropState.dismissed) {
+            return false;
+        }
         const pkg = String(row.dataset.packageKey || '');
         const order = String(row.dataset.order || '');
         return pkg !== ''
@@ -1160,6 +1243,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
     function updateCoverage() {
         const dailyTotals = {};
         rowStateMap.forEach((state, rowKey) => {
+            if (state.dismissed) {
+                return;
+            }
             let allocated = 0;
             Object.keys(state.allocatedByDate).forEach((d) => {
                 allocated += parseInt(state.allocatedByDate[d] || 0, 10) || 0;
@@ -1170,23 +1256,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
             let basePartialIdx = -1;
             let totalEndIdx = -1;
             let totalPartialIdx = -1;
-            let startIdx = 0;
-
-            const allocatedDates = Object.keys(state.allocatedByDate).filter((d) => (parseInt(state.allocatedByDate[d] || 0, 10) || 0) > 0);
-            if (allocatedDates.length > 0) {
-                let minIdx = null;
-                state.dateCells.forEach((cell, idx) => {
-                    const d = cell.dataset.date || '';
-                    if (allocatedDates.includes(d)) {
-                        if (minIdx === null || idx < minIdx) {
-                            minIdx = idx;
-                        }
-                    }
-                });
-                if (minIdx !== null) {
-                    startIdx = minIdx;
-                }
-            }
+            const startIdx = 0;
 
             let lastPlanIdx = -1;
             for (let i = startIdx; i < state.dateCells.length; i += 1) {
@@ -1284,7 +1354,43 @@ $pageTitle = 'Планирование сборки гофропакетов';
         });
     }
 
-    function returnAllocationToPool(rowKey, date, objIdx) {
+    function returnAllAllocationsForRow(rowKey) {
+        const state = rowStateMap.get(rowKey);
+        if (!state) {
+            return;
+        }
+        const dates = Object.keys(state.allocatedObjectsByDate || {});
+        dates.forEach((date) => {
+            while (state.allocatedObjectsByDate[date] && state.allocatedObjectsByDate[date].length > 0) {
+                returnAllocationToPool(rowKey, date, 0, true);
+            }
+        });
+    }
+
+    function dismissPositionRow(rowKey) {
+        const state = rowStateMap.get(rowKey);
+        if (!state || state.dismissed) {
+            return;
+        }
+        returnAllAllocationsForRow(rowKey);
+        strips = strips.filter((s) => String(s.source_row || '') !== String(rowKey));
+        Array.from(selectedStripIds).forEach((id) => {
+            if (!strips.some((s) => s.id === id)) {
+                selectedStripIds.delete(id);
+            }
+        });
+        if (selectedStripIds.size === 0) {
+            selectedSourceRow = '';
+        }
+        state.dismissed = true;
+        state.row.style.display = 'none';
+        dismissedRowKeys.add(rowKey);
+        persistDismissedRowKeys(dismissedRowKeys);
+        renderStrips();
+        updateCoverage();
+    }
+
+    function returnAllocationToPool(rowKey, date, objIdx, silentRefresh) {
         const state = rowStateMap.get(rowKey);
         if (!state) {
             return;
@@ -1339,13 +1445,18 @@ $pageTitle = 'Планирование сборки гофропакетов';
             });
         });
 
-        renderStrips();
-        updateCoverage();
+        if (!silentRefresh) {
+            renderStrips();
+            updateCoverage();
+        }
     }
 
     function buildSavePayload() {
         const items = [];
         rowStateMap.forEach((state, rowKey) => {
+            if (state.dismissed) {
+                return;
+            }
             Object.keys(state.allocatedObjectsByDate).forEach((date) => {
                 const objects = Array.isArray(state.allocatedObjectsByDate[date]) ? state.allocatedObjectsByDate[date] : [];
                 objects.forEach((obj, idx) => {
@@ -1434,7 +1545,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
 
         grouped.forEach((group) => {
             const state = rowStateMap.get(group.rowKey);
-            if (!state) {
+            if (!state || state.dismissed) {
                 return;
             }
             const restoredItems = [];
@@ -1618,9 +1729,26 @@ $pageTitle = 'Планирование сборки гофропакетов';
         });
     });
 
+    applyStoredDismissedRows();
     bootstrapStrips();
     renderStrips();
     updateCoverage();
+
+    const tableBody = document.querySelector('.panel table tbody');
+    if (tableBody) {
+        tableBody.addEventListener('click', (e) => {
+            const btn = e.target.closest('.row-dismiss-btn');
+            if (!btn) {
+                return;
+            }
+            e.preventDefault();
+            const rk = String(btn.dataset.dismissRow || '');
+            if (!rk) {
+                return;
+            }
+            dismissPositionRow(rk);
+        });
+    }
     if (savePlanBtn) {
         savePlanBtn.addEventListener('click', savePlanV2);
     }

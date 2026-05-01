@@ -275,6 +275,35 @@ function applyBuildPlanMove(
 }
 
 /**
+ * Удаляет план сборки по позиции в указанную дату (смена D).
+ */
+function applyBuildPlanClearCell(PDO $pdo, string $order, string $filter, string $dayDate): void
+{
+    $delStmt = $pdo->prepare("
+        DELETE FROM build_plans
+        WHERE shift='D' AND order_number=? AND filter=? AND day_date=?
+    ");
+    $delStmt->execute([$order, $filter, $dayDate]);
+}
+
+/**
+ * Задаёт количество в смене (перезапись): 0 — то же, что очистка.
+ */
+function applyBuildPlanSetCellQty(PDO $pdo, string $order, string $filter, string $dayDate, int $qty): void
+{
+    if ($qty <= 0) {
+        applyBuildPlanClearCell($pdo, $order, $filter, $dayDate);
+        return;
+    }
+    applyBuildPlanClearCell($pdo, $order, $filter, $dayDate);
+    $insStmt = $pdo->prepare("
+        INSERT INTO build_plans (order_number, filter, day_date, shift, qty)
+        VALUES (?, ?, ?, 'D', ?)
+    ");
+    $insStmt->execute([$order, $filter, $dayDate, $qty]);
+}
+
+/**
  * Применяет перенос из "долга" (непокрытого остатка) в план:
  * добавляет qty в целевую дату, не списывая источник из build_plans.
  */
@@ -367,20 +396,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $toDate = trim((string)($move['to_date'] ?? ''));
                 $mode = trim((string)($move['mode'] ?? 'single'));
                 $movedQty = max(0, (int)($move['moved_qty'] ?? 0));
-                if (!in_array($mode, ['single', 'row', 'block', 'debt'], true)) {
+                if (!in_array($mode, ['single', 'row', 'block', 'debt', 'clear_cell', 'set_qty'], true)) {
                     $mode = 'single';
                 }
 
                 if ($order === '' || $filter === '' || !$isDate($fromDate) || !$isDate($toDate)) {
                     throw new RuntimeException('Операция #' . ($idx + 1) . ': некорректные параметры переноса.');
                 }
-                if ($fromDate === $toDate && $mode !== 'debt') {
+                if ($fromDate === $toDate && !in_array($mode, ['debt', 'clear_cell', 'set_qty'], true)) {
                     throw new RuntimeException('Операция #' . ($idx + 1) . ': дата источника и назначения совпадают.');
                 }
                 if ($toDate < $todayIso) {
                     throw new RuntimeException('Операция #' . ($idx + 1) . ': перенос в прошлые даты недоступен.');
                 }
-                if ($fromDate < $todayIso && $mode !== 'single') {
+                if ($fromDate < $todayIso && !in_array($mode, ['single', 'debt', 'clear_cell', 'set_qty'], true)) {
                     throw new RuntimeException('Операция #' . ($idx + 1) . ': перенос из прошлых дат доступен только для одиночной смены.');
                 }
 
@@ -390,6 +419,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             throw new RuntimeException('Операция #' . ($idx + 1) . ': не указано количество для переноса из долга.');
                         }
                         applyDebtPlanMove($pdo, $order, $filter, $toDate, $movedQty);
+                    } elseif ($mode === 'clear_cell') {
+                        if ($fromDate !== $toDate) {
+                            throw new RuntimeException('Операция #' . ($idx + 1) . ': для очистки смены даты должны совпадать.');
+                        }
+                        if ($fromDate < $todayIso) {
+                            throw new RuntimeException('Операция #' . ($idx + 1) . ': изменение плана в прошлых датах недоступно.');
+                        }
+                        applyBuildPlanClearCell($pdo, $order, $filter, $fromDate);
+                    } elseif ($mode === 'set_qty') {
+                        if ($fromDate !== $toDate) {
+                            throw new RuntimeException('Операция #' . ($idx + 1) . ': для изменения количества даты должны совпадать.');
+                        }
+                        if ($fromDate < $todayIso) {
+                            throw new RuntimeException('Операция #' . ($idx + 1) . ': изменение плана в прошлых датах недоступно.');
+                        }
+                        applyBuildPlanSetCellQty($pdo, $order, $filter, $fromDate, $movedQty);
                     } else {
                         applyBuildPlanMove($pdo, $todayIso, $order, $filter, $fromDate, $toDate, $mode);
                     }
@@ -1353,7 +1398,20 @@ $pageTitle = 'Активные позиции';
             text-decoration: underline;
         }
         .order-cell button:hover { color: #1e47c5; }
-        td.state-cell { white-space: normal; }
+        td.state-cell { white-space: normal; vertical-align: top; }
+        .state-cell__sum {
+            font-size: 10px;
+            font-weight: 700;
+            color: #334155;
+            margin-bottom: 3px;
+            font-variant-numeric: tabular-nums;
+        }
+        .state-cell__badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 3px;
+            align-items: center;
+        }
         .state-badge {
             display: inline-block;
             padding: 1px 6px;
@@ -1371,6 +1429,16 @@ $pageTitle = 'Активные позиции';
             background: #f0fdf4;
             color: #166534;
             border: 1px solid #bbf7d0;
+        }
+        .state-warn {
+            background: #fffbeb;
+            color: #b45309;
+            border: 1px solid #fde68a;
+        }
+        .state-debt {
+            background: #eff6ff;
+            color: #1d4ed8;
+            border: 1px solid #bfdbfe;
         }
         .alert {
             padding: 14px 16px;
@@ -1636,6 +1704,38 @@ $pageTitle = 'Активные позиции';
             justify-content: flex-end;
             background: #f9fafb;
         }
+        .date-cell-context-menu {
+            position: fixed;
+            z-index: 1200;
+            min-width: 160px;
+            padding: 4px 0;
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+            font-size: 13px;
+        }
+        .date-cell-context-menu[hidden] {
+            display: none !important;
+        }
+        .date-cell-context-menu button {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 8px 12px;
+            border: 0;
+            background: transparent;
+            font: inherit;
+            cursor: pointer;
+            color: #1e293b;
+        }
+        .date-cell-context-menu button:hover:not(:disabled) {
+            background: #f1f5f9;
+        }
+        .date-cell-context-menu button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -1647,7 +1747,7 @@ $pageTitle = 'Активные позиции';
         Позиции по заявкам без признака «скрыта», у которых заказано больше, чем изготовлено фильтров по данным выпуска.
         Показаны позиции с процентом выполнения не выше <?= (int) $maxPct ?>% (включительно).
         <br>
-        Состояние «Отстаёт»: сумма плана сборки с сегодняшнего дня меньше остатка с допуском (не ниже <?= (int) $statePlanToleranceAbs ?> шт. и не ниже <?= (int) $statePlanTolerancePct ?>% от остатка).
+        Бейдж «Недостаток»: сумма сборки с сегодняшнего дня меньше остатка с допуском (не ниже <?= (int) $statePlanToleranceAbs ?> шт. и не ниже <?= (int) $statePlanTolerancePct ?>% от остатка). «Переизбыток»: запланировано больше остатка.
     </p>
 
     <?php if (!empty($loadError)): ?>
@@ -1682,6 +1782,10 @@ $pageTitle = 'Активные позиции';
                 <p id="moveQueueEmpty" class="queue-panel__empty">Очередь пуста.</p>
                 <ul id="moveQueueList" class="queue-list"></ul>
             </div>
+        </div>
+        <div id="dateCellContextMenu" class="date-cell-context-menu" hidden role="menu">
+            <button type="button" id="dateCellCtxClear" role="menuitem">Очистить</button>
+            <button type="button" id="dateCellCtxEdit" role="menuitem">Изменить…</button>
         </div>
         <div id="dragPreview" class="drag-preview" hidden></div>
         <div class="panel">
@@ -1823,10 +1927,15 @@ $pageTitle = 'Активные позиции';
                         );
                         $planFloor = max(0, $remaining - $planTolerance);
                         $isLagging = $remaining > 0 && $plannedFromToday < $planFloor;
-                        $stateTitle = 'План сборки с сегодня: ' . $plannedFromToday
+                        $hasPlanOver = $plannedFromToday > $remaining;
+                        $planOverQty = $hasPlanOver ? ($plannedFromToday - $remaining) : 0;
+                        $hasDebtShifts = $debtShiftQty > 0;
+                        $planQtyOk = !$isLagging && !$hasPlanOver;
+                        $stateTitle = 'Сборка с сегодня: ' . $plannedFromToday
                             . ' шт.; остаток: ' . $remaining
                             . ' шт.; допуск: ' . $planTolerance
-                            . ' шт.; нужно не меньше ' . $planFloor . ' шт. в плане.';
+                            . ' шт.; нужно не меньше ' . $planFloor . ' шт. в плане.'
+                            . ($hasPlanOver ? ' Внимание: переплан +' . $planOverQty . ' шт. (мягкое предупреждение).' : '');
                         $rowMeta = $filterMetaByKey[normalizeFilterKey($rawFilter)] ?? null;
                         $rowAnalog = trim((string)($rowMeta['analog'] ?? ''));
                         $rowHasPress = !empty($rowMeta['press']);
@@ -1868,6 +1977,9 @@ $pageTitle = 'Активные позиции';
                         data-has-d="<?= $rowHasD ? '1' : '0' ?>"
                         data-has-600="<?= $rowHas600 ? '1' : '0' ?>"
                         data-priority="<?= $isLagging ? 'A' : 'C' ?>"
+                        data-remaining="<?= (int)$remaining ?>"
+                        data-plan-floor="<?= (int)$planFloor ?>"
+                        data-debt-qty="<?= (int)$debtShiftQty ?>"
                         data-gofro-available="<?= $rowGofroAvailable !== null ? (int)$rowGofroAvailable : 0 ?>"
                         data-gofro-planned="<?= htmlspecialchars((string)json_encode($rowPlannedGofroByDate, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ENT_QUOTES, 'UTF-8') ?>"
                     >
@@ -1896,11 +2008,21 @@ $pageTitle = 'Активные позиции';
                         <td class="num"><?= $produced ?></td>
                         <td class="num"><?= $remaining ?></td>
                         <td class="state-cell" title="<?= htmlspecialchars($stateTitle, ENT_QUOTES, 'UTF-8') ?>">
-                            <?php if ($isLagging): ?>
-                                <span class="state-badge state-lag" title="<?= htmlspecialchars('Незапланировано: ' . $debtShiftQty . ' шт.', ENT_QUOTES, 'UTF-8') ?>">Отстаёт</span>
-                            <?php else: ?>
-                                <span class="state-badge state-ok">В плане</span>
-                            <?php endif; ?>
+                            <div class="state-cell__badges">
+                                <?php if ($planQtyOk): ?>
+                                    <span class="state-badge state-ok" title="Сумма с сегодня в допуске и не больше остатка">В плане</span>
+                                <?php else: ?>
+                                    <?php if ($isLagging): ?>
+                                        <span class="state-badge state-lag" title="<?= htmlspecialchars('Недостаток относительно допуска; в долге: ' . $debtShiftQty . ' шт.', ENT_QUOTES, 'UTF-8') ?>">Недостаток</span>
+                                    <?php endif; ?>
+                                    <?php if ($hasPlanOver): ?>
+                                        <span class="state-badge state-warn" title="<?= htmlspecialchars('Переизбыток к остатку: +' . $planOverQty . ' шт. Можно оставить или подправить — предупреждение, не блокировка.', ENT_QUOTES, 'UTF-8') ?>">Переизбыток +<?= (int)$planOverQty ?></span>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+                                <?php if ($hasDebtShifts): ?>
+                                    <span class="state-badge state-debt" title="<?= htmlspecialchars('Есть долг по сменам: ' . $debtShiftQty . ' шт.', ENT_QUOTES, 'UTF-8') ?>">Долг</span>
+                                <?php endif; ?>
+                            </div>
                         </td>
                         <td class="order-cell">
                             <form action="show_order.php" method="post" target="_blank" rel="noopener">
@@ -2146,6 +2268,9 @@ $pageTitle = 'Активные позиции';
         const clearLocksBtn = document.getElementById('clearLocksBtn');
         const clearPendingMovesBtn = document.getElementById('clearPendingMovesBtn');
         const addPlanDayBtn = document.getElementById('addPlanDayBtn');
+        const dateCellContextMenu = document.getElementById('dateCellContextMenu');
+        const dateCellCtxClear = document.getElementById('dateCellCtxClear');
+        const dateCellCtxEdit = document.getElementById('dateCellCtxEdit');
         if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !openGofroPackagesBtn || !toggleGofroCoverageBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !maxListPctInput || !normalizePreviewModal || !normalizePreviewList || !normalizePreviewApplyBtn || !normalizePreviewCancelBtn || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !applyPendingMovesPanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !debtExpandPopover || !debtExpandPopoverInner || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearLocksBtn || !clearPendingMovesBtn || !addPlanDayBtn) {
             return;
         }
@@ -2169,6 +2294,42 @@ $pageTitle = 'Активные позиции';
         };
         let isGofroCoverageVisible = false;
         let dateCells = [];
+        let dateCellContextMenuTarget = null;
+
+        function closeDateCellContextMenu() {
+            if (dateCellContextMenu) {
+                dateCellContextMenu.hidden = true;
+            }
+            dateCellContextMenuTarget = null;
+        }
+
+        function openDateCellContextMenu(clientX, clientY, cell) {
+            if (!dateCellContextMenu || !dateCellCtxClear || !dateCellCtxEdit || !cell) {
+                return;
+            }
+            dateCellContextMenuTarget = cell;
+            const qty = Math.max(0, parseInt(cell.dataset.qty || '0', 10) || 0);
+            const locked = isCellLocked(cell);
+            dateCellCtxClear.disabled = locked || qty <= 0 || isApplyingPendingMoves;
+            dateCellCtxEdit.disabled = locked || isApplyingPendingMoves;
+            dateCellContextMenu.hidden = false;
+            const pad = 4;
+            let x = clientX + pad;
+            let y = clientY + pad;
+            dateCellContextMenu.style.left = `${Math.round(x)}px`;
+            dateCellContextMenu.style.top = `${Math.round(y)}px`;
+            const rect = dateCellContextMenu.getBoundingClientRect();
+            const vw = window.innerWidth || document.documentElement.clientWidth;
+            const vh = window.innerHeight || document.documentElement.clientHeight;
+            if (rect.right > vw - 8) {
+                x = Math.max(8, vw - rect.width - 8);
+                dateCellContextMenu.style.left = `${Math.round(x)}px`;
+            }
+            if (rect.bottom > vh - 8) {
+                y = Math.max(8, vh - rect.height - 8);
+                dateCellContextMenu.style.top = `${Math.round(y)}px`;
+            }
+        }
 
         function refreshDateCellsCache() {
             dateCells = Array.from(document.querySelectorAll('td.date-cell'));
@@ -2373,18 +2534,12 @@ $pageTitle = 'Активные позиции';
                 }
                 const rowCells = Array.from(row.querySelectorAll('td.date-cell'));
                 let plannedTotal = 0;
-                let firstPlannedIdx = null;
-                rowCells.forEach(function (cell, idx) {
+                rowCells.forEach(function (cell) {
                     const date = String(cell.dataset.date || '');
                     const q = Math.max(0, parseInt((plannedByDate && plannedByDate[date]) || 0, 10) || 0);
-                    if (q > 0) {
-                        plannedTotal += q;
-                        if (firstPlannedIdx === null) {
-                            firstPlannedIdx = idx;
-                        }
-                    }
+                    plannedTotal += q;
                 });
-                const startIdx = firstPlannedIdx !== null ? firstPlannedIdx : 0;
+                const startIdx = 0;
                 let totalRemaining = Math.max(0, baseRemaining) + plannedTotal;
                 if (totalRemaining <= 0) {
                     return;
@@ -3099,6 +3254,12 @@ $pageTitle = 'Активные позиции';
             if (mode === 'row') {
                 return 'Позиция';
             }
+            if (mode === 'clear_cell') {
+                return 'Очистить';
+            }
+            if (mode === 'set_qty') {
+                return 'Изменить';
+            }
             return 'Смена';
         }
 
@@ -3110,6 +3271,84 @@ $pageTitle = 'Активные позиции';
             debtStateMap[planKey] = cloneDebtShifts(shifts).sort(function (a, b) {
                 return a.date.localeCompare(b.date);
             });
+        }
+
+        function refreshPlanRowState(row) {
+            if (!row || !row.matches || !row.matches('tr.plan-row')) {
+                return;
+            }
+            const remaining = Math.max(0, parseInt(row.dataset.remaining || '0', 10) || 0);
+            const planFloor = Math.max(0, parseInt(row.dataset.planFloor || '0', 10) || 0);
+            const planKey = getPlanKey(row.dataset.order, row.dataset.filter);
+            const shifts = getDebtShiftsForKey(planKey);
+            let debtQty = 0;
+            shifts.forEach(function (s) {
+                debtQty += Math.max(0, parseInt(s.qty || 0, 10) || 0);
+            });
+            row.dataset.debtQty = String(debtQty);
+
+            let planSum = 0;
+            row.querySelectorAll('td.date-cell').forEach(function (cell) {
+                planSum += Math.max(0, parseInt(cell.dataset.qty || '0', 10) || 0);
+            });
+            const isLagging = remaining > 0 && planSum < planFloor;
+            const hasPlanOver = planSum > remaining;
+            const planOverQty = hasPlanOver ? planSum - remaining : 0;
+            const hasDebt = debtQty > 0;
+            const planQtyOk = !isLagging && !hasPlanOver;
+
+            row.dataset.priority = isLagging ? 'A' : 'C';
+
+            const stateCell = row.querySelector('td.state-cell');
+            if (!stateCell) {
+                return;
+            }
+
+            let title = 'Сборка с сегодня: ' + planSum + ' шт.; остаток: ' + remaining + ' шт.';
+            if (hasPlanOver) {
+                title += ' Переизбыток +' + planOverQty + ' шт. (предупреждение).';
+            }
+
+            const wrap = document.createElement('div');
+            wrap.className = 'state-cell__badges';
+
+            if (planQtyOk) {
+                const b = document.createElement('span');
+                b.className = 'state-badge state-ok';
+                b.textContent = 'В плане';
+                b.title = 'Сумма с сегодня в допуске и не больше остатка';
+                wrap.appendChild(b);
+            } else {
+                if (isLagging) {
+                    const b = document.createElement('span');
+                    b.className = 'state-badge state-lag';
+                    b.textContent = 'Недостаток';
+                    b.title = 'Недостаток относительно допуска; в долге: ' + debtQty + ' шт.';
+                    wrap.appendChild(b);
+                }
+                if (hasPlanOver) {
+                    const b = document.createElement('span');
+                    b.className = 'state-badge state-warn';
+                    b.textContent = 'Переизбыток +' + planOverQty;
+                    b.title = 'Переизбыток к остатку. Можно оставить или подправить — предупреждение, не блокировка.';
+                    wrap.appendChild(b);
+                }
+            }
+            if (hasDebt) {
+                const b = document.createElement('span');
+                b.className = 'state-badge state-debt';
+                b.textContent = 'Долг';
+                b.title = 'Есть долг по сменам: ' + debtQty + ' шт.';
+                wrap.appendChild(b);
+            }
+
+            stateCell.innerHTML = '';
+            stateCell.title = title;
+            stateCell.appendChild(wrap);
+        }
+
+        function refreshAllPlanRowStates() {
+            document.querySelectorAll('tr.plan-row').forEach(refreshPlanRowState);
         }
 
         function bindDebtShiftDrag(item) {
@@ -3420,13 +3659,25 @@ $pageTitle = 'Активные позиции';
                 item.className = 'queue-item';
                 const fromDate = toShortDate(payload.from_date || '');
                 const toDate = toShortDate(payload.to_date || '');
-                const mode = queuedMove.debtChange ? 'Долг' : modeLabel(payload.mode || 'single');
+                const modeRaw = String(payload.mode || 'single');
                 const movedQty = Math.max(0, parseInt(queuedMove.movedQty || 0, 10) || 0);
+                let lineText;
+                if (queuedMove.debtChange) {
+                    lineText = `${idx + 1}. [Долг] ${fromDate} -> ${toDate}, ${movedQty} шт`;
+                } else if (modeRaw === 'clear_cell') {
+                    lineText = `${idx + 1}. [Очистить] ${fromDate}, было ${movedQty} шт`;
+                } else if (modeRaw === 'set_qty') {
+                    const newQty = Math.max(0, parseInt(payload.moved_qty || 0, 10) || 0);
+                    lineText = `${idx + 1}. [Изменить] ${fromDate}, стало ${newQty} шт`;
+                } else {
+                    const mode = modeLabel(modeRaw);
+                    lineText = `${idx + 1}. [${mode}] ${fromDate} -> ${toDate}, ${movedQty} шт`;
+                }
                 const rowWrap = document.createElement('div');
                 rowWrap.className = 'queue-item__row';
                 const text = document.createElement('div');
                 text.className = 'queue-item__text';
-                text.textContent = `${idx + 1}. [${mode}] ${fromDate} -> ${toDate}, ${movedQty} шт`;
+                text.textContent = lineText;
                 const removeBtn = document.createElement('button');
                 removeBtn.type = 'button';
                 removeBtn.className = 'queue-item__remove';
@@ -3656,6 +3907,76 @@ $pageTitle = 'Активные позиции';
                 movedQty += parseInt(qtyByDate[date] || '0', 10) || 0;
             });
             return { payload, movedQty: movedQty, changes };
+        }
+
+        function buildQueuedClearCellMove(cell) {
+            if (!cell) {
+                return null;
+            }
+            if (isCellLocked(cell)) {
+                return { error: 'Смена зафиксирована: сначала снимите блокировку.' };
+            }
+            const order = String(cell.dataset.order || '').trim();
+            const filter = String(cell.dataset.filter || '').trim();
+            const date = String(cell.dataset.date || '').trim();
+            const prev = Math.max(0, parseInt(cell.dataset.qty || '0', 10) || 0);
+            if (!order || !filter || !date) {
+                return { error: 'Не удалось определить позицию или дату.' };
+            }
+            if (prev <= 0) {
+                return { error: 'В этой смене нет запланированного количества.' };
+            }
+            return {
+                payload: {
+                    mode: 'clear_cell',
+                    order_number: order,
+                    filter_name: filter,
+                    from_date: date,
+                    to_date: date,
+                    moved_qty: 0,
+                },
+                movedQty: prev,
+                changes: [{ cell: cell, prev: prev, next: 0 }],
+            };
+        }
+
+        function buildQueuedSetQtyMove(cell, newQtyRaw) {
+            if (!cell) {
+                return null;
+            }
+            if (isCellLocked(cell)) {
+                return { error: 'Смена зафиксирована: сначала снимите блокировку.' };
+            }
+            const order = String(cell.dataset.order || '').trim();
+            const filter = String(cell.dataset.filter || '').trim();
+            const date = String(cell.dataset.date || '').trim();
+            const prev = Math.max(0, parseInt(cell.dataset.qty || '0', 10) || 0);
+            if (!order || !filter || !date) {
+                return { error: 'Не удалось определить позицию или дату.' };
+            }
+            const rawStr = String(newQtyRaw == null ? '' : newQtyRaw).trim().replace(/\s+/g, '');
+            if (rawStr === '') {
+                return { error: 'Введите количество.' };
+            }
+            const next = parseInt(rawStr, 10);
+            if (Number.isNaN(next) || next < 0) {
+                return { error: 'Введите целое неотрицательное число.' };
+            }
+            if (next === prev) {
+                return null;
+            }
+            return {
+                payload: {
+                    mode: 'set_qty',
+                    order_number: order,
+                    filter_name: filter,
+                    from_date: date,
+                    to_date: date,
+                    moved_qty: next,
+                },
+                movedQty: next,
+                changes: [{ cell: cell, prev: prev, next: next }],
+            };
         }
 
         function buildQueuedSingleMove(sourceCell, targetCell, context) {
@@ -4090,6 +4411,7 @@ $pageTitle = 'Активные позиции';
             }
             recalcHeaderIndicatorsFromTable();
             applyGofroCoverageHighlight();
+            refreshAllPlanRowStates();
         }
 
         function pushPendingMove(queuedMove) {
@@ -4329,6 +4651,7 @@ $pageTitle = 'Активные позиции';
             recalcHeaderIndicatorsFromTable();
             applyFrozenColumns();
             applyGofroCoverageHighlight();
+            refreshAllPlanRowStates();
         }
 
         function bindDateCellInteractions(cell) {
@@ -4346,6 +4669,14 @@ $pageTitle = 'Активные позиции';
                     clearHoverPreview();
                     lastHoveredDateCell = null;
                 }
+            });
+
+            cell.addEventListener('contextmenu', function (e) {
+                if (isApplyingPendingMoves || isMoving) {
+                    return;
+                }
+                e.preventDefault();
+                openDateCellContextMenu(e.clientX, e.clientY, cell);
             });
 
             cell.addEventListener('dragstart', function (e) {
@@ -4435,6 +4766,60 @@ $pageTitle = 'Активные позиции';
 
         dateCells.forEach(bindDateCellInteractions);
 
+        if (dateCellCtxClear) {
+            dateCellCtxClear.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                const targetCell = dateCellContextMenuTarget;
+                closeDateCellContextMenu();
+                if (!targetCell) {
+                    return;
+                }
+                const queuedMove = buildQueuedClearCellMove(targetCell);
+                if (!queuedMove) {
+                    return;
+                }
+                if (queuedMove.error) {
+                    alert(queuedMove.error);
+                    return;
+                }
+                pushPendingMove(queuedMove);
+            });
+        }
+        if (dateCellCtxEdit) {
+            dateCellCtxEdit.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                const targetCell = dateCellContextMenuTarget;
+                closeDateCellContextMenu();
+                if (!targetCell) {
+                    return;
+                }
+                const prevQty = Math.max(0, parseInt(targetCell.dataset.qty || '0', 10) || 0);
+                const raw = window.prompt('Новое количество в смене (шт, 0 — очистить):', String(prevQty));
+                if (raw === null) {
+                    return;
+                }
+                const queuedMove = buildQueuedSetQtyMove(targetCell, raw);
+                if (!queuedMove) {
+                    return;
+                }
+                if (queuedMove.error) {
+                    alert(queuedMove.error);
+                    return;
+                }
+                pushPendingMove(queuedMove);
+            });
+        }
+
+        document.addEventListener('click', function (e) {
+            if (dateCellContextMenu && !dateCellContextMenu.hidden) {
+                if (!dateCellContextMenu.contains(e.target)) {
+                    closeDateCellContextMenu();
+                }
+            }
+        }, true);
+
         document.addEventListener('keydown', function (e) {
             if (e.key !== 'Shift' || !lastHoveredDateCell || dragContext || isMoving) {
                 return;
@@ -4515,6 +4900,7 @@ $pageTitle = 'Активные позиции';
         document.querySelectorAll('td.debt-cell[data-debt-key]').forEach(function (cell) {
             renderDebtCellByKey(cell.dataset.debtKey || '');
         });
+        refreshAllPlanRowStates();
         try {
             const savedQueuePanelState = localStorage.getItem(queuePanelStorageKey);
             setQueuePanelOpen(savedQueuePanelState === '1');
@@ -4557,6 +4943,10 @@ $pageTitle = 'Активные позиции';
             }
         });
         document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && dateCellContextMenu && !dateCellContextMenu.hidden) {
+                closeDateCellContextMenu();
+                return;
+            }
             if (e.key === 'Escape' && !modal.hidden) {
                 closeModal();
                 return;
