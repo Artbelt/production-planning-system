@@ -610,6 +610,8 @@ if (!empty($rows)) {
                     rfs.press AS press,
                     rfs.analog AS analog,
                     rfs.filter_package AS filter_package,
+                    rfs.up_cap AS up_cap,
+                    rfs.down_cap AS down_cap,
                     rfs.Diametr_outer AS diametr_outer,
                     ppr.p_p_paper_width AS paper_width_mm
                 FROM round_filter_structure rfs
@@ -632,6 +634,7 @@ if (!empty($rows)) {
                         'press' => false,
                         'analog' => null,
                         'filter_package' => null,
+                        'has_metal_caps' => false,
                         'diametr_outer' => null,
                         'paper_width_mm' => null,
                     ];
@@ -653,6 +656,12 @@ if (!empty($rows)) {
                 $metaPackage = trim((string)($metaRow['filter_package'] ?? ''));
                 if ($metaPackage !== '' && $filterMetaByKey[$metaKey]['filter_package'] === null) {
                     $filterMetaByKey[$metaKey]['filter_package'] = $metaPackage;
+                }
+
+                $upCap = trim((string)($metaRow['up_cap'] ?? ''));
+                $downCap = trim((string)($metaRow['down_cap'] ?? ''));
+                if ($upCap !== '' || $downCap !== '') {
+                    $filterMetaByKey[$metaKey]['has_metal_caps'] = true;
                 }
             }
         } catch (Throwable $e) {
@@ -794,10 +803,14 @@ if (!empty($rows) && !empty($buildPlanDates)) {
 
         $meta = $filterMetaByKey[normalizeFilterKey($rawFilter)] ?? null;
         $isPress = !empty($meta['press']);
+        $hasMetalCaps = !empty($meta['has_metal_caps']);
         $isLargeDiameter = isset($meta['diametr_outer']) && $meta['diametr_outer'] !== null
             && (float)$meta['diametr_outer'] > 250
             && isset($meta['paper_width_mm']) && $meta['paper_width_mm'] !== null
             && (float)$meta['paper_width_mm'] > 400;
+        if ($hasMetalCaps) {
+            $isLargeDiameter = false;
+        }
         $isWidth600 = isset($meta['paper_width_mm']) && $meta['paper_width_mm'] !== null && (float)$meta['paper_width_mm'] > 450;
         $normalizedFilter = normalizeFilterKey($rawFilter);
 
@@ -1946,10 +1959,14 @@ $pageTitle = 'Активные позиции';
                         $rowMeta = $filterMetaByKey[normalizeFilterKey($rawFilter)] ?? null;
                         $rowAnalog = trim((string)($rowMeta['analog'] ?? ''));
                         $rowHasPress = !empty($rowMeta['press']);
+                        $rowHasMetalCaps = !empty($rowMeta['has_metal_caps']);
                         $rowHasD = isset($rowMeta['diametr_outer']) && $rowMeta['diametr_outer'] !== null
                             && (float)$rowMeta['diametr_outer'] > 250
                             && isset($rowMeta['paper_width_mm']) && $rowMeta['paper_width_mm'] !== null
                             && (float)$rowMeta['paper_width_mm'] > 400;
+                        if ($rowHasMetalCaps) {
+                            $rowHasD = false;
+                        }
                         $rowHas600 = isset($rowMeta['paper_width_mm']) && $rowMeta['paper_width_mm'] !== null
                             && (float)$rowMeta['paper_width_mm'] > 450;
                         $rowGofroPackage = trim((string)($rowMeta['filter_package'] ?? ''));
