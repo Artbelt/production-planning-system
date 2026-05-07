@@ -1454,6 +1454,13 @@ $pageTitle = 'Активные позиции';
             gap: 3px;
             min-width: 34px;
         }
+        th[data-plan-date] .date-head {
+            cursor: pointer;
+        }
+        th[data-plan-date].date-filter-active {
+            background: #eff6ff;
+            box-shadow: inset 0 0 0 1px #93c5fd;
+        }
         .date-indicators {
             display: none;
             flex-direction: column;
@@ -2295,6 +2302,7 @@ $pageTitle = 'Активные позиции';
         let isGofroCoverageVisible = false;
         let dateCells = [];
         let dateCellContextMenuTarget = null;
+        let activeDateFilter = '';
 
         function closeDateCellContextMenu() {
             if (dateCellContextMenu) {
@@ -2333,6 +2341,38 @@ $pageTitle = 'Активные позиции';
 
         function refreshDateCellsCache() {
             dateCells = Array.from(document.querySelectorAll('td.date-cell'));
+        }
+
+        function applyDateRowFilter() {
+            const targetDate = String(activeDateFilter || '').trim();
+            const hasFilter = targetDate !== '';
+            document.querySelectorAll('tr.plan-row').forEach(function (row) {
+                if (!hasFilter) {
+                    row.hidden = false;
+                    return;
+                }
+                const hasPlannedQtyOnDate = Array.from(row.querySelectorAll('td.date-cell')).some(function (cell) {
+                    const cellDate = String(cell.dataset.date || '').trim();
+                    if (cellDate !== targetDate) {
+                        return false;
+                    }
+                    return (parseInt(cell.dataset.qty || '0', 10) || 0) > 0;
+                });
+                row.hidden = !hasPlannedQtyOnDate;
+            });
+            document.querySelectorAll('th[data-plan-date]').forEach(function (th) {
+                const thDate = String(th.getAttribute('data-plan-date') || '').trim();
+                th.classList.toggle('date-filter-active', hasFilter && thDate === targetDate);
+            });
+        }
+
+        function toggleDateFilter(date) {
+            const nextDate = String(date || '').trim();
+            if (!nextDate) {
+                return;
+            }
+            activeDateFilter = activeDateFilter === nextDate ? '' : nextDate;
+            applyDateRowFilter();
         }
 
         function getSettings() {
@@ -2999,6 +3039,7 @@ $pageTitle = 'Активные позиции';
             });
 
             applySettings(getSettings());
+            applyDateRowFilter();
         }
 
         function rowHasDiameterFlag(row) {
@@ -4562,6 +4603,20 @@ $pageTitle = 'Активные позиции';
             });
         }
 
+        function bindDateHeaderFilterClick(th) {
+            if (!th || th.dataset.dateFilterBound === '1') {
+                return;
+            }
+            th.dataset.dateFilterBound = '1';
+            th.addEventListener('click', function (e) {
+                if (e.target && e.target.closest('.date-indicator')) {
+                    return;
+                }
+                const date = th.getAttribute('data-plan-date') || '';
+                toggleDateFilter(date);
+            });
+        }
+
         function resetNewPlanDateHeader(th, iso) {
             th.setAttribute('data-plan-date', iso);
             th.setAttribute('title', 'План сборки на ' + iso);
@@ -4629,6 +4684,8 @@ $pageTitle = 'Активные позиции';
             tfootRow.appendChild(newFootTh);
             bindPressIndicatorConflictClick(newHeadTh);
             bindPressIndicatorConflictClick(newFootTh);
+            bindDateHeaderFilterClick(newHeadTh);
+            bindDateHeaderFilterClick(newFootTh);
 
             rowList.forEach(function (tr) {
                 const order = tr.getAttribute('data-order') || '';
@@ -4652,6 +4709,7 @@ $pageTitle = 'Активные позиции';
             applyFrozenColumns();
             applyGofroCoverageHighlight();
             refreshAllPlanRowStates();
+            applyDateRowFilter();
         }
 
         function bindDateCellInteractions(cell) {
@@ -4885,6 +4943,7 @@ $pageTitle = 'Активные позиции';
             applyPendingMovesToServer();
         });
         document.querySelectorAll('th[data-plan-date]').forEach(bindPressIndicatorConflictClick);
+        document.querySelectorAll('th[data-plan-date]').forEach(bindDateHeaderFilterClick);
         toggleQueuePanelBtn.addEventListener('click', function () {
             setQueuePanelOpen(!isQueuePanelOpen);
         });

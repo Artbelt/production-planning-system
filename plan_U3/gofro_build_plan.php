@@ -386,11 +386,13 @@ $pageTitle = 'Планирование сборки гофропакетов';
             background: var(--panel);
             border: 1px solid var(--border);
             border-radius: 12px;
-            overflow: auto;
+            /* Не задавать overflow: здесь ломает position:sticky у шапки при прокрутке страницы */
+            overflow: visible;
         }
         table {
             width: 100%;
-            border-collapse: collapse;
+            border-collapse: separate;
+            border-spacing: 0;
             font-size: 12px;
         }
         th, td {
@@ -401,10 +403,13 @@ $pageTitle = 'Планирование сборки гофропакетов';
         }
         th {
             background: #f9fafb;
+            font-size: 11px;
+        }
+        thead th {
             position: sticky;
             top: 0;
-            z-index: 3;
-            font-size: 11px;
+            z-index: 5;
+            box-shadow: 0 1px 0 0 var(--border);
         }
         td.num, th.num { text-align: right; }
         th.num-left, td.num-left { text-align: left; }
@@ -412,7 +417,28 @@ $pageTitle = 'Планирование сборки гофропакетов';
             text-align: left;
             min-width: 28px;
             width: 28px;
+        }
+        th.date-col {
+            text-align: center;
+        }
+        thead th.date-col.weekend {
+            color: #9ca3af;
+        }
+        .date-total-value {
+            font-weight: 400;
+        }
+        td.date-cell {
             position: relative;
+        }
+        thead th.date-col.date-hover {
+            z-index: 7;
+            background: #e8ecfd;
+            outline: 2px solid rgba(36, 87, 230, 0.5);
+            outline-offset: -2px;
+        }
+        td.filter-name-cell.name-hover {
+            background: #eef2ff;
+            box-shadow: inset 3px 0 0 #4f46e5;
         }
         td.date-cell.drop-valid {
             outline: 2px dashed rgba(22, 163, 74, 0.65);
@@ -578,6 +604,22 @@ $pageTitle = 'Планирование сборки гофропакетов';
             color: #b91c1c;
             background: #fee2e2;
         }
+        .row-pool-hint {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 12px;
+            height: 12px;
+            margin-left: 4px;
+            border-radius: 999px;
+            border: 1px solid #cbd5e1;
+            color: #94a3b8;
+            font-size: 9px;
+            line-height: 1;
+            vertical-align: middle;
+            cursor: help;
+            user-select: none;
+        }
     </style>
 </head>
 <body>
@@ -586,6 +628,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
     <div style="display:flex; gap:8px; align-items:center; margin:0 0 10px;">
         <button id="save-plan-btn" type="button" style="border:1px solid #2563eb; background:#2563eb; color:#fff; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">
             Сохранить план V2
+        </button>
+        <button id="reset-dismissed-btn" type="button" style="border:1px solid #475569; background:#fff; color:#334155; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">
+            Сбросить скрытые позиции
         </button>
         <button id="task-sheet-btn" type="button" style="border:1px solid #0f766e; background:#0f766e; color:#fff; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">
             Задание
@@ -611,8 +656,12 @@ $pageTitle = 'Планирование сборки гофропакетов';
                     <th class="num">Г/п доступно</th>
                     <th class="num">Потребность в г/п</th>
                     <?php foreach ($buildPlanDates as $planDate): ?>
-                        <?php $d = DateTime::createFromFormat('Y-m-d', (string)$planDate); ?>
-                        <th class="date-col" data-date-total="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="Суммарно распределено гофропакетов из пула: 0">
+                        <?php
+                            $d = DateTime::createFromFormat('Y-m-d', (string)$planDate);
+                            $isWeekend = $d ? in_array((int)$d->format('N'), [6, 7], true) : false;
+                            $dateColClass = $isWeekend ? 'date-col weekend' : 'date-col';
+                        ?>
+                        <th class="<?= htmlspecialchars($dateColClass, ENT_QUOTES, 'UTF-8') ?>" data-date-total="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="Суммарно распределено гофропакетов из пула: 0">
                             <?= htmlspecialchars($d ? $d->format('d.m') : (string)$planDate, ENT_QUOTES, 'UTF-8') ?><br>
                             <span class="muted date-total-value" style="font-size:10px;">0</span>
                         </th>
@@ -634,6 +683,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
                         $produced = (int)($r['produced'] ?? 0);
                         $remaining = max(0, $ordered - $produced);
                         $planKey = $rawOrder . '|' . normalizeFilterKeyLocal($rawFilter);
+                        // Уникальный ключ строки для DnD/сохранения: без обрезки суффиксов в [...]
+                        // Иначе разные позиции одной заявки могут схлопываться в один rowKey.
+                        $rowKey = $rawOrder . '|' . normalizeTextKeyLocal($rawFilter);
                         $planQtyByDate = $buildPlanMap[$planKey] ?? [];
 
                         $meta = $filterMetaByKey[normalizeFilterKeyLocal($rawFilter)] ?? null;
@@ -651,6 +703,14 @@ $pageTitle = 'Планирование сборки гофропакетов';
                             ? (($foldHeight * 2 + 1) * $foldCount) / 1000
                             : 0.0;
                         $packagesPerRoll = $packLengthM > 0 ? (int)floor(600 / $packLengthM) : 0;
+                        $poolHintReason = '';
+                        if ($packageKey === '') {
+                            $poolHintReason = 'В пул не попадет: для фильтра не задан гофропакет в справочнике round_filter_structure.';
+                        } elseif ($gofroNeed <= 0) {
+                            $poolHintReason = 'В пул не попадет: потребность в г/п равна 0 (доступного г/п уже хватает).';
+                        } elseif ($packagesPerRoll <= 0) {
+                            $poolHintReason = 'В пул не попадет: не рассчитано количество г/п с рулона (проверьте параметры в paper_package_round: высота/число ребер).';
+                        }
 
                         $coverageNeed = max(0, $gofroAvailable);
                         $coverageEndIdx = -1;
@@ -678,7 +738,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                         }
                     ?>
                         <tr
-                            data-row-key="<?= htmlspecialchars($planKey, ENT_QUOTES, 'UTF-8') ?>"
+                            data-row-key="<?= htmlspecialchars($rowKey, ENT_QUOTES, 'UTF-8') ?>"
                             data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
                             data-filter-name="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
                             data-paper-width-mm="<?= htmlspecialchars((string)$paperWidthMm, ENT_QUOTES, 'UTF-8') ?>"
@@ -691,9 +751,14 @@ $pageTitle = 'Планирование сборки гофропакетов';
                             data-packages-per-roll="<?= (int)$packagesPerRoll ?>"
                         >
                             <td class="row-dismiss-col">
-                                <button type="button" class="row-dismiss-btn" data-dismiss-row="<?= htmlspecialchars($planKey, ENT_QUOTES, 'UTF-8') ?>" title="Скрыть позицию и убрать её полосы из пула (сохраняется в браузере)" aria-label="Скрыть позицию">×</button>
+                                <button type="button" class="row-dismiss-btn" data-dismiss-row="<?= htmlspecialchars($rowKey, ENT_QUOTES, 'UTF-8') ?>" title="Скрыть позицию и убрать её полосы из пула (сохраняется в браузере)" aria-label="Скрыть позицию">×</button>
                             </td>
-                            <td><?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?></td>
+                            <td class="filter-name-cell">
+                                <?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>
+                                <?php if ($poolHintReason !== ''): ?>
+                                    <span class="row-pool-hint" title="<?= htmlspecialchars($poolHintReason, ENT_QUOTES, 'UTF-8') ?>">i</span>
+                                <?php endif; ?>
+                            </td>
                             <td><?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?></td>
                             <td class="num-left" title="Остаток к производству из заказанного по позиции"><?= (int)$remaining ?><span class="muted-light"> из <?= (int)$ordered ?></span></td>
                             <td class="num"><?= $gofroProduced ?></td>
@@ -761,6 +826,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
     const stripPool = document.getElementById('strip-pool');
     const dragPreview = document.getElementById('drag-preview');
     const savePlanBtn = document.getElementById('save-plan-btn');
+    const resetDismissedBtn = document.getElementById('reset-dismissed-btn');
     const savePlanStatus = document.getElementById('save-plan-status');
     const taskSheetBtn = document.getElementById('task-sheet-btn');
     const taskSheetModal = document.getElementById('task-sheet-modal');
@@ -774,8 +840,13 @@ $pageTitle = 'Планирование сборки гофропакетов';
 
     const rows = Array.from(document.querySelectorAll('tbody tr[data-row-key]'));
     const rowStateMap = new Map();
+    function isTargetState(state) {
+        const order = String(state && state.order ? state.order : '');
+        const filter = String(state && state.filterName ? state.filterName : '');
+        return order === 'TF-19-20-20-26-2' && filter.includes('TF 325*218*760*13');
+    }
     rows.forEach((row) => {
-        rowStateMap.set(row.dataset.rowKey, {
+        const state = {
             row,
             dismissed: false,
             order: String(row.dataset.order || ''),
@@ -791,7 +862,8 @@ $pageTitle = 'Планирование сборки гофропакетов';
             dateCells: Array.from(row.querySelectorAll('td.date-cell[data-date]')),
             allocatedByDate: {},
             allocatedObjectsByDate: {},
-        });
+        };
+        rowStateMap.set(row.dataset.rowKey, state);
     });
 
     function loadDismissedRowKeys() {
@@ -855,10 +927,13 @@ $pageTitle = 'Планирование сборки гофропакетов';
     function bootstrapStrips() {
         strips = [];
         rowStateMap.forEach((state, rowKey) => {
+            let skipReason = '';
             if (state.dismissed) {
+                skipReason = 'dismissed';
                 return;
             }
             if (!state.packageKey || state.gofroNeed <= 0 || state.packagesPerRoll <= 0) {
+                skipReason = !state.packageKey ? 'empty_packageKey' : (state.gofroNeed <= 0 ? 'gofroNeed_le_0' : 'packagesPerRoll_le_0');
                 return;
             }
             const rollsNeeded = Math.ceil(state.gofroNeed / state.packagesPerRoll);
@@ -1247,26 +1322,47 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 return;
             }
             let allocated = 0;
+            let allocatedInHorizon = 0;
             Object.keys(state.allocatedByDate).forEach((d) => {
-                allocated += parseInt(state.allocatedByDate[d] || 0, 10) || 0;
+                const qty = parseInt(state.allocatedByDate[d] || 0, 10) || 0;
+                allocated += qty;
+                const hasDateCell = state.dateCells.some((cell) => String(cell.dataset.date || '') === d);
+                if (hasDateCell) {
+                    allocatedInHorizon += qty;
+                }
             });
             const baseCoverageNeed = Math.max(0, state.baseAvailable);
-            const totalCoverageNeed = Math.max(0, state.baseAvailable + allocated);
+            const totalCoverageNeed = Math.max(0, state.baseAvailable + allocatedInHorizon);
             let baseEndIdx = -1;
             let basePartialIdx = -1;
             let totalEndIdx = -1;
             let totalPartialIdx = -1;
-            const startIdx = 0;
+            const baseStartIdx = 0;
+            let totalStartIdx = 0;
+            const allocatedDates = Object.keys(state.allocatedByDate || {}).filter((d) => {
+                const qty = parseInt(state.allocatedByDate[d] || 0, 10) || 0;
+                if (qty <= 0) {
+                    return false;
+                }
+                return state.dateCells.some((cell) => String(cell.dataset.date || '') === d);
+            });
+            if (allocatedDates.length > 0) {
+                const firstAllocatedDate = allocatedDates.sort()[0];
+                const idxByDate = state.dateCells.findIndex((cell) => String(cell.dataset.date || '') === firstAllocatedDate);
+                if (idxByDate >= 0) {
+                    totalStartIdx = idxByDate;
+                }
+            }
 
             let lastPlanIdx = -1;
-            for (let i = startIdx; i < state.dateCells.length; i += 1) {
+            for (let i = baseStartIdx; i < state.dateCells.length; i += 1) {
                 const q = parseInt(state.dateCells[i].dataset.planQty || '0', 10) || 0;
                 if (q > 0) {
                     lastPlanIdx = i;
                 }
             }
 
-            function findCoverageWindow(needQty) {
+            function findCoverageWindow(needQty, startIdx) {
                 let acc = 0;
                 let endIdx = -1;
                 let partialIdx = -1;
@@ -1290,17 +1386,17 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 }
                 return { endIdx, partialIdx };
             }
-            const baseWindow = findCoverageWindow(baseCoverageNeed);
+            const baseWindow = findCoverageWindow(baseCoverageNeed, baseStartIdx);
             baseEndIdx = baseWindow.endIdx;
             basePartialIdx = baseWindow.partialIdx;
-            const totalWindow = findCoverageWindow(totalCoverageNeed);
+            const totalWindow = findCoverageWindow(totalCoverageNeed, totalStartIdx);
             totalEndIdx = totalWindow.endIdx;
             totalPartialIdx = totalWindow.partialIdx;
 
             state.dateCells.forEach((cell, idx) => {
                 cell.classList.remove('gantt-full', 'gantt-partial', 'gantt-plan-full', 'gantt-plan-partial');
-                const inBase = baseEndIdx >= 0 && idx >= startIdx && idx <= baseEndIdx;
-                const inTotal = totalEndIdx >= 0 && idx >= startIdx && idx <= totalEndIdx;
+                const inBase = baseEndIdx >= 0 && idx >= baseStartIdx && idx <= baseEndIdx;
+                const inTotal = totalEndIdx >= 0 && idx >= totalStartIdx && idx <= totalEndIdx;
                 if (inBase) {
                     cell.classList.add(idx === basePartialIdx ? 'gantt-partial' : 'gantt-full');
                 } else if (inTotal) {
@@ -1388,6 +1484,27 @@ $pageTitle = 'Планирование сборки гофропакетов';
         persistDismissedRowKeys(dismissedRowKeys);
         renderStrips();
         updateCoverage();
+    }
+
+    function resetDismissedRows() {
+        dismissedRowKeys = new Set();
+        persistDismissedRowKeys(dismissedRowKeys);
+        rowStateMap.forEach((state) => {
+            state.dismissed = false;
+            state.row.style.display = '';
+        });
+        selectedStripIds.clear();
+        selectedSourceRow = '';
+        allocations = [];
+        Object.keys(supplyMap).forEach((k) => delete supplyMap[k]);
+        rowStateMap.forEach((state) => {
+            state.allocatedByDate = {};
+            state.allocatedObjectsByDate = {};
+        });
+        bootstrapStrips();
+        renderStrips();
+        updateCoverage();
+        setSaveStatus('Скрытые позиции сброшены');
     }
 
     function returnAllocationToPool(rowKey, date, objIdx, silentRefresh) {
@@ -1546,6 +1663,10 @@ $pageTitle = 'Планирование сборки гофропакетов';
         grouped.forEach((group) => {
             const state = rowStateMap.get(group.rowKey);
             if (!state || state.dismissed) {
+                return;
+            }
+            const hasDateInHorizon = state.dateCells.some((cell) => String(cell.dataset.date || '') === group.date);
+            if (!hasDateInHorizon) {
                 return;
             }
             const restoredItems = [];
@@ -1752,6 +1873,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
     if (savePlanBtn) {
         savePlanBtn.addEventListener('click', savePlanV2);
     }
+    if (resetDismissedBtn) {
+        resetDismissedBtn.addEventListener('click', resetDismissedRows);
+    }
     if (taskSheetBtn) {
         taskSheetBtn.addEventListener('click', openTaskSheetModal);
     }
@@ -1781,6 +1905,91 @@ $pageTitle = 'Планирование сборки гофропакетов';
             }
         });
     }
+
+    const planTable = document.querySelector('.layout > .panel table');
+    if (planTable) {
+        let hoveredPlanDate = '';
+        let hoveredRowKey = '';
+
+        function clearDateColumnHover() {
+            planTable.querySelectorAll('th.date-col.date-hover').forEach((el) => {
+                el.classList.remove('date-hover');
+            });
+            hoveredPlanDate = '';
+        }
+
+        function clearNameHover() {
+            planTable.querySelectorAll('td.filter-name-cell.name-hover').forEach((el) => {
+                el.classList.remove('name-hover');
+            });
+            hoveredRowKey = '';
+        }
+
+        function setDateColumnHover(dateIso) {
+            const next = String(dateIso || '');
+            if (next === hoveredPlanDate) {
+                return;
+            }
+            planTable.querySelectorAll('th.date-col.date-hover').forEach((el) => {
+                el.classList.remove('date-hover');
+            });
+            hoveredPlanDate = next;
+            if (!next || !/^\d{4}-\d{2}-\d{2}$/.test(next)) {
+                hoveredPlanDate = '';
+                return;
+            }
+            planTable.querySelectorAll(`th.date-col[data-date-total="${next}"]`).forEach((el) => {
+                el.classList.add('date-hover');
+            });
+        }
+
+        function setNameHoverForRow(rowKey) {
+            const next = String(rowKey || '');
+            if (next === hoveredRowKey) {
+                return;
+            }
+            planTable.querySelectorAll('td.filter-name-cell.name-hover').forEach((el) => {
+                el.classList.remove('name-hover');
+            });
+            hoveredRowKey = next;
+            if (!next) {
+                return;
+            }
+            const row = planTable.querySelector(`tbody tr[data-row-key="${next}"]`);
+            if (!row) {
+                hoveredRowKey = '';
+                return;
+            }
+            const nameCell = row.querySelector('td.filter-name-cell');
+            if (!nameCell) {
+                hoveredRowKey = '';
+                return;
+            }
+            nameCell.classList.add('name-hover');
+        }
+
+        planTable.addEventListener('mouseover', (e) => {
+            const cell = e.target.closest('th.date-col, td.date-cell[data-date]');
+            if (!cell || !planTable.contains(cell)) {
+                clearDateColumnHover();
+                clearNameHover();
+                return;
+            }
+            if (cell.matches('th.date-col')) {
+                setDateColumnHover(cell.dataset.dateTotal || '');
+                clearNameHover();
+            } else {
+                setDateColumnHover(cell.dataset.date || '');
+                const row = cell.closest('tr[data-row-key]');
+                setNameHoverForRow(row ? row.dataset.rowKey : '');
+            }
+        });
+        planTable.addEventListener('mouseleave', () => {
+            clearDateColumnHover();
+            clearNameHover();
+        });
+    }
+
     loadPlanV2();
 })();
 </script>

@@ -91,6 +91,22 @@ if (($_GET['action'] ?? '') === 'create_order' && $_SERVER['REQUEST_METHOD'] ===
     exit;
 }
 
+// API: примечание (comment) из справочника по фильтру
+if (($_GET['action'] ?? '') === 'filter_comment' && $_SERVER['REQUEST_METHOD'] === 'GET') {
+    header('Content-Type: application/json; charset=utf-8');
+    $filter = trim((string)($_GET['filter'] ?? ''));
+    if ($filter === '') {
+        echo json_encode(['ok' => true, 'comment' => ''], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    $st = $pdo->prepare("SELECT `comment` FROM round_filter_structure WHERE TRIM(`filter`) = ? LIMIT 1");
+    $st->execute([$filter]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    $comment = ($row && array_key_exists('comment', $row) && $row['comment'] !== null) ? (string)$row['comment'] : '';
+    echo json_encode(['ok' => true, 'comment' => $comment], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 // список фильтров (для datalist)
 $filters = $pdo->query("SELECT DISTINCT TRIM(`filter`) AS f FROM round_filter_structure WHERE TRIM(`filter`)<>'' ORDER BY f")->fetchAll();
 $filtersList = array_map(fn($r)=>$r['f'],$filters);
@@ -119,7 +135,7 @@ $filtersList = array_map(fn($r)=>$r['f'],$filters);
     <h2>Новая заявка</h2>
     <div style="display:flex;gap:16px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
         <label>Имя заявки: <input id="order_number" type="text" placeholder="Напр.: Z-2025-001" style="width:260px"></label>
-        <label>Цех (опц.): <input id="workshop" type="text" value="U5" style="width:200px"></label>
+        <label>Цех (опц.): <input id="workshop" type="text" value="U3" style="width:200px"></label>
         <span class="muted">Строки сохраняются в таблицу <b>orders</b></span>
     </div>
 
@@ -198,11 +214,30 @@ $filtersList = array_map(fn($r)=>$r['f'],$filters);
         const colRemark=document.createElement('div');
         const inRem=document.createElement('input'); inRem.type='text'; inRem.name='remark'; inRem.placeholder='примечание'; inRem.value=prefill.remark||''; colRemark.appendChild(inRem);
 
+        const filterInp=colFilter.querySelector('input[name="filter"]');
+        const syncRemarkFromDb=async()=>{
+            const v=(filterInp.value||'').trim();
+            if(!v){ filterInp._lastRemarkSyncedFor=''; return; }
+            if(filterInp._lastRemarkSyncedFor===v) return;
+            filterInp._lastRemarkSyncedFor=v;
+            filterInp._remarkSyncGen=(filterInp._remarkSyncGen|0)+1;
+            const gen=filterInp._remarkSyncGen;
+            try{
+                const res=await fetch(location.pathname+'?action=filter_comment&filter='+encodeURIComponent(v));
+                const data=await res.json();
+                if(gen!==filterInp._remarkSyncGen) return;
+                if(data.ok) inRem.value=(data.comment!=null)?String(data.comment).trim():'';
+            }catch(_){ filterInp._lastRemarkSyncedFor=''; }
+        };
+        filterInp.addEventListener('change',syncRemarkFromDb);
+        filterInp.addEventListener('blur',syncRemarkFromDb);
+
         const colDel=document.createElement('div');
         const btnX=document.createElement('button'); btnX.type='button'; btnX.textContent='✕'; btnX.title='Удалить'; btnX.onclick=()=>r.remove(); colDel.appendChild(btnX);
 
         r.append(colFilter,colCount,colMark,colPPack,colPLabel,colGPack,colRate,colGLabel,colRemark,colDel);
         document.getElementById('rows').appendChild(r);
+        if((prefill.filter||'').trim()&&!('remark' in prefill)) syncRemarkFromDb();
     }
 
     function buildPayload(){
