@@ -1,6 +1,6 @@
 <?php
 // NP_supply_requirements.php — потребность комплектующих по заявке
-// Печать: таблица разбивается на несколько страниц по N дат (по умолчанию 20)
+// Печать: таблица выводится целиком, без постраничной разбивки
 
 require_once __DIR__ . '/../auth/includes/db.php';
 
@@ -52,8 +52,6 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
     }
     $order = $_POST['order'] ?? '';
     $ctype = $_POST['ctype'] ?? '';          // box
-    $chunkSize = 20; // Фиксированное значение для печати
-
     if ($order==='' || $ctype==='') {
         http_response_code(400);
         echo "<p>Не указана заявка или тип комплектующих.</p>";
@@ -205,92 +203,246 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
 
     echo '</tbody></table></div>'; // table-wrap
 
-    // Создаем скрытые копии таблицы для печати с разбивкой на страницы
+    // Создаем скрытую таблицу для печати без разбивки на страницы
     echo '<div class="print-only">';
-    $dateChunks = array_chunk($dates, $chunkSize, true);
+    echo '<div class="table-wrap"><table class="pivot">';
+    echo '<thead><tr><th class="left">Позиция</th>';
+    foreach ($dates as $d) {
+        echo '<th class="nowrap vertical-date">' . date('d-m-y', strtotime($d)) . '</th>';
+    }
+    echo '<th class="nowrap">Итого</th></tr></thead><tbody>';
 
-    // Вычисляем общие итоги за все страницы для каждой позиции
-    $grandTotalsByItem = [];
-    $grandTotalAll = 0;
     foreach ($items as $name) {
-        $rowTotalAll = 0;
+        $rowTotal = 0;
+        echo '<tr><td class="left">'.htmlspecialchars($name).'</td>';
         foreach ($dates as $d) {
-            $rowTotalAll += $matrix[$name][$d] ?? 0;
-        }
-        $grandTotalsByItem[$name] = $rowTotalAll;
-        $grandTotalAll += $rowTotalAll;
-    }
-
-    $totalChunks = count($dateChunks);
-    foreach ($dateChunks as $i => $chunkDates) {
-        $isLastPage = ($i == $totalChunks - 1);
-        
-        echo '<div class="sheet">';                   // оболочка страницы
-        echo '<div class="table-wrap"><table class="pivot">';
-        echo '<thead><tr><th class="left">Позиция</th>';
-        foreach ($chunkDates as $d) {
-            echo '<th class="nowrap vertical-date">' . date('d-m-y', strtotime($d)) . '</th>';
-        }
-        echo '<th class="nowrap">Итого</th>';
-        if ($isLastPage) {
-            echo '<th class="nowrap grand-total-header">Итого за все страницы</th>';
-            echo '<th class="nowrap position-names-header">Позиция</th>';
-        }
-        echo '</tr></thead><tbody>';
-
-        // Пересчитываем итоги только для текущего чанка дат
-        foreach ($items as $name) {
-            $rowTotal = 0;
-            echo '<tr><td class="left">'.htmlspecialchars($name).'</td>';
-            foreach ($chunkDates as $d) {
-                $v = $matrix[$name][$d] ?? 0;
-                $rowTotal += $v;
-                if ($v) {
-                    $displayValue = fmt($v);
-                    $fullValue = fmtFull($v);
-                    if (strlen($displayValue) != strlen($fullValue)) {
-                        echo '<td title="'.$fullValue.'">'.$displayValue.'</td>';
-                    } else {
-                        echo '<td>'.$displayValue.'</td>';
-                    }
+            $v = $matrix[$name][$d] ?? 0;
+            $rowTotal += $v;
+            if ($v) {
+                $displayValue = fmt($v);
+                $fullValue = fmtFull($v);
+                if (strlen($displayValue) != strlen($fullValue)) {
+                    echo '<td title="'.$fullValue.'">'.$displayValue.'</td>';
                 } else {
-                    echo '<td></td>';
+                    echo '<td>'.$displayValue.'</td>';
                 }
-            }
-            // Итого для строки - только по датам в этом чанке
-            $displayTotal = fmt($rowTotal);
-            $fullTotal = fmtFull($rowTotal);
-            if (strlen($displayTotal) != strlen($fullTotal)) {
-                echo '<td class="total" title="'.$fullTotal.'">'.$displayTotal.'</td>';
             } else {
-                echo '<td class="total">'.$displayTotal.'</td>';
+                echo '<td></td>';
             }
-            
-            // Дополнительные колонки только на последней странице
-            if ($isLastPage) {
-                // Итого за все страницы для этой позиции
-                $grandTotalForItem = $grandTotalsByItem[$name];
-                $displayGrandItem = fmt($grandTotalForItem);
-                $fullGrandItem = fmtFull($grandTotalForItem);
-                if (strlen($displayGrandItem) != strlen($fullGrandItem)) {
-                    echo '<td class="grand-total-cell" title="'.$fullGrandItem.'"><strong>'.$displayGrandItem.'</strong></td>';
-                } else {
-                    echo '<td class="grand-total-cell"><strong>'.$displayGrandItem.'</strong></td>';
-                }
-                
-                // Дублированное название позиции справа
-                echo '<td class="left position-names-cell">'.htmlspecialchars($name).'</td>';
-            }
-            echo '</tr>';
         }
-
-        // Строка "Итого по дням" убрана для экономии места при печати
-
-        echo '</tbody></table></div>'; // table-wrap
-        echo '</div>'; // sheet
+        $displayTotal = fmt($rowTotal);
+        $fullTotal = fmtFull($rowTotal);
+        if (strlen($displayTotal) != strlen($fullTotal)) {
+            echo '<td class="total" title="'.$fullTotal.'">'.$displayTotal.'</td></tr>';
+        } else {
+            echo '<td class="total">'.$displayTotal.'</td></tr>';
+        }
     }
+    
+    echo '<tr class="foot"><td class="left nowrap">Итого по дням</td>';
+    $grand = 0;
+    foreach ($dates as $d) {
+        $col = 0;
+        foreach ($items as $name) {
+            $col += $matrix[$name][$d] ?? 0;
+        }
+        $grand += $col;
+        if ($col) {
+            $displayCol = fmt($col);
+            $fullCol = fmtFull($col);
+            if (strlen($displayCol) != strlen($fullCol)) {
+                echo '<td class="total" title="'.$fullCol.'">'.$displayCol.'</td>';
+            } else {
+                echo '<td class="total">'.$displayCol.'</td>';
+            }
+        } else {
+            echo '<td class="total"></td>';
+        }
+    }
+    $displayGrand = fmt($grand);
+    $fullGrand = fmtFull($grand);
+    if (strlen($displayGrand) != strlen($fullGrand)) {
+        echo '<td class="grand" title="'.$fullGrand.'">'.$displayGrand.'</td></tr>';
+    } else {
+        echo '<td class="grand">'.$displayGrand.'</td></tr>';
+    }
+    
+    echo '</tbody></table></div>';
     echo '</div>'; // print-only
 
+    exit;
+}
+
+/* ===== экспорт в XLSX ===== */
+if (isset($_GET['export']) && $_GET['export'] === 'xlsx') {
+    if (!$pdo) {
+        http_response_code(503);
+        echo "Сервис временно недоступен: ошибка базы данных.";
+        exit;
+    }
+
+    $order = $_GET['order'] ?? '';
+    $ctype = $_GET['ctype'] ?? '';
+
+    if ($order === '' || $ctype === '') {
+        http_response_code(400);
+        echo "Не указана заявка или тип комплектующих.";
+        exit;
+    }
+
+    try {
+        $sql = "
+        SELECT
+          'box' AS component_type,
+          COALESCE(sfs1.box, sfs2.box) AS component_name,
+          bp.plan_date AS need_by_date,
+          bp.`filter` AS filter_label,
+          TRIM(SUBSTRING_INDEX(bp.`filter`, ' [', 1)) AS base_filter,
+          bp.`count` AS qty
+        FROM build_plan bp
+        LEFT JOIN salon_filter_structure sfs1 ON sfs1.`filter` = TRIM(SUBSTRING_INDEX(bp.`filter`, ' [', 1))
+        LEFT JOIN salon_filter_structure sfs2 ON sfs2.`filter` = bp.`filter`
+          AND (sfs1.box IS NULL OR sfs1.box = '')
+        WHERE bp.order_number = :ord
+          AND (COALESCE(sfs1.box, sfs2.box) IS NOT NULL AND COALESCE(sfs1.box, sfs2.box) <> '')
+        ORDER BY need_by_date, component_name, base_filter
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([':ord' => $order]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo "Ошибка загрузки данных для экспорта.";
+        exit;
+    }
+
+    if (!$rows) {
+        http_response_code(404);
+        echo "По заявке {$order} для индивидуальных коробок данных нет.";
+        exit;
+    }
+
+    $dates = [];
+    $items = [];
+    $matrix = [];
+    foreach ($rows as $r) {
+        $d = $r['need_by_date'];
+        $name = $r['component_name'];
+        if ($name === null || $name === '') {
+            continue;
+        }
+
+        $dates[$d] = true;
+        $items[$name] = true;
+
+        if (!isset($matrix[$name])) {
+            $matrix[$name] = [];
+        }
+        if (!isset($matrix[$name][$d])) {
+            $matrix[$name][$d] = 0;
+        }
+        $matrix[$name][$d] += (float)$r['qty'];
+    }
+
+    $dates = array_keys($dates);
+    sort($dates);
+    $items = array_keys($items);
+    sort($items, SORT_NATURAL | SORT_FLAG_CASE);
+
+    require_once __DIR__ . '/PHPExcel.php';
+
+    $objPHPExcel = new PHPExcel();
+    $sheet = $objPHPExcel->setActiveSheetIndex(0);
+    $sheet->setTitle('Потребность');
+
+    $lastColIndex = count($dates) + 1; // Позиция + даты + Итого
+    $lastColLetter = PHPExcel_Cell::stringFromColumnIndex($lastColIndex);
+
+    $title = 'Заявка ' . $order . ': потребность — индивидуальная коробка';
+    $sheet->setCellValue('A1', $title);
+    $sheet->mergeCells('A1:' . $lastColLetter . '1');
+    $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+    $sheet->getStyle('A1')->getAlignment()->setHorizontal(PHPExcel_Style_Alignment::HORIZONTAL_CENTER);
+
+    $col = 0;
+    $sheet->setCellValueByColumnAndRow($col++, 2, 'Позиция');
+    foreach ($dates as $d) {
+        $sheet->setCellValueByColumnAndRow($col++, 2, date('d-m-y', strtotime($d)));
+    }
+    $sheet->setCellValueByColumnAndRow($col, 2, 'Итого');
+
+    $headerRange = 'A2:' . $lastColLetter . '2';
+    $sheet->getStyle($headerRange)->getFont()->setBold(true);
+    $sheet->getStyle($headerRange)->getFill()
+        ->setFillType(PHPExcel_Style_Fill::FILL_SOLID)
+        ->getStartColor()->setRGB('F1F5F9');
+    $sheet->getStyle($headerRange)->getAlignment()
+        ->setHorizontal(PHPExcel_Style_Alignment::HORIZONTAL_CENTER)
+        ->setVertical(PHPExcel_Style_Alignment::VERTICAL_CENTER);
+
+    $rowNum = 3;
+    foreach ($items as $name) {
+        $col = 0;
+        $rowTotal = 0;
+        $sheet->setCellValueByColumnAndRow($col++, $rowNum, $name);
+        foreach ($dates as $d) {
+            $v = (float)($matrix[$name][$d] ?? 0);
+            $rowTotal += $v;
+            if ($v != 0.0) {
+                $sheet->setCellValueByColumnAndRow($col, $rowNum, $v);
+            }
+            $col++;
+        }
+        $sheet->setCellValueByColumnAndRow($col, $rowNum, $rowTotal);
+        $sheet->getStyle(PHPExcel_Cell::stringFromColumnIndex($col) . $rowNum)->getFont()->setBold(true);
+        $rowNum++;
+    }
+
+    $col = 0;
+    $sheet->setCellValueByColumnAndRow($col++, $rowNum, 'Итого по дням');
+    $grand = 0;
+    foreach ($dates as $d) {
+        $colTotal = 0;
+        foreach ($items as $name) {
+            $colTotal += (float)($matrix[$name][$d] ?? 0);
+        }
+        $grand += $colTotal;
+        if ($colTotal != 0.0) {
+            $sheet->setCellValueByColumnAndRow($col, $rowNum, $colTotal);
+        }
+        $col++;
+    }
+    $sheet->setCellValueByColumnAndRow($col, $rowNum, $grand);
+
+    $totalRowRange = 'A' . $rowNum . ':' . $lastColLetter . $rowNum;
+    $sheet->getStyle($totalRowRange)->getFont()->setBold(true);
+    $sheet->getStyle($totalRowRange)->getFill()
+        ->setFillType(PHPExcel_Style_Fill::FILL_SOLID)
+        ->getStartColor()->setRGB('E0F2FE');
+
+    $dataRange = 'A2:' . $lastColLetter . $rowNum;
+    $sheet->getStyle($dataRange)->getBorders()->getAllBorders()
+        ->setBorderStyle(PHPExcel_Style_Border::BORDER_THIN);
+
+    for ($i = 0; $i <= $lastColIndex; $i++) {
+        $sheet->getColumnDimension(PHPExcel_Cell::stringFromColumnIndex($i))->setAutoSize(true);
+    }
+
+    $sheet->getPageSetup()->setOrientation(PHPExcel_Worksheet_PageSetup::ORIENTATION_LANDSCAPE);
+    $sheet->getPageSetup()->setPaperSize(PHPExcel_Worksheet_PageSetup::PAPERSIZE_A4);
+    $sheet->getPageSetup()->setFitToWidth(1);
+    $sheet->getPageSetup()->setFitToHeight(0);
+
+    $safeOrder = preg_replace('/[^0-9A-Za-z._-]/', '_', (string)$order);
+    $filename = 'potrebnost_' . ($safeOrder ?: 'order') . '_' . date('Y-m-d') . '.xlsx';
+
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: max-age=0');
+
+    $writer = PHPExcel_IOFactory::createWriter($objPHPExcel, 'Excel2007');
+    $writer->save('php://output');
     exit;
 }
 
@@ -1007,8 +1159,6 @@ if ($pdo) {
     function loadPivot() {
         const order = document.getElementById('order').value;
         const ctype = document.getElementById('ctype').value;
-        const chunk = 20; // Фиксированное значение для печати
-        
         if (!order) { 
             showNotification('Выберите заявку', 'warning');
             return; 
@@ -1050,7 +1200,7 @@ if ($pdo) {
         
         xhr.open('POST', '?ajax=1', true);
         xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-        xhr.send('order=' + encodeURIComponent(order) + '&ctype=' + encodeURIComponent(ctype) + '&chunk=' + encodeURIComponent(chunk));
+        xhr.send('order=' + encodeURIComponent(order) + '&ctype=' + encodeURIComponent(ctype));
     }
 
     function showNotification(message, type = 'info') {
@@ -1107,49 +1257,19 @@ if ($pdo) {
 
     // Функция экспорта в Excel
     function exportToExcel() {
-        const tables = document.querySelectorAll('table.pivot');
-        if (tables.length === 0) {
-            showNotification('Нет данных для экспорта', 'warning');
+        const order = document.getElementById('order').value;
+        const ctype = document.getElementById('ctype').value;
+        if (!order) {
+            showNotification('Выберите заявку', 'warning');
+            return;
+        }
+        if (!ctype) {
+            showNotification('Выберите тип комплектующих', 'warning');
             return;
         }
 
-        let csvContent = '';
-        const order = document.getElementById('order').value;
-        const ctype = document.getElementById('ctype').value;
-        const title = 'индивидуальная коробка';
-        
-        csvContent += `Заявка ${order}: потребность — ${title}\n\n`;
-
-        tables.forEach((table, tableIndex) => {
-            if (tableIndex > 0) csvContent += '\n';
-            
-            const rows = table.querySelectorAll('tr');
-            rows.forEach(row => {
-                const cells = row.querySelectorAll('th, td');
-                const rowData = Array.from(cells).map(cell => {
-                    let text = cell.textContent.trim();
-                    // Экранируем кавычки и запятые
-                    if (text.includes('"') || text.includes(',')) {
-                        text = '"' + text.replace(/"/g, '""') + '"';
-                    }
-                    return text;
-                });
-                csvContent += rowData.join(',') + '\n';
-            });
-        });
-
-        // Создаем и скачиваем файл
-        const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement('a');
-        const url = URL.createObjectURL(blob);
-        link.setAttribute('href', url);
-        link.setAttribute('download', `потребность_${order}_коробки_${new Date().toISOString().split('T')[0]}.csv`);
-        link.style.visibility = 'hidden';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
-        showNotification('Файл успешно экспортирован', 'success');
+        const url = '?export=xlsx&order=' + encodeURIComponent(order) + '&ctype=' + encodeURIComponent(ctype);
+        window.location.href = url;
     }
 
     // Функция инициализации улучшенной прокрутки таблицы

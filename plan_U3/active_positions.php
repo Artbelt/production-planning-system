@@ -3409,6 +3409,56 @@ $pageTitle = 'Активные позиции';
             document.querySelectorAll('tr.plan-row').forEach(refreshPlanRowState);
         }
 
+        function adjustDebtShiftsForPlanDelta(planKey, deltaPlan, fallbackDate) {
+            if (!planKey || !deltaPlan) {
+                return;
+            }
+            const shifts = getDebtShiftsForKey(planKey);
+            const next = [];
+            if (deltaPlan > 0) {
+                // План увеличили: уменьшаем долг по самым ранним сменам.
+                let consume = deltaPlan;
+                shifts.forEach(function (item) {
+                    const qty = Math.max(0, parseInt(item.qty || 0, 10) || 0);
+                    if (qty <= 0) {
+                        return;
+                    }
+                    if (consume <= 0) {
+                        next.push({ date: item.date, qty: qty });
+                        return;
+                    }
+                    const take = Math.min(qty, consume);
+                    consume -= take;
+                    const left = qty - take;
+                    if (left > 0) {
+                        next.push({ date: item.date, qty: left });
+                    }
+                });
+            } else {
+                // План уменьшили: добавляем долг в дату правки (или в сегодня).
+                const addQty = Math.abs(deltaPlan);
+                const dateRef = (typeof fallbackDate === 'string' && fallbackDate) ? fallbackDate : todayIso;
+                let merged = false;
+                shifts.forEach(function (item) {
+                    const qty = Math.max(0, parseInt(item.qty || 0, 10) || 0);
+                    if (qty <= 0) {
+                        return;
+                    }
+                    if (!merged && item.date === dateRef) {
+                        next.push({ date: item.date, qty: qty + addQty });
+                        merged = true;
+                    } else {
+                        next.push({ date: item.date, qty: qty });
+                    }
+                });
+                if (!merged && addQty > 0) {
+                    next.push({ date: dateRef, qty: addQty });
+                }
+            }
+            setDebtShiftsForKey(planKey, next);
+            renderDebtCellByKey(planKey);
+        }
+
         function bindDebtShiftDrag(item) {
             item.addEventListener('dragstart', function (e) {
                 const order = item.dataset.order || '';
@@ -4423,7 +4473,23 @@ $pageTitle = 'Активные позиции';
         }
 
         function applyQueuedMoveChanges(queuedMove, direction) {
+            const rowPlanDelta = new Map();
+            const fallbackDates = new Map();
             queuedMove.changes.forEach(function (change) {
+                const cell = change.cell;
+                const row = cell ? cell.closest('tr.plan-row') : null;
+                if (row) {
+                    const planKey = getPlanKey(row.dataset.order || '', row.dataset.filter || '');
+                    const nextVal = direction === 'forward' ? change.next : change.prev;
+                    const prevVal = direction === 'forward' ? change.prev : change.next;
+                    const diff = (parseInt(nextVal, 10) || 0) - (parseInt(prevVal, 10) || 0);
+                    if (diff !== 0) {
+                        rowPlanDelta.set(planKey, (rowPlanDelta.get(planKey) || 0) + diff);
+                        if (!fallbackDates.has(planKey)) {
+                            fallbackDates.set(planKey, (cell && cell.dataset) ? (cell.dataset.date || todayIso) : todayIso);
+                        }
+                    }
+                }
                 setCellQty(change.cell, direction === 'forward' ? change.next : change.prev);
             });
             if (queuedMove.debtChange) {
@@ -4466,6 +4532,13 @@ $pageTitle = 'Активные позиции';
                     }
                     renderDebtCellByKey(debtKey);
                 }
+            } else {
+                rowPlanDelta.forEach(function (delta, planKey) {
+                    if (!delta) {
+                        return;
+                    }
+                    adjustDebtShiftsForPlanDelta(planKey, delta, fallbackDates.get(planKey) || todayIso);
+                });
             }
             recalcHeaderIndicatorsFromTable();
             applyGofroCoverageHighlight();

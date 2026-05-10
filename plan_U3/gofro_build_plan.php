@@ -436,6 +436,12 @@ $pageTitle = 'Планирование сборки гофропакетов';
             outline: 2px solid rgba(36, 87, 230, 0.5);
             outline-offset: -2px;
         }
+        thead th.date-col.drag-target-hover {
+            z-index: 8;
+            background: #dbeafe;
+            outline: 2px solid rgba(37, 99, 235, 0.9);
+            outline-offset: -2px;
+        }
         td.filter-name-cell.name-hover {
             background: #eef2ff;
             box-shadow: inset 3px 0 0 #4f46e5;
@@ -489,6 +495,52 @@ $pageTitle = 'Планирование сборки гофропакетов';
         .cell-supply-item:hover {
             background: #bae6fd;
             border-color: #0284c7;
+        }
+        .supply-action-menu {
+            position: fixed;
+            z-index: 12000;
+            width: max-content;
+            min-width: 0;
+            max-width: 320px;
+            background: #fff;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.2);
+            padding: 6px;
+            display: none;
+        }
+        .supply-action-menu.open {
+            display: block;
+        }
+        .supply-action-btn {
+            width: auto;
+            min-width: 100%;
+            border: 1px solid #e2e8f0;
+            background: #fff;
+            color: #0f172a;
+            border-radius: 6px;
+            padding: 6px 8px;
+            text-align: left;
+            font-size: 12px;
+            cursor: pointer;
+            margin: 0;
+            white-space: nowrap;
+        }
+        .supply-action-btn + .supply-action-btn {
+            margin-top: 6px;
+        }
+        .supply-action-btn:hover {
+            background: #f8fafc;
+            border-color: #cbd5e1;
+        }
+        .supply-action-btn--danger {
+            color: #b91c1c;
+        }
+        .supply-action-caption {
+            font-size: 11px;
+            color: #475569;
+            margin: 0 0 6px;
+            padding: 0 2px;
         }
         td.date-cell.gantt-full {
             background: var(--ok-bg);
@@ -620,6 +672,54 @@ $pageTitle = 'Планирование сборки гофропакетов';
             cursor: help;
             user-select: none;
         }
+        .machine-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            margin-right: 6px;
+            border-radius: 999px;
+            border: 1px solid #60a5fa;
+            color: #3b82f6;
+            font-size: 9px;
+            font-weight: 700;
+            line-height: 1;
+            vertical-align: middle;
+            background: transparent;
+            cursor: help;
+            user-select: none;
+        }
+        .date-total-lines {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 1px;
+            margin-top: 2px;
+            font-size: 9px;
+            line-height: 1.15;
+            color: #64748b;
+            white-space: nowrap;
+        }
+        .debt-badge {
+            display: inline-flex;
+            align-items: center;
+            margin-left: 6px;
+            padding: 1px 6px;
+            border-radius: 999px;
+            border: 1px solid #fecaca;
+            background: #fef2f2;
+            color: #b91c1c;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 1.4;
+            white-space: nowrap;
+            vertical-align: middle;
+        }
+        tr.has-overdue-debt td.filter-name-cell {
+            background: #fff7ed;
+            box-shadow: inset 3px 0 0 #ea580c;
+        }
     </style>
 </head>
 <body>
@@ -634,6 +734,13 @@ $pageTitle = 'Планирование сборки гофропакетов';
         </button>
         <button id="task-sheet-btn" type="button" style="border:1px solid #0f766e; background:#0f766e; color:#fff; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">
             Задание
+        </button>
+        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#334155;">
+            Тест-дата:
+            <input id="test-today-date" type="date" value="<?= htmlspecialchars((string)$todayIso, ENT_QUOTES, 'UTF-8') ?>" style="border:1px solid #cbd5e1; border-radius:8px; padding:5px 8px; font-size:12px; color:#0f172a;">
+        </label>
+        <button id="test-today-reset-btn" type="button" style="border:1px solid #cbd5e1; background:#fff; color:#334155; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">
+            Сегодня
         </button>
         <span id="save-plan-status" class="muted" style="font-size:12px;"></span>
     </div>
@@ -663,7 +770,10 @@ $pageTitle = 'Планирование сборки гофропакетов';
                         ?>
                         <th class="<?= htmlspecialchars($dateColClass, ENT_QUOTES, 'UTF-8') ?>" data-date-total="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="Суммарно распределено гофропакетов из пула: 0">
                             <?= htmlspecialchars($d ? $d->format('d.m') : (string)$planDate, ENT_QUOTES, 'UTF-8') ?><br>
-                            <span class="muted date-total-value" style="font-size:10px;">0</span>
+                            <span class="date-total-lines">
+                                <span class="date-total-knife">0</span>
+                                <span class="date-total-rotary">0</span>
+                            </span>
                         </th>
                     <?php endforeach; ?>
                 </tr>
@@ -699,6 +809,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
                         $foldHeight = (float)($meta['fold_height'] ?? 0);
                         $foldCount = (float)($meta['fold_count'] ?? 0);
                         $paperWidthMm = (float)($meta['paper_width_mm'] ?? 0);
+                        $ribHeightRounded = (int)round($foldHeight);
+                        $isRotaryMachine = in_array($ribHeightRounded, [23, 29, 36, 40, 45, 55], true);
+                        $machineType = $isRotaryMachine ? 'rotary' : 'knife';
                         $packLengthM = ($foldHeight > 0 && $foldCount > 0)
                             ? (($foldHeight * 2 + 1) * $foldCount) / 1000
                             : 0.0;
@@ -749,11 +862,15 @@ $pageTitle = 'Планирование сборки гофропакетов';
                             data-base-available="<?= (int)$gofroAvailable ?>"
                             data-gofro-need="<?= (int)$gofroNeed ?>"
                             data-packages-per-roll="<?= (int)$packagesPerRoll ?>"
+                            data-machine-type="<?= htmlspecialchars($machineType, ENT_QUOTES, 'UTF-8') ?>"
                         >
                             <td class="row-dismiss-col">
                                 <button type="button" class="row-dismiss-btn" data-dismiss-row="<?= htmlspecialchars($rowKey, ENT_QUOTES, 'UTF-8') ?>" title="Скрыть позицию и убрать её полосы из пула (сохраняется в браузере)" aria-label="Скрыть позицию">×</button>
                             </td>
                             <td class="filter-name-cell">
+                                <?php if ($machineType === 'knife'): ?>
+                                    <span class="machine-badge" title="Позиция гофрируется на ножевой машине" aria-label="Ножевая машина">Н</span>
+                                <?php endif; ?>
                                 <?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>
                                 <?php if ($poolHintReason !== ''): ?>
                                     <span class="row-pool-hint" title="<?= htmlspecialchars($poolHintReason, ENT_QUOTES, 'UTF-8') ?>">i</span>
@@ -821,6 +938,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
 <script>
 (() => {
     const NORM_PER_UNIT = 2.5; // м на 1 гофропакет
+    const REAL_TODAY_ISO = <?= json_encode($todayIso, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
     const DISMISSED_ROWS_STORAGE_KEY = 'gofroBuildPlanDismissedRowKeys';
     const packageCatalog = <?= json_encode($packageCatalog, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?> || {};
     const stripPool = document.getElementById('strip-pool');
@@ -834,6 +952,8 @@ $pageTitle = 'Планирование сборки гофропакетов';
     const taskDateTo = document.getElementById('task-date-to');
     const taskSheetCancel = document.getElementById('task-sheet-cancel');
     const taskSheetPrint = document.getElementById('task-sheet-print');
+    const testTodayDateInput = document.getElementById('test-today-date');
+    const testTodayResetBtn = document.getElementById('test-today-reset-btn');
     if (!stripPool || !dragPreview) {
         return;
     }
@@ -859,6 +979,8 @@ $pageTitle = 'Планирование сборки гофропакетов';
             baseAvailable: parseInt(row.dataset.baseAvailable || '0', 10) || 0,
             gofroNeed: Math.max(0, parseInt(row.dataset.gofroNeed || '0', 10) || 0),
             packagesPerRoll: Math.max(0, parseInt(row.dataset.packagesPerRoll || '0', 10) || 0),
+            machineType: String(row.dataset.machineType || 'knife'),
+            filterCell: row.querySelector('td.filter-name-cell'),
             dateCells: Array.from(row.querySelectorAll('td.date-cell[data-date]')),
             allocatedByDate: {},
             allocatedObjectsByDate: {},
@@ -911,29 +1033,29 @@ $pageTitle = 'Планирование сборки гофропакетов';
     const supplyMap = {};
     let selectedSourceRow = '';
     const selectedStripIds = new Set();
+    let supplyActionMenuEl = null;
+    let activeSupplyAction = null;
+    let supplyActionMenuMode = 'actions';
+    let dragHoveredDate = '';
+    let currentTodayIso = REAL_TODAY_ISO;
     const dateHeaderTotals = {};
     document.querySelectorAll('th.date-col[data-date-total]').forEach((th) => {
         const date = String(th.dataset.dateTotal || '');
         if (!date) {
             return;
         }
-        const valueEl = th.querySelector('.date-total-value');
-        if (!valueEl) {
+        const rotaryEl = th.querySelector('.date-total-rotary');
+        const knifeEl = th.querySelector('.date-total-knife');
+        if (!rotaryEl || !knifeEl) {
             return;
         }
-        dateHeaderTotals[date] = { th, valueEl };
+        dateHeaderTotals[date] = { th, rotaryEl, knifeEl };
     });
 
     function bootstrapStrips() {
         strips = [];
-        rowStateMap.forEach((state, rowKey) => {
-            let skipReason = '';
-            if (state.dismissed) {
-                skipReason = 'dismissed';
-                return;
-            }
-            if (!state.packageKey || state.gofroNeed <= 0 || state.packagesPerRoll <= 0) {
-                skipReason = !state.packageKey ? 'empty_packageKey' : (state.gofroNeed <= 0 ? 'gofroNeed_le_0' : 'packagesPerRoll_le_0');
+        function appendRowStrips(state, rowKey) {
+            if (!state || !state.packageKey || state.gofroNeed <= 0 || state.packagesPerRoll <= 0) {
                 return;
             }
             const rollsNeeded = Math.ceil(state.gofroNeed / state.packagesPerRoll);
@@ -950,6 +1072,18 @@ $pageTitle = 'Планирование сборки гофропакетов';
                     source_row: rowKey,
                 });
             }
+        }
+        rowStateMap.forEach((state, rowKey) => {
+            let skipReason = '';
+            if (state.dismissed) {
+                skipReason = 'dismissed';
+                return;
+            }
+            if (!state.packageKey || state.gofroNeed <= 0 || state.packagesPerRoll <= 0) {
+                skipReason = !state.packageKey ? 'empty_packageKey' : (state.gofroNeed <= 0 ? 'gofroNeed_le_0' : 'packagesPerRoll_le_0');
+                return;
+            }
+            appendRowStrips(state, rowKey);
         });
     }
 
@@ -961,6 +1095,24 @@ $pageTitle = 'Планирование сборки гофропакетов';
         document.querySelectorAll('td.date-cell.drop-valid, td.date-cell.drop-invalid').forEach((cell) => {
             cell.classList.remove('drop-valid', 'drop-invalid');
         });
+    }
+
+    function setDragDateHover(dateIso) {
+        const next = String(dateIso || '');
+        if (dragHoveredDate === next) {
+            return;
+        }
+        document.querySelectorAll('th.date-col.drag-target-hover').forEach((el) => {
+            el.classList.remove('drag-target-hover');
+        });
+        dragHoveredDate = '';
+        if (!next || !/^\d{4}-\d{2}-\d{2}$/.test(next)) {
+            return;
+        }
+        document.querySelectorAll(`th.date-col[data-date-total="${next}"]`).forEach((el) => {
+            el.classList.add('drag-target-hover');
+        });
+        dragHoveredDate = next;
     }
 
     function computeQtyFromLength(length) {
@@ -1018,6 +1170,151 @@ $pageTitle = 'Планирование сборки гофропакетов';
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#039;');
+    }
+
+    function getTodayIso() {
+        if (testTodayDateInput) {
+            const raw = String(testTodayDateInput.value || '').trim();
+            if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+                return raw;
+            }
+        }
+        return currentTodayIso;
+    }
+
+    function ensureSupplyActionMenu() {
+        if (supplyActionMenuEl) {
+            return supplyActionMenuEl;
+        }
+        supplyActionMenuEl = document.createElement('div');
+        supplyActionMenuEl.className = 'supply-action-menu';
+        supplyActionMenuEl.innerHTML = `
+            <div class="supply-action-main">
+                <button type="button" class="supply-action-btn supply-action-btn--danger" data-supply-action="delete">Удалить (вернуть в пул)</button>
+                <button type="button" class="supply-action-btn" data-supply-action="move">Сдвинуть...</button>
+            </div>
+            <div class="supply-action-move" style="display:none;"></div>
+        `;
+        document.body.appendChild(supplyActionMenuEl);
+        return supplyActionMenuEl;
+    }
+
+    function buildMoveDateOptions(rowKey, fromDate) {
+        const state = rowStateMap.get(rowKey);
+        if (!state) {
+            return [];
+        }
+        return (state.dateCells || [])
+            .map((cell) => String(cell.dataset.date || ''))
+            .filter((d) => d && d !== fromDate);
+    }
+
+    function renderSupplyActionMenu(mode = 'actions') {
+        if (!supplyActionMenuEl || !activeSupplyAction) {
+            return;
+        }
+        const mainEl = supplyActionMenuEl.querySelector('.supply-action-main');
+        const moveEl = supplyActionMenuEl.querySelector('.supply-action-move');
+        if (!(mainEl instanceof HTMLElement) || !(moveEl instanceof HTMLElement)) {
+            return;
+        }
+        supplyActionMenuMode = mode === 'move' ? 'move' : 'actions';
+        if (supplyActionMenuMode === 'actions') {
+            mainEl.style.display = '';
+            moveEl.style.display = 'none';
+            moveEl.innerHTML = '';
+            return;
+        }
+        const { rowKey, date } = activeSupplyAction;
+        const dates = buildMoveDateOptions(rowKey, date);
+        mainEl.style.display = 'none';
+        moveEl.style.display = '';
+        if (dates.length === 0) {
+            moveEl.innerHTML = `
+                <div class="supply-action-caption">Нет доступных дат для сдвига.</div>
+                <button type="button" class="supply-action-btn" data-supply-action="move-back">Назад</button>
+            `;
+            return;
+        }
+        const dateButtons = dates.map((d) => `
+            <button type="button" class="supply-action-btn" data-supply-action="move-date" data-target-date="${htmlEscape(d)}">
+                ${htmlEscape(formatDateRu(d))} <span style="color:#64748b;">(${htmlEscape(d)})</span>
+            </button>
+        `).join('');
+        moveEl.innerHTML = `
+            <div class="supply-action-caption">Куда сдвинуть позицию:</div>
+            ${dateButtons}
+            <button type="button" class="supply-action-btn" data-supply-action="move-back">Назад</button>
+        `;
+    }
+
+    function closeSupplyActionMenu() {
+        if (!supplyActionMenuEl) {
+            return;
+        }
+        supplyActionMenuEl.classList.remove('open');
+        activeSupplyAction = null;
+        supplyActionMenuMode = 'actions';
+    }
+
+    function moveAllocationToDate(rowKey, fromDate, objIdx, targetDate) {
+        const state = rowStateMap.get(rowKey);
+        if (!state) {
+            return false;
+        }
+        const toDate = String(targetDate || '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(toDate) || toDate === fromDate) {
+            return false;
+        }
+        const validDates = new Set((state.dateCells || []).map((cell) => String(cell.dataset.date || '')).filter((d) => d));
+        if (!validDates.has(toDate)) {
+            return false;
+        }
+        const sourceList = Array.isArray(state.allocatedObjectsByDate[fromDate]) ? state.allocatedObjectsByDate[fromDate] : [];
+        if (objIdx < 0 || objIdx >= sourceList.length) {
+            return false;
+        }
+        const allocObj = sourceList[objIdx];
+        const qty = getAllocatedObjectQty(allocObj);
+        if (qty <= 0) {
+            return false;
+        }
+        sourceList.splice(objIdx, 1);
+        if (sourceList.length === 0) {
+            delete state.allocatedObjectsByDate[fromDate];
+        }
+        state.allocatedByDate[fromDate] = Math.max(0, (parseInt(state.allocatedByDate[fromDate] || 0, 10) || 0) - qty);
+        if ((parseInt(state.allocatedByDate[fromDate] || 0, 10) || 0) <= 0) {
+            delete state.allocatedByDate[fromDate];
+        }
+
+        if (!Array.isArray(state.allocatedObjectsByDate[toDate])) {
+            state.allocatedObjectsByDate[toDate] = [];
+        }
+        state.allocatedObjectsByDate[toDate].push(allocObj);
+        state.allocatedByDate[toDate] = (parseInt(state.allocatedByDate[toDate] || 0, 10) || 0) + qty;
+
+        if (!supplyMap[rowKey]) {
+            supplyMap[rowKey] = {};
+        }
+        supplyMap[rowKey][fromDate] = Math.max(0, (parseInt(supplyMap[rowKey][fromDate] || 0, 10) || 0) - qty);
+        if ((parseInt(supplyMap[rowKey][fromDate] || 0, 10) || 0) <= 0) {
+            delete supplyMap[rowKey][fromDate];
+        }
+        supplyMap[rowKey][toDate] = (parseInt(supplyMap[rowKey][toDate] || 0, 10) || 0) + qty;
+        return true;
+    }
+
+    function openSupplyActionMenu(rowKey, date, objIdx, anchorEl) {
+        const menu = ensureSupplyActionMenu();
+        activeSupplyAction = { rowKey, date, objIdx };
+        renderSupplyActionMenu('actions');
+        const rect = anchorEl.getBoundingClientRect();
+        const baseLeft = Math.round(rect.left + window.scrollX);
+        const baseTop = Math.round(rect.bottom + window.scrollY + 4);
+        menu.style.left = `${baseLeft}px`;
+        menu.style.top = `${baseTop}px`;
+        menu.classList.add('open');
     }
 
     function collectTaskSheetRows(dateFrom, dateTo) {
@@ -1255,6 +1552,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 stripEl.addEventListener('dragend', () => {
                     dragContext = null;
                     clearDropHints();
+                    setDragDateHover('');
                     hidePreview();
                 });
                 groupEl.appendChild(stripEl);
@@ -1321,16 +1619,42 @@ $pageTitle = 'Планирование сборки гофропакетов';
             if (state.dismissed) {
                 return;
             }
+            let overduePlannedQty = 0;
             let allocated = 0;
             let allocatedInHorizon = 0;
             Object.keys(state.allocatedByDate).forEach((d) => {
                 const qty = parseInt(state.allocatedByDate[d] || 0, 10) || 0;
                 allocated += qty;
+                const todayIso = getTodayIso();
+                if (d < todayIso) {
+                    overduePlannedQty += qty;
+                }
                 const hasDateCell = state.dateCells.some((cell) => String(cell.dataset.date || '') === d);
                 if (hasDateCell) {
                     allocatedInHorizon += qty;
                 }
             });
+            const overdueDebtQty = Math.max(0, Math.min(overduePlannedQty, Math.max(0, state.gofroNeed)));
+            const filterCell = state.filterCell;
+            if (filterCell) {
+                let debtBadge = filterCell.querySelector('.debt-badge');
+                if (overdueDebtQty > 0) {
+                    if (!debtBadge) {
+                        debtBadge = document.createElement('span');
+                        debtBadge.className = 'debt-badge';
+                        filterCell.appendChild(debtBadge);
+                    }
+                    const todayIso = getTodayIso();
+                    debtBadge.textContent = `Долг: ${overdueDebtQty}`;
+                    debtBadge.title = `Просроченный долг: запланировано до ${formatDateRu(todayIso)} и не выполнено на сейчас`;
+                    state.row.classList.add('has-overdue-debt');
+                } else {
+                    if (debtBadge) {
+                        debtBadge.remove();
+                    }
+                    state.row.classList.remove('has-overdue-debt');
+                }
+            }
             const baseCoverageNeed = Math.max(0, state.baseAvailable);
             const totalCoverageNeed = Math.max(0, state.baseAvailable + allocatedInHorizon);
             let baseEndIdx = -1;
@@ -1354,35 +1678,29 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 }
             }
 
-            let lastPlanIdx = -1;
-            for (let i = baseStartIdx; i < state.dateCells.length; i += 1) {
-                const q = parseInt(state.dateCells[i].dataset.planQty || '0', 10) || 0;
-                if (q > 0) {
-                    lastPlanIdx = i;
-                }
-            }
-
             function findCoverageWindow(needQty, startIdx) {
                 let acc = 0;
                 let endIdx = -1;
                 let partialIdx = -1;
+                let lastEffectiveIdx = -1;
                 for (let i = startIdx; i < state.dateCells.length; i += 1) {
                     const cell = state.dateCells[i];
-                    const planQty = parseInt(cell.dataset.planQty || '0', 10) || 0;
-                    if (planQty <= 0) {
+                    const effectiveQty = parseInt(cell.dataset.planQty || '0', 10) || 0;
+                    if (effectiveQty <= 0) {
                         continue;
                     }
-                    if (acc < needQty && acc + planQty >= needQty) {
+                    lastEffectiveIdx = i;
+                    if (acc < needQty && acc + effectiveQty >= needQty) {
                         endIdx = i;
-                        if (acc + planQty > needQty) {
+                        if (acc + effectiveQty > needQty) {
                             partialIdx = i;
                         }
                         break;
                     }
-                    acc += planQty;
+                    acc += effectiveQty;
                 }
-                if (needQty > 0 && endIdx < 0 && lastPlanIdx >= startIdx) {
-                    endIdx = lastPlanIdx;
+                if (needQty > 0 && endIdx < 0 && lastEffectiveIdx >= startIdx) {
+                    endIdx = lastEffectiveIdx;
                 }
                 return { endIdx, partialIdx };
             }
@@ -1392,6 +1710,18 @@ $pageTitle = 'Планирование сборки гофропакетов';
             const totalWindow = findCoverageWindow(totalCoverageNeed, totalStartIdx);
             totalEndIdx = totalWindow.endIdx;
             totalPartialIdx = totalWindow.partialIdx;
+            const allocatedIdxList = state.dateCells
+                .map((cell, idx) => {
+                    const d = String(cell.dataset.date || '');
+                    const q = parseInt(state.allocatedByDate[d] || 0, 10) || 0;
+                    return q > 0 ? idx : -1;
+                })
+                .filter((idx) => idx >= 0);
+            if (allocatedIdxList.length > 0 && (totalCoverageNeed <= 0 || totalEndIdx < 0)) {
+                totalStartIdx = allocatedIdxList[0];
+                totalEndIdx = allocatedIdxList[allocatedIdxList.length - 1];
+                totalPartialIdx = -1;
+            }
 
             state.dateCells.forEach((cell, idx) => {
                 cell.classList.remove('gantt-full', 'gantt-partial', 'gantt-plan-full', 'gantt-plan-partial');
@@ -1406,7 +1736,15 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 const date = cell.dataset.date || '';
                 const qty = parseInt(state.allocatedByDate[date] || 0, 10) || 0;
                 if (qty > 0) {
-                    dailyTotals[date] = (parseInt(dailyTotals[date] || 0, 10) || 0) + qty;
+                    if (!dailyTotals[date]) {
+                        dailyTotals[date] = { total: 0, rotary: 0, knife: 0 };
+                    }
+                    dailyTotals[date].total += qty;
+                    if (state.machineType === 'rotary') {
+                        dailyTotals[date].rotary += qty;
+                    } else {
+                        dailyTotals[date].knife += qty;
+                    }
                 }
                 let supplyEl = cell.querySelector('.cell-supply');
                 const objects = Array.isArray(state.allocatedObjectsByDate[date])
@@ -1428,11 +1766,11 @@ $pageTitle = 'Планирование сборки гофропакетов';
                         const item = document.createElement('span');
                         item.className = 'cell-supply-item';
                         item.textContent = String(objQty);
-                        item.title = 'Клик: вернуть в пул';
+                        item.title = 'Клик: действия (удалить/сдвинуть)';
                         item.addEventListener('click', (e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            returnAllocationToPool(rowKey, date, objIdx);
+                            openSupplyActionMenu(rowKey, date, objIdx, item);
                         });
                         supplyEl.appendChild(item);
                     });
@@ -1443,10 +1781,11 @@ $pageTitle = 'Планирование сборки гофропакетов';
         });
 
         Object.keys(dateHeaderTotals).forEach((date) => {
-            const total = parseInt(dailyTotals[date] || 0, 10) || 0;
+            const totals = dailyTotals[date] || { total: 0, rotary: 0, knife: 0 };
             const entry = dateHeaderTotals[date];
-            entry.valueEl.textContent = String(total);
-            entry.th.title = `Суммарно распределено гофропакетов из пула: ${total}`;
+            entry.knifeEl.textContent = String(totals.knife);
+            entry.rotaryEl.textContent = String(totals.rotary);
+            entry.th.title = `Суммарно: ${totals.total}; Ротационная: ${totals.rotary}; Ножевая: ${totals.knife}`;
         });
     }
 
@@ -1487,21 +1826,38 @@ $pageTitle = 'Планирование сборки гофропакетов';
     }
 
     function resetDismissedRows() {
+        const restoredRowKeys = [...dismissedRowKeys];
         dismissedRowKeys = new Set();
         persistDismissedRowKeys(dismissedRowKeys);
-        rowStateMap.forEach((state) => {
+        restoredRowKeys.forEach((rowKey) => {
+            const state = rowStateMap.get(rowKey);
+            if (!state) {
+                return;
+            }
             state.dismissed = false;
             state.row.style.display = '';
+            if (!state.packageKey || state.gofroNeed <= 0 || state.packagesPerRoll <= 0) {
+                return;
+            }
+            const rollsNeeded = Math.ceil(state.gofroNeed / state.packagesPerRoll);
+            for (let i = 0; i < rollsNeeded; i += 1) {
+                const qtyFromRoll = state.packagesPerRoll;
+                const length = qtyFromRoll * NORM_PER_UNIT;
+                strips.push({
+                    id: `S${stripSeq++}`,
+                    length,
+                    qty_capacity: qtyFromRoll,
+                    package_type: state.packageKey,
+                    package_label: state.filterName || state.packageName || getPackageLabel(state.packageKey),
+                    order: state.order || '',
+                    source_row: rowKey,
+                });
+            }
         });
-        selectedStripIds.clear();
-        selectedSourceRow = '';
-        allocations = [];
-        Object.keys(supplyMap).forEach((k) => delete supplyMap[k]);
-        rowStateMap.forEach((state) => {
-            state.allocatedByDate = {};
-            state.allocatedObjectsByDate = {};
-        });
-        bootstrapStrips();
+        if (selectedSourceRow && restoredRowKeys.includes(selectedSourceRow)) {
+            selectedSourceRow = '';
+            selectedStripIds.clear();
+        }
         renderStrips();
         updateCoverage();
         setSaveStatus('Скрытые позиции сброшены');
@@ -1830,6 +2186,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
             }
             const txt = `${(Number(dragContext.length) || 0).toFixed(1)} м -> ${dragContext.qty} шт`;
             showPreview(e.clientX, e.clientY, txt);
+            setDragDateHover(valid ? (cell.dataset.date || '') : '');
         });
         cell.addEventListener('dragenter', (e) => {
             if (dragContext && isValidDropCell(cell)) {
@@ -1838,6 +2195,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
         });
         cell.addEventListener('dragleave', () => {
             hidePreview();
+            setDragDateHover('');
         });
         cell.addEventListener('drop', (e) => {
             if (!dragContext) {
@@ -1847,6 +2205,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
             hidePreview();
             applyDrop(cell);
             clearDropHints();
+            setDragDateHover('');
         });
     });
 
@@ -1870,6 +2229,60 @@ $pageTitle = 'Планирование сборки гофропакетов';
             dismissPositionRow(rk);
         });
     }
+    document.addEventListener('click', (e) => {
+        const target = e.target;
+        const menu = supplyActionMenuEl;
+        if (!menu || !menu.classList.contains('open')) {
+            return;
+        }
+        if (!(target instanceof Element)) {
+            closeSupplyActionMenu();
+            return;
+        }
+        if (!menu.contains(target)) {
+            closeSupplyActionMenu();
+            return;
+        }
+        const actionBtn = target.closest('[data-supply-action]');
+        if (!actionBtn || !activeSupplyAction) {
+            return;
+        }
+        const action = String(actionBtn.dataset.supplyAction || '');
+        const { rowKey, date, objIdx } = activeSupplyAction;
+        if (action === 'delete') {
+            closeSupplyActionMenu();
+            returnAllocationToPool(rowKey, date, objIdx);
+            return;
+        }
+        if (action === 'move') {
+            renderSupplyActionMenu('move');
+            return;
+        }
+        if (action === 'move-back') {
+            renderSupplyActionMenu('actions');
+            return;
+        }
+        if (action === 'move-date') {
+            const nextDate = String(actionBtn.dataset.targetDate || '').trim();
+            closeSupplyActionMenu();
+            if (!nextDate) {
+                return;
+            }
+            const moved = moveAllocationToDate(rowKey, date, objIdx, nextDate);
+            if (!moved) {
+                alert('Не удалось сдвинуть позицию.');
+                return;
+            }
+            updateCoverage();
+        }
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeSupplyActionMenu();
+        }
+    });
+    window.addEventListener('scroll', closeSupplyActionMenu, true);
+    window.addEventListener('resize', closeSupplyActionMenu);
     if (savePlanBtn) {
         savePlanBtn.addEventListener('click', savePlanV2);
     }
@@ -1903,6 +2316,24 @@ $pageTitle = 'Планирование сборки гофропакетов';
             if (e.target === taskSheetModal) {
                 closeTaskSheetModal();
             }
+        });
+    }
+    if (testTodayDateInput) {
+        testTodayDateInput.addEventListener('change', () => {
+            const next = String(testTodayDateInput.value || '').trim();
+            if (/^\d{4}-\d{2}-\d{2}$/.test(next)) {
+                currentTodayIso = next;
+                updateCoverage();
+            }
+        });
+    }
+    if (testTodayResetBtn) {
+        testTodayResetBtn.addEventListener('click', () => {
+            currentTodayIso = REAL_TODAY_ISO;
+            if (testTodayDateInput) {
+                testTodayDateInput.value = REAL_TODAY_ISO;
+            }
+            updateCoverage();
         });
     }
 
