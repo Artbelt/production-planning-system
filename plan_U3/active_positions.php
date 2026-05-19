@@ -1319,6 +1319,10 @@ $pageTitle = 'Активные позиции';
             cursor: pointer;
             user-select: none;
         }
+        tr.plan-row[data-no-analog="1"] td.pos-cell {
+            cursor: pointer;
+            user-select: none;
+        }
         td.analog-cell.analog-match,
         td.date-cell.analog-shift-match {
             background: #fef08a !important;
@@ -1997,6 +2001,8 @@ $pageTitle = 'Активные позиции';
                         class="plan-row"
                         data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
                         data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
+                        data-filter-key="<?= htmlspecialchars(normalizeFilterKey($rawFilter), ENT_QUOTES, 'UTF-8') ?>"
+                        data-no-analog="<?= $rowAnalog === '' && $fil !== '' ? '1' : '0' ?>"
                         data-has-press="<?= $rowHasPress ? '1' : '0' ?>"
                         data-has-d="<?= $rowHasD ? '1' : '0' ?>"
                         data-has-600="<?= $rowHas600 ? '1' : '0' ?>"
@@ -2026,7 +2032,7 @@ $pageTitle = 'Активные позиции';
                         <td
                             class="analog-cell"
                             data-analog-key="<?= htmlspecialchars(normalizeFilterKey($rowAnalog), ENT_QUOTES, 'UTF-8') ?>"
-                            title="<?= $rowAnalog !== '' ? 'Клик для подсветки одинаковых аналогов' : '' ?>"
+                            title="<?= $rowAnalog !== '' ? 'Клик: подсветка позиций с этим аналогом и строки-прототипа' : ($fil !== '' ? 'Клик: подсветка такой же позиции в других заявках' : '') ?>"
                         ><?= $rowAnalog !== '' ? htmlspecialchars($rowAnalog, ENT_QUOTES, 'UTF-8') : '—' ?></td>
                         <td class="num"><?= $ordered ?></td>
                         <td class="num"><?= $produced ?></td>
@@ -2753,6 +2759,7 @@ $pageTitle = 'Активные позиции';
         const pendingMoves = [];
         let debtPopoverAnchorCell = null;
         let activeAnalogKey = '';
+        let activeFilterKey = '';
         const DEBT_COMPACT_VISIBLE = 2;
         let normalizationDraftMoves = [];
 
@@ -3883,6 +3890,7 @@ $pageTitle = 'Активные позиции';
 
         function clearAnalogHighlight() {
             activeAnalogKey = '';
+            activeFilterKey = '';
             document.querySelectorAll('td.analog-cell.analog-match').forEach(function (cell) {
                 cell.classList.remove('analog-match');
             });
@@ -3891,30 +3899,95 @@ $pageTitle = 'Активные позиции';
             });
         }
 
+        function highlightAnalogRow(row) {
+            if (!row) {
+                return;
+            }
+            const analogCell = row.querySelector('td.analog-cell');
+            if (analogCell) {
+                analogCell.classList.add('analog-match');
+            }
+            row.querySelectorAll('td.date-cell').forEach(function (dc) {
+                const q = parseInt(dc.dataset.qty || '0', 10) || 0;
+                if (q > 0) {
+                    dc.classList.add('analog-shift-match');
+                }
+            });
+        }
+
+        function collectAnalogHighlightRows(analogKey) {
+            const rows = new Set();
+            document.querySelectorAll(`td.analog-cell[data-analog-key="${CSS.escape(analogKey)}"]`).forEach(function (cell) {
+                const row = cell.closest('tr.plan-row');
+                if (row) {
+                    rows.add(row);
+                }
+            });
+            document.querySelectorAll(`tr.plan-row[data-filter-key="${CSS.escape(analogKey)}"]`).forEach(function (row) {
+                rows.add(row);
+            });
+            return rows;
+        }
+
         function highlightAnalogKey(analogKey) {
             const key = String(analogKey || '').trim();
             clearAnalogHighlight();
             if (!key) {
                 return;
             }
-            const cells = Array.from(document.querySelectorAll(`td.analog-cell[data-analog-key="${CSS.escape(key)}"]`));
-            if (cells.length < 2) {
+            const rows = collectAnalogHighlightRows(key);
+            if (rows.size < 2) {
                 return;
             }
             activeAnalogKey = key;
-            cells.forEach(function (cell) {
-                cell.classList.add('analog-match');
-                const row = cell.closest('tr.plan-row');
-                if (!row) {
-                    return;
-                }
-                row.querySelectorAll('td.date-cell').forEach(function (dc) {
-                    const q = parseInt(dc.dataset.qty || '0', 10) || 0;
-                    if (q > 0) {
-                        dc.classList.add('analog-shift-match');
-                    }
-                });
+            rows.forEach(highlightAnalogRow);
+        }
+
+        function collectFilterHighlightRows(filterKey) {
+            const rows = new Set();
+            document.querySelectorAll(`tr.plan-row[data-filter-key="${CSS.escape(filterKey)}"]`).forEach(function (row) {
+                rows.add(row);
             });
+            return rows;
+        }
+
+        function highlightFilterKey(filterKey) {
+            const key = String(filterKey || '').trim();
+            clearAnalogHighlight();
+            if (!key) {
+                return;
+            }
+            const rows = collectFilterHighlightRows(key);
+            if (rows.size < 2) {
+                return;
+            }
+            activeFilterKey = key;
+            rows.forEach(highlightAnalogRow);
+        }
+
+        function toggleFilterKeyHighlight(filterKey) {
+            const key = String(filterKey || '').trim();
+            if (!key) {
+                clearAnalogHighlight();
+                return;
+            }
+            if (activeFilterKey === key) {
+                clearAnalogHighlight();
+                return;
+            }
+            highlightFilterKey(key);
+        }
+
+        function getPlanRowFilterKey(row) {
+            return row ? String(row.dataset.filterKey || '').trim() : '';
+        }
+
+        function planRowHasAnalog(row) {
+            if (!row) {
+                return false;
+            }
+            const analogCell = row.querySelector('td.analog-cell');
+            return !!(analogCell && String(analogCell.dataset.analogKey || '').trim());
         }
 
         function getDateShiftInDays(fromDate, toDate) {
@@ -5113,7 +5186,8 @@ $pageTitle = 'Активные позиции';
             if (analogCell) {
                 const analogKey = String(analogCell.dataset.analogKey || '').trim();
                 if (!analogKey) {
-                    clearAnalogHighlight();
+                    const row = analogCell.closest('tr.plan-row');
+                    toggleFilterKeyHighlight(getPlanRowFilterKey(row));
                     return;
                 }
                 if (activeAnalogKey === analogKey) {
@@ -5123,7 +5197,15 @@ $pageTitle = 'Активные позиции';
                 highlightAnalogKey(analogKey);
                 return;
             }
-            if (activeAnalogKey) {
+            const posCell = e.target.closest('td.pos-cell');
+            if (posCell) {
+                const row = posCell.closest('tr.plan-row');
+                if (row && !planRowHasAnalog(row)) {
+                    toggleFilterKeyHighlight(getPlanRowFilterKey(row));
+                    return;
+                }
+            }
+            if (activeAnalogKey || activeFilterKey) {
                 clearAnalogHighlight();
             }
             const dInd = e.target.closest('.date-indicator[data-kind="d"]');

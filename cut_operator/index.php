@@ -568,7 +568,7 @@ if (isset($_POST['action'])) {
     </div>
 
     <?php if (!empty($overdueTasks)): ?>
-    <div class="department-section">
+    <div class="department-section overdue-section">
         <div class="department-header">
             ⚠️ Просроченные бухты
         </div>
@@ -588,7 +588,7 @@ if (isset($_POST['action'])) {
                     <?php foreach ($overdueTasks as $task): 
                         $overdueClass = $task['days_overdue'] >= 2 ? 'critical' : 'warning';
                     ?>
-                    <tr class="main-row overdue <?= $overdueClass ?>" data-id="overdue-<?= $task['id'] ?>" onclick="toggleDetails('overdue-<?= $task['id'] ?>')">
+                    <tr class="main-row overdue <?= $overdueClass ?>" data-id="overdue-<?= $task['id'] ?>" data-department="<?= htmlspecialchars($task['department'], ENT_QUOTES) ?>" data-status="pending" onclick="toggleDetails('overdue-<?= $task['id'] ?>')">
                         <td><?= htmlspecialchars(str_replace('U', '', $task['department'])) ?></td>
                         <td><?= htmlspecialchars($task['order_number']) ?></td>
                         <td><?= htmlspecialchars($task['bale_id']) ?></td>
@@ -772,15 +772,48 @@ if (isset($_POST['action'])) {
 
                 document.querySelectorAll('.department-section').forEach(section => {
                     const department = section.getAttribute('data-department');
-                    
-                    if (selectedDepartment && department !== selectedDepartment) {
-                        section.style.display = 'none';
+                    const isOverdueSection = section.classList.contains('overdue-section');
+
+                    if (!isOverdueSection) {
+                        if (selectedDepartment && department !== selectedDepartment) {
+                            section.style.display = 'none';
+                            return;
+                        }
+                    }
+
+                    section.style.display = 'block';
+
+                    if (isOverdueSection) {
+                        section.querySelectorAll('tr.main-row.overdue').forEach(row => {
+                            const rowDept = row.getAttribute('data-department');
+                            const showByDept = !selectedDepartment || rowDept === selectedDepartment;
+                            const rowStatus = row.getAttribute('data-status');
+                            var showByStatus = true;
+                            if (selectedStatus) {
+                                if (selectedStatus === 'done' && rowStatus !== 'done') {
+                                    showByStatus = false;
+                                } else if (selectedStatus === 'pending' && rowStatus === 'done') {
+                                    showByStatus = false;
+                                }
+                            }
+                            const show = showByDept && showByStatus;
+                            row.style.display = show ? '' : 'none';
+                            var next = row.nextElementSibling;
+                            if (next && next.classList.contains('details-row')) {
+                                next.style.display = show ? '' : 'none';
+                            }
+                        });
+                        var hasVisibleOverdue = false;
+                        section.querySelectorAll('tr.main-row.overdue').forEach(row => {
+                            if (row.style.display !== 'none') {
+                                hasVisibleOverdue = true;
+                            }
+                        });
+                        section.style.display = hasVisibleOverdue ? 'block' : 'none';
                         return;
                     }
-                    
-                    section.style.display = 'block';
-                    
-                    // Фильтр по статусу
+
+                    // Фильтр по статусу (обычные участки)
                     if (selectedStatus) {
                         section.querySelectorAll('.main-row').forEach(row => {
                             const rowStatus = row.getAttribute('data-status');

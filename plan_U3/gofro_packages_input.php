@@ -59,41 +59,348 @@ if (isset($_GET['debug_ppr'])) {
     exit;
 }
 
-// === АВТОДОПОЛНЕНИЕ ===
+// === АВТОДОПОЛНЕНИЕ (с подсказками по активным заявкам: заявка, позиция, остаток) ===
 if (isset($_GET['q'])) {
-    header('Content-Type: application/json');
+    header('Content-Type: application/json; charset=utf-8');
     try {
         require_once __DIR__ . '/../auth/includes/db.php';
         $pdo = getPdo('plan_u3');
-        $query = $_GET['q'];
-        $stmt = $pdo->prepare("SELECT DISTINCT p_p_name FROM paper_package_round WHERE p_p_name LIKE ? LIMIT 10");
-        $stmt->execute(["%$query%"]);
-        echo json_encode($stmt->fetchAll(PDO::FETCH_COLUMN));
+        $query = trim((string)($_GET['q'] ?? ''));
+        if (mb_strlen($query, 'UTF-8') < 4) {
+            echo json_encode([]);
+            exit;
+        }
+
+        $like = '%' . $query . '%';
+
+        $stmt = $pdo->prepare("
+            SELECT DISTINCT TRIM(ppr.p_p_name) AS p_p_name
+            FROM paper_package_round ppr
+            INNER JOIN round_filter_structure rfs
+                ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
+            INNER JOIN orders o ON o.`filter` = rfs.`filter`
+            WHERE (o.hide IS NULL OR o.hide != 1)
+              AND TRIM(COALESCE(rfs.filter_package, '')) != ''
+              AND ppr.p_p_name LIKE ?
+            LIMIT 10
+        ");
+        $stmt->execute([$like]);
+        $catalogNames = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+        // Гофропакеты как они записаны у чужих брендов (есть analog → эталон), только по активным заявкам
+        $stmtBrand = $pdo->prepare("
+            SELECT DISTINCT TRIM(rfs_brand.filter_package) AS pkg_name
+            FROM orders o
+            INNER JOIN round_filter_structure rfs_brand ON o.`filter` = rfs_brand.`filter`
+            INNER JOIN round_filter_structure rfs_native
+                ON rfs_brand.analog IS NOT NULL
+               AND TRIM(rfs_brand.analog) != ''
+               AND UPPER(TRIM(rfs_brand.analog)) = UPPER(TRIM(rfs_native.`filter`))
+               AND (rfs_native.analog IS NULL OR TRIM(COALESCE(rfs_native.analog, '')) = '')
+            WHERE (o.hide IS NULL OR o.hide != 1)
+              AND TRIM(COALESCE(rfs_brand.filter_package, '')) != ''
+              AND (
+                    UPPER(TRIM(rfs_brand.filter_package)) LIKE UPPER(?)
+                 OR UPPER(TRIM(COALESCE(rfs_native.filter_package, ''))) LIKE UPPER(?)
+              )
+            LIMIT 15
+        ");
+        $stmtBrand->execute([$like, $like]);
+        $brandPkgNames = $stmtBrand->fetchAll(PDO::FETCH_COLUMN);
+
+        $names = [];
+        $seenNorm = [];
+        foreach ($catalogNames as $n) {
+            $n = trim((string)$n);
+            if ($n === '') {
+                continue;
+            }
+            $k = mb_strtoupper($n, 'UTF-8');
+            if (isset($seenNorm[$k])) {
+                continue;
+            }
+            $seenNorm[$k] = true;
+            $names[] = $n;
+        }
+        foreach ($brandPkgNames as $n) {
+            $n = trim((string)$n);
+            if ($n === '') {
+                continue;
+            }
+            $k = mb_strtoupper($n, 'UTF-8');
+            if (isset($seenNorm[$k])) {
+                continue;
+            }
+            $seenNorm[$k] = true;
+            $names[] = $n;
+        }
+
+        $maxSuggestions = 18;
+        if (count($names) > $maxSuggestions) {
+            $names = array_slice($names, 0, $maxSuggestions);
+        }
+
+        if (empty($names)) {
+            echo json_encode([]);
+            exit;
+        }
+
+        $normKeys = [];
+        foreach ($names as $n) {
+            $k = mb_strtoupper(trim((string)$n), 'UTF-8');
+            if ($k !== '') {
+                $normKeys[$k] = true;
+            }
+        }
+        $keyList = array_keys($normKeys);
+        $placeholders = implode(',', array_fill(0, count($keyList), '?'));
+
+        $linesByPkgU = [];
+        $analogLinesByPkgU = [];
+        if (!empty($keyList)) {
+            // Остаток по гофро: как в gofro_build_plan — max(0, (заказ-выпуск фильтров) - (внесено гофро - выпуск фильтров))
+            $sqlLines = "
+                SELECT
+                    agg.pkg_u,
+                    agg.order_number,
+                    agg.filter_name,
+                    GREATEST(
+                        0,
+                        GREATEST(0, agg.ordered - COALESCE(prod.produced, 0))
+                        - (COALESCE(mp.gofro_qty, 0) - COALESCE(prod.produced, 0))
+                    ) AS gofro_need
+                FROM (
+                    SELECT
+                        UPPER(TRIM(rfs.filter_package)) AS pkg_u,
+                        o.order_number,
+                        o.`filter` AS filter_name,
+                        SUM(o.`count`) AS ordered
+                    FROM orders o
+                    INNER JOIN round_filter_structure rfs ON o.`filter` = rfs.`filter`
+                    WHERE (o.hide IS NULL OR o.hide != 1)
+                      AND UPPER(TRIM(rfs.filter_package)) IN ($placeholders)
+                    GROUP BY UPPER(TRIM(rfs.filter_package)), o.order_number, o.`filter`
+                ) agg
+                LEFT JOIN (
+                    SELECT name_of_order, name_of_filter, SUM(count_of_filters) AS produced
+                    FROM manufactured_production
+                    GROUP BY name_of_order, name_of_filter
+                ) prod
+                    ON prod.name_of_order = agg.order_number
+                   AND prod.name_of_filter = agg.filter_name
+                LEFT JOIN (
+                    SELECT
+                        name_of_order,
+                        UPPER(TRIM(name_of_parts)) AS parts_u,
+                        SUM(COALESCE(count_of_parts, 0)) AS gofro_qty
+                    FROM manufactured_parts
+                    GROUP BY name_of_order, UPPER(TRIM(name_of_parts))
+                ) mp
+                    ON mp.name_of_order = agg.order_number
+                   AND mp.parts_u = agg.pkg_u
+                WHERE GREATEST(
+                    0,
+                    GREATEST(0, agg.ordered - COALESCE(prod.produced, 0))
+                    - (COALESCE(mp.gofro_qty, 0) - COALESCE(prod.produced, 0))
+                ) > 0
+                ORDER BY agg.order_number, agg.filter_name
+            ";
+            $stmtLines = $pdo->prepare($sqlLines);
+            $stmtLines->execute($keyList);
+            foreach ($stmtLines->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $pkgU = (string)($row['pkg_u'] ?? '');
+                if ($pkgU === '') {
+                    continue;
+                }
+                if (!isset($linesByPkgU[$pkgU])) {
+                    $linesByPkgU[$pkgU] = [];
+                }
+                $gofroNeed = (int)($row['gofro_need'] ?? 0);
+                $linesByPkgU[$pkgU][] = [
+                    'order_number' => (string)($row['order_number'] ?? ''),
+                    'filter_name' => (string)($row['filter_name'] ?? ''),
+                    'remaining' => $gofroNeed,
+                ];
+            }
+
+            // Позиции «под чужим брендом»: в заявке фильтр бренда, analog → эталон с тем же гофропакетом
+            // (эталон: analog пустой, как в NP_build_plan load_native_forms)
+            $sqlAnalog = "
+                SELECT
+                    agg.pkg_u,
+                    agg.order_number,
+                    agg.filter_name,
+                    agg.native_filter_name,
+                    agg.brand_filter_package,
+                    GREATEST(
+                        0,
+                        GREATEST(0, agg.ordered - COALESCE(prod.produced, 0))
+                        - (COALESCE(mp.gofro_qty, 0) - COALESCE(prod.produced, 0))
+                    ) AS gofro_need
+                FROM (
+                    SELECT
+                        UPPER(TRIM(rfs_native.filter_package)) AS pkg_u,
+                        o.order_number,
+                        o.`filter` AS filter_name,
+                        MAX(TRIM(rfs_native.`filter`)) AS native_filter_name,
+                        MAX(TRIM(COALESCE(rfs_brand.filter_package, ''))) AS brand_filter_package,
+                        SUM(o.`count`) AS ordered
+                    FROM orders o
+                    INNER JOIN round_filter_structure rfs_brand ON o.`filter` = rfs_brand.`filter`
+                    INNER JOIN round_filter_structure rfs_native
+                        ON rfs_brand.analog IS NOT NULL
+                       AND TRIM(rfs_brand.analog) != ''
+                       AND UPPER(TRIM(rfs_brand.analog)) = UPPER(TRIM(rfs_native.`filter`))
+                       AND (rfs_native.analog IS NULL OR TRIM(COALESCE(rfs_native.analog, '')) = '')
+                    WHERE (o.hide IS NULL OR o.hide != 1)
+                      AND UPPER(TRIM(rfs_native.filter_package)) IN ($placeholders)
+                    GROUP BY UPPER(TRIM(rfs_native.filter_package)), o.order_number, o.`filter`
+                ) agg
+                LEFT JOIN (
+                    SELECT name_of_order, name_of_filter, SUM(count_of_filters) AS produced
+                    FROM manufactured_production
+                    GROUP BY name_of_order, name_of_filter
+                ) prod
+                    ON prod.name_of_order = agg.order_number
+                   AND prod.name_of_filter = agg.filter_name
+                LEFT JOIN (
+                    SELECT
+                        name_of_order,
+                        UPPER(TRIM(name_of_parts)) AS parts_u,
+                        SUM(COALESCE(count_of_parts, 0)) AS gofro_qty
+                    FROM manufactured_parts
+                    GROUP BY name_of_order, UPPER(TRIM(name_of_parts))
+                ) mp
+                    ON mp.name_of_order = agg.order_number
+                   AND mp.parts_u = UPPER(TRIM(agg.brand_filter_package))
+                WHERE TRIM(COALESCE(agg.brand_filter_package, '')) != ''
+                  AND GREATEST(
+                    0,
+                    GREATEST(0, agg.ordered - COALESCE(prod.produced, 0))
+                    - (COALESCE(mp.gofro_qty, 0) - COALESCE(prod.produced, 0))
+                ) > 0
+                ORDER BY agg.order_number, agg.filter_name
+            ";
+            $stmtAnalog = $pdo->prepare($sqlAnalog);
+            $stmtAnalog->execute($keyList);
+            foreach ($stmtAnalog->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $pkgU = (string)($row['pkg_u'] ?? '');
+                if ($pkgU === '') {
+                    continue;
+                }
+                $orderNumber = (string)($row['order_number'] ?? '');
+                $filterName = (string)($row['filter_name'] ?? '');
+                $alreadyDirect = false;
+                foreach (($linesByPkgU[$pkgU] ?? []) as $d) {
+                    if (($d['order_number'] ?? '') === $orderNumber && ($d['filter_name'] ?? '') === $filterName) {
+                        $alreadyDirect = true;
+                        break;
+                    }
+                }
+                if ($alreadyDirect) {
+                    continue;
+                }
+                if (!isset($analogLinesByPkgU[$pkgU])) {
+                    $analogLinesByPkgU[$pkgU] = [];
+                }
+                $gofroNeed = (int)($row['gofro_need'] ?? 0);
+                $analogLinesByPkgU[$pkgU][] = [
+                    'order_number' => $orderNumber,
+                    'filter_name' => $filterName,
+                    'native_filter_name' => (string)($row['native_filter_name'] ?? ''),
+                    'brand_filter_package' => (string)($row['brand_filter_package'] ?? ''),
+                    'remaining' => $gofroNeed,
+                ];
+            }
+        }
+
+        $out = [];
+        foreach ($names as $name) {
+            $pkgU = mb_strtoupper(trim((string)$name), 'UTF-8');
+            $out[] = [
+                'name' => (string)$name,
+                'active_lines' => $linesByPkgU[$pkgU] ?? [],
+                'analog_active_lines' => $analogLinesByPkgU[$pkgU] ?? [],
+            ];
+        }
+
+        echo json_encode($out, JSON_UNESCAPED_UNICODE);
     } catch (Exception $e) {
         echo json_encode([]);
     }
     exit;
 }
 
-// === ПОЛУЧЕНИЕ ЗАЯВОК ПО ГОФРОПАКЕТУ ===
+// === ПОЛУЧЕНИЕ ЗАЯВОК ПО ГОФРОПАКЕТУ (с суммарным остатком по заявке) ===
 if (isset($_GET['orders']) && isset($_GET['part'])) {
-    header('Content-Type: application/json');
+    header('Content-Type: application/json; charset=utf-8');
     try {
         require_once __DIR__ . '/../auth/includes/db.php';
         $pdo = getPdo('plan_u3');
         $part = $_GET['part'];
-        // Ищем заявки, где используется этот гофропакет через структуру фильтров
-        // В round_filter_structure поле filter_package содержит название гофропакета
-        $stmt = $pdo->prepare("
-            SELECT DISTINCT o.order_number 
-            FROM orders o
-            JOIN round_filter_structure rfs ON o.filter = rfs.filter
-            WHERE rfs.filter_package = ? 
-            AND (o.hide IS NULL OR o.hide = 0)
-            ORDER BY o.order_number
-        ");
-        $stmt->execute([$part]);
-        echo json_encode($stmt->fetchAll(PDO::FETCH_COLUMN));
+        $partNorm = mb_strtoupper(trim((string)$part), 'UTF-8');
+        if ($partNorm === '') {
+            echo json_encode([]);
+            exit;
+        }
+
+        // Сумма по заявке: потребность в гофропакетах (не «остаток фильтров»)
+        $sql = "
+            SELECT
+                z.order_number,
+                SUM(z.gofro_line) AS remaining_total
+            FROM (
+                SELECT
+                    agg.order_number,
+                    GREATEST(
+                        0,
+                        GREATEST(0, agg.ordered - COALESCE(prod.produced, 0))
+                        - (COALESCE(mp.gofro_qty, 0) - COALESCE(prod.produced, 0))
+                    ) AS gofro_line
+                FROM (
+                    SELECT
+                        o.order_number,
+                        o.`filter` AS filter_name,
+                        SUM(o.`count`) AS ordered
+                    FROM orders o
+                    INNER JOIN round_filter_structure rfs ON o.`filter` = rfs.`filter`
+                    WHERE (o.hide IS NULL OR o.hide != 1)
+                      AND UPPER(TRIM(rfs.filter_package)) = ?
+                    GROUP BY o.order_number, o.`filter`
+                ) agg
+                LEFT JOIN (
+                    SELECT name_of_order, name_of_filter, SUM(count_of_filters) AS produced
+                    FROM manufactured_production
+                    GROUP BY name_of_order, name_of_filter
+                ) prod
+                    ON prod.name_of_order = agg.order_number
+                   AND prod.name_of_filter = agg.filter_name
+                LEFT JOIN (
+                    SELECT
+                        name_of_order,
+                        UPPER(TRIM(name_of_parts)) AS parts_u,
+                        SUM(COALESCE(count_of_parts, 0)) AS gofro_qty
+                    FROM manufactured_parts
+                    GROUP BY name_of_order, UPPER(TRIM(name_of_parts))
+                ) mp
+                    ON mp.name_of_order = agg.order_number
+                   AND mp.parts_u = ?
+            ) z
+            WHERE z.gofro_line > 0
+            GROUP BY z.order_number
+            ORDER BY z.order_number
+        ";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$partNorm, $partNorm]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $out = [];
+        foreach ($rows as $row) {
+            $out[] = [
+                'order_number' => (string)($row['order_number'] ?? ''),
+                'remaining_total' => (int)($row['remaining_total'] ?? 0),
+            ];
+        }
+        echo json_encode($out, JSON_UNESCAPED_UNICODE);
     } catch (Exception $e) {
         echo json_encode([]);
     }
@@ -221,14 +528,14 @@ try {
 
 <div id="modal" class="fixed inset-0 bg-black bg-opacity-40 z-50 overflow-y-auto hidden">
     <div class="flex justify-center items-start min-h-screen pt-12 px-4">
-        <div class="bg-white p-6 rounded shadow w-full max-w-sm">
+        <div class="bg-white p-6 rounded shadow w-full max-w-lg">
             <h2 class="text-lg font-semibold mb-4">Добавить гофропакет</h2>
 
             <!-- Наименование -->
             <label class="block text-sm">Наименование</label>
             <div class="relative mb-2">
-                <input type="text" id="modalName" class="w-full border px-3 py-2 rounded" placeholder="гофропакет AF1600" oninput="autocompletePart(this.value); handlePartInput(this.value)" onblur="updateOrdersList(this.value)">
-                <ul id="partSuggestions" class="absolute z-10 bg-white border w-full rounded shadow hidden max-h-48 overflow-y-auto"></ul>
+                <input type="text" id="modalName" class="w-full border px-3 py-2 rounded" placeholder="минимум 4 символа (например 1600 или AF16)" oninput="autocompletePart(this.value); handlePartInput(this.value)" onblur="updateOrdersList(this.value)">
+                <ul id="partSuggestions" class="absolute z-10 bg-white border w-full rounded shadow hidden max-h-72 overflow-y-auto text-left"></ul>
             </div>
 
             <!-- Номер заявки -->
@@ -331,18 +638,28 @@ try {
         }
     }
 
+    const SUGGESTION_LINES_CAP = 18;
+    const SUGGESTION_ANALOG_CAP = 14;
+
     async function autocompletePart(query) {
         const list = document.getElementById('partSuggestions');
         list.innerHTML = '';
-        if (query.length < 2) {
+        const q = query.trim();
+        if (q.length < 4) {
             list.classList.add('hidden');
-            // Если поле пустое, показываем все заявки
             updateOrdersList('');
+            if (q.length > 0 && q.length < 4) {
+                const li = document.createElement('li');
+                li.className = 'px-3 py-2 text-gray-500 text-xs';
+                li.textContent = 'Введите не менее 4 символов для поиска';
+                list.appendChild(li);
+                list.classList.remove('hidden');
+            }
             return;
         }
 
         try {
-            const res = await fetch('?q=' + encodeURIComponent(query));
+            const res = await fetch('?q=' + encodeURIComponent(q));
             const suggestions = await res.json();
 
             if (!suggestions.length) {
@@ -351,20 +668,84 @@ try {
                 li.className = 'px-3 py-2 text-gray-400';
                 list.appendChild(li);
                 list.classList.remove('hidden');
-                // Очищаем список заявок, если нет совпадений
                 updateOrdersList('');
                 return;
             }
 
-            suggestions.forEach(text => {
+            suggestions.forEach(item => {
+                const name = typeof item === 'string' ? item : (item.name || '');
+                const lines = (item && Array.isArray(item.active_lines)) ? item.active_lines : [];
+                const analogLines = (item && Array.isArray(item.analog_active_lines)) ? item.analog_active_lines : [];
+                const hasDirect = lines.length > 0;
+                const hasAnalog = analogLines.length > 0;
+
                 const li = document.createElement('li');
-                li.textContent = text;
-                li.className = 'px-3 py-2 hover:bg-blue-100 cursor-pointer';
+                li.className = 'px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-b-0';
+
+                const title = document.createElement('div');
+                title.className = 'font-medium text-gray-900';
+                title.textContent = name;
+                li.appendChild(title);
+
+                const sub = document.createElement('div');
+                sub.className = 'mt-1 text-xs text-gray-600 space-y-0.5 pl-0.5';
+                if (!hasDirect && !hasAnalog) {
+                    const row = document.createElement('div');
+                    row.className = 'italic text-gray-400';
+                    row.textContent = 'Нет активных позиций в открытых заявках';
+                    sub.appendChild(row);
+                } else {
+                    if (hasDirect) {
+                        const shown = lines.slice(0, SUGGESTION_LINES_CAP);
+                        shown.forEach(ln => {
+                            const row = document.createElement('div');
+                            const ord = (ln.order_number || '').trim();
+                            const flt = (ln.filter_name || '').trim();
+                            const rem = parseInt(ln.remaining, 10);
+                            const remTxt = isNaN(rem) ? '—' : rem;
+                            row.textContent = `Заявка ${ord} · ${flt} · нужно гофро ${remTxt} шт`;
+                            sub.appendChild(row);
+                        });
+                        if (lines.length > SUGGESTION_LINES_CAP) {
+                            const more = document.createElement('div');
+                            more.className = 'text-gray-400 italic';
+                            more.textContent = `… и ещё ${lines.length - SUGGESTION_LINES_CAP}`;
+                            sub.appendChild(more);
+                        }
+                    }
+                    if (hasAnalog) {
+                        const hdr = document.createElement('div');
+                        hdr.className = 'mt-2 text-[11px] font-semibold text-amber-900';
+                        hdr.textContent = 'Чужие бренды: вводите наименование гофро как в справочнике у бренда (столбец ниже)';
+                        sub.appendChild(hdr);
+                        const shownA = analogLines.slice(0, SUGGESTION_ANALOG_CAP);
+                        shownA.forEach(ln => {
+                            const row = document.createElement('div');
+                            const ord = (ln.order_number || '').trim();
+                            const flt = (ln.filter_name || '').trim();
+                            const nat = (ln.native_filter_name || '').trim();
+                            const brandPkg = (ln.brand_filter_package || '').trim();
+                            const rem = parseInt(ln.remaining, 10);
+                            const remTxt = isNaN(rem) ? '—' : rem;
+                            const natPart = nat ? ` → эталон ${nat}` : '';
+                            const gofroForInput = brandPkg || name;
+                            row.textContent = `Заявка ${ord} · ${flt}${natPart} · гофро в бренде: «${gofroForInput}» · нужно гофро ${remTxt} шт`;
+                            sub.appendChild(row);
+                        });
+                        if (analogLines.length > SUGGESTION_ANALOG_CAP) {
+                            const more = document.createElement('div');
+                            more.className = 'text-gray-400 italic';
+                            more.textContent = `… и ещё ${analogLines.length - SUGGESTION_ANALOG_CAP}`;
+                            sub.appendChild(more);
+                        }
+                    }
+                }
+                li.appendChild(sub);
+
                 li.onclick = () => {
-                    document.getElementById('modalName').value = text;
+                    document.getElementById('modalName').value = name;
                     list.classList.add('hidden');
-                    // Обновляем список заявок при выборе гофропакета
-                    updateOrdersList(text);
+                    updateOrdersList(name);
                 };
                 list.appendChild(li);
             });
@@ -400,11 +781,19 @@ try {
                 option.disabled = true;
                 select.appendChild(option);
             } else {
-                orders.forEach(order => {
+                orders.forEach(entry => {
                     const option = document.createElement('option');
-                    option.value = order;
-                    option.textContent = order;
-                    if (order === currentValue) {
+                    const num = typeof entry === 'string' ? entry : String(entry.order_number || '').trim();
+                    const rem = (typeof entry === 'object' && entry !== null && !Array.isArray(entry))
+                        ? parseInt(entry.remaining_total, 10)
+                        : NaN;
+                    option.value = num;
+                    if (!Number.isNaN(rem)) {
+                        option.textContent = `${num} — нужно гофро ${rem} шт`;
+                    } else {
+                        option.textContent = num;
+                    }
+                    if (num === currentValue) {
                         option.selected = true;
                     }
                     select.appendChild(option);

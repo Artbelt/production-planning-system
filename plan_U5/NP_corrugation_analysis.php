@@ -328,13 +328,27 @@ try {
         }
 
         @media print {
+            @page {
+                size: landscape;
+                margin: 8mm;
+            }
+
             body {
                 background: white;
-                padding-top: 0;
+                padding: 0;
+                display: block;
+                max-width: 100%;
             }
 
             .no-print {
                 display: none !important;
+            }
+
+            .scroll-wrapper,
+            .page-container {
+                width: 100%;
+                max-width: 100%;
+                min-width: 0;
             }
 
             .page-container {
@@ -353,6 +367,7 @@ try {
             .day-column {
                 page-break-inside: avoid;
                 break-inside: avoid;
+                min-width: 0;
             }
 
             .item.item-highlighted {
@@ -360,9 +375,29 @@ try {
                 box-shadow: none !important;
             }
 
+            .item-name {
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }
+
+            /* При печати — штриховка вместо цветной заливки (хорошо читается в Ч/Б) */
+            .item-fact-fill {
+                background: repeating-linear-gradient(
+                    -45deg,
+                    #e8e8e8,
+                    #e8e8e8 4px,
+                    #444 4px,
+                    #444 5px
+                ) !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
             .days-grid {
                 display: grid;
-                grid-template-columns: repeat(14, 100px);
+                width: 100%;
+                grid-template-columns: repeat(14, minmax(0, 1fr));
+                min-width: 0;
             }
         }
 

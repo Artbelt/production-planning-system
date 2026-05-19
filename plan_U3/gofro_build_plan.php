@@ -105,6 +105,8 @@ if (isset($_GET['api']) && $_GET['api'] === 'save_plan_v2' && $_SERVER['REQUEST_
         ");
         $userId = isset($session['user_id']) ? (int)$session['user_id'] : null;
         $saved = 0;
+        $received = count($items);
+        $agentDbg = __DIR__ . DIRECTORY_SEPARATOR . 'debug-32dac2.log';
         foreach ($items as $it) {
             $rowKey = trim((string)($it['source_row_key'] ?? ''));
             $order = trim((string)($it['order_number'] ?? ''));
@@ -115,20 +117,70 @@ if (isset($_GET['api']) && $_GET['api'] === 'save_plan_v2' && $_SERVER['REQUEST_
             $groupId = trim((string)($it['group_id'] ?? ''));
             $stripId = trim((string)($it['strip_id'] ?? ''));
             $qty = (int)($it['qty'] ?? 0);
-            if (
-                $rowKey === '' || $order === '' || $filterName === '' || $packageKey === '' ||
-                $planDate === '' || $groupId === '' || $stripId === '' || $qty <= 0 ||
-                !preg_match('/^\d{4}-\d{2}-\d{2}$/', $planDate)
-            ) {
+            // #region agent log
+            $rawRow = (string)($it['source_row_key'] ?? '');
+            $interest = (stripos($rawRow, 'LW206') !== false || stripos($rawRow, 'LUFT') !== false)
+                || (stripos($rawRow, 'TF-19-20-20-26-2') !== false || stripos($rawRow, 'TF 325') !== false)
+                || (stripos((string)($it['filter_name'] ?? ''), 'LW206') !== false)
+                || (stripos((string)($it['filter_name'] ?? ''), 'TF 325') !== false);
+            if ($interest) {
+                $skip = ($rowKey === '' || $qty <= 0 || $planDate === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $planDate));
+                $line = json_encode([
+                    'sessionId' => '32dac2',
+                    'runId' => 'save_plan_v2',
+                    'hypothesisId' => 'H3',
+                    'location' => 'save_plan_v2:item',
+                    'message' => $skip ? 'skip' : 'insert',
+                    'data' => [
+                        'rowKey' => $rowKey,
+                        'planDate' => $planDate,
+                        'qty' => $qty,
+                        'filterName' => $filterName,
+                        'stripIdLen' => strlen($stripId),
+                        'skipReason' => $skip ? (
+                            $rowKey === '' ? 'empty_rowKey' : ($qty <= 0 ? 'qty_le_0' : ($planDate === '' ? 'empty_date' : 'bad_date_format'))
+                        ) : null,
+                    ],
+                    'timestamp' => (int) round(microtime(true) * 1000),
+                ], JSON_UNESCAPED_UNICODE) . "\n";
+                @file_put_contents($agentDbg, $line, FILE_APPEND | LOCK_EX);
+            }
+            // #endregion
+            if ($rowKey === '' || $qty <= 0 || $planDate === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $planDate)) {
                 continue;
             }
+            if ($order === '') {
+                $order = '-';
+            }
+            if ($filterName === '') {
+                $filterName = $packageName !== '' ? $packageName : '-';
+            }
+            if ($packageKey === '') {
+                $packageKey = '-';
+            }
+            if ($packageName === '') {
+                $packageName = $packageKey !== '-' ? $packageKey : '-';
+            }
+            if ($groupId === '') {
+                $groupId = 'G-' . bin2hex(random_bytes(4));
+            }
+            if ($stripId === '') {
+                $stripId = 'GEN-' . bin2hex(random_bytes(5));
+            }
+            $rowKey = mb_substr($rowKey, 0, 255, 'UTF-8');
+            $order = mb_substr($order, 0, 64, 'UTF-8');
+            $filterName = mb_substr($filterName, 0, 255, 'UTF-8');
+            $packageKey = mb_substr($packageKey, 0, 255, 'UTF-8');
+            $packageName = mb_substr($packageName, 0, 255, 'UTF-8');
+            $groupId = mb_substr($groupId, 0, 128, 'UTF-8');
+            $stripId = mb_substr($stripId, 0, 128, 'UTF-8');
             $ins->execute([$rowKey, $order, $filterName, $packageKey, $packageName, $planDate, $groupId, $stripId, $qty, $userId]);
             $saved++;
         }
         if ($pdo->inTransaction()) {
             $pdo->commit();
         }
-        echo json_encode(['ok' => true, 'saved' => $saved], JSON_UNESCAPED_UNICODE);
+        echo json_encode(['ok' => true, 'saved' => $saved, 'received' => $received], JSON_UNESCAPED_UNICODE);
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
@@ -207,6 +259,24 @@ try {
         $buildPlanMap[$key][$date] += $qty;
         $buildPlanDates[$date] = true;
     }
+    /*
+     * Даты из сохранённого плана V2 (в т.ч. прошлые): без них колонок «вчера» нет,
+     * applyLoadedPlanRows отбрасывает такие строки (hasDateInHorizon), и долг не считается.
+     */
+    try {
+        ensureCorrugationPlanV2Table($pdo);
+        $stmtV2Dates = $pdo->query("SELECT DISTINCT plan_date FROM corrugation_plan_v2 WHERE qty > 0");
+        if ($stmtV2Dates) {
+            while ($rowV2 = $stmtV2Dates->fetch(PDO::FETCH_ASSOC)) {
+                $pd = trim((string)($rowV2['plan_date'] ?? ''));
+                if ($pd !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $pd)) {
+                    $buildPlanDates[$pd] = true;
+                }
+            }
+        }
+    } catch (Throwable $eV2) {
+        /* игнорируем — до первого сохранения таблицы может не быть */
+    }
     $buildPlanDates = array_keys($buildPlanDates);
     sort($buildPlanDates);
     if (!empty($buildPlanDates)) {
@@ -240,6 +310,7 @@ if (!empty($rows)) {
             $sqlMeta = "
                 SELECT
                     rfs.filter AS filter_name,
+                    rfs.analog AS analog,
                     rfs.filter_package AS filter_package,
                     ppr.p_p_paper_width AS paper_width_mm,
                     ppr.p_p_fold_height AS fold_height,
@@ -258,11 +329,16 @@ if (!empty($rows)) {
                 }
                 if (!isset($filterMetaByKey[$metaKey])) {
                     $filterMetaByKey[$metaKey] = [
+                        'analog' => null,
                         'filter_package' => null,
                         'paper_width_mm' => null,
                         'fold_height' => null,
                         'fold_count' => null,
                     ];
+                }
+                $metaAnalog = trim((string)($metaRow['analog'] ?? ''));
+                if ($metaAnalog !== '' && $filterMetaByKey[$metaKey]['analog'] === null) {
+                    $filterMetaByKey[$metaKey]['analog'] = $metaAnalog;
                 }
                 $pkg = trim((string)($metaRow['filter_package'] ?? ''));
                 if ($pkg !== '' && $filterMetaByKey[$metaKey]['filter_package'] === null) {
@@ -276,6 +352,129 @@ if (!empty($rows)) {
                 }
                 if ($metaRow['fold_count'] !== null && $filterMetaByKey[$metaKey]['fold_count'] === null) {
                     $filterMetaByKey[$metaKey]['fold_count'] = (float)$metaRow['fold_count'];
+                }
+            }
+            /*
+             * Позиция из заказа может не совпасть с полем filter в round_filter_structure (другой текст / analog).
+             * Дополнительный поиск по совпадению названия или колонке analog.
+             */
+            foreach ($rawFilterList as $rawFilterTry) {
+                $targetKey = normalizeFilterKeyLocal((string)$rawFilterTry);
+                if ($targetKey === '') {
+                    continue;
+                }
+                $existingPkg = trim((string)($filterMetaByKey[$targetKey]['filter_package'] ?? ''));
+                if ($existingPkg !== '') {
+                    continue;
+                }
+                $stmtAlt = $pdo->prepare("
+                    SELECT
+                        rfs.filter AS filter_name,
+                        rfs.analog AS analog,
+                        rfs.filter_package AS filter_package,
+                        ppr.p_p_paper_width AS paper_width_mm,
+                        ppr.p_p_fold_height AS fold_height,
+                        ppr.p_p_fold_count AS fold_count
+                    FROM round_filter_structure rfs
+                    LEFT JOIN paper_package_round ppr
+                        ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
+                    WHERE UPPER(TRIM(rfs.filter)) = UPPER(TRIM(?))
+                       OR UPPER(TRIM(rfs.analog)) = UPPER(TRIM(?))
+                    LIMIT 8
+                ");
+                $stmtAlt->execute([$rawFilterTry, $rawFilterTry]);
+                foreach ($stmtAlt->fetchAll(PDO::FETCH_ASSOC) as $metaRow) {
+                    $pkg = trim((string)($metaRow['filter_package'] ?? ''));
+                    if ($pkg === '') {
+                        continue;
+                    }
+                    if (!isset($filterMetaByKey[$targetKey])) {
+                        $filterMetaByKey[$targetKey] = [
+                            'analog' => null,
+                            'filter_package' => null,
+                            'paper_width_mm' => null,
+                            'fold_height' => null,
+                            'fold_count' => null,
+                        ];
+                    }
+                    $metaAnalog = trim((string)($metaRow['analog'] ?? ''));
+                    if ($metaAnalog !== '' && $filterMetaByKey[$targetKey]['analog'] === null) {
+                        $filterMetaByKey[$targetKey]['analog'] = $metaAnalog;
+                    }
+                    $filterMetaByKey[$targetKey]['filter_package'] = $pkg;
+                    if ($metaRow['paper_width_mm'] !== null && $filterMetaByKey[$targetKey]['paper_width_mm'] === null) {
+                        $filterMetaByKey[$targetKey]['paper_width_mm'] = (float)$metaRow['paper_width_mm'];
+                    }
+                    if ($metaRow['fold_height'] !== null && $filterMetaByKey[$targetKey]['fold_height'] === null) {
+                        $filterMetaByKey[$targetKey]['fold_height'] = (float)$metaRow['fold_height'];
+                    }
+                    if ($metaRow['fold_count'] !== null && $filterMetaByKey[$targetKey]['fold_count'] === null) {
+                        $filterMetaByKey[$targetKey]['fold_count'] = (float)$metaRow['fold_count'];
+                    }
+                    break;
+                }
+            }
+            /*
+             * Расширенный поиск по подстроке (разный пробел, суффиксы, опечатки в заказе vs справочнике).
+             */
+            foreach ($rawFilterList as $rawFilterTry) {
+                $targetKey = normalizeFilterKeyLocal((string)$rawFilterTry);
+                if ($targetKey === '') {
+                    continue;
+                }
+                $existingPkg = trim((string)($filterMetaByKey[$targetKey]['filter_package'] ?? ''));
+                if ($existingPkg !== '') {
+                    continue;
+                }
+                $needle = trim((string)$rawFilterTry);
+                if ($needle === '' || mb_strlen($needle, 'UTF-8') < 4) {
+                    continue;
+                }
+                $stmtLike = $pdo->prepare("
+                    SELECT
+                        rfs.filter AS filter_name,
+                        rfs.analog AS analog,
+                        rfs.filter_package AS filter_package,
+                        ppr.p_p_paper_width AS paper_width_mm,
+                        ppr.p_p_fold_height AS fold_height,
+                        ppr.p_p_fold_count AS fold_count
+                    FROM round_filter_structure rfs
+                    LEFT JOIN paper_package_round ppr
+                        ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
+                    WHERE UPPER(TRIM(rfs.filter)) LIKE CONCAT('%', UPPER(TRIM(?)), '%')
+                       OR UPPER(TRIM(rfs.analog)) LIKE CONCAT('%', UPPER(TRIM(?)), '%')
+                    LIMIT 12
+                ");
+                $stmtLike->execute([$needle, $needle]);
+                foreach ($stmtLike->fetchAll(PDO::FETCH_ASSOC) as $metaRow) {
+                    $pkg = trim((string)($metaRow['filter_package'] ?? ''));
+                    if ($pkg === '') {
+                        continue;
+                    }
+                    if (!isset($filterMetaByKey[$targetKey])) {
+                        $filterMetaByKey[$targetKey] = [
+                            'analog' => null,
+                            'filter_package' => null,
+                            'paper_width_mm' => null,
+                            'fold_height' => null,
+                            'fold_count' => null,
+                        ];
+                    }
+                    $metaAnalog = trim((string)($metaRow['analog'] ?? ''));
+                    if ($metaAnalog !== '' && $filterMetaByKey[$targetKey]['analog'] === null) {
+                        $filterMetaByKey[$targetKey]['analog'] = $metaAnalog;
+                    }
+                    $filterMetaByKey[$targetKey]['filter_package'] = $pkg;
+                    if ($metaRow['paper_width_mm'] !== null && $filterMetaByKey[$targetKey]['paper_width_mm'] === null) {
+                        $filterMetaByKey[$targetKey]['paper_width_mm'] = (float)$metaRow['paper_width_mm'];
+                    }
+                    if ($metaRow['fold_height'] !== null && $filterMetaByKey[$targetKey]['fold_height'] === null) {
+                        $filterMetaByKey[$targetKey]['fold_height'] = (float)$metaRow['fold_height'];
+                    }
+                    if ($metaRow['fold_count'] !== null && $filterMetaByKey[$targetKey]['fold_count'] === null) {
+                        $filterMetaByKey[$targetKey]['fold_count'] = (float)$metaRow['fold_count'];
+                    }
+                    break;
                 }
             }
         } catch (Throwable $e) {
@@ -720,6 +919,11 @@ $pageTitle = 'Планирование сборки гофропакетов';
             background: #fff7ed;
             box-shadow: inset 3px 0 0 #ea580c;
         }
+        td.analog-cell {
+            max-width: 180px;
+            white-space: normal;
+            word-break: break-word;
+        }
     </style>
 </head>
 <body>
@@ -734,6 +938,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
         </button>
         <button id="task-sheet-btn" type="button" style="border:1px solid #0f766e; background:#0f766e; color:#fff; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">
             Задание
+        </button>
+        <button id="overdue-alert-btn" type="button" style="display:none; border:1px solid #b91c1c; background:#fff; color:#b91c1c; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer; font-weight:600;">
+            Просрочено
         </button>
         <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#334155;">
             Тест-дата:
@@ -757,6 +964,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 <tr>
                     <th class="row-dismiss-col" title="Скрыть позицию (только у вас в браузере)"></th>
                     <th>Фильтр</th>
+                    <th>Аналог</th>
                     <th>Заявка</th>
                     <th class="num-left">Остаток фильтров</th>
                     <th class="num">Г/п изготовлено</th>
@@ -781,7 +989,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 <tbody>
                 <?php if (empty($rows)): ?>
                     <tr>
-                        <td colspan="<?= 7 + count($buildPlanDates) ?>" class="muted" style="text-align:center;padding:12px;">
+                        <td colspan="<?= 8 + count($buildPlanDates) ?>" class="muted" style="text-align:center;padding:12px;">
                             Нет данных для отображения.
                         </td>
                     </tr>
@@ -799,6 +1007,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                         $planQtyByDate = $buildPlanMap[$planKey] ?? [];
 
                         $meta = $filterMetaByKey[normalizeFilterKeyLocal($rawFilter)] ?? null;
+                        $rowAnalog = trim((string)($meta['analog'] ?? ''));
                         $package = trim((string)($meta['filter_package'] ?? ''));
                         $packageKey = normalizeTextKeyLocal($package);
                         $gofroProduced = $packageKey !== '' && $rawOrder !== ''
@@ -816,13 +1025,34 @@ $pageTitle = 'Планирование сборки гофропакетов';
                             ? (($foldHeight * 2 + 1) * $foldCount) / 1000
                             : 0.0;
                         $packagesPerRoll = $packLengthM > 0 ? (int)floor(600 / $packLengthM) : 0;
+                        $packagesPerRollFallback = false;
+                        if ($packageKey !== '' && $gofroNeed > 0 && $packagesPerRoll <= 0) {
+                            $packagesPerRoll = max(1, min($gofroNeed, 500));
+                            $packagesPerRollFallback = true;
+                        }
+                        $poolSynthetic = false;
+                        if ($packageKey === '' && $gofroNeed > 0) {
+                            $poolSynthetic = true;
+                            $packageKey = 'Z_FALLBACK_' . substr(hash('sha256', $rowKey), 0, 22);
+                            if ($package === '') {
+                                $package = 'Г/п (нет в справочнике)';
+                            }
+                            if ($packagesPerRoll <= 0) {
+                                $packagesPerRoll = max(1, min($gofroNeed, 500));
+                            }
+                            $packagesPerRollFallback = true;
+                        }
                         $poolHintReason = '';
-                        if ($packageKey === '') {
+                        if ($poolSynthetic) {
+                            $poolHintReason = 'Фильтр не найден в round_filter_structure — в пул добавлены полосы с техническим ключом пакета. Добавьте/исправьте строку в справочнике, чтобы совпали названия.';
+                        } elseif ($packageKey === '') {
                             $poolHintReason = 'В пул не попадет: для фильтра не задан гофропакет в справочнике round_filter_structure.';
                         } elseif ($gofroNeed <= 0) {
                             $poolHintReason = 'В пул не попадет: потребность в г/п равна 0 (доступного г/п уже хватает).';
                         } elseif ($packagesPerRoll <= 0) {
                             $poolHintReason = 'В пул не попадет: не рассчитано количество г/п с рулона (проверьте параметры в paper_package_round: высота/число ребер).';
+                        } elseif ($packagesPerRollFallback) {
+                            $poolHintReason = 'В paper_package_round нет данных для расчёта длины гофропакета; в пул добавлены полосы с упрощённой ёмкостью. Уточните параметры в справочнике.';
                         }
 
                         $coverageNeed = max(0, $gofroAvailable);
@@ -876,6 +1106,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                                     <span class="row-pool-hint" title="<?= htmlspecialchars($poolHintReason, ENT_QUOTES, 'UTF-8') ?>">i</span>
                                 <?php endif; ?>
                             </td>
+                            <td class="analog-cell" title="<?= $rowAnalog !== '' ? htmlspecialchars('Аналог: ' . $rowAnalog, ENT_QUOTES, 'UTF-8') : '' ?>"><?= $rowAnalog !== '' ? htmlspecialchars($rowAnalog, ENT_QUOTES, 'UTF-8') : '<span class="muted">—</span>' ?></td>
                             <td><?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?></td>
                             <td class="num-left" title="Остаток к производству из заказанного по позиции"><?= (int)$remaining ?><span class="muted-light"> из <?= (int)$ordered ?></span></td>
                             <td class="num"><?= $gofroProduced ?></td>
@@ -915,6 +1146,18 @@ $pageTitle = 'Планирование сборки гофропакетов';
     <?php endif; ?>
 </div>
 <div id="drag-preview" class="drag-preview"></div>
+<div id="overdue-alert-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:10001; align-items:center; justify-content:center; padding:14px;">
+    <div style="background:#fff; border-radius:12px; width:min(720px, 100%); max-width:100%; max-height:min(80vh, 560px); box-shadow:0 16px 40px rgba(2,6,23,.25); border:1px solid #e2e8f0; display:flex; flex-direction:column;">
+        <div style="padding:12px 14px; border-bottom:1px solid #e2e8f0; font-weight:700; font-size:14px; color:#991b1b;">Просроченные позиции</div>
+        <div style="padding:10px 14px 0; font-size:12px; color:#64748b;">
+            Запланировано к гофрированию на дату раньше «сегодня» (учитывается поле «Тест-дата», если задано) и по расчёту ещё не закрыто текущей потребностью в г/п.
+        </div>
+        <div id="overdue-alert-body" style="padding:12px 14px; overflow:auto; flex:1;"></div>
+        <div style="padding:10px 14px; display:flex; justify-content:flex-end; gap:8px; border-top:1px solid #e2e8f0;">
+            <button id="overdue-alert-close" type="button" style="border:1px solid #cbd5e1; background:#fff; color:#334155; border-radius:8px; padding:6px 14px; font-size:12px; cursor:pointer;">Закрыть</button>
+        </div>
+    </div>
+</div>
 <div id="task-sheet-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:10000; align-items:center; justify-content:center; padding:14px;">
     <div style="background:#fff; border-radius:12px; width:360px; max-width:100%; box-shadow:0 16px 40px rgba(2,6,23,.25); border:1px solid #e2e8f0;">
         <div style="padding:12px; border-bottom:1px solid #e2e8f0; font-weight:700; font-size:14px;">Печать задания сборщицам</div>
@@ -954,6 +1197,11 @@ $pageTitle = 'Планирование сборки гофропакетов';
     const taskSheetPrint = document.getElementById('task-sheet-print');
     const testTodayDateInput = document.getElementById('test-today-date');
     const testTodayResetBtn = document.getElementById('test-today-reset-btn');
+    const overdueAlertBtn = document.getElementById('overdue-alert-btn');
+    const overdueAlertModal = document.getElementById('overdue-alert-modal');
+    const overdueAlertBody = document.getElementById('overdue-alert-body');
+    const overdueAlertClose = document.getElementById('overdue-alert-close');
+    let overdueModalAutoOpened = false;
     if (!stripPool || !dragPreview) {
         return;
     }
@@ -984,6 +1232,8 @@ $pageTitle = 'Планирование сборки гофропакетов';
             dateCells: Array.from(row.querySelectorAll('td.date-cell[data-date]')),
             allocatedByDate: {},
             allocatedObjectsByDate: {},
+            overdueDebtQty: 0,
+            overduePlannedQty: 0,
         };
         rowStateMap.set(row.dataset.rowKey, state);
     });
@@ -1028,6 +1278,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
     let strips = [];
     let stripSeq = 1;
     let allocationGroupSeq = 1;
+    let planSaveStripSeq = 1;
     let allocations = [];
     let dragContext = null;
     const supplyMap = {};
@@ -1074,13 +1325,10 @@ $pageTitle = 'Планирование сборки гофропакетов';
             }
         }
         rowStateMap.forEach((state, rowKey) => {
-            let skipReason = '';
             if (state.dismissed) {
-                skipReason = 'dismissed';
                 return;
             }
             if (!state.packageKey || state.gofroNeed <= 0 || state.packagesPerRoll <= 0) {
-                skipReason = !state.packageKey ? 'empty_packageKey' : (state.gofroNeed <= 0 ? 'gofroNeed_le_0' : 'packagesPerRoll_le_0');
                 return;
             }
             appendRowStrips(state, rowKey);
@@ -1128,10 +1376,14 @@ $pageTitle = 'Планирование сборки гофропакетов';
     }
 
     function getAllocatedObjectItems(obj) {
+        const ensureStripId = (sid) => {
+            const t = String(sid || '').trim();
+            return t !== '' ? t : `GEN${planSaveStripSeq++}`;
+        };
         if (obj && typeof obj === 'object' && Array.isArray(obj.items) && obj.items.length > 0) {
             return obj.items
                 .map((item) => ({
-                    strip_id: String(item.strip_id || ''),
+                    strip_id: ensureStripId(item.strip_id),
                     qty: Math.max(0, parseInt(item.qty || 0, 10) || 0),
                 }))
                 .filter((item) => item.qty > 0);
@@ -1141,7 +1393,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
             return [];
         }
         const stripId = obj && typeof obj === 'object' ? String(obj.strip_id || '') : '';
-        return [{ strip_id: stripId, qty }];
+        return [{ strip_id: ensureStripId(stripId), qty }];
     }
 
     function setSaveStatus(text, isError = false) {
@@ -1309,12 +1561,37 @@ $pageTitle = 'Планирование сборки гофропакетов';
         const menu = ensureSupplyActionMenu();
         activeSupplyAction = { rowKey, date, objIdx };
         renderSupplyActionMenu('actions');
-        const rect = anchorEl.getBoundingClientRect();
-        const baseLeft = Math.round(rect.left + window.scrollX);
-        const baseTop = Math.round(rect.bottom + window.scrollY + 4);
-        menu.style.left = `${baseLeft}px`;
-        menu.style.top = `${baseTop}px`;
         menu.classList.add('open');
+        const rect = anchorEl.getBoundingClientRect();
+        const margin = 6;
+        const pad = 8;
+        let menuRect = menu.getBoundingClientRect();
+        let left = Math.round(rect.left);
+        let top = Math.round(rect.bottom + margin);
+        const maxLeft = window.innerWidth - menuRect.width - pad;
+        if (left > maxLeft) {
+            left = Math.max(pad, maxLeft);
+        }
+        if (left < pad) {
+            left = pad;
+        }
+        if (top + menuRect.height > window.innerHeight - pad) {
+            const aboveTop = Math.round(rect.top - menuRect.height - margin);
+            if (aboveTop >= pad) {
+                top = aboveTop;
+            } else {
+                top = Math.max(pad, Math.round(window.innerHeight - menuRect.height - pad));
+            }
+        }
+        menu.style.left = `${left}px`;
+        menu.style.top = `${top}px`;
+        menuRect = menu.getBoundingClientRect();
+        if (menuRect.right > window.innerWidth - pad) {
+            menu.style.left = `${Math.max(pad, window.innerWidth - menuRect.width - pad)}px`;
+        }
+        if (menuRect.bottom > window.innerHeight - pad) {
+            menu.style.top = `${Math.max(pad, window.innerHeight - menuRect.height - pad)}px`;
+        }
     }
 
     function collectTaskSheetRows(dateFrom, dateTo) {
@@ -1634,7 +1911,15 @@ $pageTitle = 'Планирование сборки гофропакетов';
                     allocatedInHorizon += qty;
                 }
             });
-            const overdueDebtQty = Math.max(0, Math.min(overduePlannedQty, Math.max(0, state.gofroNeed)));
+            let overdueDebtQty;
+            if (state.gofroNeed > 0) {
+                overdueDebtQty = Math.min(overduePlannedQty, state.gofroNeed);
+            } else {
+                overdueDebtQty = overduePlannedQty;
+            }
+            overdueDebtQty = Math.max(0, overdueDebtQty);
+            state.overduePlannedQty = overduePlannedQty;
+            state.overdueDebtQty = overdueDebtQty;
             const filterCell = state.filterCell;
             if (filterCell) {
                 let debtBadge = filterCell.querySelector('.debt-badge');
@@ -1787,6 +2072,89 @@ $pageTitle = 'Планирование сборки гофропакетов';
             entry.rotaryEl.textContent = String(totals.rotary);
             entry.th.title = `Суммарно: ${totals.total}; Ротационная: ${totals.rotary}; Ножевая: ${totals.knife}`;
         });
+        refreshOverdueAlertModal();
+    }
+
+    function openOverdueAlertModal() {
+        if (overdueAlertModal) {
+            overdueAlertModal.style.display = 'flex';
+        }
+    }
+
+    function closeOverdueAlertModal() {
+        if (overdueAlertModal) {
+            overdueAlertModal.style.display = 'none';
+        }
+    }
+
+    function refreshOverdueAlertModal() {
+        if (!overdueAlertBtn || !overdueAlertModal || !overdueAlertBody) {
+            return;
+        }
+        const todayIso = getTodayIso();
+        const rowsList = [];
+        rowStateMap.forEach((state) => {
+            if (state.dismissed) {
+                return;
+            }
+            const debt = Math.max(0, parseInt(state.overdueDebtQty || 0, 10) || 0);
+            if (debt <= 0) {
+                return;
+            }
+            const machineLabel = state.machineType === 'rotary' ? 'Ротационная' : 'Ножевая';
+            rowsList.push({
+                order: String(state.order || ''),
+                filter: String(state.filterName || ''),
+                debt,
+                plannedPast: Math.max(0, parseInt(state.overduePlannedQty || 0, 10) || 0),
+                machineLabel,
+            });
+        });
+        rowsList.sort((a, b) => {
+            if (b.debt !== a.debt) {
+                return b.debt - a.debt;
+            }
+            if (a.order !== b.order) {
+                return a.order.localeCompare(b.order, 'ru');
+            }
+            return a.filter.localeCompare(b.filter, 'ru');
+        });
+        if (rowsList.length === 0) {
+            overdueModalAutoOpened = false;
+            overdueAlertBtn.style.display = 'none';
+            closeOverdueAlertModal();
+            return;
+        }
+        overdueAlertBtn.style.display = 'inline-block';
+        overdueAlertBtn.textContent = `Просрочено (${rowsList.length})`;
+        const tableRows = rowsList.map((row) => `
+            <tr>
+                <td>${htmlEscape(row.order)}</td>
+                <td>${htmlEscape(row.filter)}</td>
+                <td>${htmlEscape(row.machineLabel)}</td>
+                <td style="text-align:right; font-weight:700;">${row.debt}</td>
+                <td style="text-align:right; color:#64748b;">${row.plannedPast}</td>
+            </tr>
+        `).join('');
+        overdueAlertBody.innerHTML = `
+            <div style="font-size:11px; color:#64748b; margin-bottom:8px;">Отсечка «сегодня»: ${htmlEscape(formatDateRu(todayIso))} (${htmlEscape(todayIso)})</div>
+            <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                <thead>
+                    <tr style="background:#f8fafc;">
+                        <th style="text-align:left; border:1px solid #e2e8f0; padding:6px 8px;">Заявка</th>
+                        <th style="text-align:left; border:1px solid #e2e8f0; padding:6px 8px;">Фильтр</th>
+                        <th style="text-align:left; border:1px solid #e2e8f0; padding:6px 8px;">Машина</th>
+                        <th style="text-align:right; border:1px solid #e2e8f0; padding:6px 8px;">Долг, шт</th>
+                        <th style="text-align:right; border:1px solid #e2e8f0; padding:6px 8px;">Всего заплан. до даты</th>
+                    </tr>
+                </thead>
+                <tbody>${tableRows}</tbody>
+            </table>
+        `;
+        if (!overdueModalAutoOpened) {
+            overdueModalAutoOpened = true;
+            openOverdueAlertModal();
+        }
     }
 
     function returnAllAllocationsForRow(rowKey) {
@@ -1925,6 +2293,13 @@ $pageTitle = 'Планирование сборки гофропакетов';
     }
 
     function buildSavePayload() {
+        const trimTo = (s, maxLen) => {
+            const str = String(s ?? '');
+            if (str.length <= maxLen) {
+                return str;
+            }
+            return str.slice(0, maxLen);
+        };
         const items = [];
         rowStateMap.forEach((state, rowKey) => {
             if (state.dismissed) {
@@ -1933,26 +2308,136 @@ $pageTitle = 'Планирование сборки гофропакетов';
             Object.keys(state.allocatedObjectsByDate).forEach((date) => {
                 const objects = Array.isArray(state.allocatedObjectsByDate[date]) ? state.allocatedObjectsByDate[date] : [];
                 objects.forEach((obj, idx) => {
-                    const groupId = (obj && typeof obj === 'object' && String(obj.group_id || '') !== '')
+                    const groupIdRaw = (obj && typeof obj === 'object' && String(obj.group_id || '') !== '')
                         ? String(obj.group_id)
                         : `ROW:${rowKey}|DATE:${date}|IDX:${idx}`;
+                    const groupId = trimTo(groupIdRaw, 128);
                     const entries = getAllocatedObjectItems(obj);
                     entries.forEach((entry) => {
+                        const qty = Math.max(0, parseInt(entry.qty || 0, 10) || 0);
+                        if (qty <= 0) {
+                            return;
+                        }
+                        const stripId = trimTo(String(entry.strip_id || '').trim() || `GEN${planSaveStripSeq++}`, 128);
+                        const orderNum = trimTo(state.order || '-', 64);
+                        const filterNm = trimTo(state.filterName || state.packageName || state.packageKey || '-', 255);
+                        const pkgKey = trimTo(state.packageKey || '-', 255);
+                        const pkgName = trimTo(state.packageName || state.filterName || state.packageKey || '-', 255);
                         items.push({
-                            source_row_key: rowKey,
-                            order_number: state.order || '',
-                            filter_name: state.filterName || '',
-                            package_key: state.packageKey || '',
-                            package_name: state.packageName || '',
+                            source_row_key: trimTo(rowKey, 255),
+                            order_number: orderNum,
+                            filter_name: filterNm,
+                            package_key: pkgKey,
+                            package_name: pkgName,
                             plan_date: date,
                             group_id: groupId,
-                            strip_id: entry.strip_id || '',
-                            qty: entry.qty,
+                            strip_id: stripId,
+                            qty,
                         });
                     });
                 });
             });
         });
+        const qtyInPayloadForRowDate = (rk, dt) => {
+            let s = 0;
+            items.forEach((it) => {
+                if (String(it.source_row_key) === String(rk) && String(it.plan_date) === String(dt)) {
+                    s += Math.max(0, parseInt(it.qty || 0, 10) || 0);
+                }
+            });
+            return s;
+        };
+        const itemsLenAfterObjects = items.length;
+        rowStateMap.forEach((state, rowKey) => {
+            if (state.dismissed) {
+                return;
+            }
+            Object.keys(state.allocatedByDate || {}).forEach((date) => {
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+                    return;
+                }
+                const target = Math.max(0, parseInt(state.allocatedByDate[date] || 0, 10) || 0);
+                if (target <= 0) {
+                    return;
+                }
+                const inPayload = qtyInPayloadForRowDate(rowKey, date);
+                let deficit = target - inPayload;
+                if (deficit <= 0) {
+                    return;
+                }
+                const ppr = Math.max(1, parseInt(state.packagesPerRoll || 1, 10) || 1);
+                const syncGid = trimTo(`SYNC:${rowKey}:${date}`, 128);
+                while (deficit > 0) {
+                    const q = Math.min(deficit, ppr);
+                    items.push({
+                        source_row_key: trimTo(rowKey, 255),
+                        order_number: trimTo(state.order || '-', 64),
+                        filter_name: trimTo(state.filterName || state.packageName || state.packageKey || '-', 255),
+                        package_key: trimTo(state.packageKey || '-', 255),
+                        package_name: trimTo(state.packageName || state.filterName || state.packageKey || '-', 255),
+                        plan_date: date,
+                        group_id: syncGid,
+                        strip_id: trimTo(`GENSYNC${planSaveStripSeq++}`, 128),
+                        qty: q,
+                    });
+                    deficit -= q;
+                }
+            });
+        });
+        // #region agent log
+        const interestRows = [];
+        rowStateMap.forEach((state, rk) => {
+            const fl = String(state.filterName || '');
+            const ord = String(state.order || '');
+            if (!/LW206/i.test(fl) && !/LUFT.*LW206/i.test(rk) && !/TF 325\*218\*760\*13/i.test(fl) && !/TF-19-20-20-26-2/i.test(ord)) {
+                return;
+            }
+            const objDates = Object.keys(state.allocatedObjectsByDate || {});
+            let objItemCount = 0;
+            objDates.forEach((d) => {
+                const arr = state.allocatedObjectsByDate[d];
+                if (!Array.isArray(arr)) {
+                    return;
+                }
+                arr.forEach((o) => {
+                    objItemCount += getAllocatedObjectItems(o).length;
+                });
+            });
+            const byDateKeys = Object.keys(state.allocatedByDate || {});
+            let sumAlloc = 0;
+            byDateKeys.forEach((d) => {
+                sumAlloc += parseInt(state.allocatedByDate[d] || 0, 10) || 0;
+            });
+            interestRows.push({
+                rowKey: rk,
+                dismissed: !!state.dismissed,
+                order: ord,
+                filter: fl,
+                objDates,
+                objItemCount,
+                sumAllocatedByDate: sumAlloc,
+            });
+        });
+        fetch('http://127.0.0.1:7721/ingest/fec3737a-7de3-4e7b-bbe9-58f5d30241f0', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '32dac2' },
+            body: JSON.stringify({
+                sessionId: '32dac2',
+                runId: 'save_payload',
+                hypothesisId: 'H1-H2-H4',
+                location: 'buildSavePayload:end',
+                message: 'interest rows vs payload',
+                data: {
+                    totalItems: items.length,
+                    itemsLenAfterObjects,
+                    reconcileAdded: items.length - itemsLenAfterObjects,
+                    lwOrTfItems: items.filter((x) => /LW206|LUFT WAL LW206|TF-19-20|TF 325/i.test(String(x.source_row_key || '') + String(x.filter_name || ''))).length,
+                    interestRows,
+                },
+                timestamp: Date.now(),
+            }),
+        }).catch(() => {});
+        // #endregion
         return { items };
     }
 
@@ -1970,10 +2455,31 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 body: JSON.stringify(payload),
             });
             const data = await res.json();
+            // #region agent log
+            fetch('http://127.0.0.1:7721/ingest/fec3737a-7de3-4e7b-bbe9-58f5d30241f0', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '32dac2' },
+                body: JSON.stringify({
+                    sessionId: '32dac2',
+                    runId: 'save_response',
+                    hypothesisId: 'H3',
+                    location: 'savePlanV2:after',
+                    message: 'server save counts',
+                    data: { ok: !!(data && data.ok), saved: data && data.saved, received: data && data.received, status: res.status },
+                    timestamp: Date.now(),
+                }),
+            }).catch(() => {});
+            // #endregion
             if (!res.ok || !data || !data.ok) {
                 throw new Error((data && data.error) ? data.error : 'Ошибка сохранения');
             }
-            setSaveStatus(`Сохранено: ${Number(data.saved || 0)} строк`);
+            const savedN = Number(data.saved || 0);
+            const recvN = Number(data.received);
+            if (Number.isFinite(recvN) && recvN !== savedN) {
+                setSaveStatus(`Сохранено: ${savedN} из ${recvN} строк (часть отклонена проверкой)`, true);
+            } else {
+                setSaveStatus(`Сохранено: ${savedN} строк`);
+            }
         } catch (err) {
             setSaveStatus(`Ошибка сохранения: ${err.message || err}`, true);
         } finally {
@@ -1981,21 +2487,101 @@ $pageTitle = 'Планирование сборки гофропакетов';
         }
     }
 
-    function removeStripFromPoolByIdOrQty(state, stripId, qty) {
-        let idx = strips.findIndex((s) => s.id === stripId);
-        if (idx < 0) {
-            idx = strips.findIndex((s) =>
-                String(s.source_row || '') === String(state.row.dataset.rowKey || '')
-                && (Math.max(0, parseInt(s.qty_capacity || 0, 10) || 0) === qty)
-            );
+    /**
+     * Снимает с пула qty г/п по позиции (source_row), без угадывания по ёмкости полосы.
+     * Нужен при загрузке плана V2: strip_id из БД не совпадает с новыми S1,S2,… после перезагрузки.
+     */
+    function consumePoolGofroQtyFromRow(rowKey, qty) {
+        const out = [];
+        let remaining = Math.max(0, parseInt(qty, 10) || 0);
+        const rk = String(rowKey || '');
+        while (remaining > 0) {
+            const idx = strips.findIndex((s) => String(s.source_row || '') === rk);
+            if (idx < 0) {
+                break;
+            }
+            const s = strips[idx];
+            const cap = Math.max(0, parseInt(s.qty_capacity || 0, 10) || computeQtyFromLength(Number(s.length) || 0));
+            if (cap <= 0) {
+                selectedStripIds.delete(s.id);
+                strips.splice(idx, 1);
+                continue;
+            }
+            if (remaining >= cap) {
+                out.push({ strip_id: s.id, qty: cap });
+                remaining -= cap;
+                selectedStripIds.delete(s.id);
+                strips.splice(idx, 1);
+            } else {
+                out.push({ strip_id: s.id, qty: remaining });
+                s.qty_capacity = cap - remaining;
+                s.length = s.qty_capacity * NORM_PER_UNIT;
+                remaining = 0;
+            }
         }
+        return out;
+    }
+
+    function removeStripFromPoolByIdOrQty(state, stripId, qty) {
+        const idx = strips.findIndex((s) => s.id === stripId);
         if (idx < 0) {
             return null;
         }
         const removed = strips[idx];
-        selectedStripIds.delete(removed.id);
-        strips.splice(idx, 1);
+        const cap = Math.max(0, parseInt(removed.qty_capacity || 0, 10) || computeQtyFromLength(Number(removed.length) || 0));
+        const need = Math.max(0, parseInt(qty, 10) || 0);
+        if (need <= 0) {
+            return null;
+        }
+        if (need >= cap) {
+            selectedStripIds.delete(removed.id);
+            strips.splice(idx, 1);
+            return removed;
+        }
+        removed.qty_capacity = cap - need;
+        removed.length = removed.qty_capacity * NORM_PER_UNIT;
         return removed;
+    }
+
+    /**
+     * После загрузки плана: если в календаре суммарно меньше г/п, чем gofroNeed, а в пуле не хватает
+     * ёмкости под остаток — добавляем полосы (защита от рассинхрона БД / strip_id / порядка групп).
+     */
+    function replenishPoolForUnallocatedNeedAfterPlan() {
+        rowStateMap.forEach((state, rowKey) => {
+            if (state.dismissed || !state.packageKey || state.gofroNeed <= 0 || state.packagesPerRoll <= 0) {
+                return;
+            }
+            let allocatedSum = 0;
+            Object.keys(state.allocatedByDate || {}).forEach((d) => {
+                allocatedSum += parseInt(state.allocatedByDate[d] || 0, 10) || 0;
+            });
+            const needStill = Math.max(0, state.gofroNeed - allocatedSum);
+            let poolCap = 0;
+            strips.forEach((s) => {
+                if (String(s.source_row || '') !== String(rowKey)) {
+                    return;
+                }
+                poolCap += Math.max(0, parseInt(s.qty_capacity || 0, 10) || computeQtyFromLength(Number(s.length) || 0));
+            });
+            let deficit = needStill - poolCap;
+            if (deficit <= 0) {
+                return;
+            }
+            while (deficit > 0) {
+                const q = Math.min(state.packagesPerRoll, deficit);
+                strips.push({
+                    id: `S${stripSeq++}`,
+                    length: q * NORM_PER_UNIT,
+                    qty_capacity: q,
+                    package_type: state.packageKey,
+                    package_label: state.filterName || state.packageName || getPackageLabel(state.packageKey),
+                    order: state.order || '',
+                    source_row: rowKey,
+                });
+                deficit -= q;
+            }
+        });
     }
 
     function applyLoadedPlanRows(rows) {
@@ -2016,7 +2602,17 @@ $pageTitle = 'Планирование сборки гофропакетов';
             grouped.get(mapKey).items.push({ strip_id: stripId, qty });
         });
 
-        grouped.forEach((group) => {
+        const sortedGroups = Array.from(grouped.values()).sort((a, b) => {
+            if (String(a.rowKey) !== String(b.rowKey)) {
+                return String(a.rowKey).localeCompare(String(b.rowKey), 'ru');
+            }
+            if (String(a.date) !== String(b.date)) {
+                return String(a.date).localeCompare(String(b.date));
+            }
+            return String(a.groupId).localeCompare(String(b.groupId), 'ru');
+        });
+
+        sortedGroups.forEach((group) => {
             const state = rowStateMap.get(group.rowKey);
             if (!state || state.dismissed) {
                 return;
@@ -2027,13 +2623,34 @@ $pageTitle = 'Планирование сборки гофропакетов';
             }
             const restoredItems = [];
             group.items.forEach((item) => {
-                const removed = removeStripFromPoolByIdOrQty(state, item.strip_id, item.qty);
-                if (!removed) {
+                const qty = Math.max(0, parseInt(item.qty || 0, 10) || 0);
+                if (qty <= 0) {
                     return;
                 }
-                restoredItems.push({
-                    strip_id: item.strip_id || removed.id,
-                    qty: item.qty,
+                const idx = strips.findIndex((s) => s.id === item.strip_id);
+                if (idx >= 0) {
+                    const s0 = strips[idx];
+                    const cap0 = Math.max(0, parseInt(s0.qty_capacity || 0, 10) || computeQtyFromLength(Number(s0.length) || 0));
+                    const applyQty = Math.min(qty, cap0);
+                    const removed = removeStripFromPoolByIdOrQty(state, item.strip_id, qty);
+                    if (!removed) {
+                        return;
+                    }
+                    restoredItems.push({
+                        strip_id: item.strip_id || removed.id,
+                        qty: applyQty,
+                    });
+                    return;
+                }
+                const segs = consumePoolGofroQtyFromRow(group.rowKey, qty);
+                if (segs.length === 0) {
+                    return;
+                }
+                segs.forEach((seg) => {
+                    restoredItems.push({
+                        strip_id: item.strip_id || seg.strip_id,
+                        qty: seg.qty,
+                    });
                 });
             });
             if (restoredItems.length === 0) {
@@ -2054,6 +2671,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
             }
             supplyMap[group.rowKey][group.date] = (parseInt(supplyMap[group.rowKey][group.date] || 0, 10) || 0) + totalQty;
         });
+        replenishPoolForUnallocatedNeedAfterPlan();
         if (selectedStripIds.size === 0) {
             selectedSourceRow = '';
         }
@@ -2315,6 +2933,21 @@ $pageTitle = 'Планирование сборки гофропакетов';
         taskSheetModal.addEventListener('click', (e) => {
             if (e.target === taskSheetModal) {
                 closeTaskSheetModal();
+            }
+        });
+    }
+    if (overdueAlertBtn) {
+        overdueAlertBtn.addEventListener('click', () => {
+            openOverdueAlertModal();
+        });
+    }
+    if (overdueAlertClose) {
+        overdueAlertClose.addEventListener('click', closeOverdueAlertModal);
+    }
+    if (overdueAlertModal) {
+        overdueAlertModal.addEventListener('click', (e) => {
+            if (e.target === overdueAlertModal) {
+                closeOverdueAlertModal();
             }
         });
     }

@@ -87,7 +87,7 @@ if (isset($_GET['check'])) {
     exit;
 }
 
-// ========= API: список фильтров с остатками (активные заявки) =========
+// ========= API: список фильтров с остатком по активным заявкам (по умолчанию в модалке) =========
 // GET ?filters_with_balance=1 → ["AF1600", "Panther AirMax...", ...]
 if (isset($_GET['filters_with_balance'])) {
     header('Content-Type: application/json; charset=utf-8');
@@ -98,8 +98,8 @@ if (isset($_GET['filters_with_balance'])) {
             FROM orders o
             LEFT JOIN manufactured_production mp
                 ON BINARY mp.name_of_order = BINARY o.order_number
-                AND BINARY mp.name_of_filter = BINARY o.filter
-            WHERE (o.hide IS NULL OR o.hide = 0)
+                AND BINARY TRIM(COALESCE(mp.name_of_filter, '')) = BINARY TRIM(COALESCE(o.filter, ''))
+            WHERE (o.hide IS NULL OR o.hide <> 1)
             GROUP BY o.order_number, o.filter, o.`count`
             HAVING (o.`count` - COALESCE(SUM(mp.count_of_filters), 0)) > 0
             ORDER BY o.filter
@@ -130,11 +130,11 @@ if (isset($_GET['all_filters'])) {
     exit;
 }
 
-// ========= API: остатки по фильтру из всех активных заявок =========
-// GET ?filter_balance=1&filter=AF1600 → [{"order_number":"29-35-25","plan_count":100,"produced_count":50,"remaining_count":50}, ...]
+// ========= API: активные заявки по фильтру (остаток ≥ 0, в т.ч. закрытая позиция) =========
+// GET ?filter_balance=1&filter=AF1600 → [{"order_number":"...","plan_count":...,"produced_count":...,"remaining_count":...}, ...]
 if (isset($_GET['filter_balance'])) {
     header('Content-Type: application/json; charset=utf-8');
-    $filter = $_GET['filter'] ?? '';
+    $filter = trim((string)($_GET['filter'] ?? ''));
     if ($filter === '') { echo json_encode([]); exit; }
     try {
         $pdo = pdo_u5();
@@ -147,12 +147,13 @@ if (isset($_GET['filter_balance'])) {
             FROM `orders` o
             LEFT JOIN `manufactured_production` mp 
                 ON BINARY mp.name_of_order = BINARY o.order_number 
-                AND BINARY mp.name_of_filter = BINARY o.filter
-            WHERE BINARY o.filter = BINARY ?
-              AND (o.hide IS NULL OR o.hide = 0)
+                AND BINARY TRIM(COALESCE(mp.name_of_filter, '')) = BINARY TRIM(COALESCE(o.filter, ''))
+            WHERE BINARY TRIM(COALESCE(o.filter, '')) = BINARY ?
+              AND (o.hide IS NULL OR o.hide <> 1)
             GROUP BY o.order_number, o.`count`
-            HAVING remaining_count > 0
-            ORDER BY o.order_number
+            ORDER BY ((o.`count` - COALESCE(SUM(mp.count_of_filters), 0)) > 0) DESC,
+                     (o.`count` - COALESCE(SUM(mp.count_of_filters), 0)) DESC,
+                     o.order_number
         ");
         $stmt->execute([$filter]);
         $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -169,12 +170,12 @@ if (isset($_GET['filter_balance'])) {
     exit;
 }
 
-// ========= API: архивные заявки по фильтру (последние 5 по свежести, для внесения остатка) =========
+// ========= API: архивные заявки по фильтру (все строки с этим фильтром, для внесения остатка) =========
 // Номер заявки: XX(неделя старт)-XX(неделя финиш)-XX(год). Формат XX-XX — древние, в конец.
-// GET ?filter_balance_archived=1&filter=AF1600 → [{"order_number":"...","plan_count":100,"produced_count":100,"remaining_count":0}, ...]
+// GET ?filter_balance_archived=1&filter=AF1600 → [...] без LIMIT, чтобы не терять заявки вроде 15-18-26
 if (isset($_GET['filter_balance_archived'])) {
     header('Content-Type: application/json; charset=utf-8');
-    $filter = $_GET['filter'] ?? '';
+    $filter = trim((string)($_GET['filter'] ?? ''));
     if ($filter === '') { echo json_encode([]); exit; }
     try {
         $pdo = pdo_u5();
@@ -187,9 +188,9 @@ if (isset($_GET['filter_balance_archived'])) {
             FROM `orders` o
             LEFT JOIN `manufactured_production` mp 
                 ON BINARY mp.name_of_order = BINARY o.order_number 
-                AND BINARY mp.name_of_filter = BINARY o.filter
-            WHERE BINARY o.filter = BINARY ?
-              AND (o.hide = 1)
+                AND BINARY TRIM(COALESCE(mp.name_of_filter, '')) = BINARY TRIM(COALESCE(o.filter, ''))
+            WHERE BINARY TRIM(COALESCE(o.filter, '')) = BINARY ?
+              AND o.hide = 1
             GROUP BY o.order_number, o.`count`
             ORDER BY (
                 CASE WHEN (LENGTH(o.order_number) - LENGTH(REPLACE(o.order_number, '-', ''))) >= 2
@@ -198,7 +199,6 @@ if (isset($_GET['filter_balance_archived'])) {
                      ELSE 0
                 END
             ) DESC
-            LIMIT 5
         ");
         $stmt->execute([$filter]);
         $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -349,9 +349,10 @@ $today = date('Y-m-d');
 
             <!-- 2. Заявки с остатками по выбранному фильтру (активные или архивные) -->
             <div id="ordersBlock" class="hidden mb-3">
-                <label id="ordersBlockLabel" class="block text-sm font-medium mb-1">2. Активные заявки с остатком по этому фильтру</label>
+                <label id="ordersBlockLabel" class="block text-sm font-medium mb-1">2. Заявки по выбранному фильтру</label>
                 <div id="ordersList" class="border rounded p-2 bg-gray-50 max-h-40 overflow-y-auto space-y-1 text-sm"></div>
                 <input type="hidden" id="modalOrder" value="">
+                <input type="hidden" id="modalPlanCount" value="">
             </div>
 
             <!-- 3. Количество -->
@@ -383,7 +384,23 @@ $today = date('Y-m-d');
     }
 
     let currentFilterBalance = [];
-    let currentFilterIsArchived = false;
+
+    function rowKey(order, planCount) {
+        return String(order) + '\0' + String(planCount);
+    }
+
+    /** Выбранная строка из списка заявок (учёт plan_count при дубле номера). */
+    function getSelectedBalanceItem() {
+        const order = document.getElementById('modalOrder').value;
+        const planStr = document.getElementById('modalPlanCount').value;
+        if (!order) return null;
+        const planCount = parseInt(planStr, 10);
+        const byBoth = currentFilterBalance.find(x =>
+            x.order_number === order && (Number.isFinite(planCount) ? x.plan_count === planCount : true)
+        );
+        if (byBoth) return byBoth;
+        return currentFilterBalance.find(x => x.order_number === order) || null;
+    }
 
     async function openModal() {
         document.getElementById('modal').classList.remove('hidden');
@@ -391,9 +408,9 @@ $today = date('Y-m-d');
         document.getElementById('countBlock').classList.add('hidden');
         document.getElementById('correctnessBlock').classList.add('hidden');
         document.getElementById('modalOrder').value = '';
+        document.getElementById('modalPlanCount').value = '';
         document.getElementById('modalCount').value = '';
         currentFilterBalance = [];
-        currentFilterIsArchived = false;
         await loadFiltersWithBalance();
         setTimeout(() => document.getElementById('modalName')?.focus(), 50);
     }
@@ -402,12 +419,12 @@ $today = date('Y-m-d');
         document.getElementById('modal').classList.add('hidden');
         document.getElementById('modalName').value = '';
         document.getElementById('modalOrder').value = '';
+        document.getElementById('modalPlanCount').value = '';
         document.getElementById('modalCount').value = '';
         document.getElementById('ordersBlock').classList.add('hidden');
         document.getElementById('countBlock').classList.add('hidden');
         document.getElementById('correctnessBlock').classList.add('hidden');
         currentFilterBalance = [];
-        currentFilterIsArchived = false;
     }
 
     async function loadAllFilters() {
@@ -460,6 +477,7 @@ $today = date('Y-m-d');
         const correctnessBlock = document.getElementById('correctnessBlock');
 
         document.getElementById('modalOrder').value = '';
+        document.getElementById('modalPlanCount').value = '';
         document.getElementById('modalCount').value = '';
         countBlock.classList.add('hidden');
         correctnessBlock.classList.add('hidden');
@@ -472,35 +490,43 @@ $today = date('Y-m-d');
 
         ordersList.innerHTML = 'Загрузка…';
         ordersBlock.classList.remove('hidden');
-        document.getElementById('ordersBlockLabel').textContent = '2. Активные заявки с остатком по этому фильтру';
-        currentFilterIsArchived = false;
+
+        let active = [];
+        let archived = [];
         try {
             const res = await fetch(`?filter_balance=1&filter=${encodeURIComponent(filter)}`);
-            const balance = await res.json();
-            currentFilterBalance = balance || [];
+            active = await res.json();
+            if (!Array.isArray(active)) active = [];
         } catch (e) {
-            currentFilterBalance = [];
+            active = [];
+        }
+        try {
+            const resArch = await fetch(`?filter_balance_archived=1&filter=${encodeURIComponent(filter)}`);
+            archived = await resArch.json();
+            if (!Array.isArray(archived)) archived = [];
+        } catch (e) {
+            archived = [];
         }
 
-        if (currentFilterBalance.length === 0) {
-            try {
-                const resArch = await fetch(`?filter_balance_archived=1&filter=${encodeURIComponent(filter)}`);
-                const archived = await resArch.json();
-                if (archived && archived.length > 0) {
-                    currentFilterBalance = archived;
-                    currentFilterIsArchived = true;
-                    document.getElementById('ordersBlockLabel').textContent = '2. Архивные заявки с этим фильтром (выберите заявку для внесения остатка)';
-                }
-            } catch (e) {}
+        const activeRows = active.map(x => ({ ...x, isArchived: false }));
+        const seenActive = new Set(activeRows.map(x => rowKey(x.order_number, x.plan_count)));
+        const archivedRows = [];
+        for (const x of archived) {
+            const k = rowKey(x.order_number, x.plan_count);
+            if (!seenActive.has(k)) {
+                archivedRows.push({ ...x, isArchived: true });
+            }
         }
+        currentFilterBalance = activeRows.concat(archivedRows);
+
+        document.getElementById('ordersBlockLabel').textContent = '2. Заявки по выбранному фильтру';
 
         if (currentFilterBalance.length === 0) {
             ordersList.innerHTML = '<span class="text-gray-500">Нет активных и архивных заявок по этому фильтру</span>';
             return;
         }
 
-        ordersList.innerHTML = '';
-        for (const item of currentFilterBalance) {
+        function appendOrderButton(item) {
             const order = item.order_number;
             const rem = item.remaining_count;
             const plan = item.plan_count;
@@ -509,22 +535,43 @@ $today = date('Y-m-d');
             div.type = 'button';
             div.className = 'w-full text-left px-2 py-1.5 rounded border border-transparent hover:bg-blue-100 hover:border-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-400 order-item';
             div.dataset.order = order;
-            div.textContent = currentFilterIsArchived
+            div.dataset.plan = String(plan);
+            div.textContent = item.isArchived
                 ? `Заявка ${order} (архив) — план ${plan}, сделано ${produced}, остаток ${rem}`
                 : `Заявка ${order} — осталось ${rem} из ${plan} (сделано ${produced})`;
-            div.addEventListener('click', () => selectOrder(order));
+            div.addEventListener('click', () => selectOrder(order, plan));
             ordersList.appendChild(div);
         }
+
+        ordersList.innerHTML = '';
+        if (activeRows.length > 0) {
+            const sub = document.createElement('div');
+            sub.className = 'text-xs font-semibold text-gray-600 px-1 py-1';
+            sub.textContent = 'Активные заявки';
+            ordersList.appendChild(sub);
+            for (const item of activeRows) appendOrderButton(item);
+        }
+        if (archivedRows.length > 0) {
+            const subA = document.createElement('div');
+            subA.className = 'text-xs font-semibold text-gray-600 px-1 py-1 mt-2 border-t border-gray-200 pt-2';
+            subA.textContent = 'Архивные заявки';
+            ordersList.appendChild(subA);
+            for (const item of archivedRows) appendOrderButton(item);
+        }
+
         if (currentFilterBalance.length === 1) {
-            selectOrder(currentFilterBalance[0].order_number);
+            const only = currentFilterBalance[0];
+            selectOrder(only.order_number, only.plan_count);
         }
     }
 
-    function selectOrder(order) {
+    function selectOrder(order, planCount) {
         document.getElementById('modalOrder').value = order;
+        document.getElementById('modalPlanCount').value = String(planCount);
         document.querySelectorAll('.order-item').forEach(el => {
-            el.classList.toggle('bg-blue-100', el.dataset.order === order);
-            el.classList.toggle('border-blue-400', el.dataset.order === order);
+            const ok = el.dataset.order === order && el.dataset.plan === String(planCount);
+            el.classList.toggle('bg-blue-100', ok);
+            el.classList.toggle('border-blue-400', ok);
         });
         document.getElementById('countBlock').classList.remove('hidden');
         document.getElementById('modalCount').focus();
@@ -546,15 +593,16 @@ $today = date('Y-m-d');
             return;
         }
 
-        const item = currentFilterBalance.find(x => x.order_number === order);
+        const item = getSelectedBalanceItem();
         if (!item) {
             block.classList.add('hidden');
             return;
         }
 
         const remaining = item.remaining_count;
-        const totalRemaining = currentFilterBalance.reduce((s, x) => s + x.remaining_count, 0);
-        const multi = currentFilterBalance.length > 1;
+        const activeRows = currentFilterBalance.filter(x => !x.isArchived);
+        const totalRemaining = activeRows.reduce((s, x) => s + x.remaining_count, 0);
+        const multi = activeRows.length > 1;
 
         if (count <= 0) {
             block.textContent = userName + ', введите количество изготовленных шт.';
@@ -562,7 +610,7 @@ $today = date('Y-m-d');
             return;
         }
 
-        if (currentFilterIsArchived) {
+        if (item.isArchived) {
             block.classList.add('bg-amber-50', 'border', 'border-amber-300', 'text-amber-900');
             block.textContent = 'Внесение в архивную заявку ' + order + '. Будет внесено ' + count + ' шт.';
             return;
@@ -571,7 +619,7 @@ $today = date('Y-m-d');
         if (count > remaining) {
             if (multi) {
                 block.classList.add('bg-red-200', 'border-2', 'border-red-600', 'text-red-900', 'font-semibold', 'text-base', 'py-4', 'px-4');
-                const other = currentFilterBalance.filter(x => x.order_number !== order);
+                const other = activeRows.filter(x => !(x.order_number === item.order_number && x.plan_count === item.plan_count));
                 const parts = other.map(x => x.order_number + ' (' + x.remaining_count + ')').join(', ');
                 block.innerHTML = '<span class="text-lg">⚠️ ВНИМАНИЕ!</span><br>' + userName + ', вы вводите больше остатка по заявке ' + escapeHtml(order) + ' (осталось ' + remaining + ' шт, введено ' + count + ' шт). ' +
                     '<strong>Скорее всего, вы относите продукцию не к той заявке!</strong> Разделите между заявками: ' + escapeHtml(order) + ' (макс. ' + remaining + ') и ' + escapeHtml(parts) + '.';
@@ -622,9 +670,10 @@ $today = date('Y-m-d');
             return;
         }
 
-        const item = currentFilterBalance.find(x => x.order_number === order);
-        if (item && countNum > item.remaining_count && !currentFilterIsArchived) {
-            const multi = currentFilterBalance.length > 1;
+        const item = getSelectedBalanceItem();
+        if (item && countNum > item.remaining_count && !item.isArchived) {
+            const activeRows = currentFilterBalance.filter(x => !x.isArchived);
+            const multi = activeRows.length > 1;
             let msg;
             if (multi) {
                 msg = '⚠️ ВНИМАНИЕ! ' + userName + ', вы вносите больше остатка по одной заявке (введено ' + countNum + ', осталось ' + item.remaining_count + '). По этому фильтру есть другие заявки с остатком — скорее всего, нужно разделить продукцию!\n\nПродолжить всё равно?';
@@ -633,7 +682,7 @@ $today = date('Y-m-d');
             }
             if (!confirm(msg)) return;
         }
-        if (currentFilterIsArchived && item && !confirm('Внести ' + countNum + ' шт. в архивную заявку ' + order + '?')) return;
+        if (item && item.isArchived && !confirm('Внести ' + countNum + ' шт. в архивную заявку ' + order + '?')) return;
 
         const row = document.createElement('tr');
         row.setAttribute('data-valid', 'pending');
