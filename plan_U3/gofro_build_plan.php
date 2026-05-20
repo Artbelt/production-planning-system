@@ -22,6 +22,8 @@ if (!$session) {
 $pdo = getPdo('plan_u3');
 $todayIso = (new DateTime())->format('Y-m-d');
 $loadError = '';
+/** Макс. % выполнения для показа (как на active_positions). */
+$gofroMaxCompletionPctDefault = 80;
 
 function normalizeFilterKeyLocal(string $name): string
 {
@@ -34,6 +36,99 @@ function normalizeTextKeyLocal(string $name): string
 {
     $name = preg_replace('/\s+/u', ' ', trim($name));
     return mb_strtoupper($name, 'UTF-8');
+}
+
+/**
+ * Просрочка не может превышать потребность, не покрытую планом с сегодня (FIFO по датам).
+ *
+ * @param list<array{date: string, qty: int}> $shifts
+ * @return list<array{date: string, qty: int}>
+ */
+function capGofroDebtShiftsToUncoveredNeed(array $shifts, int $uncoveredNeed): array
+{
+    if ($uncoveredNeed <= 0 || $shifts === []) {
+        return [];
+    }
+    $total = 0;
+    foreach ($shifts as $shift) {
+        $total += (int)($shift['qty'] ?? 0);
+    }
+    if ($total <= $uncoveredNeed) {
+        return $shifts;
+    }
+    $remaining = $uncoveredNeed;
+    $capped = [];
+    foreach ($shifts as $shift) {
+        $qty = (int)($shift['qty'] ?? 0);
+        if ($qty <= 0 || $remaining <= 0) {
+            continue;
+        }
+        $take = min($qty, $remaining);
+        $capped[] = ['date' => (string)$shift['date'], 'qty' => $take];
+        $remaining -= $take;
+    }
+    return $capped;
+}
+
+/**
+ * Колонки таблицы — только с сегодня; непрерывный диапазон до последней даты.
+ *
+ * @param list<string> $dates
+ * @return list<string>
+ */
+function filterPlanDatesFromToday(array $dates, string $todayIso): array
+{
+    $filtered = [];
+    foreach ($dates as $date) {
+        $d = (string)$date;
+        if ($d !== '' && $d >= $todayIso) {
+            $filtered[] = $d;
+        }
+    }
+    if ($filtered === []) {
+        return [];
+    }
+    sort($filtered);
+    $fullDateRange = [];
+    $cursor = new DateTimeImmutable((string)$filtered[0]);
+    $lastDate = new DateTimeImmutable((string)$filtered[count($filtered) - 1]);
+    while ($cursor <= $lastDate) {
+        $fullDateRange[] = $cursor->format('Y-m-d');
+        $cursor = $cursor->modify('+1 day');
+    }
+    return $fullDateRange;
+}
+
+/** Шапка колонки даты: дата, сумма ножевой (Н), сумма ротационной (Р). */
+function renderGofroPlanDateHeaderTh(string $planDate): void
+{
+    $d = DateTime::createFromFormat('Y-m-d', $planDate);
+    $isWeekend = $d ? in_array((int)$d->format('N'), [6, 7], true) : false;
+    $dateColClass = $isWeekend ? 'date-col weekend' : 'date-col';
+    $label = $d ? $d->format('d.m') : $planDate;
+    ?>
+    <th class="<?= htmlspecialchars($dateColClass, ENT_QUOTES, 'UTF-8') ?>" data-date-total="<?= htmlspecialchars($planDate, ENT_QUOTES, 'UTF-8') ?>" title="Суммарно г/п на дату">
+        <span class="date-head-label"><?= htmlspecialchars($label, ENT_QUOTES, 'UTF-8') ?></span>
+        <span class="date-total-lines">
+            <span class="date-total-line date-total-line--knife" title="Ножевая машина">Н <span class="date-total-knife">0</span></span>
+            <span class="date-total-line date-total-line--rotary" title="Ротационная машина">Р <span class="date-total-rotary">0</span></span>
+        </span>
+    </th>
+    <?php
+}
+
+function renderGofroPlanFixedHeaderCells(): void
+{
+    ?>
+    <th class="filter-col col-compact">Фильтр</th>
+    <th class="col-compact">Аналог</th>
+    <th class="order-col col-compact">Заявка</th>
+    <th class="num-metric-col" title="Остаток фильтров">Остаток<br>фильтров</th>
+    <th class="num-metric-col" title="Г/п изготовлено">Г/п<br>изг.</th>
+    <th class="num-metric-col" title="Г/п доступно">Г/п<br>дост.</th>
+    <th class="num-metric-col" title="Потребность в г/п">Потребн.<br>г/п</th>
+    <th class="debt-col">Долг</th>
+    <?php
 }
 
 function ensureCorrugationPlanV2Table(PDO $pdo): void
@@ -59,6 +154,129 @@ function ensureCorrugationPlanV2Table(PDO $pdo): void
             KEY idx_cp2_group (group_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+}
+
+/**
+ * Записать агрегированное количество г/п на дату (одна логическая ячейка).
+ */
+function applyGofroPlanSetCell(
+    PDO $pdo,
+    string $rowKey,
+    string $order,
+    string $filterName,
+    string $packageKey,
+    string $packageName,
+    string $planDate,
+    int $qty,
+    ?int $userId
+): void {
+    $delStmt = $pdo->prepare('DELETE FROM corrugation_plan_v2 WHERE source_row_key = ? AND plan_date = ?');
+    $delStmt->execute([$rowKey, $planDate]);
+    if ($qty <= 0) {
+        return;
+    }
+    $groupId = 'G-' . substr(hash('sha256', $rowKey . '|' . $planDate), 0, 16);
+    $stripId = 'GENSYNC-' . substr(hash('sha256', $rowKey . '|' . $planDate . '|qty'), 0, 20);
+    $insStmt = $pdo->prepare('
+        INSERT INTO corrugation_plan_v2
+        (source_row_key, order_number, filter_name, package_key, package_name, plan_date, group_id, strip_id, qty, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ');
+    $insStmt->execute([
+        mb_substr($rowKey, 0, 255, 'UTF-8'),
+        mb_substr($order !== '' ? $order : '-', 0, 64, 'UTF-8'),
+        mb_substr($filterName !== '' ? $filterName : '-', 0, 255, 'UTF-8'),
+        mb_substr($packageKey !== '' ? $packageKey : '-', 0, 255, 'UTF-8'),
+        mb_substr($packageName !== '' ? $packageName : '-', 0, 255, 'UTF-8'),
+        $planDate,
+        mb_substr($groupId, 0, 128, 'UTF-8'),
+        mb_substr($stripId, 0, 128, 'UTF-8'),
+        $qty,
+        $userId,
+    ]);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $rawBody = file_get_contents('php://input');
+    $payload = [];
+    if (is_string($rawBody) && trim($rawBody) !== '') {
+        $decoded = json_decode($rawBody, true);
+        if (is_array($decoded)) {
+            $payload = $decoded;
+        }
+    }
+    if (empty($payload)) {
+        $payload = $_POST;
+    }
+    $action = (string)($payload['action'] ?? '');
+    if ($action === 'apply_moves') {
+        header('Content-Type: application/json; charset=utf-8');
+        $isDate = static function (string $value): bool {
+            return (bool)preg_match('/^\d{4}-\d{2}-\d{2}$/', $value);
+        };
+        try {
+            $rawMoves = $payload['moves'] ?? [];
+            if (!is_array($rawMoves) || empty($rawMoves)) {
+                throw new RuntimeException('Нет операций для применения.');
+            }
+            ensureCorrugationPlanV2Table($pdo);
+            $userId = isset($session['user_id']) ? (int)$session['user_id'] : null;
+            $pdo->beginTransaction();
+            foreach ($rawMoves as $idx => $move) {
+                if (!is_array($move)) {
+                    throw new RuntimeException('Операция #' . ($idx + 1) . ': некорректный формат.');
+                }
+                $rowKey = trim((string)($move['source_row_key'] ?? ''));
+                $order = trim((string)($move['order_number'] ?? ''));
+                $filterName = trim((string)($move['filter_name'] ?? ''));
+                $packageKey = trim((string)($move['package_key'] ?? ''));
+                $packageName = trim((string)($move['package_name'] ?? ''));
+                $planDate = trim((string)($move['plan_date'] ?? $move['to_date'] ?? $move['from_date'] ?? ''));
+                $mode = trim((string)($move['mode'] ?? 'set_qty'));
+                $qty = max(0, (int)($move['qty'] ?? $move['moved_qty'] ?? 0));
+                if ($rowKey === '' || !$isDate($planDate)) {
+                    throw new RuntimeException('Операция #' . ($idx + 1) . ': некорректные параметры.');
+                }
+                if ($mode === 'debt') {
+                    $fromDate = trim((string)($move['from_date'] ?? ''));
+                    $toDate = trim((string)($move['to_date'] ?? ''));
+                    if (!$isDate($fromDate) || !$isDate($toDate)) {
+                        throw new RuntimeException('Операция #' . ($idx + 1) . ': некорректные даты долга.');
+                    }
+                    if ($toDate < $todayIso) {
+                        throw new RuntimeException('Операция #' . ($idx + 1) . ': перенос долга только на сегодня или будущие даты.');
+                    }
+                    if ($qty <= 0) {
+                        throw new RuntimeException('Операция #' . ($idx + 1) . ': не указано количество для переноса из долга.');
+                    }
+                    if ($fromDate < $todayIso) {
+                        applyGofroPlanSetCell($pdo, $rowKey, $order, $filterName, $packageKey, $packageName, $fromDate, 0, $userId);
+                    }
+                    applyGofroPlanSetCell($pdo, $rowKey, $order, $filterName, $packageKey, $packageName, $toDate, $qty, $userId);
+                } elseif ($mode === 'clear_cell') {
+                    if ($planDate < $todayIso) {
+                        throw new RuntimeException('Операция #' . ($idx + 1) . ': изменение плана в прошлых датах недоступно.');
+                    }
+                    applyGofroPlanSetCell($pdo, $rowKey, $order, $filterName, $packageKey, $packageName, $planDate, 0, $userId);
+                } elseif ($mode === 'set_qty') {
+                    if ($planDate < $todayIso) {
+                        throw new RuntimeException('Операция #' . ($idx + 1) . ': изменение плана в прошлых датах недоступно.');
+                    }
+                    applyGofroPlanSetCell($pdo, $rowKey, $order, $filterName, $packageKey, $packageName, $planDate, $qty, $userId);
+                } else {
+                    throw new RuntimeException('Операция #' . ($idx + 1) . ': неизвестный режим.');
+                }
+            }
+            $pdo->commit();
+            echo json_encode(['ok' => true, 'applied' => count($rawMoves)], JSON_UNESCAPED_UNICODE);
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+        }
+        exit;
+    }
 }
 
 if (isset($_GET['api']) && $_GET['api'] === 'load_plan_v2') {
@@ -88,107 +306,12 @@ if (isset($_GET['api']) && $_GET['api'] === 'load_plan_v2') {
     exit;
 }
 
-if (isset($_GET['api']) && $_GET['api'] === 'save_plan_v2' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    header('Content-Type: application/json; charset=utf-8');
-    try {
-        ensureCorrugationPlanV2Table($pdo);
-        $raw = file_get_contents('php://input');
-        $data = json_decode((string)$raw, true);
-        $items = isset($data['items']) && is_array($data['items']) ? $data['items'] : [];
-
-        $pdo->beginTransaction();
-        $pdo->exec("DELETE FROM corrugation_plan_v2");
-        $ins = $pdo->prepare("
-            INSERT INTO corrugation_plan_v2
-            (source_row_key, order_number, filter_name, package_key, package_name, plan_date, group_id, strip_id, qty, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ");
-        $userId = isset($session['user_id']) ? (int)$session['user_id'] : null;
-        $saved = 0;
-        $received = count($items);
-        $agentDbg = __DIR__ . DIRECTORY_SEPARATOR . 'debug-32dac2.log';
-        foreach ($items as $it) {
-            $rowKey = trim((string)($it['source_row_key'] ?? ''));
-            $order = trim((string)($it['order_number'] ?? ''));
-            $filterName = trim((string)($it['filter_name'] ?? ''));
-            $packageKey = trim((string)($it['package_key'] ?? ''));
-            $packageName = trim((string)($it['package_name'] ?? ''));
-            $planDate = trim((string)($it['plan_date'] ?? ''));
-            $groupId = trim((string)($it['group_id'] ?? ''));
-            $stripId = trim((string)($it['strip_id'] ?? ''));
-            $qty = (int)($it['qty'] ?? 0);
-            // #region agent log
-            $rawRow = (string)($it['source_row_key'] ?? '');
-            $interest = (stripos($rawRow, 'LW206') !== false || stripos($rawRow, 'LUFT') !== false)
-                || (stripos($rawRow, 'TF-19-20-20-26-2') !== false || stripos($rawRow, 'TF 325') !== false)
-                || (stripos((string)($it['filter_name'] ?? ''), 'LW206') !== false)
-                || (stripos((string)($it['filter_name'] ?? ''), 'TF 325') !== false);
-            if ($interest) {
-                $skip = ($rowKey === '' || $qty <= 0 || $planDate === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $planDate));
-                $line = json_encode([
-                    'sessionId' => '32dac2',
-                    'runId' => 'save_plan_v2',
-                    'hypothesisId' => 'H3',
-                    'location' => 'save_plan_v2:item',
-                    'message' => $skip ? 'skip' : 'insert',
-                    'data' => [
-                        'rowKey' => $rowKey,
-                        'planDate' => $planDate,
-                        'qty' => $qty,
-                        'filterName' => $filterName,
-                        'stripIdLen' => strlen($stripId),
-                        'skipReason' => $skip ? (
-                            $rowKey === '' ? 'empty_rowKey' : ($qty <= 0 ? 'qty_le_0' : ($planDate === '' ? 'empty_date' : 'bad_date_format'))
-                        ) : null,
-                    ],
-                    'timestamp' => (int) round(microtime(true) * 1000),
-                ], JSON_UNESCAPED_UNICODE) . "\n";
-                @file_put_contents($agentDbg, $line, FILE_APPEND | LOCK_EX);
-            }
-            // #endregion
-            if ($rowKey === '' || $qty <= 0 || $planDate === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $planDate)) {
-                continue;
-            }
-            if ($order === '') {
-                $order = '-';
-            }
-            if ($filterName === '') {
-                $filterName = $packageName !== '' ? $packageName : '-';
-            }
-            if ($packageKey === '') {
-                $packageKey = '-';
-            }
-            if ($packageName === '') {
-                $packageName = $packageKey !== '-' ? $packageKey : '-';
-            }
-            if ($groupId === '') {
-                $groupId = 'G-' . bin2hex(random_bytes(4));
-            }
-            if ($stripId === '') {
-                $stripId = 'GEN-' . bin2hex(random_bytes(5));
-            }
-            $rowKey = mb_substr($rowKey, 0, 255, 'UTF-8');
-            $order = mb_substr($order, 0, 64, 'UTF-8');
-            $filterName = mb_substr($filterName, 0, 255, 'UTF-8');
-            $packageKey = mb_substr($packageKey, 0, 255, 'UTF-8');
-            $packageName = mb_substr($packageName, 0, 255, 'UTF-8');
-            $groupId = mb_substr($groupId, 0, 128, 'UTF-8');
-            $stripId = mb_substr($stripId, 0, 128, 'UTF-8');
-            $ins->execute([$rowKey, $order, $filterName, $packageKey, $packageName, $planDate, $groupId, $stripId, $qty, $userId]);
-            $saved++;
-        }
-        if ($pdo->inTransaction()) {
-            $pdo->commit();
-        }
-        echo json_encode(['ok' => true, 'saved' => $saved, 'received' => $received], JSON_UNESCAPED_UNICODE);
-    } catch (Throwable $e) {
-        if ($pdo->inTransaction()) {
-            $pdo->rollBack();
-        }
-        http_response_code(500);
-        echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+$maxPct = max(0, min(100, (int)$gofroMaxCompletionPctDefault));
+if (isset($_GET['max_pct']) && $_GET['max_pct'] !== '') {
+    $fromUrl = (int)$_GET['max_pct'];
+    if ($fromUrl >= 0 && $fromUrl <= 100) {
+        $maxPct = $fromUrl;
     }
-    exit;
 }
 
 $rows = [];
@@ -214,6 +337,7 @@ try {
            AND prod.name_of_filter = agg.filter_name
         WHERE agg.ordered > COALESCE(prod.produced, 0)
           AND agg.ordered > 0
+          AND COALESCE(prod.produced, 0) * 100 <= {$maxPct} * agg.ordered
         ORDER BY agg.order_number, agg.filter_name
     ";
     $rows = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
@@ -259,17 +383,13 @@ try {
         $buildPlanMap[$key][$date] += $qty;
         $buildPlanDates[$date] = true;
     }
-    /*
-     * Даты из сохранённого плана V2 (в т.ч. прошлые): без них колонок «вчера» нет,
-     * applyLoadedPlanRows отбрасывает такие строки (hasDateInHorizon), и долг не считается.
-     */
     try {
         ensureCorrugationPlanV2Table($pdo);
-        $stmtV2Dates = $pdo->query("SELECT DISTINCT plan_date FROM corrugation_plan_v2 WHERE qty > 0");
+        $stmtV2Dates = $pdo->query("SELECT DISTINCT plan_date FROM corrugation_plan_v2 WHERE qty > 0 AND plan_date >= " . $pdo->quote($todayIso));
         if ($stmtV2Dates) {
             while ($rowV2 = $stmtV2Dates->fetch(PDO::FETCH_ASSOC)) {
                 $pd = trim((string)($rowV2['plan_date'] ?? ''));
-                if ($pd !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $pd)) {
+                if ($pd !== '' && $pd >= $todayIso) {
                     $buildPlanDates[$pd] = true;
                 }
             }
@@ -277,21 +397,44 @@ try {
     } catch (Throwable $eV2) {
         /* игнорируем — до первого сохранения таблицы может не быть */
     }
-    $buildPlanDates = array_keys($buildPlanDates);
-    sort($buildPlanDates);
-    if (!empty($buildPlanDates)) {
-        $fullDateRange = [];
-        $cursor = new DateTimeImmutable((string)$buildPlanDates[0]);
-        $lastDate = new DateTimeImmutable((string)$buildPlanDates[count($buildPlanDates) - 1]);
-        while ($cursor <= $lastDate) {
-            $fullDateRange[] = $cursor->format('Y-m-d');
-            $cursor = $cursor->modify('+1 day');
-        }
-        $buildPlanDates = $fullDateRange;
-    }
+    $buildPlanDates = filterPlanDatesFromToday(array_keys($buildPlanDates), $todayIso);
 } catch (Throwable $e) {
     $buildPlanMap = [];
     $buildPlanDates = [];
+}
+
+/** Сохранённый план гофропакетов: [rowKey][date] => qty */
+$gofroPlanMap = [];
+try {
+    ensureCorrugationPlanV2Table($pdo);
+    $stmtGofroPlan = $pdo->query("
+        SELECT source_row_key, plan_date, SUM(qty) AS qty
+        FROM corrugation_plan_v2
+        WHERE qty > 0
+        GROUP BY source_row_key, plan_date
+    ");
+    $dateSet = [];
+    foreach ($buildPlanDates as $d) {
+        $dateSet[(string)$d] = true;
+    }
+    foreach ($stmtGofroPlan->fetchAll(PDO::FETCH_ASSOC) as $gp) {
+        $rk = trim((string)($gp['source_row_key'] ?? ''));
+        $pd = trim((string)($gp['plan_date'] ?? ''));
+        $q = (int)($gp['qty'] ?? 0);
+        if ($rk === '' || $pd === '' || $q <= 0) {
+            continue;
+        }
+        if (!isset($gofroPlanMap[$rk])) {
+            $gofroPlanMap[$rk] = [];
+        }
+        $gofroPlanMap[$rk][$pd] = ($gofroPlanMap[$rk][$pd] ?? 0) + $q;
+        if ($pd >= $todayIso) {
+            $dateSet[$pd] = true;
+        }
+    }
+    $buildPlanDates = filterPlanDatesFromToday(array_merge($buildPlanDates, array_keys($dateSet)), $todayIso);
+} catch (Throwable $e) {
+    $gofroPlanMap = [];
 }
 
 $filterMetaByKey = [];
@@ -541,6 +684,75 @@ if (!empty($rows) && !empty($filterMetaByKey)) {
     }
 }
 
+/** Долг по г/п: [rowKey] => [['date' => Y-m-d, 'qty' => int], ...] */
+$gofroDebtShiftMap = [];
+if (!empty($rows)) {
+    foreach ($rows as $rowDebt) {
+        $rawOrderDebt = (string)($rowDebt['order_number'] ?? '');
+        $rawFilterDebt = (string)($rowDebt['filter_name'] ?? '');
+        if ($rawOrderDebt === '' || $rawFilterDebt === '') {
+            continue;
+        }
+        $orderedDebt = (int)($rowDebt['ordered'] ?? 0);
+        $producedDebt = (int)($rowDebt['produced'] ?? 0);
+        $remainingDebt = max(0, $orderedDebt - $producedDebt);
+        $rowKeyDebt = $rawOrderDebt . '|' . normalizeTextKeyLocal($rawFilterDebt);
+        $metaDebt = $filterMetaByKey[normalizeFilterKeyLocal($rawFilterDebt)] ?? null;
+        $packageDebt = trim((string)($metaDebt['filter_package'] ?? ''));
+        $packageKeyDebt = normalizeTextKeyLocal($packageDebt);
+        $gofroProducedDebt = $packageKeyDebt !== ''
+            ? (int)($gofroProducedByOrderPackage[$rawOrderDebt][$packageKeyDebt] ?? 0)
+            : 0;
+        $gofroAvailableDebt = $gofroProducedDebt - $producedDebt;
+        $gofroNeedDebt = max(0, $remainingDebt - $gofroAvailableDebt);
+
+        // Просрочка: г/п, запланированные на прошлую дату и ещё не закрытые переносом.
+        if ($gofroNeedDebt <= 0) {
+            continue;
+        }
+        $qtyByDate = $gofroPlanMap[$rowKeyDebt] ?? [];
+        $shifts = [];
+        $plannedFromToday = 0;
+        foreach ($qtyByDate as $dateKey => $qtyVal) {
+            $qtyVal = (int)$qtyVal;
+            if ($qtyVal <= 0) {
+                continue;
+            }
+            if ($dateKey < $todayIso) {
+                $shifts[] = ['date' => (string)$dateKey, 'qty' => $qtyVal];
+            } else {
+                $plannedFromToday += $qtyVal;
+            }
+        }
+        if ($shifts !== []) {
+            usort($shifts, static function ($a, $b) {
+                return strcmp((string)$a['date'], (string)$b['date']);
+            });
+            // Уже изготовленные г/п учтены в gofroNeed; в долге — только непокрытая потребность.
+            $uncoveredNeed = max(0, $gofroNeedDebt - $plannedFromToday);
+            $shifts = capGofroDebtShiftsToUncoveredNeed($shifts, $uncoveredNeed);
+        }
+        if (!empty($shifts)) {
+            $gofroDebtShiftMap[$rowKeyDebt] = $shifts;
+        }
+    }
+}
+
+/** План сборки фильтров по строке таблицы: [rowKey][date] => qty */
+$buildPlanMapByRowKey = [];
+if (!empty($rows)) {
+    foreach ($rows as $rowBp) {
+        $orderBp = (string)($rowBp['order_number'] ?? '');
+        $filterBp = (string)($rowBp['filter_name'] ?? '');
+        if ($orderBp === '' || $filterBp === '') {
+            continue;
+        }
+        $rowKeyBp = $orderBp . '|' . normalizeTextKeyLocal($filterBp);
+        $planKeyBp = $orderBp . '|' . normalizeFilterKeyLocal($filterBp);
+        $buildPlanMapByRowKey[$rowKeyBp] = $buildPlanMap[$planKeyBp] ?? [];
+    }
+}
+
 $pageTitle = 'Планирование сборки гофропакетов';
 ?>
 <!DOCTYPE html>
@@ -575,30 +787,67 @@ $pageTitle = 'Планирование сборки гофропакетов';
             margin: 0 auto;
             padding: 14px;
         }
-        .layout {
-            display: grid;
-            grid-template-columns: 1fr 280px;
-            gap: 12px;
-            align-items: start;
-        }
         .panel {
             background: var(--panel);
             border: 1px solid var(--border);
             border-radius: 12px;
-            /* Не задавать overflow: здесь ломает position:sticky у шапки при прокрутке страницы */
-            overflow: visible;
         }
-        table {
-            width: 100%;
+        .panel.panel--gofro-table {
+            width: fit-content;
+            max-width: 100%;
+            overflow-x: auto;
+            overflow-y: visible;
+        }
+        table.gofro-plan-table {
+            width: max-content;
             border-collapse: separate;
             border-spacing: 0;
             font-size: 12px;
+            table-layout: auto;
         }
-        th, td {
+        table.gofro-plan-table th,
+        table.gofro-plan-table td {
             border-right: 1px solid var(--border);
             border-bottom: 1px solid var(--border);
-            padding: 2px 4px;
+            padding: 2px 3px;
+        }
+        table.gofro-plan-table th.col-compact,
+        table.gofro-plan-table td.col-compact {
+            width: 1%;
             white-space: nowrap;
+        }
+        table.gofro-plan-table th.filter-col,
+        table.gofro-plan-table td.filter-name-cell {
+            width: 1%;
+            max-width: 168px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        table.gofro-plan-table th.order-col,
+        table.gofro-plan-table td.order-col {
+            width: 1%;
+            white-space: nowrap;
+        }
+        table.gofro-plan-table th.num-metric-col,
+        table.gofro-plan-table td.num-metric-col {
+            width: 1%;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+        }
+        table.gofro-plan-table th.num-metric-col {
+            white-space: normal;
+            line-height: 1.15;
+            text-align: right;
+            vertical-align: bottom;
+            font-size: 10px;
+            padding: 3px 4px;
+        }
+        table.gofro-plan-table td.num-metric-col {
+            text-align: right;
+        }
+        table.gofro-plan-table td.num-metric-col.num-metric-col--left {
+            text-align: left;
         }
         th {
             background: #f9fafb;
@@ -612,13 +861,14 @@ $pageTitle = 'Планирование сборки гофропакетов';
         }
         td.num, th.num { text-align: right; }
         th.num-left, td.num-left { text-align: left; }
-        td.date-cell, th.date-col {
-            text-align: left;
-            min-width: 28px;
-            width: 28px;
-        }
-        th.date-col {
+        table.gofro-plan-table th.date-col,
+        table.gofro-plan-table td.date-cell {
+            width: 1%;
+            min-width: 40px;
+            padding: 2px 3px;
+            box-sizing: border-box;
             text-align: center;
+            white-space: nowrap;
         }
         thead th.date-col.weekend {
             color: #9ca3af;
@@ -629,7 +879,8 @@ $pageTitle = 'Планирование сборки гофропакетов';
         td.date-cell {
             position: relative;
         }
-        thead th.date-col.date-hover {
+        thead th.date-col.date-hover,
+        tfoot th.date-col.date-hover {
             z-index: 7;
             background: #e8ecfd;
             outline: 2px solid rgba(36, 87, 230, 0.5);
@@ -741,119 +992,75 @@ $pageTitle = 'Планирование сборки гофропакетов';
             margin: 0 0 6px;
             padding: 0 2px;
         }
-        td.date-cell.gantt-full {
-            background: var(--ok-bg);
-            box-shadow: inset 0 0 0 1px rgba(22, 163, 74, .2);
+        .coverage-legend {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px 14px;
+            margin: 0 0 10px;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #f8fafc;
+            font-size: 12px;
         }
-        td.date-cell.gantt-partial {
-            background: var(--warn-bg);
-            box-shadow: inset 0 0 0 1px rgba(217, 119, 6, .2);
+        .coverage-legend[hidden] { display: none; }
+        .coverage-legend__title {
+            font-weight: 600;
+            color: var(--ink);
         }
-        td.date-cell.gantt-plan-full {
-            background: var(--plan-bg);
-            box-shadow: inset 0 0 0 1px rgba(37, 99, 235, .22);
+        .coverage-legend__item {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
         }
-        td.date-cell.gantt-plan-partial {
-            background: #eff6ff;
-            box-shadow: inset 0 0 0 1px rgba(37, 99, 235, .35);
+        .coverage-legend__swatch {
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+            border: 1px solid rgba(15, 23, 42, 0.12);
+            flex-shrink: 0;
+        }
+        .coverage-legend__swatch--stock { background: #dcfce7; }
+        .coverage-legend__swatch--plan { background: #dbeafe; }
+        .coverage-legend__swatch--gap { background: #fee2e2; }
+        .coverage-legend__hint {
+            color: var(--muted);
+            font-size: 11px;
+        }
+        td.date-cell.gofro-coverage-cell {
+            background: #dcfce7;
+            box-shadow: inset 0 0 0 1px rgba(22, 163, 74, 0.35);
+        }
+        td.date-cell.gofro-coverage-cell-partial {
+            background: linear-gradient(to top, #dcfce7 0%, #dcfce7 55%, #fff 55%, #fff 100%);
+            box-shadow: inset 0 0 0 1px rgba(22, 163, 74, 0.35);
+        }
+        td.date-cell.gofro-coverage-planned-cell {
+            background: #dbeafe;
+            box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.35);
+        }
+        td.date-cell.gofro-coverage-planned-cell-partial {
+            background: linear-gradient(to top, #dbeafe 0%, #dbeafe 55%, #fff 55%, #fff 100%);
+            box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.35);
+        }
+        td.date-cell.gofro-coverage-cell-partial.gofro-coverage-planned-cell-partial {
+            background: linear-gradient(to top, #dbeafe 0%, #dbeafe 40%, #dcfce7 40%, #dcfce7 100%);
+            box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.35);
+        }
+        td.date-cell.gofro-coverage-gap {
+            background: #fee2e2;
+            box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.35);
+        }
+        td.date-cell.gofro-coverage-gap-partial {
+            background: linear-gradient(to top, #fee2e2 0%, #fee2e2 45%, #fff 45%, #fff 100%);
+            box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.35);
         }
         .muted {
             color: var(--muted);
         }
         .muted-light {
             color: #d1d5db;
-        }
-        .strip-pool {
-            background: #fff;
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 10px;
-            position: sticky;
-            top: 12px;
-            max-height: calc(100vh - 24px);
-            overflow: auto;
-        }
-        .strip-pool h3 {
-            margin: 0 0 8px;
-            font-size: 13px;
-        }
-        .strip-group {
-            border: 1px solid #e2e8f0;
-            border-radius: 10px;
-            padding: 8px;
-            margin-bottom: 10px;
-            background: #f8fafc;
-        }
-        .strip-group__title {
-            font-size: 12px;
-            font-weight: 700;
-            color: #334155;
-            margin: 0 0 6px;
-        }
-        .strip {
-            border: 1px solid #cbd5e1;
-            border-radius: 8px;
-            padding: 6px;
-            margin-bottom: 6px;
-            background: #fff;
-            cursor: grab;
-        }
-        .strip:active { cursor: grabbing; }
-        .strip.strip-selected {
-            border-color: #2563eb;
-            background: #eff6ff;
-            box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.2);
-        }
-        .strip-meta {
-            font-size: 11px;
-            color: #334155;
-            display: flex;
-            justify-content: space-between;
-            gap: 6px;
-        }
-        .drag-preview {
-            position: fixed;
-            z-index: 9999;
-            pointer-events: none;
-            background: #111827;
-            color: #fff;
-            font-size: 11px;
-            border-radius: 6px;
-            padding: 4px 6px;
-            box-shadow: 0 6px 16px rgba(0,0,0,.25);
-            display: none;
-            white-space: nowrap;
-        }
-        @media (max-width: 1200px) {
-            .layout {
-                grid-template-columns: 1fr;
-            }
-            .strip-pool {
-                position: static;
-                max-height: none;
-            }
-        }
-        th.row-dismiss-col, td.row-dismiss-col {
-            width: 28px;
-            min-width: 28px;
-            max-width: 28px;
-            text-align: center;
-            padding: 2px;
-            vertical-align: middle;
-        }
-        .row-dismiss-btn {
-            border: none;
-            background: transparent;
-            color: #94a3b8;
-            font-size: 16px;
-            line-height: 1;
-            padding: 0 2px;
-            cursor: pointer;
-            border-radius: 4px;
-        }
-        .row-dismiss-btn:hover {
-            color: #b91c1c;
-            background: #fee2e2;
         }
         .row-pool-hint {
             display: inline-flex;
@@ -900,90 +1107,383 @@ $pageTitle = 'Планирование сборки гофропакетов';
             color: #64748b;
             white-space: nowrap;
         }
-        .debt-badge {
-            display: inline-flex;
-            align-items: center;
-            margin-left: 6px;
-            padding: 1px 6px;
-            border-radius: 999px;
-            border: 1px solid #fecaca;
-            background: #fef2f2;
-            color: #b91c1c;
-            font-size: 10px;
-            font-weight: 700;
-            line-height: 1.4;
-            white-space: nowrap;
-            vertical-align: middle;
-        }
         tr.has-overdue-debt td.filter-name-cell {
             background: #fff7ed;
             box-shadow: inset 3px 0 0 #ea580c;
         }
-        td.analog-cell {
-            max-width: 180px;
+        th.debt-col, td.debt-cell {
+            width: 0.1%;
+            min-width: 56px;
+            max-width: 88px;
+            text-align: center;
+            box-sizing: border-box;
+        }
+        td.debt-cell {
+            vertical-align: middle;
+            padding: 1px 3px;
+            height: 24px;
+            max-height: 24px;
+            min-height: 24px;
+            overflow: hidden;
+            position: relative;
+        }
+        td.debt-cell.debt-cell--warn {
+            background: #fffbeb;
+            padding-right: 14px;
+        }
+        td.debt-cell.debt-cell--warn::after {
+            content: "⏳";
+            position: absolute;
+            right: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 10px;
+            opacity: 0.75;
+            pointer-events: none;
+        }
+        .debt-list {
+            display: flex;
+            flex-direction: row;
+            flex-wrap: nowrap;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            height: 22px;
+            max-height: 22px;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+        .debt-shift {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 24px;
+            min-height: 18px;
+            max-height: 20px;
+            padding: 0 4px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            background: #f9fafb;
+            color: #374151;
+            font-size: 10px;
+            font-weight: 600;
+            line-height: 1.2;
+            cursor: grab;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .debt-shift.drag-source-single {
+            outline: 2px solid #93c5fd;
+            outline-offset: -2px;
+            background: #eff6ff;
+        }
+        .debt-more {
+            appearance: none;
+            flex-shrink: 0;
+            border: 1px dashed #94a3b8;
+            border-radius: 4px;
+            background: #f1f5f9;
+            color: #475569;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 1.2;
+            padding: 0 4px;
+            min-height: 18px;
+            max-height: 20px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .debt-more:hover { background: #e2e8f0; }
+        .debt-popover[hidden] { display: none; }
+        .debt-popover {
+            position: fixed;
+            z-index: 1150;
+            min-width: 140px;
+            max-width: 240px;
+            max-height: min(60vh, 360px);
+            overflow-y: auto;
+            padding: 8px;
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+        }
+        .debt-popover__inner {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            align-items: stretch;
+        }
+        .debt-shift.debt-shift--popover {
+            width: 100%;
+            min-height: 22px;
+            justify-content: center;
+            cursor: grab;
+        }
+        td.date-cell.drag-drop-target {
+            outline: 2px dashed #60a5fa;
+            outline-offset: -2px;
+            background: #e0f2fe !important;
+        }
+        table.gofro-plan-table td.analog-cell {
+            max-width: 96px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 0 0 10px;
+            flex-wrap: wrap;
+        }
+        .toolbar-btn {
+            appearance: none;
+            border: 1px solid var(--border);
+            background: #fff;
+            color: var(--ink);
+            border-radius: 8px;
+            padding: 6px 10px;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .toolbar-btn.secondary { font-weight: 500; }
+        .toolbar-btn:hover { border-color: #c7d2fe; background: #f8faff; }
+        .pending-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0 0 10px;
+            padding: 8px 10px;
+            border: 1px solid #bfdbfe;
+            background: #eff6ff;
+            border-radius: 10px;
+        }
+        .pending-text { font-size: 12px; color: #1e3a8a; margin-right: auto; }
+        .queue-panel[hidden] { display: none; }
+        .queue-panel {
+            position: fixed;
+            right: 14px;
+            bottom: 14px;
+            width: min(520px, calc(100vw - 28px));
+            max-height: min(55vh, 520px);
+            z-index: 1100;
+            display: grid;
+            grid-template-rows: auto 1fr;
+            border: 1px solid #c7d2fe;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+        }
+        .queue-panel__head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 12px;
+            border-bottom: 1px solid #e2e8f0;
+            font-weight: 600;
+        }
+        .queue-panel__head-actions { display: flex; gap: 8px; }
+        .queue-panel__body { overflow: auto; padding: 8px 12px 12px; }
+        .queue-panel__empty { margin: 0; font-size: 12px; color: var(--muted); }
+        .queue-list { list-style: none; margin: 0; padding: 0; }
+        .queue-item {
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 12px;
+            margin-bottom: 6px;
+        }
+        table.has-frozen-cols th,
+        table.has-frozen-cols td { background-clip: padding-box; }
+        .frozen-col {
+            position: sticky !important;
+            left: var(--sticky-left, 0px);
+            z-index: 20;
+            background: #fff;
+        }
+        thead .frozen-col, tfoot .frozen-col { background: #f9fafb; z-index: 40; }
+        tbody tr:hover .frozen-col { background: #fafbfc; }
+        .frozen-col.frozen-col--last { box-shadow: 1px 0 0 0 var(--border); }
+        table.gofro-plan-table td.date-cell {
+            position: relative;
+            font-variant-numeric: tabular-nums;
+            cursor: pointer;
+        }
+        table.gofro-plan-table th.date-col {
+            font-size: 11px;
+            line-height: 1.15;
             white-space: normal;
-            word-break: break-word;
+            vertical-align: bottom;
+        }
+        table.gofro-plan-table tfoot th {
+            position: sticky;
+            bottom: 0;
+            z-index: 5;
+            background: #f9fafb;
+            box-shadow: 0 -1px 0 0 var(--border);
+        }
+        table.gofro-plan-table tfoot .frozen-col {
+            background: #f9fafb;
+            z-index: 25;
+        }
+        .date-head-label {
+            display: block;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .date-total-lines {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1px;
+            margin-top: 2px;
+            font-size: 9px;
+            line-height: 1.15;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        .date-total-line {
+            display: block;
+        }
+        .date-total-line--knife {
+            color: #15803d;
+        }
+        .date-total-line--rotary {
+            color: #1d4ed8;
+        }
+        .date-total-knife,
+        .date-total-rotary {
+            font-variant-numeric: tabular-nums;
+            font-weight: 700;
+        }
+        td.date-cell.queue-pending {
+            outline: 2px solid #f59e0b;
+            outline-offset: -2px;
+            background: #fffbeb !important;
+        }
+        .cell-plan-hint {
+            position: absolute;
+            left: 2px;
+            top: 1px;
+            font-size: 8px;
+            line-height: 1;
+            color: #94a3b8;
+            pointer-events: none;
+        }
+        .gofro-cell-picker {
+            position: fixed;
+            z-index: 12000;
+            min-width: 200px;
+            max-width: 280px;
+            background: #fff;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+            padding: 8px;
+        }
+        .gofro-cell-picker[hidden] { display: none; }
+        .gofro-cell-picker__title {
+            font-size: 12px;
+            font-weight: 600;
+            margin: 0 0 6px;
+            color: #334155;
+        }
+        .gofro-cell-picker__warn {
+            font-size: 11px;
+            color: #b45309;
+            margin: 0 0 6px;
+        }
+        .gofro-cell-picker__grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
+        }
+        .gofro-pick-btn {
+            border: 1px solid #e2e8f0;
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 6px 4px;
+            font-size: 11px;
+            cursor: pointer;
+            text-align: center;
+            line-height: 1.25;
+        }
+        .gofro-pick-btn:hover { border-color: #93c5fd; background: #eff6ff; }
+        .gofro-pick-btn strong { display: block; font-size: 13px; }
+        .gofro-cell-picker__actions {
+            display: flex;
+            gap: 6px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+        .gofro-cell-picker__actions button {
+            flex: 1;
+            min-width: 70px;
+            border: 1px solid #e2e8f0;
+            background: #fff;
+            border-radius: 6px;
+            padding: 5px 8px;
+            font-size: 11px;
+            cursor: pointer;
         }
     </style>
 </head>
 <body>
 <div class="wrap">
     <h1 style="margin:0 0 8px; font-size:20px;"><?= htmlspecialchars($pageTitle, ENT_QUOTES, 'UTF-8') ?></h1>
-    <div style="display:flex; gap:8px; align-items:center; margin:0 0 10px;">
-        <button id="save-plan-btn" type="button" style="border:1px solid #2563eb; background:#2563eb; color:#fff; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">
-            Сохранить план V2
-        </button>
-        <button id="reset-dismissed-btn" type="button" style="border:1px solid #475569; background:#fff; color:#334155; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">
-            Сбросить скрытые позиции
-        </button>
-        <button id="task-sheet-btn" type="button" style="border:1px solid #0f766e; background:#0f766e; color:#fff; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">
-            Задание
-        </button>
-        <button id="overdue-alert-btn" type="button" style="display:none; border:1px solid #b91c1c; background:#fff; color:#b91c1c; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer; font-weight:600;">
-            Просрочено
-        </button>
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#334155;">
-            Тест-дата:
-            <input id="test-today-date" type="date" value="<?= htmlspecialchars((string)$todayIso, ENT_QUOTES, 'UTF-8') ?>" style="border:1px solid #cbd5e1; border-radius:8px; padding:5px 8px; font-size:12px; color:#0f172a;">
-        </label>
-        <button id="test-today-reset-btn" type="button" style="border:1px solid #cbd5e1; background:#fff; color:#334155; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">
-            Сегодня
-        </button>
-        <span id="save-plan-status" class="muted" style="font-size:12px;"></span>
-    </div>
-    <p class="muted" style="margin:0 0 12px;">
-        Линия/заливка показывает покрытие смен оставшимися гофропакетами. Число сборки фильтров показано маленьким фоновым текстом в левом верхнем углу ячейки.
+    <p class="muted" style="margin:0 0 10px;">
+        Позиции с выполнением не выше <?= (int)$maxPct ?>%. Клик по ячейке даты — выбор г/п полурулонами (×1, ×2…).
+        Колонка «Долг»: перетащите чип на дату. Мелкая цифра в ячейке — план сборки фильтров на день; крупная — план г/п.
     </p>
+    <div class="toolbar">
+        <button type="button" id="add-plan-day-btn" class="toolbar-btn secondary" title="Добавить колонку следующего дня в конец таблицы (только в интерфейсе)">+ день</button>
+        <button type="button" id="toggle-gofro-coverage-btn" class="toolbar-btn secondary" aria-pressed="true">Покрытие г/п: вкл</button>
+        <button type="button" id="task-sheet-btn" class="toolbar-btn secondary">Задание</button>
+        <button type="button" id="overdue-alert-btn" class="toolbar-btn secondary" style="display:none; color:#b91c1c; border-color:#fecaca;">Просрочено</button>
+        <span id="apply-status" class="muted" style="font-size:12px; margin-left:4px;"></span>
+    </div>
+    <div id="gofro-coverage-legend" class="coverage-legend">
+        <span class="coverage-legend__title">Покрытие плана сборки фильтров:</span>
+        <span class="coverage-legend__item"><span class="coverage-legend__swatch coverage-legend__swatch--stock"></span>запас г/п</span>
+        <span class="coverage-legend__item"><span class="coverage-legend__swatch coverage-legend__swatch--plan"></span>план г/п</span>
+        <span class="coverage-legend__item"><span class="coverage-legend__swatch coverage-legend__swatch--gap"></span>не хватает</span>
+        <span class="coverage-legend__hint">По мелкой цифре в ячейке, слева направо</span>
+    </div>
+    <div id="pendingMovesBar" class="pending-bar">
+        <span id="pendingMovesText" class="pending-text">Изменений в очереди: 0</span>
+        <button type="button" id="toggleQueuePanelBtn" class="toolbar-btn secondary" aria-pressed="false">Очередь</button>
+        <button type="button" id="undoPendingMoveBtn" class="toolbar-btn secondary">Отменить последнее</button>
+        <button type="button" id="clearPendingMovesBtn" class="toolbar-btn secondary">Сбросить все</button>
+        <button type="button" id="applyPendingMovesBtn" class="toolbar-btn">Применить</button>
+    </div>
+    <div id="moveQueuePanel" class="queue-panel" hidden>
+        <div class="queue-panel__head">
+            <span>Очередь изменений</span>
+            <div class="queue-panel__head-actions">
+                <button type="button" id="applyPendingMovesPanelBtn" class="toolbar-btn">Применить</button>
+                <button type="button" id="closeQueuePanelBtn" class="toolbar-btn secondary">Закрыть</button>
+            </div>
+        </div>
+        <div class="queue-panel__body">
+            <p id="moveQueueEmpty" class="queue-panel__empty">Очередь пуста.</p>
+            <ul id="moveQueueList" class="queue-list"></ul>
+        </div>
+    </div>
     <?php if ($loadError !== ''): ?>
         <div class="panel" style="padding:12px;">Ошибка загрузки: <?= htmlspecialchars($loadError, ENT_QUOTES, 'UTF-8') ?></div>
     <?php else: ?>
-        <div class="layout">
-        <div class="panel">
-            <table>
+        <div class="panel panel--gofro-table">
+            <table class="gofro-plan-table">
                 <thead>
                 <tr>
-                    <th class="row-dismiss-col" title="Скрыть позицию (только у вас в браузере)"></th>
-                    <th>Фильтр</th>
-                    <th>Аналог</th>
-                    <th>Заявка</th>
-                    <th class="num-left">Остаток фильтров</th>
-                    <th class="num">Г/п изготовлено</th>
-                    <th class="num">Г/п доступно</th>
-                    <th class="num">Потребность в г/п</th>
-                    <?php foreach ($buildPlanDates as $planDate): ?>
-                        <?php
-                            $d = DateTime::createFromFormat('Y-m-d', (string)$planDate);
-                            $isWeekend = $d ? in_array((int)$d->format('N'), [6, 7], true) : false;
-                            $dateColClass = $isWeekend ? 'date-col weekend' : 'date-col';
-                        ?>
-                        <th class="<?= htmlspecialchars($dateColClass, ENT_QUOTES, 'UTF-8') ?>" data-date-total="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="Суммарно распределено гофропакетов из пула: 0">
-                            <?= htmlspecialchars($d ? $d->format('d.m') : (string)$planDate, ENT_QUOTES, 'UTF-8') ?><br>
-                            <span class="date-total-lines">
-                                <span class="date-total-knife">0</span>
-                                <span class="date-total-rotary">0</span>
-                            </span>
-                        </th>
-                    <?php endforeach; ?>
+                    <?php renderGofroPlanFixedHeaderCells(); ?>
+                    <?php foreach ($buildPlanDates as $planDate) {
+                        renderGofroPlanDateHeaderTh((string)$planDate);
+                    } ?>
                 </tr>
                 </thead>
                 <tbody>
@@ -1005,6 +1505,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                         // Иначе разные позиции одной заявки могут схлопываться в один rowKey.
                         $rowKey = $rawOrder . '|' . normalizeTextKeyLocal($rawFilter);
                         $planQtyByDate = $buildPlanMap[$planKey] ?? [];
+                        $gofroQtyByDate = $gofroPlanMap[$rowKey] ?? [];
 
                         $meta = $filterMetaByKey[normalizeFilterKeyLocal($rawFilter)] ?? null;
                         $rowAnalog = trim((string)($meta['analog'] ?? ''));
@@ -1052,33 +1553,11 @@ $pageTitle = 'Планирование сборки гофропакетов';
                         } elseif ($packagesPerRoll <= 0) {
                             $poolHintReason = 'В пул не попадет: не рассчитано количество г/п с рулона (проверьте параметры в paper_package_round: высота/число ребер).';
                         } elseif ($packagesPerRollFallback) {
-                            $poolHintReason = 'В paper_package_round нет данных для расчёта длины гофропакета; в пул добавлены полосы с упрощённой ёмкостью. Уточните параметры в справочнике.';
+                            $poolHintReason = 'В paper_package_round нет данных для расчёта длины гофропакета; используется упрощённая ёмкость полурулона. Уточните параметры в справочнике.';
                         }
+                        $qtyPerHalfRoll = $packagesPerRoll > 0 ? max(1, (int)ceil($packagesPerRoll / 2)) : 0;
+                        $rowHintReason = $poolHintReason;
 
-                        $coverageNeed = max(0, $gofroAvailable);
-                        $coverageEndIdx = -1;
-                        $coveragePartialIdx = -1;
-                        if ($coverageNeed > 0 && !empty($buildPlanDates)) {
-                            $acc = 0;
-                            foreach ($buildPlanDates as $idx => $dKey) {
-                                $cellQty = (int)($planQtyByDate[$dKey] ?? 0);
-                                if ($cellQty <= 0) {
-                                    continue;
-                                }
-                                if ($acc < $coverageNeed && $acc + $cellQty >= $coverageNeed) {
-                                    $coverageEndIdx = (int)$idx;
-                                    if ($acc + $cellQty > $coverageNeed) {
-                                        $coveragePartialIdx = (int)$idx;
-                                    }
-                                    break;
-                                }
-                                $acc += $cellQty;
-                            }
-                            if ($coverageEndIdx < 0) {
-                                // Покрытие хватает на весь текущий горизонт.
-                                $coverageEndIdx = count($buildPlanDates) - 1;
-                            }
-                        }
                     ?>
                         <tr
                             data-row-key="<?= htmlspecialchars($rowKey, ENT_QUOTES, 'UTF-8') ?>"
@@ -1092,12 +1571,11 @@ $pageTitle = 'Планирование сборки гофропакетов';
                             data-base-available="<?= (int)$gofroAvailable ?>"
                             data-gofro-need="<?= (int)$gofroNeed ?>"
                             data-packages-per-roll="<?= (int)$packagesPerRoll ?>"
+                            data-qty-per-half-roll="<?= (int)$qtyPerHalfRoll ?>"
                             data-machine-type="<?= htmlspecialchars($machineType, ENT_QUOTES, 'UTF-8') ?>"
+                            data-row-hint="<?= htmlspecialchars($rowHintReason, ENT_QUOTES, 'UTF-8') ?>"
                         >
-                            <td class="row-dismiss-col">
-                                <button type="button" class="row-dismiss-btn" data-dismiss-row="<?= htmlspecialchars($rowKey, ENT_QUOTES, 'UTF-8') ?>" title="Скрыть позицию и убрать её полосы из пула (сохраняется в браузере)" aria-label="Скрыть позицию">×</button>
-                            </td>
-                            <td class="filter-name-cell">
+                            <td class="filter-name-cell col-compact" title="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>">
                                 <?php if ($machineType === 'knife'): ?>
                                     <span class="machine-badge" title="Позиция гофрируется на ножевой машине" aria-label="Ножевая машина">Н</span>
                                 <?php endif; ?>
@@ -1106,51 +1584,62 @@ $pageTitle = 'Планирование сборки гофропакетов';
                                     <span class="row-pool-hint" title="<?= htmlspecialchars($poolHintReason, ENT_QUOTES, 'UTF-8') ?>">i</span>
                                 <?php endif; ?>
                             </td>
-                            <td class="analog-cell" title="<?= $rowAnalog !== '' ? htmlspecialchars('Аналог: ' . $rowAnalog, ENT_QUOTES, 'UTF-8') : '' ?>"><?= $rowAnalog !== '' ? htmlspecialchars($rowAnalog, ENT_QUOTES, 'UTF-8') : '<span class="muted">—</span>' ?></td>
-                            <td><?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?></td>
-                            <td class="num-left" title="Остаток к производству из заказанного по позиции"><?= (int)$remaining ?><span class="muted-light"> из <?= (int)$ordered ?></span></td>
-                            <td class="num"><?= $gofroProduced ?></td>
-                            <td class="num"><?= $gofroAvailable ?></td>
+                            <td class="analog-cell col-compact" title="<?= $rowAnalog !== '' ? htmlspecialchars('Аналог: ' . $rowAnalog, ENT_QUOTES, 'UTF-8') : '' ?>"><?= $rowAnalog !== '' ? htmlspecialchars($rowAnalog, ENT_QUOTES, 'UTF-8') : '<span class="muted">—</span>' ?></td>
+                            <td class="order-col col-compact"><?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?></td>
+                            <td class="num-metric-col num-metric-col--left col-compact" title="Остаток к производству из заказанного по позиции"><?= (int)$remaining ?><span class="muted-light">/<?= (int)$ordered ?></span></td>
+                            <td class="num-metric-col col-compact"><?= $gofroProduced ?></td>
+                            <td class="num-metric-col col-compact"><?= $gofroAvailable ?></td>
                             <td
-                                class="num"
+                                class="num-metric-col col-compact"
                                 title="Остаток фильтров: <?= (int)$remaining ?> из <?= (int)$ordered ?>; доступно г/п: <?= (int)$gofroAvailable ?>; потребность: <?= (int)$gofroNeed ?>"
                             ><?= (int)$gofroNeed ?></td>
+                            <td
+                                class="debt-cell"
+                                data-debt-key="<?= htmlspecialchars($rowKey, ENT_QUOTES, 'UTF-8') ?>"
+                                data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
+                                data-filter-name="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
+                            >
+                                <div class="debt-list"></div>
+                            </td>
                             <?php foreach ($buildPlanDates as $idx => $planDate):
-                                $qty = (int)($planQtyByDate[$planDate] ?? 0);
-                                $classes = ['date-cell'];
-                                if ($coverageEndIdx >= 0 && $idx <= $coverageEndIdx) {
-                                    if ($idx === $coveragePartialIdx) {
-                                        $classes[] = 'gantt-partial';
-                                    } else {
-                                        $classes[] = 'gantt-full';
-                                    }
-                                }
+                                $buildQty = (int)($planQtyByDate[$planDate] ?? 0);
+                                $gofroQty = (int)($gofroQtyByDate[$planDate] ?? 0);
+                                $classes = ['date-col', 'date-cell'];
                             ?>
                                 <td class="<?= htmlspecialchars(implode(' ', $classes), ENT_QUOTES, 'UTF-8') ?>"
                                     data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>"
-                                    data-plan-qty="<?= (int)$qty ?>">
-                                    <?php if ($qty > 0): ?><span class="cell-qty"><?= (int)$qty ?></span><?php endif; ?>
+                                    data-plan-qty="<?= (int)$buildQty ?>"
+                                    data-gofro-qty="<?= (int)$gofroQty ?>"
+                                    title="<?= $buildQty > 0 ? 'План сборки фильтров: ' . (int)$buildQty . ' шт' : 'Клик: задать г/п на дату' ?>">
+                                    <?php if ($buildQty > 0): ?><span class="cell-plan-hint"><?= (int)$buildQty ?></span><?php endif; ?>
+                                    <?= $gofroQty > 0 ? (int)$gofroQty : '' ?>
                                 </td>
                             <?php endforeach; ?>
                         </tr>
                     <?php endforeach; ?>
                 <?php endif; ?>
                 </tbody>
+                <tfoot>
+                <tr>
+                    <?php renderGofroPlanFixedHeaderCells(); ?>
+                    <?php foreach ($buildPlanDates as $planDate) {
+                        renderGofroPlanDateHeaderTh((string)$planDate);
+                    } ?>
+                </tr>
+                </tfoot>
             </table>
-        </div>
-        <aside class="strip-pool">
-            <h3>Пул полос</h3>
-            <div id="strip-pool"></div>
-        </aside>
         </div>
     <?php endif; ?>
 </div>
-<div id="drag-preview" class="drag-preview"></div>
+<div id="debtExpandPopover" class="debt-popover" hidden>
+    <div id="debtExpandPopoverInner" class="debt-popover__inner"></div>
+</div>
+<div id="gofroCellPicker" class="gofro-cell-picker" hidden></div>
 <div id="overdue-alert-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:10001; align-items:center; justify-content:center; padding:14px;">
     <div style="background:#fff; border-radius:12px; width:min(720px, 100%); max-width:100%; max-height:min(80vh, 560px); box-shadow:0 16px 40px rgba(2,6,23,.25); border:1px solid #e2e8f0; display:flex; flex-direction:column;">
         <div style="padding:12px 14px; border-bottom:1px solid #e2e8f0; font-weight:700; font-size:14px; color:#991b1b;">Просроченные позиции</div>
         <div style="padding:10px 14px 0; font-size:12px; color:#64748b;">
-            Запланировано к гофрированию на дату раньше «сегодня» (учитывается поле «Тест-дата», если задано) и по расчёту ещё не закрыто текущей потребностью в г/п.
+            Запланировано к гофрированию на дату раньше «сегодня» и по расчёту ещё не закрыто текущей потребностью в г/п.
         </div>
         <div id="overdue-alert-body" style="padding:12px 14px; overflow:auto; flex:1;"></div>
         <div style="padding:10px 14px; display:flex; justify-content:flex-end; gap:8px; border-top:1px solid #e2e8f0;">
@@ -1159,17 +1648,38 @@ $pageTitle = 'Планирование сборки гофропакетов';
     </div>
 </div>
 <div id="task-sheet-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:10000; align-items:center; justify-content:center; padding:14px;">
-    <div style="background:#fff; border-radius:12px; width:360px; max-width:100%; box-shadow:0 16px 40px rgba(2,6,23,.25); border:1px solid #e2e8f0;">
+    <div style="background:#fff; border-radius:12px; width:min(420px, 100%); max-width:100%; box-shadow:0 16px 40px rgba(2,6,23,.25); border:1px solid #e2e8f0;">
         <div style="padding:12px; border-bottom:1px solid #e2e8f0; font-weight:700; font-size:14px;">Печать задания сборщицам</div>
-        <div style="padding:12px; display:grid; gap:8px;">
-            <label style="font-size:12px; color:#334155;">
-                С даты
-                <input id="task-date-from" type="date" style="display:block; width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:6px 8px; margin-top:4px;">
-            </label>
-            <label style="font-size:12px; color:#334155;">
-                По дату
-                <input id="task-date-to" type="date" style="display:block; width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:6px 8px; margin-top:4px;">
-            </label>
+        <div style="padding:12px; display:grid; gap:10px;">
+            <fieldset style="border:0; padding:0; margin:0;">
+                <legend style="font-size:12px; color:#334155; margin-bottom:6px;">Форма бланка</legend>
+                <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; color:#334155;">
+                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                        <input type="radio" name="task-print-mode" id="task-print-mode-period" value="period" checked>
+                        Ведомость за период
+                    </label>
+                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                        <input type="radio" name="task-print-mode" id="task-print-mode-day" value="day">
+                        Сменной наряд на одну дату
+                    </label>
+                </div>
+            </fieldset>
+            <div id="task-period-dates" style="display:grid; gap:8px;">
+                <label style="font-size:12px; color:#334155;">
+                    С даты
+                    <input id="task-date-from" type="date" style="display:block; width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:6px 8px; margin-top:4px;">
+                </label>
+                <label style="font-size:12px; color:#334155;">
+                    По дату
+                    <input id="task-date-to" type="date" style="display:block; width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:6px 8px; margin-top:4px;">
+                </label>
+            </div>
+            <div id="task-day-date-wrap" style="display:none;">
+                <label style="font-size:12px; color:#334155;">
+                    Дата наряда
+                    <input id="task-date-one" type="date" style="display:block; width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:6px 8px; margin-top:4px;">
+                </label>
+            </div>
         </div>
         <div style="padding:10px 12px; display:flex; justify-content:flex-end; gap:8px; border-top:1px solid #e2e8f0;">
             <button id="task-sheet-cancel" type="button" style="border:1px solid #cbd5e1; background:#fff; color:#334155; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;">Отмена</button>
@@ -1180,548 +1690,1470 @@ $pageTitle = 'Планирование сборки гофропакетов';
 <?php if ($loadError === ''): ?>
 <script>
 (() => {
-    const NORM_PER_UNIT = 2.5; // м на 1 гофропакет
     const REAL_TODAY_ISO = <?= json_encode($todayIso, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
-    const DISMISSED_ROWS_STORAGE_KEY = 'gofroBuildPlanDismissedRowKeys';
-    const packageCatalog = <?= json_encode($packageCatalog, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?> || {};
-    const stripPool = document.getElementById('strip-pool');
-    const dragPreview = document.getElementById('drag-preview');
-    const savePlanBtn = document.getElementById('save-plan-btn');
-    const resetDismissedBtn = document.getElementById('reset-dismissed-btn');
-    const savePlanStatus = document.getElementById('save-plan-status');
+    const GOFRO_COVERAGE_VISIBLE_STORAGE_KEY = 'gofroBuildPlanCoverageVisible';
+    const FROZEN_COL_COUNT = 8;
+    const DEBT_COMPACT_VISIBLE = 3;
+    const initialGofroDebtShiftMap = <?= json_encode($gofroDebtShiftMap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?> || {};
+    const initialGofroPlanMap = <?= json_encode($gofroPlanMap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?> || {};
+    const initialBuildPlanMap = <?= json_encode($buildPlanMapByRowKey, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?> || {};
+    const urlParams = new URLSearchParams(window.location.search);
+    let currentTodayIso = REAL_TODAY_ISO;
+    if (urlParams.has('test_date') && /^\d{4}-\d{2}-\d{2}$/.test(urlParams.get('test_date') || '')) {
+        currentTodayIso = String(urlParams.get('test_date'));
+    }
+
+    const gofroCellPicker = document.getElementById('gofroCellPicker');
+    const pendingMovesBar = document.getElementById('pendingMovesBar');
+    const pendingMovesText = document.getElementById('pendingMovesText');
+    const applyPendingMovesBtn = document.getElementById('applyPendingMovesBtn');
+    const applyPendingMovesPanelBtn = document.getElementById('applyPendingMovesPanelBtn');
+    const undoPendingMoveBtn = document.getElementById('undoPendingMoveBtn');
+    const clearPendingMovesBtn = document.getElementById('clearPendingMovesBtn');
+    const toggleQueuePanelBtn = document.getElementById('toggleQueuePanelBtn');
+    const moveQueuePanel = document.getElementById('moveQueuePanel');
+    const closeQueuePanelBtn = document.getElementById('closeQueuePanelBtn');
+    const moveQueueEmpty = document.getElementById('moveQueueEmpty');
+    const moveQueueList = document.getElementById('moveQueueList');
+    const applyStatus = document.getElementById('apply-status');
     const taskSheetBtn = document.getElementById('task-sheet-btn');
     const taskSheetModal = document.getElementById('task-sheet-modal');
     const taskDateFrom = document.getElementById('task-date-from');
     const taskDateTo = document.getElementById('task-date-to');
+    const taskDateOne = document.getElementById('task-date-one');
+    const taskPeriodDates = document.getElementById('task-period-dates');
+    const taskDayDateWrap = document.getElementById('task-day-date-wrap');
+    const taskPrintModePeriod = document.getElementById('task-print-mode-period');
+    const taskPrintModeDay = document.getElementById('task-print-mode-day');
     const taskSheetCancel = document.getElementById('task-sheet-cancel');
     const taskSheetPrint = document.getElementById('task-sheet-print');
-    const testTodayDateInput = document.getElementById('test-today-date');
-    const testTodayResetBtn = document.getElementById('test-today-reset-btn');
+    const addPlanDayBtn = document.getElementById('add-plan-day-btn');
+    const toggleGofroCoverageBtn = document.getElementById('toggle-gofro-coverage-btn');
+    const gofroCoverageLegend = document.getElementById('gofro-coverage-legend');
     const overdueAlertBtn = document.getElementById('overdue-alert-btn');
     const overdueAlertModal = document.getElementById('overdue-alert-modal');
     const overdueAlertBody = document.getElementById('overdue-alert-body');
     const overdueAlertClose = document.getElementById('overdue-alert-close');
-    let overdueModalAutoOpened = false;
-    if (!stripPool || !dragPreview) {
+    const debtExpandPopover = document.getElementById('debtExpandPopover');
+    const debtExpandPopoverInner = document.getElementById('debtExpandPopoverInner');
+    const planTable = document.querySelector('.panel table');
+
+    if (!gofroCellPicker || !planTable) {
         return;
     }
 
-    const rows = Array.from(document.querySelectorAll('tbody tr[data-row-key]'));
     const rowStateMap = new Map();
-    function isTargetState(state) {
-        const order = String(state && state.order ? state.order : '');
-        const filter = String(state && state.filterName ? state.filterName : '');
-        return order === 'TF-19-20-20-26-2' && filter.includes('TF 325*218*760*13');
+    const pendingMoves = [];
+    let isApplyingPendingMoves = false;
+    let overdueModalAutoOpened = false;
+    let isGofroCoverageVisible = true;
+    try {
+        const storedCoverage = localStorage.getItem(GOFRO_COVERAGE_VISIBLE_STORAGE_KEY);
+        if (storedCoverage === '0') {
+            isGofroCoverageVisible = false;
+        }
+    } catch (_) { /* ignore */ }
+
+    function setGofroCoverageVisible(visible) {
+        isGofroCoverageVisible = !!visible;
+        if (toggleGofroCoverageBtn) {
+            toggleGofroCoverageBtn.setAttribute('aria-pressed', isGofroCoverageVisible ? 'true' : 'false');
+            toggleGofroCoverageBtn.textContent = isGofroCoverageVisible ? 'Покрытие г/п: вкл' : 'Покрытие г/п: выкл';
+        }
+        if (gofroCoverageLegend) {
+            gofroCoverageLegend.hidden = !isGofroCoverageVisible;
+        }
+        try {
+            localStorage.setItem(GOFRO_COVERAGE_VISIBLE_STORAGE_KEY, isGofroCoverageVisible ? '1' : '0');
+        } catch (_) { /* ignore */ }
+        updateCoverage();
     }
-    rows.forEach((row) => {
-        const state = {
-            row,
-            dismissed: false,
-            order: String(row.dataset.order || ''),
-            filterName: String(row.dataset.filterName || ''),
-            paperWidthMm: Math.max(0, Number(row.dataset.paperWidthMm || 0) || 0),
-            foldHeight: Math.max(0, Number(row.dataset.foldHeight || 0) || 0),
-            foldCount: Math.max(0, Number(row.dataset.foldCount || 0) || 0),
-            packageKey: String(row.dataset.packageKey || ''),
-            packageName: String(row.dataset.packageName || ''),
-            baseAvailable: parseInt(row.dataset.baseAvailable || '0', 10) || 0,
-            gofroNeed: Math.max(0, parseInt(row.dataset.gofroNeed || '0', 10) || 0),
-            packagesPerRoll: Math.max(0, parseInt(row.dataset.packagesPerRoll || '0', 10) || 0),
-            machineType: String(row.dataset.machineType || 'knife'),
-            filterCell: row.querySelector('td.filter-name-cell'),
-            dateCells: Array.from(row.querySelectorAll('td.date-cell[data-date]')),
-            allocatedByDate: {},
-            allocatedObjectsByDate: {},
-            overdueDebtQty: 0,
-            overduePlannedQty: 0,
-        };
-        rowStateMap.set(row.dataset.rowKey, state);
+
+    function buildFilterCoverageTitle(filterQty, stockPart, planPart, date) {
+        const lines = [`План сборки фильтров: ${filterQty} шт`];
+        if (stockPart > 0) {
+            lines.push(`Покрыто из запаса г/п: ${stockPart} шт`);
+        }
+        if (planPart > 0) {
+            lines.push(`Покрыто планом г/п: ${planPart} шт`);
+        }
+        const gap = Math.max(0, filterQty - stockPart - planPart);
+        if (gap > 0) {
+            lines.push(`Не хватает г/п: ${gap} шт`);
+        }
+        return lines.join('\n');
+    }
+
+    function applyGofroCoverageForRow(state) {
+        if (!state) {
+            return;
+        }
+        const coverageClasses = [
+            'gofro-coverage-cell',
+            'gofro-coverage-cell-partial',
+            'gofro-coverage-planned-cell',
+            'gofro-coverage-planned-cell-partial',
+            'gofro-coverage-gap',
+            'gofro-coverage-gap-partial',
+        ];
+        let baseRemaining = Math.max(0, state.baseAvailable);
+        let plannedTotal = 0;
+        state.dateCells.forEach((cell) => {
+            const d = String(cell.dataset.date || '');
+            plannedTotal += Math.max(0, parseInt(state.allocatedByDate[d] || '0', 10) || 0);
+        });
+        let poolRemaining = baseRemaining + plannedTotal;
+
+        state.dateCells.forEach((cell) => {
+            cell.classList.remove(...coverageClasses);
+            if (cell.dataset.coverageBaseTitle === undefined) {
+                cell.dataset.coverageBaseTitle = cell.getAttribute('title') || '';
+            }
+            const baseTitle = cell.dataset.coverageBaseTitle || '';
+            const date = String(cell.dataset.date || '');
+            const filterQty = Math.max(0, parseInt(cell.dataset.planQty || '0', 10) || 0);
+
+            if (!isGofroCoverageVisible || filterQty <= 0) {
+                cell.title = baseTitle;
+                return;
+            }
+
+            let stockUsed = 0;
+            let planUsed = 0;
+
+            if (poolRemaining <= 0) {
+                cell.classList.add('gofro-coverage-gap');
+                cell.title = baseTitle
+                    ? `${baseTitle}\n${buildFilterCoverageTitle(filterQty, 0, 0, date)}`
+                    : buildFilterCoverageTitle(filterQty, 0, 0, date);
+                return;
+            }
+
+            stockUsed = Math.min(baseRemaining, filterQty);
+            if (stockUsed > 0) {
+                if (stockUsed >= filterQty) {
+                    cell.classList.add('gofro-coverage-cell');
+                } else {
+                    cell.classList.add('gofro-coverage-cell-partial');
+                }
+                baseRemaining -= stockUsed;
+                poolRemaining -= stockUsed;
+            }
+
+            const leftover = filterQty - stockUsed;
+            if (leftover > 0 && poolRemaining > 0) {
+                planUsed = Math.min(poolRemaining, leftover);
+                if (planUsed >= leftover) {
+                    cell.classList.add('gofro-coverage-planned-cell');
+                } else {
+                    cell.classList.add('gofro-coverage-planned-cell-partial');
+                }
+                poolRemaining -= planUsed;
+            }
+
+            const uncovered = filterQty - stockUsed - planUsed;
+            if (uncovered > 0) {
+                if (stockUsed + planUsed > 0) {
+                    cell.classList.add('gofro-coverage-gap-partial');
+                } else {
+                    cell.classList.add('gofro-coverage-gap');
+                }
+            }
+
+            const coverageTitle = buildFilterCoverageTitle(filterQty, stockUsed, planUsed, date);
+            cell.title = baseTitle ? `${baseTitle}\n${coverageTitle}` : coverageTitle;
+        });
+    }
+    let pickerTarget = null;
+    let dragContext = null;
+    let debtPopoverAnchorCell = null;
+    const debtStateMap = Object.assign({}, initialGofroDebtShiftMap || {});
+    const dateHeaderTotals = {};
+
+    function registerDateHeaderTotals() {
+        Object.keys(dateHeaderTotals).forEach((k) => delete dateHeaderTotals[k]);
+        document.querySelectorAll('th.date-col[data-date-total]').forEach((th) => {
+            const date = String(th.dataset.dateTotal || '');
+            const rotaryEl = th.querySelector('.date-total-rotary');
+            const knifeEl = th.querySelector('.date-total-knife');
+            if (!date || !rotaryEl || !knifeEl) {
+                return;
+            }
+            if (!dateHeaderTotals[date]) {
+                dateHeaderTotals[date] = { knifeEls: [], rotaryEls: [], ths: [] };
+            }
+            dateHeaderTotals[date].knifeEls.push(knifeEl);
+            dateHeaderTotals[date].rotaryEls.push(rotaryEl);
+            dateHeaderTotals[date].ths.push(th);
+        });
+    }
+    registerDateHeaderTotals();
+
+    let crosshairHoverCell = null;
+
+    function clearTableCrosshairHighlight() {
+        crosshairHoverCell = null;
+        planTable.querySelectorAll('th.date-col.date-hover').forEach((el) => {
+            el.classList.remove('date-hover');
+        });
+        planTable.querySelectorAll('td.filter-name-cell.name-hover').forEach((el) => {
+            el.classList.remove('name-hover');
+        });
+    }
+
+    function applyTableCrosshairHighlight(cell) {
+        if (!cell || cell === crosshairHoverCell) {
+            return;
+        }
+        crosshairHoverCell = cell;
+        planTable.querySelectorAll('th.date-col.date-hover').forEach((el) => {
+            el.classList.remove('date-hover');
+        });
+        planTable.querySelectorAll('td.filter-name-cell.name-hover').forEach((el) => {
+            el.classList.remove('name-hover');
+        });
+
+        const tr = cell.closest('tr');
+        const dataRow = tr && tr.hasAttribute('data-row-key') ? tr : null;
+        if (dataRow) {
+            const nameCell = dataRow.querySelector('td.filter-name-cell');
+            if (nameCell) {
+                nameCell.classList.add('name-hover');
+            }
+        }
+
+        let dateIso = String(cell.dataset.date || cell.dataset.dateTotal || '');
+        if (!dateIso && typeof cell.cellIndex === 'number' && cell.cellIndex >= 0) {
+            const headRow = planTable.querySelector('thead tr');
+            const headCell = headRow ? headRow.children[cell.cellIndex] : null;
+            if (headCell && headCell.dataset.dateTotal) {
+                dateIso = String(headCell.dataset.dateTotal);
+            }
+        }
+        if (dateIso) {
+            planTable.querySelectorAll(`thead th.date-col[data-date-total="${dateIso}"], tfoot th.date-col[data-date-total="${dateIso}"]`).forEach((th) => {
+                th.classList.add('date-hover');
+            });
+        }
+    }
+
+    planTable.addEventListener('mouseover', (e) => {
+        const cell = e.target.closest('td, th');
+        if (!cell || !planTable.contains(cell)) {
+            return;
+        }
+        applyTableCrosshairHighlight(cell);
+    });
+    planTable.addEventListener('mouseleave', (e) => {
+        if (!e.relatedTarget || !planTable.contains(e.relatedTarget)) {
+            clearTableCrosshairHighlight();
+        }
     });
 
-    function loadDismissedRowKeys() {
-        try {
-            const raw = localStorage.getItem(DISMISSED_ROWS_STORAGE_KEY);
-            if (!raw) {
-                return new Set();
-            }
-            const parsed = JSON.parse(raw);
-            if (!Array.isArray(parsed)) {
-                return new Set();
-            }
-            return new Set(parsed.filter((k) => typeof k === 'string' && k));
-        } catch {
-            return new Set();
-        }
+    function getTodayIso() {
+        return currentTodayIso;
     }
 
-    function persistDismissedRowKeys(set) {
-        try {
-            localStorage.setItem(DISMISSED_ROWS_STORAGE_KEY, JSON.stringify([...set]));
-        } catch (_) {
-            /* ignore quota */
+    function addCalendarDaysIso(iso, deltaDays) {
+        const parts = String(iso).split('-').map((v) => parseInt(v, 10));
+        if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) {
+            return String(iso);
         }
+        const dt = new Date(parts[0], parts[1] - 1, parts[2]);
+        dt.setDate(dt.getDate() + deltaDays);
+        const y = dt.getFullYear();
+        const m = String(dt.getMonth() + 1).padStart(2, '0');
+        const d = String(dt.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
     }
 
-    let dismissedRowKeys = loadDismissedRowKeys();
+    function htmlEscape(s) {
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
 
-    function applyStoredDismissedRows() {
-        dismissedRowKeys.forEach((rowKey) => {
+    function formatDateRu(iso) {
+        const p = String(iso || '').split('-');
+        if (p.length !== 3) {
+            return iso;
+        }
+        return `${p[2]}.${p[1]}.${p[0]}`;
+    }
+
+    function toShortDate(iso) {
+        const p = String(iso || '').split('-');
+        if (p.length !== 3) {
+            return iso;
+        }
+        return `${p[2]}.${p[1]}`;
+    }
+
+    function addDaysIso(iso, days) {
+        const p = String(iso || '').split('-').map((x) => parseInt(x, 10));
+        if (p.length !== 3 || p.some((n) => Number.isNaN(n))) {
+            return '';
+        }
+        const dt = new Date(p[0], p[1] - 1, p[2]);
+        dt.setDate(dt.getDate() + (parseInt(days, 10) || 0));
+        const y = dt.getFullYear();
+        const m = String(dt.getMonth() + 1).padStart(2, '0');
+        const d = String(dt.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+    }
+
+    function getUniquePlanDates() {
+        return Array.from(planTable.querySelectorAll('th.date-col[data-date-total]'))
+            .map((th) => String(th.dataset.dateTotal || ''))
+            .filter(Boolean)
+            .sort();
+    }
+
+    function buildDateHeaderTh(dateIso) {
+        const th = document.createElement('th');
+        th.className = 'date-col';
+        const dt = new Date(`${dateIso}T12:00:00`);
+        const dow = dt.getDay();
+        if (dow === 0 || dow === 6) {
+            th.classList.add('weekend');
+        }
+        th.dataset.dateTotal = dateIso;
+        th.title = 'Суммарно г/п на дату';
+        const label = formatDateRu(dateIso).slice(0, 5);
+        th.innerHTML = `<span class="date-head-label">${htmlEscape(label)}</span><span class="date-total-lines"><span class="date-total-line date-total-line--knife" title="Ножевая машина">Н <span class="date-total-knife">0</span></span><span class="date-total-line date-total-line--rotary" title="Ротационная машина">Р <span class="date-total-rotary">0</span></span></span>`;
+        return th;
+    }
+
+    function createDateCellForRow(state, dateIso) {
+        const rowPlan = initialBuildPlanMap[state.rowKey] || {};
+        const buildQty = Math.max(0, parseInt(rowPlan[dateIso] || '0', 10) || 0);
+        const gofroQty = Math.max(0, parseInt((state.planByDate && state.planByDate[dateIso]) || '0', 10) || 0);
+        const cell = document.createElement('td');
+        cell.className = 'date-col date-cell';
+        cell.dataset.date = dateIso;
+        cell.dataset.planQty = String(buildQty);
+        cell.dataset.gofroQty = String(gofroQty);
+        cell.title = buildQty > 0
+            ? `План сборки фильтров: ${buildQty} шт`
+            : 'Клик: задать г/п на дату';
+        refreshCellDom(cell, gofroQty);
+        if (gofroQty > 0 && dateIso >= getTodayIso()) {
+            state.allocatedByDate[dateIso] = gofroQty;
+        }
+        return cell;
+    }
+
+    function bindDateCellInteractions(cell) {
+        cell.addEventListener('click', (e) => {
+            if (dragContext) {
+                return;
+            }
+            if (e.target.closest('.gofro-cell-picker')) {
+                return;
+            }
+            const row = cell.closest('tr[data-row-key]');
+            if (!row) {
+                return;
+            }
+            const state = rowStateMap.get(String(row.dataset.rowKey || ''));
+            if (!state) {
+                return;
+            }
+            openGofroCellPicker(cell, state);
+        });
+        cell.addEventListener('dragover', (e) => {
+            if (!dragContext || dragContext.sourceType !== 'debt') {
+                return;
+            }
+            const row = cell.closest('tr[data-row-key]');
+            const state = row ? rowStateMap.get(String(row.dataset.rowKey || '')) : null;
+            if (canDropDebtOnCell(cell, state)) {
+                e.preventDefault();
+                if (e.dataTransfer) {
+                    e.dataTransfer.dropEffect = 'move';
+                }
+                cell.classList.add('drag-drop-target');
+            }
+        });
+        cell.addEventListener('dragleave', () => {
+            cell.classList.remove('drag-drop-target');
+        });
+        cell.addEventListener('drop', (e) => {
+            if (!dragContext || dragContext.sourceType !== 'debt') {
+                return;
+            }
+            const row = cell.closest('tr[data-row-key]');
+            const state = row ? rowStateMap.get(String(row.dataset.rowKey || '')) : null;
+            cell.classList.remove('drag-drop-target');
+            if (!canDropDebtOnCell(cell, state)) {
+                return;
+            }
+            e.preventDefault();
+            const toDate = String(cell.dataset.date || '');
+            queueDebtMove(state, dragContext.fromDate, toDate, dragContext.movedQty);
+            dragContext = null;
+        });
+    }
+
+    function addPlanDayColumn() {
+        const rows = Array.from(planTable.querySelectorAll('tbody tr[data-row-key]'));
+        if (rows.length === 0) {
+            alert('Нет строк — добавлять колонку не к чему.');
+            return;
+        }
+        const dates = getUniquePlanDates();
+        let nextIso;
+        if (dates.length > 0) {
+            nextIso = addDaysIso(dates[dates.length - 1], 1);
+        } else {
+            nextIso = getTodayIso();
+        }
+        if (!nextIso) {
+            return;
+        }
+        if (dates.includes(nextIso)) {
+            alert('Колонка для этой даты уже есть.');
+            return;
+        }
+        const theadRow = planTable.querySelector('thead tr');
+        const tfootRow = planTable.querySelector('tfoot tr');
+        if (!theadRow || !tfootRow) {
+            return;
+        }
+        const lastHeadTh = theadRow.querySelector('th.date-col[data-date-total]:last-of-type');
+        const newHeadTh = lastHeadTh ? lastHeadTh.cloneNode(true) : buildDateHeaderTh(nextIso);
+        const newFootTh = newHeadTh.cloneNode(true);
+        theadRow.appendChild(newHeadTh);
+        tfootRow.appendChild(newFootTh);
+        registerDateHeaderTotals();
+
+        rows.forEach((row) => {
+            const rowKey = String(row.dataset.rowKey || '');
             const state = rowStateMap.get(rowKey);
             if (!state) {
                 return;
             }
-            state.dismissed = true;
-            state.row.style.display = 'none';
+            const cell = createDateCellForRow(state, nextIso);
+            row.appendChild(cell);
+            bindDateCellInteractions(cell);
+            state.dateCells.push(cell);
+        });
+
+        applyFrozenColumns();
+        updateCoverage();
+        setApplyStatus(`Добавлена колонка ${formatDateRu(nextIso)}`, false);
+    }
+
+    function cloneDebtShifts(shifts) {
+        return (Array.isArray(shifts) ? shifts : []).map((s) => ({
+            date: String(s.date || ''),
+            qty: Math.max(0, parseInt(s.qty || 0, 10) || 0),
+        })).filter((s) => s.date && s.qty > 0);
+    }
+
+    function getDebtShiftsForKey(rowKey) {
+        return cloneDebtShifts(debtStateMap[rowKey] || []);
+    }
+
+    function setDebtShiftsForKey(rowKey, shifts) {
+        const next = cloneDebtShifts(shifts).sort((a, b) => a.date.localeCompare(b.date));
+        if (next.length === 0) {
+            delete debtStateMap[rowKey];
+        } else {
+            debtStateMap[rowKey] = next;
+        }
+    }
+
+    function getDebtQtyForRow(rowKey) {
+        return getDebtShiftsForKey(rowKey).reduce((sum, s) => sum + s.qty, 0);
+    }
+
+    function getOverdueDebtQtyForRow(rowKey) {
+        const todayIso = getTodayIso();
+        return getDebtShiftsForKey(rowKey)
+            .filter((s) => s.date && s.date < todayIso)
+            .reduce((sum, s) => sum + s.qty, 0);
+    }
+
+    function capDebtShiftsFifo(shifts, uncoveredNeed) {
+        const cap = Math.max(0, parseInt(uncoveredNeed, 10) || 0);
+        if (cap <= 0 || !shifts.length) {
+            return [];
+        }
+        const total = shifts.reduce((s, it) => s + it.qty, 0);
+        if (total <= cap) {
+            return shifts.map((s) => ({ date: s.date, qty: s.qty }));
+        }
+        let remaining = cap;
+        const out = [];
+        shifts.forEach((item) => {
+            if (remaining <= 0) {
+                return;
+            }
+            const take = Math.min(item.qty, remaining);
+            if (take > 0) {
+                out.push({ date: item.date, qty: take });
+                remaining -= take;
+            }
+        });
+        return out;
+    }
+
+    function reconcileDebtForRow(state) {
+        if (!state) {
+            return;
+        }
+        const todayIso = getTodayIso();
+        const existing = getDebtShiftsForKey(state.rowKey);
+        const nonPast = existing.filter((s) => s.date >= todayIso);
+        let plannedFromToday = 0;
+        const pastFromPlan = [];
+        const planByDate = state.planByDate || {};
+        Object.keys(planByDate).forEach((d) => {
+            const q = parseInt(planByDate[d] || '0', 10) || 0;
+            if (q <= 0) {
+                return;
+            }
+            if (d < todayIso) {
+                pastFromPlan.push({ date: d, qty: q });
+            } else {
+                plannedFromToday += q;
+            }
+        });
+        pastFromPlan.sort((a, b) => a.date.localeCompare(b.date));
+        const uncovered = Math.max(0, state.gofroNeed - plannedFromToday);
+        const cappedPast = capDebtShiftsFifo(pastFromPlan, uncovered);
+        setDebtShiftsForKey(state.rowKey, cappedPast.concat(nonPast));
+    }
+
+    function bindDebtShiftDrag(item, state) {
+        item.addEventListener('dragstart', (e) => {
+            const fromDate = item.dataset.date || '';
+            const qty = Math.max(0, parseInt(item.dataset.qty || '0', 10) || 0);
+            if (!fromDate || qty <= 0 || !state) {
+                e.preventDefault();
+                return;
+            }
+            dragContext = {
+                sourceType: 'debt',
+                rowKey: state.rowKey,
+                order: state.order,
+                filterName: state.filterName,
+                fromDate,
+                movedQty: qty,
+            };
+            item.classList.add('drag-source-single');
+            if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', `${state.rowKey}|${fromDate}|debt`);
+            }
+        });
+        item.addEventListener('dragend', () => {
+            item.classList.remove('drag-source-single');
+            dragContext = null;
+            planTable.querySelectorAll('td.date-cell.drag-drop-target').forEach((el) => {
+                el.classList.remove('drag-drop-target');
+            });
         });
     }
 
-    let strips = [];
-    let stripSeq = 1;
-    let allocationGroupSeq = 1;
-    let planSaveStripSeq = 1;
-    let allocations = [];
-    let dragContext = null;
-    const supplyMap = {};
-    let selectedSourceRow = '';
-    const selectedStripIds = new Set();
-    let supplyActionMenuEl = null;
-    let activeSupplyAction = null;
-    let supplyActionMenuMode = 'actions';
-    let dragHoveredDate = '';
-    let currentTodayIso = REAL_TODAY_ISO;
-    const dateHeaderTotals = {};
-    document.querySelectorAll('th.date-col[data-date-total]').forEach((th) => {
-        const date = String(th.dataset.dateTotal || '');
-        if (!date) {
+    function closeDebtExpandPopover() {
+        debtPopoverAnchorCell = null;
+        if (debtExpandPopover) {
+            debtExpandPopover.hidden = true;
+        }
+        if (debtExpandPopoverInner) {
+            debtExpandPopoverInner.innerHTML = '';
+        }
+    }
+
+    function positionDebtExpandPopover(anchorCell) {
+        if (!anchorCell || !debtExpandPopover || debtExpandPopover.hidden) {
             return;
         }
-        const rotaryEl = th.querySelector('.date-total-rotary');
-        const knifeEl = th.querySelector('.date-total-knife');
-        if (!rotaryEl || !knifeEl) {
+        const rect = anchorCell.getBoundingClientRect();
+        const gap = 6;
+        const vw = window.innerWidth || 800;
+        const vh = window.innerHeight || 600;
+        debtExpandPopover.style.left = `${Math.round(rect.left)}px`;
+        debtExpandPopover.style.top = `${Math.round(rect.bottom + gap)}px`;
+        const popRect = debtExpandPopover.getBoundingClientRect();
+        let left = rect.left + (rect.width - popRect.width) / 2;
+        let top = rect.bottom + gap;
+        if (left + popRect.width > vw - 8) {
+            left = Math.max(8, vw - popRect.width - 8);
+        }
+        if (left < 8) {
+            left = 8;
+        }
+        if (top + popRect.height > vh - 8) {
+            top = Math.max(8, rect.top - popRect.height - gap);
+        }
+        debtExpandPopover.style.left = `${Math.round(left)}px`;
+        debtExpandPopover.style.top = `${Math.round(top)}px`;
+    }
+
+    function fillDebtPopoverShifts(debtCell, state) {
+        if (!debtExpandPopoverInner || !state) {
             return;
         }
-        dateHeaderTotals[date] = { th, rotaryEl, knifeEl };
+        debtExpandPopoverInner.innerHTML = '';
+        getDebtShiftsForKey(state.rowKey).forEach((shift) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'debt-shift debt-shift--popover';
+            item.draggable = true;
+            item.dataset.date = shift.date;
+            item.dataset.qty = String(shift.qty);
+            item.title = `Долг ${toShortDate(shift.date)}: ${shift.qty} шт — перетащите на дату`;
+            item.textContent = `${toShortDate(shift.date)} • ${shift.qty}`;
+            bindDebtShiftDrag(item, state);
+            debtExpandPopoverInner.appendChild(item);
+        });
+    }
+
+    function openDebtExpandPopover(debtCell, state) {
+        if (!debtCell || !state || getDebtShiftsForKey(state.rowKey).length === 0) {
+            closeDebtExpandPopover();
+            return;
+        }
+        debtPopoverAnchorCell = debtCell;
+        fillDebtPopoverShifts(debtCell, state);
+        if (debtExpandPopover) {
+            debtExpandPopover.hidden = false;
+            positionDebtExpandPopover(debtCell);
+            window.requestAnimationFrame(() => positionDebtExpandPopover(debtCell));
+        }
+    }
+
+    function renderDebtCellByKey(rowKey) {
+        const state = rowStateMap.get(rowKey);
+        if (!state) {
+            return;
+        }
+        const debtCell = state.row.querySelector('td.debt-cell');
+        if (!debtCell) {
+            return;
+        }
+        const list = debtCell.querySelector('.debt-list');
+        if (!list) {
+            return;
+        }
+        const shifts = getDebtShiftsForKey(rowKey);
+        const total = shifts.length;
+        const debtQty = shifts.reduce((s, it) => s + it.qty, 0);
+        const overdueQty = getOverdueDebtQtyForRow(rowKey);
+        state.row.dataset.debtQty = String(debtQty);
+        debtCell.classList.toggle('debt-cell--warn', total > DEBT_COMPACT_VISIBLE);
+        debtCell.title = total > 0 ? `Долг: ${debtQty} шт в ${total} смен(ах). Перетащите на дату в плане.` : '';
+        state.row.classList.toggle('has-overdue-debt', overdueQty > 0);
+        list.innerHTML = '';
+        shifts.slice(0, DEBT_COMPACT_VISIBLE).forEach((shift) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'debt-shift';
+            item.draggable = true;
+            item.dataset.date = shift.date;
+            item.dataset.qty = String(shift.qty);
+            item.title = `Долг ${toShortDate(shift.date)}: ${shift.qty} шт`;
+            item.textContent = String(shift.qty);
+            bindDebtShiftDrag(item, state);
+            list.appendChild(item);
+        });
+        const hidden = total - DEBT_COMPACT_VISIBLE;
+        if (hidden > 0) {
+            const moreBtn = document.createElement('button');
+            moreBtn.type = 'button';
+            moreBtn.className = 'debt-more';
+            moreBtn.textContent = `+${hidden}`;
+            moreBtn.title = `Ещё ${hidden} — открыть список`;
+            moreBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                openDebtExpandPopover(debtCell, state);
+            });
+            list.appendChild(moreBtn);
+        }
+        if (debtPopoverAnchorCell === debtCell) {
+            fillDebtPopoverShifts(debtCell, state);
+            positionDebtExpandPopover(debtCell);
+        }
+    }
+
+    function adjustDebtForPlanDelta(state, deltaPlan, fallbackDate) {
+        if (!state || !deltaPlan) {
+            return;
+        }
+        const rowKey = state.rowKey;
+        const shifts = getDebtShiftsForKey(rowKey);
+        const next = [];
+        if (deltaPlan > 0) {
+            let consume = deltaPlan;
+            shifts.forEach((item) => {
+                const qty = item.qty;
+                if (qty <= 0) {
+                    return;
+                }
+                if (consume <= 0) {
+                    next.push({ date: item.date, qty });
+                    return;
+                }
+                const take = Math.min(qty, consume);
+                consume -= take;
+                const left = qty - take;
+                if (left > 0) {
+                    next.push({ date: item.date, qty: left });
+                }
+            });
+        } else {
+            const addQty = Math.abs(deltaPlan);
+            const dateRef = fallbackDate || getTodayIso();
+            let merged = false;
+            shifts.forEach((item) => {
+                const qty = item.qty;
+                if (qty <= 0) {
+                    return;
+                }
+                if (!merged && item.date === dateRef) {
+                    next.push({ date: item.date, qty: qty + addQty });
+                    merged = true;
+                } else {
+                    next.push({ date: item.date, qty });
+                }
+            });
+            if (!merged && addQty > 0) {
+                next.push({ date: dateRef, qty: addQty });
+            }
+        }
+        setDebtShiftsForKey(rowKey, next);
+        renderDebtCellByKey(rowKey);
+    }
+
+    function applyDebtChange(debtChange, direction) {
+        const rowKey = debtChange.rowKey || '';
+        const shift = debtChange.shift || null;
+        const debtMoved = Math.max(0, parseInt(debtChange.movedQty || 0, 10) || 0);
+        if (!rowKey || !shift || !shift.date || debtMoved <= 0) {
+            return;
+        }
+        const shifts = getDebtShiftsForKey(rowKey);
+        const dateRef = shift.date;
+        if (direction === 'forward') {
+            let remaining = debtMoved;
+            const next = [];
+            shifts.forEach((item) => {
+                if (remaining > 0 && item.date === dateRef) {
+                    const take = Math.min(item.qty, remaining);
+                    remaining -= take;
+                    const left = item.qty - take;
+                    if (left > 0) {
+                        next.push({ date: item.date, qty: left });
+                    }
+                } else {
+                    next.push({ date: item.date, qty: item.qty });
+                }
+            });
+            setDebtShiftsForKey(rowKey, next);
+        } else {
+            let merged = false;
+            const next = shifts.map((item) => {
+                if (item.date === dateRef) {
+                    merged = true;
+                    return { date: item.date, qty: item.qty + debtMoved };
+                }
+                return { date: item.date, qty: item.qty };
+            });
+            if (!merged) {
+                next.push({ date: dateRef, qty: debtMoved });
+            }
+            setDebtShiftsForKey(rowKey, next);
+        }
+        renderDebtCellByKey(rowKey);
+    }
+
+    function canDropDebtOnCell(cell, state) {
+        if (!dragContext || dragContext.sourceType !== 'debt' || !cell || !state) {
+            return false;
+        }
+        if (dragContext.rowKey !== state.rowKey) {
+            return false;
+        }
+        const toDate = String(cell.dataset.date || '');
+        if (!toDate || toDate < getTodayIso()) {
+            return false;
+        }
+        const targetQty = parseInt(cell.dataset.gofroQty || '0', 10) || 0;
+        return targetQty <= 0;
+    }
+
+    function queueDebtMove(state, fromDate, toDate, qty) {
+        const movedQty = Math.max(0, parseInt(qty, 10) || 0);
+        if (movedQty <= 0) {
+            return;
+        }
+        const move = {
+            label: `[Долг] ${formatDateRu(fromDate)} → ${formatDateRu(toDate)}, ${movedQty} шт`,
+            beforeQty: 0,
+            payload: {
+                mode: 'debt',
+                source_row_key: state.rowKey,
+                order_number: state.order,
+                filter_name: state.filterName,
+                package_key: state.packageKey,
+                package_name: state.packageName,
+                from_date: fromDate,
+                to_date: toDate,
+                plan_date: toDate,
+                qty: movedQty,
+            },
+            debtChange: {
+                rowKey: state.rowKey,
+                shift: { date: fromDate, qty: movedQty },
+                movedQty,
+            },
+        };
+        pendingMoves.push(move);
+        applyMoveLocally(move);
+        refreshPendingUi();
+    }
+
+    function setApplyStatus(text, isError) {
+        if (!applyStatus) {
+            return;
+        }
+        applyStatus.textContent = text || '';
+        applyStatus.style.color = isError ? '#b91c1c' : '#64748b';
+    }
+
+    function syncPlanQty(state, date, qty) {
+        const d = String(date || '');
+        if (!d || !state) {
+            return;
+        }
+        const nextQty = Math.max(0, parseInt(qty, 10) || 0);
+        if (!state.planByDate) {
+            state.planByDate = {};
+        }
+        if (nextQty > 0) {
+            state.planByDate[d] = nextQty;
+            if (d >= getTodayIso()) {
+                state.allocatedByDate[d] = nextQty;
+            }
+        } else {
+            delete state.planByDate[d];
+            delete state.allocatedByDate[d];
+        }
+    }
+
+    Array.from(document.querySelectorAll('tbody tr[data-row-key]')).forEach((row) => {
+        const rowKey = String(row.dataset.rowKey || '');
+        const planByDate = Object.assign({}, initialGofroPlanMap[rowKey] || {});
+        const allocatedByDate = {};
+        row.querySelectorAll('td.date-cell[data-date]').forEach((cell) => {
+            const d = String(cell.dataset.date || '');
+            const q = parseInt(cell.dataset.gofroQty || '0', 10) || 0;
+            if (d && q > 0) {
+                planByDate[d] = q;
+                allocatedByDate[d] = q;
+            }
+        });
+        const state = {
+            row,
+            rowKey,
+            order: String(row.dataset.order || ''),
+            filterName: String(row.dataset.filterName || ''),
+            packageKey: String(row.dataset.packageKey || ''),
+            packageName: String(row.dataset.packageName || ''),
+            qtyPerHalfRoll: Math.max(0, parseInt(row.dataset.qtyPerHalfRoll || '0', 10) || 0),
+            packagesPerRoll: Math.max(0, parseInt(row.dataset.packagesPerRoll || '0', 10) || 0),
+            baseAvailable: parseInt(row.dataset.baseAvailable || '0', 10) || 0,
+            gofroNeed: Math.max(0, parseInt(row.dataset.gofroNeed || '0', 10) || 0),
+            machineType: String(row.dataset.machineType || 'knife'),
+            rowHint: String(row.dataset.rowHint || ''),
+            filterCell: row.querySelector('td.filter-name-cell'),
+            dateCells: Array.from(row.querySelectorAll('td.date-cell[data-date]')),
+            allocatedByDate,
+            planByDate,
+            overdueDebtQty: 0,
+            overduePlannedQty: 0,
+        };
+        rowStateMap.set(rowKey, state);
     });
 
-    function bootstrapStrips() {
-        strips = [];
-        function appendRowStrips(state, rowKey) {
-            if (!state || !state.packageKey || state.gofroNeed <= 0 || state.packagesPerRoll <= 0) {
-                return;
-            }
-            const rollsNeeded = Math.ceil(state.gofroNeed / state.packagesPerRoll);
-            for (let i = 0; i < rollsNeeded; i += 1) {
-                const qtyFromRoll = state.packagesPerRoll;
-                const length = qtyFromRoll * NORM_PER_UNIT;
-                strips.push({
-                    id: `S${stripSeq++}`,
-                    length,
-                    qty_capacity: qtyFromRoll,
-                    package_type: state.packageKey,
-                    package_label: state.filterName || state.packageName || getPackageLabel(state.packageKey),
-                    order: state.order || '',
-                    source_row: rowKey,
-                });
-            }
-        }
-        rowStateMap.forEach((state, rowKey) => {
-            if (state.dismissed) {
-                return;
-            }
-            if (!state.packageKey || state.gofroNeed <= 0 || state.packagesPerRoll <= 0) {
-                return;
-            }
-            appendRowStrips(state, rowKey);
-        });
-    }
-
-    function getPackageLabel(pkgKey) {
-        return packageCatalog[pkgKey] || pkgKey || '—';
-    }
-
-    function clearDropHints() {
-        document.querySelectorAll('td.date-cell.drop-valid, td.date-cell.drop-invalid').forEach((cell) => {
-            cell.classList.remove('drop-valid', 'drop-invalid');
-        });
-    }
-
-    function setDragDateHover(dateIso) {
-        const next = String(dateIso || '');
-        if (dragHoveredDate === next) {
+    function applyFrozenColumns() {
+        const table = planTable;
+        if (!table) {
             return;
         }
-        document.querySelectorAll('th.date-col.drag-target-hover').forEach((el) => {
-            el.classList.remove('drag-target-hover');
-        });
-        dragHoveredDate = '';
-        if (!next || !/^\d{4}-\d{2}-\d{2}$/.test(next)) {
+        const headRow = table.querySelector('thead tr');
+        if (!headRow) {
             return;
         }
-        document.querySelectorAll(`th.date-col[data-date-total="${next}"]`).forEach((el) => {
-            el.classList.add('drag-target-hover');
+        const cols = Array.from(headRow.children);
+        let left = 0;
+        table.classList.add('has-frozen-cols');
+        cols.forEach((th, index) => {
+            const isFrozen = index < FROZEN_COL_COUNT;
+            const selector = `tr > *:nth-child(${index + 1})`;
+            table.querySelectorAll(selector).forEach((cell) => {
+                if (isFrozen) {
+                    cell.classList.add('frozen-col');
+                    cell.style.setProperty('--sticky-left', `${left}px`);
+                    cell.classList.toggle('frozen-col--last', index === FROZEN_COL_COUNT - 1);
+                } else {
+                    cell.classList.remove('frozen-col', 'frozen-col--last');
+                    cell.style.removeProperty('--sticky-left');
+                }
+            });
+            if (isFrozen) {
+                left += th.getBoundingClientRect().width;
+            }
         });
-        dragHoveredDate = next;
     }
 
-    function computeQtyFromLength(length) {
-        const safeLength = Math.max(0, Number(length) || 0);
-        return Math.max(0, Math.floor(safeLength / NORM_PER_UNIT));
-    }
-
-    function getAllocatedObjectQty(obj) {
-        if (obj && typeof obj === 'object') {
-            return Math.max(0, parseInt(obj.qty || 0, 10) || 0);
+    function refreshCellDom(cell, gofroQty) {
+        const planQty = parseInt(cell.dataset.planQty || '0', 10) || 0;
+        const qty = Math.max(0, parseInt(gofroQty, 10) || 0);
+        cell.dataset.gofroQty = String(qty);
+        let hint = cell.querySelector('.cell-plan-hint');
+        if (planQty > 0) {
+            if (!hint) {
+                hint = document.createElement('span');
+                hint.className = 'cell-plan-hint';
+                cell.insertBefore(hint, cell.firstChild);
+            }
+            hint.textContent = String(planQty);
+        } else if (hint) {
+            hint.remove();
         }
-        return Math.max(0, parseInt(obj || 0, 10) || 0);
+        const textNodes = [];
+        cell.childNodes.forEach((n) => {
+            if (n.nodeType === Node.TEXT_NODE && String(n.textContent || '').trim() !== '') {
+                textNodes.push(n);
+            }
+        });
+        textNodes.forEach((n) => n.remove());
+        if (qty > 0) {
+            cell.appendChild(document.createTextNode(String(qty)));
+        }
     }
 
-    function getAllocatedObjectItems(obj) {
-        const ensureStripId = (sid) => {
-            const t = String(sid || '').trim();
-            return t !== '' ? t : `GEN${planSaveStripSeq++}`;
+    function updateCoverage() {
+        const dailyTotals = {};
+        rowStateMap.forEach((state) => {
+            const todayIso = getTodayIso();
+            Object.keys(state.allocatedByDate).forEach((d) => {
+                const qty = parseInt(state.allocatedByDate[d] || 0, 10) || 0;
+                if (qty > 0 && d >= todayIso) {
+                    if (!dailyTotals[d]) {
+                        dailyTotals[d] = { total: 0, rotary: 0, knife: 0 };
+                    }
+                    dailyTotals[d].total += qty;
+                    if (state.machineType === 'rotary') {
+                        dailyTotals[d].rotary += qty;
+                    } else {
+                        dailyTotals[d].knife += qty;
+                    }
+                }
+            });
+            reconcileDebtForRow(state);
+            renderDebtCellByKey(state.rowKey);
+
+            state.dateCells.forEach((cell) => {
+                const gofroQty = parseInt(state.allocatedByDate[cell.dataset.date || ''] || 0, 10) || 0;
+                refreshCellDom(cell, gofroQty);
+            });
+            applyGofroCoverageForRow(state);
+        });
+
+        Object.keys(dateHeaderTotals).forEach((date) => {
+            const totals = dailyTotals[date] || { total: 0, rotary: 0, knife: 0 };
+            const entry = dateHeaderTotals[date];
+            if (!entry) {
+                return;
+            }
+            const title = `Г/п на дату: ${totals.total}; ножевая (Н): ${totals.knife}; ротационная (Р): ${totals.rotary}`;
+            entry.knifeEls.forEach((el) => {
+                el.textContent = String(totals.knife);
+            });
+            entry.rotaryEls.forEach((el) => {
+                el.textContent = String(totals.rotary);
+            });
+            entry.ths.forEach((th) => {
+                th.title = title;
+            });
+        });
+        refreshOverdueAlertModal();
+        markPendingCells();
+    }
+
+    function markPendingCells() {
+        planTable.querySelectorAll('td.date-cell.queue-pending').forEach((c) => c.classList.remove('queue-pending'));
+        pendingMoves.forEach((move) => {
+            const rowKey = move.payload.source_row_key;
+            const date = move.payload.to_date || move.payload.plan_date;
+            const state = rowStateMap.get(rowKey);
+            if (!state) {
+                return;
+            }
+            const cell = state.dateCells.find((c) => String(c.dataset.date) === date);
+            if (cell) {
+                cell.classList.add('queue-pending');
+            }
+        });
+    }
+
+    function buildMovePayload(state, date, mode, qty) {
+        return {
+            source_row_key: state.rowKey,
+            order_number: state.order,
+            filter_name: state.filterName,
+            package_key: state.packageKey,
+            package_name: state.packageName,
+            plan_date: date,
+            from_date: date,
+            to_date: date,
+            mode,
+            qty,
         };
-        if (obj && typeof obj === 'object' && Array.isArray(obj.items) && obj.items.length > 0) {
-            return obj.items
-                .map((item) => ({
-                    strip_id: ensureStripId(item.strip_id),
-                    qty: Math.max(0, parseInt(item.qty || 0, 10) || 0),
-                }))
-                .filter((item) => item.qty > 0);
-        }
-        const qty = getAllocatedObjectQty(obj);
-        if (qty <= 0) {
-            return [];
-        }
-        const stripId = obj && typeof obj === 'object' ? String(obj.strip_id || '') : '';
-        return [{ strip_id: ensureStripId(stripId), qty }];
     }
 
-    function setSaveStatus(text, isError = false) {
-        if (!savePlanStatus) {
+    function applyMoveLocally(move) {
+        const state = rowStateMap.get(move.payload.source_row_key);
+        if (!state) {
             return;
         }
-        savePlanStatus.textContent = text;
-        savePlanStatus.style.color = isError ? '#b91c1c' : '#6b7280';
+        if (move.debtChange) {
+            applyDebtChange(move.debtChange, 'forward');
+            const fromDate = String(move.debtChange.shift.date || '');
+            const toDate = String(move.payload.to_date || move.payload.plan_date || '');
+            const qty = Math.max(0, parseInt(move.payload.qty, 10) || 0);
+            const movedQty = Math.max(0, parseInt(move.debtChange.movedQty, 10) || 0);
+            if (fromDate && movedQty > 0 && state.planByDate[fromDate] != null) {
+                const left = (parseInt(state.planByDate[fromDate], 10) || 0) - movedQty;
+                if (left > 0) {
+                    state.planByDate[fromDate] = left;
+                } else {
+                    delete state.planByDate[fromDate];
+                }
+            }
+            if (toDate && qty > 0) {
+                state.planByDate[toDate] = qty;
+                state.allocatedByDate[toDate] = qty;
+            }
+            updateCoverage();
+            return;
+        }
+        const date = move.payload.plan_date;
+        if (move.payload.mode === 'clear_cell') {
+            delete state.allocatedByDate[date];
+            delete state.planByDate[date];
+        } else {
+            const nextQty = Math.max(0, parseInt(move.payload.qty, 10) || 0);
+            if (nextQty > 0) {
+                state.planByDate[date] = nextQty;
+                state.allocatedByDate[date] = nextQty;
+            } else {
+                delete state.planByDate[date];
+                delete state.allocatedByDate[date];
+            }
+        }
+        updateCoverage();
     }
 
-    function formatDateRu(iso) {
-        if (!iso) {
+    function revertMoveLocally(move) {
+        const state = rowStateMap.get(move.payload.source_row_key);
+        if (!state) {
+            return;
+        }
+        if (move.debtChange) {
+            applyDebtChange(move.debtChange, 'backward');
+            const fromDate = String(move.debtChange.shift.date || '');
+            const toDate = String(move.payload.to_date || move.payload.plan_date || '');
+            const movedQty = Math.max(0, parseInt(move.debtChange.movedQty, 10) || 0);
+            delete state.allocatedByDate[toDate];
+            delete state.planByDate[toDate];
+            if (fromDate && movedQty > 0) {
+                state.planByDate[fromDate] = (parseInt(state.planByDate[fromDate], 10) || 0) + movedQty;
+            }
+            updateCoverage();
+            return;
+        }
+        const date = move.payload.plan_date;
+        if (move.beforeQty > 0) {
+            state.planByDate[date] = move.beforeQty;
+            state.allocatedByDate[date] = move.beforeQty;
+        } else {
+            delete state.planByDate[date];
+            delete state.allocatedByDate[date];
+        }
+        updateCoverage();
+    }
+
+    function queueSetCell(state, date, qty) {
+        const beforeQty = parseInt(state.allocatedByDate[date] || 0, 10) || 0;
+        const nextQty = Math.max(0, parseInt(qty, 10) || 0);
+        if (beforeQty === nextQty) {
+            return;
+        }
+        const mode = nextQty > 0 ? 'set_qty' : 'clear_cell';
+        const move = {
+            label: `${state.filterName} / ${formatDateRu(date)}: ${beforeQty || '—'} → ${nextQty || '—'} шт`,
+            beforeQty,
+            payload: buildMovePayload(state, date, mode, nextQty),
+        };
+        pendingMoves.push(move);
+        applyMoveLocally(move);
+        const delta = nextQty - beforeQty;
+        if (delta !== 0) {
+            adjustDebtForPlanDelta(state, delta, date);
+        }
+        refreshPendingUi();
+    }
+
+    function refreshPendingUi() {
+        const count = pendingMoves.length;
+        if (pendingMovesText) {
+            pendingMovesText.textContent = `Изменений в очереди: ${count}`;
+        }
+        const disabled = count === 0 || isApplyingPendingMoves;
+        [applyPendingMovesBtn, applyPendingMovesPanelBtn, undoPendingMoveBtn, clearPendingMovesBtn].forEach((btn) => {
+            if (btn) {
+                btn.disabled = disabled;
+            }
+        });
+        if (applyPendingMovesBtn) {
+            applyPendingMovesBtn.textContent = isApplyingPendingMoves ? 'Применение...' : (count > 0 ? `Применить (${count})` : 'Применить');
+        }
+        if (applyPendingMovesPanelBtn) {
+            applyPendingMovesPanelBtn.textContent = isApplyingPendingMoves ? 'Применение...' : (count > 0 ? `Применить (${count})` : 'Применить');
+        }
+        if (moveQueueEmpty && moveQueueList) {
+            moveQueueEmpty.hidden = count > 0;
+            moveQueueList.innerHTML = '';
+            pendingMoves.forEach((move, idx) => {
+                const li = document.createElement('li');
+                li.className = 'queue-item';
+                li.textContent = `${idx + 1}. ${move.label}`;
+                moveQueueList.appendChild(li);
+            });
+        }
+        markPendingCells();
+    }
+
+    async function applyPendingMovesToServer() {
+        if (pendingMoves.length === 0 || isApplyingPendingMoves) {
+            return;
+        }
+        isApplyingPendingMoves = true;
+        refreshPendingUi();
+        setApplyStatus('Сохраняем...', false);
+        try {
+            const res = await fetch(window.location.pathname + window.location.search, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'apply_moves',
+                    moves: pendingMoves.map((m) => m.payload),
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data || !data.ok) {
+                throw new Error((data && data.error) ? data.error : 'Ошибка сохранения');
+            }
+            pendingMoves.length = 0;
+            refreshPendingUi();
+            setApplyStatus(`Сохранено: ${data.applied || 0} операций`, false);
+        } catch (err) {
+            setApplyStatus(String(err.message || err), true);
+        } finally {
+            isApplyingPendingMoves = false;
+            refreshPendingUi();
+        }
+    }
+
+    function closeGofroCellPicker() {
+        gofroCellPicker.hidden = true;
+        pickerTarget = null;
+    }
+
+    function openGofroCellPicker(cell, state) {
+        const date = String(cell.dataset.date || '');
+        if (!date || date < getTodayIso()) {
+            return;
+        }
+        pickerTarget = { cell, state, date };
+        const half = state.qtyPerHalfRoll;
+        const maxButtons = 6;
+        let buttonsHtml = '';
+        if (half > 0) {
+            for (let k = 1; k <= maxButtons; k += 1) {
+                const qty = k * half;
+                buttonsHtml += `<button type="button" class="gofro-pick-btn" data-qty="${qty}"><strong>×${k}</strong>${qty} шт</button>`;
+            }
+        }
+        const warn = half <= 0
+            ? `<p class="gofro-cell-picker__warn">${htmlEscape(state.rowHint || 'Не рассчитан полурулон — введите количество вручную.')}</p>`
+            : '';
+        gofroCellPicker.innerHTML = `
+            <p class="gofro-cell-picker__title">${htmlEscape(state.filterName)}<br>${htmlEscape(formatDateRu(date))}</p>
+            ${warn}
+            <div class="gofro-cell-picker__grid">${buttonsHtml}</div>
+            <div class="gofro-cell-picker__actions">
+                <button type="button" data-action="clear">Очистить</button>
+                <button type="button" data-action="custom">Другое…</button>
+            </div>
+        `;
+        const pickerGrid = gofroCellPicker.querySelector('.gofro-cell-picker__grid');
+        if (pickerGrid) {
+            pickerGrid.querySelectorAll('.gofro-pick-btn').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    queueSetCell(state, date, parseInt(btn.dataset.qty || '0', 10));
+                    closeGofroCellPicker();
+                });
+            });
+        }
+        gofroCellPicker.querySelector('[data-action="clear"]')?.addEventListener('click', () => {
+            queueSetCell(state, date, 0);
+            closeGofroCellPicker();
+        });
+        gofroCellPicker.querySelector('[data-action="custom"]')?.addEventListener('click', () => {
+            const raw = window.prompt('Количество г/п (шт):', String(parseInt(state.allocatedByDate[date] || '0', 10) || ''));
+            if (raw === null) {
+                return;
+            }
+            const val = parseInt(String(raw).trim(), 10);
+            if (Number.isNaN(val) || val < 0) {
+                alert('Введите неотрицательное целое число.');
+                return;
+            }
+            queueSetCell(state, date, val);
+            closeGofroCellPicker();
+        });
+        gofroCellPicker.hidden = false;
+        const rect = cell.getBoundingClientRect();
+        let x = rect.left;
+        let y = rect.bottom + 4;
+        gofroCellPicker.style.left = `${Math.round(x)}px`;
+        gofroCellPicker.style.top = `${Math.round(y)}px`;
+        const pr = gofroCellPicker.getBoundingClientRect();
+        const vw = window.innerWidth || 800;
+        const vh = window.innerHeight || 600;
+        if (pr.right > vw - 8) {
+            x = Math.max(8, vw - pr.width - 8);
+            gofroCellPicker.style.left = `${Math.round(x)}px`;
+        }
+        if (pr.bottom > vh - 8) {
+            y = Math.max(8, rect.top - pr.height - 4);
+            gofroCellPicker.style.top = `${Math.round(y)}px`;
+        }
+    }
+
+    /** Н — ножевая, Р — ротационная машина гофрирования. */
+    function gofroMachineLabel(machineType) {
+        return String(machineType || '') === 'rotary' ? 'Р' : 'Н';
+    }
+
+    /** Одно числовое поле ребра (высота или количество), без объединения. */
+    function formatRibNumber(n) {
+        const val = Number(n);
+        if (!Number.isFinite(val) || val <= 0) {
+            return '—';
+        }
+        const s = String(val);
+        return s.replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+    }
+
+    function formatWidthMm(w) {
+        const n = Number(w);
+        if (!Number.isFinite(n) || n <= 0) {
+            return '—';
+        }
+        const s = String(Math.round(n * 100) / 100);
+        return s.replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+    }
+
+    /** Убирает из названия слово «гофропакет» (в типичных падежах) для колонки печати. */
+    function stripGofropaketWordForPrint(name) {
+        const raw = String(name || '').trim();
+        if (!raw) {
             return '';
         }
-        const parts = String(iso).split('-');
-        if (parts.length !== 3) {
-            return String(iso);
-        }
-        return `${parts[2]}.${parts[1]}.${parts[0]}`;
-    }
-
-    function htmlEscape(str) {
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
-    }
-
-    function getTodayIso() {
-        if (testTodayDateInput) {
-            const raw = String(testTodayDateInput.value || '').trim();
-            if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-                return raw;
-            }
-        }
-        return currentTodayIso;
-    }
-
-    function ensureSupplyActionMenu() {
-        if (supplyActionMenuEl) {
-            return supplyActionMenuEl;
-        }
-        supplyActionMenuEl = document.createElement('div');
-        supplyActionMenuEl.className = 'supply-action-menu';
-        supplyActionMenuEl.innerHTML = `
-            <div class="supply-action-main">
-                <button type="button" class="supply-action-btn supply-action-btn--danger" data-supply-action="delete">Удалить (вернуть в пул)</button>
-                <button type="button" class="supply-action-btn" data-supply-action="move">Сдвинуть...</button>
-            </div>
-            <div class="supply-action-move" style="display:none;"></div>
-        `;
-        document.body.appendChild(supplyActionMenuEl);
-        return supplyActionMenuEl;
-    }
-
-    function buildMoveDateOptions(rowKey, fromDate) {
-        const state = rowStateMap.get(rowKey);
-        if (!state) {
-            return [];
-        }
-        return (state.dateCells || [])
-            .map((cell) => String(cell.dataset.date || ''))
-            .filter((d) => d && d !== fromDate);
-    }
-
-    function renderSupplyActionMenu(mode = 'actions') {
-        if (!supplyActionMenuEl || !activeSupplyAction) {
-            return;
-        }
-        const mainEl = supplyActionMenuEl.querySelector('.supply-action-main');
-        const moveEl = supplyActionMenuEl.querySelector('.supply-action-move');
-        if (!(mainEl instanceof HTMLElement) || !(moveEl instanceof HTMLElement)) {
-            return;
-        }
-        supplyActionMenuMode = mode === 'move' ? 'move' : 'actions';
-        if (supplyActionMenuMode === 'actions') {
-            mainEl.style.display = '';
-            moveEl.style.display = 'none';
-            moveEl.innerHTML = '';
-            return;
-        }
-        const { rowKey, date } = activeSupplyAction;
-        const dates = buildMoveDateOptions(rowKey, date);
-        mainEl.style.display = 'none';
-        moveEl.style.display = '';
-        if (dates.length === 0) {
-            moveEl.innerHTML = `
-                <div class="supply-action-caption">Нет доступных дат для сдвига.</div>
-                <button type="button" class="supply-action-btn" data-supply-action="move-back">Назад</button>
-            `;
-            return;
-        }
-        const dateButtons = dates.map((d) => `
-            <button type="button" class="supply-action-btn" data-supply-action="move-date" data-target-date="${htmlEscape(d)}">
-                ${htmlEscape(formatDateRu(d))} <span style="color:#64748b;">(${htmlEscape(d)})</span>
-            </button>
-        `).join('');
-        moveEl.innerHTML = `
-            <div class="supply-action-caption">Куда сдвинуть позицию:</div>
-            ${dateButtons}
-            <button type="button" class="supply-action-btn" data-supply-action="move-back">Назад</button>
-        `;
-    }
-
-    function closeSupplyActionMenu() {
-        if (!supplyActionMenuEl) {
-            return;
-        }
-        supplyActionMenuEl.classList.remove('open');
-        activeSupplyAction = null;
-        supplyActionMenuMode = 'actions';
-    }
-
-    function moveAllocationToDate(rowKey, fromDate, objIdx, targetDate) {
-        const state = rowStateMap.get(rowKey);
-        if (!state) {
-            return false;
-        }
-        const toDate = String(targetDate || '').trim();
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(toDate) || toDate === fromDate) {
-            return false;
-        }
-        const validDates = new Set((state.dateCells || []).map((cell) => String(cell.dataset.date || '')).filter((d) => d));
-        if (!validDates.has(toDate)) {
-            return false;
-        }
-        const sourceList = Array.isArray(state.allocatedObjectsByDate[fromDate]) ? state.allocatedObjectsByDate[fromDate] : [];
-        if (objIdx < 0 || objIdx >= sourceList.length) {
-            return false;
-        }
-        const allocObj = sourceList[objIdx];
-        const qty = getAllocatedObjectQty(allocObj);
-        if (qty <= 0) {
-            return false;
-        }
-        sourceList.splice(objIdx, 1);
-        if (sourceList.length === 0) {
-            delete state.allocatedObjectsByDate[fromDate];
-        }
-        state.allocatedByDate[fromDate] = Math.max(0, (parseInt(state.allocatedByDate[fromDate] || 0, 10) || 0) - qty);
-        if ((parseInt(state.allocatedByDate[fromDate] || 0, 10) || 0) <= 0) {
-            delete state.allocatedByDate[fromDate];
-        }
-
-        if (!Array.isArray(state.allocatedObjectsByDate[toDate])) {
-            state.allocatedObjectsByDate[toDate] = [];
-        }
-        state.allocatedObjectsByDate[toDate].push(allocObj);
-        state.allocatedByDate[toDate] = (parseInt(state.allocatedByDate[toDate] || 0, 10) || 0) + qty;
-
-        if (!supplyMap[rowKey]) {
-            supplyMap[rowKey] = {};
-        }
-        supplyMap[rowKey][fromDate] = Math.max(0, (parseInt(supplyMap[rowKey][fromDate] || 0, 10) || 0) - qty);
-        if ((parseInt(supplyMap[rowKey][fromDate] || 0, 10) || 0) <= 0) {
-            delete supplyMap[rowKey][fromDate];
-        }
-        supplyMap[rowKey][toDate] = (parseInt(supplyMap[rowKey][toDate] || 0, 10) || 0) + qty;
-        return true;
-    }
-
-    function openSupplyActionMenu(rowKey, date, objIdx, anchorEl) {
-        const menu = ensureSupplyActionMenu();
-        activeSupplyAction = { rowKey, date, objIdx };
-        renderSupplyActionMenu('actions');
-        menu.classList.add('open');
-        const rect = anchorEl.getBoundingClientRect();
-        const margin = 6;
-        const pad = 8;
-        let menuRect = menu.getBoundingClientRect();
-        let left = Math.round(rect.left);
-        let top = Math.round(rect.bottom + margin);
-        const maxLeft = window.innerWidth - menuRect.width - pad;
-        if (left > maxLeft) {
-            left = Math.max(pad, maxLeft);
-        }
-        if (left < pad) {
-            left = pad;
-        }
-        if (top + menuRect.height > window.innerHeight - pad) {
-            const aboveTop = Math.round(rect.top - menuRect.height - margin);
-            if (aboveTop >= pad) {
-                top = aboveTop;
-            } else {
-                top = Math.max(pad, Math.round(window.innerHeight - menuRect.height - pad));
-            }
-        }
-        menu.style.left = `${left}px`;
-        menu.style.top = `${top}px`;
-        menuRect = menu.getBoundingClientRect();
-        if (menuRect.right > window.innerWidth - pad) {
-            menu.style.left = `${Math.max(pad, window.innerWidth - menuRect.width - pad)}px`;
-        }
-        if (menuRect.bottom > window.innerHeight - pad) {
-            menu.style.top = `${Math.max(pad, window.innerHeight - menuRect.height - pad)}px`;
-        }
+        const word = /гофропакет(?:а|ов|ы|у|ом|е|ами|ам|ах)?/gi;
+        const s = raw.replace(word, ' ').replace(/\s{2,}/g, ' ').trim();
+        return s || raw;
     }
 
     function collectTaskSheetRows(dateFrom, dateTo) {
         const rowsOut = [];
         rowStateMap.forEach((state) => {
-            if (state.dismissed) {
-                return;
-            }
             Object.keys(state.allocatedByDate).forEach((date) => {
                 if (date < dateFrom || date > dateTo) {
                     return;
                 }
-                const qty = Math.max(0, parseInt(state.allocatedByDate[date] || 0, 10) || 0);
+                const qty = parseInt(state.allocatedByDate[date] || 0, 10) || 0;
                 if (qty <= 0) {
                     return;
                 }
                 rowsOut.push({
                     date,
-                    order: String(state.order || ''),
-                    filter: String(state.filterName || ''),
+                    order: state.order,
+                    filter: state.filterName,
                     qty,
-                    paperWidthMm: Math.max(0, Number(state.paperWidthMm || 0) || 0),
-                    foldHeight: Math.max(0, Number(state.foldHeight || 0) || 0),
-                    foldCount: Math.max(0, Number(state.foldCount || 0) || 0),
+                    paperWidthMm: parseFloat(state.row.dataset.paperWidthMm || 0) || 0,
+                    foldHeight: parseFloat(state.row.dataset.foldHeight || 0) || 0,
+                    foldCount: parseFloat(state.row.dataset.foldCount || 0) || 0,
+                    packageName: state.packageName,
+                    machineType: state.machineType,
                 });
             });
         });
         rowsOut.sort((a, b) => {
-            if (a.date !== b.date) return a.date.localeCompare(b.date);
-            if (a.order !== b.order) return a.order.localeCompare(b.order, 'ru');
+            if (a.date !== b.date) {
+                return a.date.localeCompare(b.date);
+            }
+            if (a.order !== b.order) {
+                return a.order.localeCompare(b.order, 'ru');
+            }
             return a.filter.localeCompare(b.filter, 'ru');
         });
         return rowsOut;
+    }
+
+    function syncTaskPrintModeUi() {
+        const isDay = taskPrintModeDay && taskPrintModeDay.checked;
+        if (taskPeriodDates) {
+            taskPeriodDates.style.display = isDay ? 'none' : 'grid';
+        }
+        if (taskDayDateWrap) {
+            taskDayDateWrap.style.display = isDay ? 'block' : 'none';
+        }
     }
 
     function openTaskSheetModal() {
         if (!taskSheetModal || !taskDateFrom || !taskDateTo) {
             return;
         }
-        const now = new Date();
-        const fromIso = now.toISOString().slice(0, 10);
-        const toDate = new Date(now.getTime());
-        toDate.setDate(toDate.getDate() + 6);
-        const toIso = toDate.toISOString().slice(0, 10);
-        taskDateFrom.value = taskDateFrom.value || fromIso;
-        taskDateTo.value = taskDateTo.value || toIso;
+        const todayIso = getTodayIso();
+        taskDateFrom.value = taskDateFrom.value || todayIso;
+        taskDateTo.value = taskDateTo.value || addCalendarDaysIso(todayIso, 6);
+        if (taskDateOne) {
+            taskDateOne.value = taskDateOne.value || todayIso;
+        }
+        if (taskPrintModePeriod) {
+            taskPrintModePeriod.checked = true;
+        }
+        if (taskPrintModeDay) {
+            taskPrintModeDay.checked = false;
+        }
+        syncTaskPrintModeUi();
         taskSheetModal.style.display = 'flex';
     }
 
     function closeTaskSheetModal() {
-        if (!taskSheetModal) {
-            return;
+        if (taskSheetModal) {
+            taskSheetModal.style.display = 'none';
         }
-        taskSheetModal.style.display = 'none';
     }
 
-    function printTaskSheet(dateFrom, dateTo) {
+    function printTaskSheet(mode, dateFrom, dateTo) {
         const rowsForPrint = collectTaskSheetRows(dateFrom, dateTo);
         const totalQty = rowsForPrint.reduce((acc, row) => acc + row.qty, 0);
-        const bodyRows = rowsForPrint.length > 0
-            ? rowsForPrint.map((row, idx) => `
+        const isDay = mode === 'day';
+        let printHtml;
+        if (isDay) {
+            const dayStr = formatDateRu(dateFrom);
+            const bodyRows = rowsForPrint.length > 0
+                ? rowsForPrint.map((row) => `
                 <tr>
-                    <td>${idx + 1}</td>
-                    <td>${htmlEscape(formatDateRu(row.date))}</td>
                     <td>${htmlEscape(row.order)}</td>
-                    <td>${htmlEscape(row.filter)}</td>
-                    <td style="text-align:right;">${row.paperWidthMm > 0 ? htmlEscape(String(row.paperWidthMm)) : '—'}</td>
-                    <td style="text-align:right;">${row.foldHeight > 0 ? htmlEscape(String(row.foldHeight)) : '—'}</td>
-                    <td style="text-align:right;">${row.foldCount > 0 ? htmlEscape(String(row.foldCount)) : '—'}</td>
+                    <td>${htmlEscape(stripGofropaketWordForPrint(row.packageName))}</td>
+                    <td style="text-align:center;">${htmlEscape(gofroMachineLabel(row.machineType))}</td>
+                    <td style="text-align:right;">${htmlEscape(formatWidthMm(row.paperWidthMm))}</td>
+                    <td style="text-align:right;">${htmlEscape(formatRibNumber(row.foldHeight))}</td>
+                    <td style="text-align:right;">${htmlEscape(formatRibNumber(row.foldCount))}</td>
                     <td style="text-align:right;">${row.qty}</td>
                     <td></td>
-                </tr>
-            `).join('')
-            : '<tr><td colspan="9" style="text-align:center;color:#64748b;">Нет распланированных позиций за выбранный период</td></tr>';
-
-        const printHtml = `
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <title>Задание сборщицам</title>
-  <style>
-    body { font: 13px/1.35 "Segoe UI", Arial, sans-serif; color:#0f172a; margin:16px; }
-    h1 { margin:0 0 6px; font-size:18px; }
-    .meta { margin:0 0 10px; color:#475569; font-size:12px; }
-    table { width:100%; border-collapse:collapse; }
-    th, td { border:1px solid #cbd5e1; padding:4px 6px; }
-    th { background:#f1f5f9; text-align:left; }
-    @media print { body { margin:8mm; } }
-  </style>
-</head>
-<body>
-  <h1>Задание сборщицам</h1>
-  <div class="meta">Период: ${htmlEscape(formatDateRu(dateFrom))} - ${htmlEscape(formatDateRu(dateTo))}. Всего г/п: ${totalQty}</div>
-  <table>
-    <thead>
-      <tr>
-        <th style="width:34px;">#</th>
-        <th style="width:90px;">Дата</th>
-        <th style="width:120px;">Заявка</th>
-        <th>Фильтр</th>
-        <th style="width:95px; text-align:right;">Ширина, мм</th>
-        <th style="width:95px; text-align:right;">Высота ребра</th>
-        <th style="width:105px; text-align:right;">Кол-во ребер</th>
-        <th style="width:90px; text-align:right;">Кол-во г/п</th>
-        <th style="width:120px;">Примечание</th>
-      </tr>
-    </thead>
-    <tbody>${bodyRows}</tbody>
-  </table>
-</body>
-</html>`;
+                </tr>`).join('')
+                : '<tr><td colspan="8" style="text-align:center;color:#64748b;">Нет распланированных позиций на эту дату</td></tr>';
+            printHtml = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Сменной наряд</title>
+            <style>
+                @page { size: A4 portrait; margin: 12mm; }
+                body { font: 12px Arial, sans-serif; margin: 0; color: #0f172a; }
+                h1 { font-size: 16px; margin: 0 0 8px; }
+                .meta { margin: 0 0 12px; font-size: 12px; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { border: 1px solid #94a3b8; padding: 5px 6px; vertical-align: top; }
+                th { background: #f1f5f9; font-weight: 700; font-size: 11px; }
+                td { font-size: 11px; }
+                .sign { margin-top: 22px; font-size: 11px; line-height: 1.85; color: #334155; }
+            </style>
+            </head><body>
+            <h1>Сменной наряд на сборку гофропакетов</h1>
+            <p class="meta">Дата: <strong>${htmlEscape(dayStr)}</strong>. По плану г/п: <strong>${totalQty}</strong> шт.</p>
+            <table>
+            <thead><tr>
+                <th>Заявка</th><th>Гофропакет</th><th>Н/Р</th><th>Шир., мм</th>
+                <th>h ребра</th><th>Кол-во ребер</th>
+                <th>План, шт</th><th>Примечание</th>
+            </tr></thead>
+            <tbody>${bodyRows}</tbody>
+            </table>
+            <div class="sign">
+                <p>Выдал задание _____________________________ / _______________</p>
+                <p>Приняла старшая смены ____________________ / _______________</p>
+                <p>Задание выполнено, сдало смена _____________ / _______________ &nbsp; дата __________</p>
+            </div>
+            </body></html>`;
+        } else {
+            const bodyRows = rowsForPrint.length > 0
+                ? rowsForPrint.map((row) => `
+                <tr>
+                    <td>${htmlEscape(formatDateRu(row.date))}</td>
+                    <td>${htmlEscape(row.order)}</td>
+                    <td>${htmlEscape(stripGofropaketWordForPrint(row.packageName))}</td>
+                    <td style="text-align:center;">${htmlEscape(gofroMachineLabel(row.machineType))}</td>
+                    <td style="text-align:right;">${htmlEscape(formatWidthMm(row.paperWidthMm))}</td>
+                    <td style="text-align:right;">${htmlEscape(formatRibNumber(row.foldHeight))}</td>
+                    <td style="text-align:right;">${htmlEscape(formatRibNumber(row.foldCount))}</td>
+                    <td style="text-align:right;">${row.qty}</td>
+                    <td></td>
+                </tr>`).join('')
+                : '<tr><td colspan="9" style="text-align:center;color:#64748b;">Нет распланированных позиций за выбранный период</td></tr>';
+            printHtml = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Ведомость задания</title>
+            <style>
+                @page { size: A4 portrait; margin: 10mm; }
+                body { font: 11px Arial, sans-serif; margin: 0; color: #0f172a; }
+                h1 { font-size: 15px; margin: 0 0 8px; }
+                .meta { margin: 0 0 10px; font-size: 11px; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { border: 1px solid #94a3b8; padding: 4px 5px; vertical-align: top; }
+                th { background: #f1f5f9; font-weight: 700; font-size: 10px; }
+                td { font-size: 10px; }
+            </style>
+            </head><body>
+            <h1>Ведомость задания сборщицам (гофропакеты)</h1>
+            <p class="meta">Период: ${htmlEscape(formatDateRu(dateFrom))} — ${htmlEscape(formatDateRu(dateTo))}. Всего г/п: <strong>${totalQty}</strong> шт.</p>
+            <table>
+            <thead><tr>
+                <th>Дата</th><th>Заявка</th><th>Гофропакет</th><th>Н/Р</th><th>Шир., мм</th>
+                <th>h ребра</th><th>Кол-во ребер</th>
+                <th>План, шт</th><th>Примечание</th>
+            </tr></thead>
+            <tbody>${bodyRows}</tbody>
+            </table>
+            </body></html>`;
+        }
         let frame = document.getElementById('task-sheet-print-frame');
         if (!frame) {
             frame = document.createElement('iframe');
             frame.id = 'task-sheet-print-frame';
-            frame.style.position = 'fixed';
-            frame.style.right = '0';
-            frame.style.bottom = '0';
-            frame.style.width = '0';
-            frame.style.height = '0';
-            frame.style.border = '0';
-            frame.setAttribute('aria-hidden', 'true');
+            frame.style.cssText = 'position:fixed;width:0;height:0;border:0';
             document.body.appendChild(frame);
         }
-        const doc = frame.contentWindow ? frame.contentWindow.document : null;
-        if (!doc || !frame.contentWindow) {
-            alert('Не удалось подготовить печать.');
-            return;
-        }
+        const doc = frame.contentWindow.document;
         doc.open();
         doc.write(printHtml);
         doc.close();
@@ -1731,1181 +3163,126 @@ $pageTitle = 'Планирование сборки гофропакетов';
         }, 100);
     }
 
-    function renderStrips() {
-        stripPool.innerHTML = '';
-        if (strips.length === 0) {
-            stripPool.innerHTML = '<div class="muted">Расчетных полос нет (потребность закрыта или не хватает параметров гофропакета).</div>';
-            return;
-        }
-        const grouped = new Map();
-        strips.forEach((strip) => {
-            const groupKey = String(strip.order || '').trim() || 'Без заявки';
-            if (!grouped.has(groupKey)) {
-                grouped.set(groupKey, []);
-            }
-            grouped.get(groupKey).push(strip);
-        });
-
-        Array.from(grouped.entries()).sort((a, b) => a[0].localeCompare(b[0])).forEach(([order, list]) => {
-            const groupEl = document.createElement('div');
-            groupEl.className = 'strip-group';
-            groupEl.innerHTML = `<div class="strip-group__title">Заявка: ${order}</div>`;
-
-            list.forEach((strip) => {
-                const stripEl = document.createElement('div');
-                stripEl.className = 'strip';
-                stripEl.draggable = true;
-                stripEl.dataset.stripId = strip.id;
-                stripEl.dataset.length = String(strip.length);
-                stripEl.dataset.package = strip.package_type;
-                stripEl.dataset.sourceRow = String(strip.source_row || '');
-                if (selectedStripIds.has(strip.id)) {
-                    stripEl.classList.add('strip-selected');
-                }
-                const qty = Math.max(0, parseInt(strip.qty_capacity || computeQtyFromLength(strip.length), 10) || 0);
-                stripEl.innerHTML = `
-                    <div class="strip-meta">
-                        <span>${strip.package_label || getPackageLabel(strip.package_type)}</span>
-                        <span>${qty} шт</span>
-                    </div>
-                `;
-                stripEl.addEventListener('click', (e) => {
-                    const sourceRow = String(strip.source_row || '');
-                    if (!sourceRow) {
-                        return;
-                    }
-                    if (selectedSourceRow && selectedSourceRow !== sourceRow) {
-                        selectedStripIds.clear();
-                    }
-                    selectedSourceRow = sourceRow;
-                    if (selectedStripIds.has(strip.id)) {
-                        selectedStripIds.delete(strip.id);
-                    } else {
-                        selectedStripIds.add(strip.id);
-                    }
-                    if (selectedStripIds.size === 0) {
-                        selectedSourceRow = '';
-                    }
-                    e.preventDefault();
-                    e.stopPropagation();
-                    renderStrips();
-                });
-                stripEl.addEventListener('dragstart', (e) => {
-                    let bundleIds = [strip.id];
-                    if (selectedStripIds.has(strip.id) && selectedSourceRow === String(strip.source_row || '')) {
-                        bundleIds = strips
-                            .filter((s) => selectedStripIds.has(s.id) && String(s.source_row || '') === selectedSourceRow)
-                            .map((s) => s.id);
-                    }
-                    if (bundleIds.length === 0) {
-                        bundleIds = [strip.id];
-                    }
-                    let totalLength = 0;
-                    let totalQty = 0;
-                    bundleIds.forEach((id) => {
-                        const s = strips.find((x) => x.id === id);
-                        if (!s) {
-                            return;
-                        }
-                        const length = Number(s.length) || 0;
-                        const capQty = Math.max(0, parseInt(s.qty_capacity || computeQtyFromLength(length), 10) || 0);
-                        totalLength += length;
-                        totalQty += capQty;
-                    });
-                    dragContext = {
-                        strip_ids: bundleIds,
-                        package_type: strip.package_type,
-                        order: String(strip.order || ''),
-                        length: totalLength,
-                        qty: totalQty,
-                        used_length: totalQty * NORM_PER_UNIT,
-                    };
-                    if (e.dataTransfer) {
-                        e.dataTransfer.effectAllowed = 'move';
-                        e.dataTransfer.setData('text/plain', bundleIds.join(','));
-                    }
-                    highlightValidCells();
-                });
-                stripEl.addEventListener('dragend', () => {
-                    dragContext = null;
-                    clearDropHints();
-                    setDragDateHover('');
-                    hidePreview();
-                });
-                groupEl.appendChild(stripEl);
-            });
-
-            stripPool.appendChild(groupEl);
-        });
-    }
-
-    function highlightValidCells() {
-        clearDropHints();
-        if (!dragContext) {
-            return;
-        }
-        rowStateMap.forEach((state) => {
-            if (state.dismissed) {
-                return;
-            }
-            const validRow = state.packageKey !== ''
-                && state.packageKey === dragContext.package_type
-                && state.order !== ''
-                && state.order === String(dragContext.order || '');
-            state.dateCells.forEach((cell) => {
-                cell.classList.add(validRow ? 'drop-valid' : 'drop-invalid');
-            });
-        });
-    }
-
-    function showPreview(x, y, text) {
-        dragPreview.textContent = text;
-        dragPreview.style.left = `${Math.round(x + 14)}px`;
-        dragPreview.style.top = `${Math.round(y + 14)}px`;
-        dragPreview.style.display = 'block';
-    }
-
-    function hidePreview() {
-        dragPreview.style.display = 'none';
-    }
-
-    function isValidDropCell(cell) {
-        if (!dragContext || !cell || !cell.classList.contains('date-cell')) {
-            return false;
-        }
-        const row = cell.closest('tr[data-row-key]');
-        if (!row) {
-            return false;
-        }
-        const dropRowKey = String(row.dataset.rowKey || '');
-        const dropState = rowStateMap.get(dropRowKey);
-        if (!dropState || dropState.dismissed) {
-            return false;
-        }
-        const pkg = String(row.dataset.packageKey || '');
-        const order = String(row.dataset.order || '');
-        return pkg !== ''
-            && pkg === dragContext.package_type
-            && order !== ''
-            && order === String(dragContext.order || '');
-    }
-
-    function updateCoverage() {
-        const dailyTotals = {};
-        rowStateMap.forEach((state, rowKey) => {
-            if (state.dismissed) {
-                return;
-            }
-            let overduePlannedQty = 0;
-            let allocated = 0;
-            let allocatedInHorizon = 0;
-            Object.keys(state.allocatedByDate).forEach((d) => {
-                const qty = parseInt(state.allocatedByDate[d] || 0, 10) || 0;
-                allocated += qty;
-                const todayIso = getTodayIso();
-                if (d < todayIso) {
-                    overduePlannedQty += qty;
-                }
-                const hasDateCell = state.dateCells.some((cell) => String(cell.dataset.date || '') === d);
-                if (hasDateCell) {
-                    allocatedInHorizon += qty;
-                }
-            });
-            let overdueDebtQty;
-            if (state.gofroNeed > 0) {
-                overdueDebtQty = Math.min(overduePlannedQty, state.gofroNeed);
-            } else {
-                overdueDebtQty = overduePlannedQty;
-            }
-            overdueDebtQty = Math.max(0, overdueDebtQty);
-            state.overduePlannedQty = overduePlannedQty;
-            state.overdueDebtQty = overdueDebtQty;
-            const filterCell = state.filterCell;
-            if (filterCell) {
-                let debtBadge = filterCell.querySelector('.debt-badge');
-                if (overdueDebtQty > 0) {
-                    if (!debtBadge) {
-                        debtBadge = document.createElement('span');
-                        debtBadge.className = 'debt-badge';
-                        filterCell.appendChild(debtBadge);
-                    }
-                    const todayIso = getTodayIso();
-                    debtBadge.textContent = `Долг: ${overdueDebtQty}`;
-                    debtBadge.title = `Просроченный долг: запланировано до ${formatDateRu(todayIso)} и не выполнено на сейчас`;
-                    state.row.classList.add('has-overdue-debt');
-                } else {
-                    if (debtBadge) {
-                        debtBadge.remove();
-                    }
-                    state.row.classList.remove('has-overdue-debt');
-                }
-            }
-            const baseCoverageNeed = Math.max(0, state.baseAvailable);
-            const totalCoverageNeed = Math.max(0, state.baseAvailable + allocatedInHorizon);
-            let baseEndIdx = -1;
-            let basePartialIdx = -1;
-            let totalEndIdx = -1;
-            let totalPartialIdx = -1;
-            const baseStartIdx = 0;
-            let totalStartIdx = 0;
-            const allocatedDates = Object.keys(state.allocatedByDate || {}).filter((d) => {
-                const qty = parseInt(state.allocatedByDate[d] || 0, 10) || 0;
-                if (qty <= 0) {
-                    return false;
-                }
-                return state.dateCells.some((cell) => String(cell.dataset.date || '') === d);
-            });
-            if (allocatedDates.length > 0) {
-                const firstAllocatedDate = allocatedDates.sort()[0];
-                const idxByDate = state.dateCells.findIndex((cell) => String(cell.dataset.date || '') === firstAllocatedDate);
-                if (idxByDate >= 0) {
-                    totalStartIdx = idxByDate;
-                }
-            }
-
-            function findCoverageWindow(needQty, startIdx) {
-                let acc = 0;
-                let endIdx = -1;
-                let partialIdx = -1;
-                let lastEffectiveIdx = -1;
-                for (let i = startIdx; i < state.dateCells.length; i += 1) {
-                    const cell = state.dateCells[i];
-                    const effectiveQty = parseInt(cell.dataset.planQty || '0', 10) || 0;
-                    if (effectiveQty <= 0) {
-                        continue;
-                    }
-                    lastEffectiveIdx = i;
-                    if (acc < needQty && acc + effectiveQty >= needQty) {
-                        endIdx = i;
-                        if (acc + effectiveQty > needQty) {
-                            partialIdx = i;
-                        }
-                        break;
-                    }
-                    acc += effectiveQty;
-                }
-                if (needQty > 0 && endIdx < 0 && lastEffectiveIdx >= startIdx) {
-                    endIdx = lastEffectiveIdx;
-                }
-                return { endIdx, partialIdx };
-            }
-            const baseWindow = findCoverageWindow(baseCoverageNeed, baseStartIdx);
-            baseEndIdx = baseWindow.endIdx;
-            basePartialIdx = baseWindow.partialIdx;
-            const totalWindow = findCoverageWindow(totalCoverageNeed, totalStartIdx);
-            totalEndIdx = totalWindow.endIdx;
-            totalPartialIdx = totalWindow.partialIdx;
-            const allocatedIdxList = state.dateCells
-                .map((cell, idx) => {
-                    const d = String(cell.dataset.date || '');
-                    const q = parseInt(state.allocatedByDate[d] || 0, 10) || 0;
-                    return q > 0 ? idx : -1;
-                })
-                .filter((idx) => idx >= 0);
-            if (allocatedIdxList.length > 0 && (totalCoverageNeed <= 0 || totalEndIdx < 0)) {
-                totalStartIdx = allocatedIdxList[0];
-                totalEndIdx = allocatedIdxList[allocatedIdxList.length - 1];
-                totalPartialIdx = -1;
-            }
-
-            state.dateCells.forEach((cell, idx) => {
-                cell.classList.remove('gantt-full', 'gantt-partial', 'gantt-plan-full', 'gantt-plan-partial');
-                const inBase = baseEndIdx >= 0 && idx >= baseStartIdx && idx <= baseEndIdx;
-                const inTotal = totalEndIdx >= 0 && idx >= totalStartIdx && idx <= totalEndIdx;
-                if (inBase) {
-                    cell.classList.add(idx === basePartialIdx ? 'gantt-partial' : 'gantt-full');
-                } else if (inTotal) {
-                    cell.classList.add(idx === totalPartialIdx ? 'gantt-plan-partial' : 'gantt-plan-full');
-                }
-
-                const date = cell.dataset.date || '';
-                const qty = parseInt(state.allocatedByDate[date] || 0, 10) || 0;
-                if (qty > 0) {
-                    if (!dailyTotals[date]) {
-                        dailyTotals[date] = { total: 0, rotary: 0, knife: 0 };
-                    }
-                    dailyTotals[date].total += qty;
-                    if (state.machineType === 'rotary') {
-                        dailyTotals[date].rotary += qty;
-                    } else {
-                        dailyTotals[date].knife += qty;
-                    }
-                }
-                let supplyEl = cell.querySelector('.cell-supply');
-                const objects = Array.isArray(state.allocatedObjectsByDate[date])
-                    ? state.allocatedObjectsByDate[date]
-                    : [];
-
-                if (objects.length > 0) {
-                    if (!supplyEl) {
-                        supplyEl = document.createElement('div');
-                        supplyEl.className = 'cell-supply';
-                        cell.appendChild(supplyEl);
-                    }
-                    supplyEl.innerHTML = '';
-                    objects.forEach((obj, objIdx) => {
-                        const objQty = getAllocatedObjectQty(obj);
-                        if (objQty <= 0) {
-                            return;
-                        }
-                        const item = document.createElement('span');
-                        item.className = 'cell-supply-item';
-                        item.textContent = String(objQty);
-                        item.title = 'Клик: действия (удалить/сдвинуть)';
-                        item.addEventListener('click', (e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            openSupplyActionMenu(rowKey, date, objIdx, item);
-                        });
-                        supplyEl.appendChild(item);
-                    });
-                } else if (supplyEl) {
-                    supplyEl.remove();
-                }
-            });
-        });
-
-        Object.keys(dateHeaderTotals).forEach((date) => {
-            const totals = dailyTotals[date] || { total: 0, rotary: 0, knife: 0 };
-            const entry = dateHeaderTotals[date];
-            entry.knifeEl.textContent = String(totals.knife);
-            entry.rotaryEl.textContent = String(totals.rotary);
-            entry.th.title = `Суммарно: ${totals.total}; Ротационная: ${totals.rotary}; Ножевая: ${totals.knife}`;
-        });
-        refreshOverdueAlertModal();
-    }
-
-    function openOverdueAlertModal() {
-        if (overdueAlertModal) {
-            overdueAlertModal.style.display = 'flex';
-        }
-    }
-
-    function closeOverdueAlertModal() {
-        if (overdueAlertModal) {
-            overdueAlertModal.style.display = 'none';
-        }
-    }
-
     function refreshOverdueAlertModal() {
-        if (!overdueAlertBtn || !overdueAlertModal || !overdueAlertBody) {
+        if (!overdueAlertBtn || !overdueAlertBody) {
             return;
         }
-        const todayIso = getTodayIso();
         const rowsList = [];
         rowStateMap.forEach((state) => {
-            if (state.dismissed) {
-                return;
-            }
-            const debt = Math.max(0, parseInt(state.overdueDebtQty || 0, 10) || 0);
+            const debt = getOverdueDebtQtyForRow(state.rowKey);
             if (debt <= 0) {
                 return;
             }
-            const machineLabel = state.machineType === 'rotary' ? 'Ротационная' : 'Ножевая';
             rowsList.push({
-                order: String(state.order || ''),
-                filter: String(state.filterName || ''),
+                order: state.order,
+                filter: state.filterName,
                 debt,
-                plannedPast: Math.max(0, parseInt(state.overduePlannedQty || 0, 10) || 0),
-                machineLabel,
             });
-        });
-        rowsList.sort((a, b) => {
-            if (b.debt !== a.debt) {
-                return b.debt - a.debt;
-            }
-            if (a.order !== b.order) {
-                return a.order.localeCompare(b.order, 'ru');
-            }
-            return a.filter.localeCompare(b.filter, 'ru');
         });
         if (rowsList.length === 0) {
             overdueModalAutoOpened = false;
             overdueAlertBtn.style.display = 'none';
-            closeOverdueAlertModal();
             return;
         }
         overdueAlertBtn.style.display = 'inline-block';
         overdueAlertBtn.textContent = `Просрочено (${rowsList.length})`;
-        const tableRows = rowsList.map((row) => `
-            <tr>
-                <td>${htmlEscape(row.order)}</td>
-                <td>${htmlEscape(row.filter)}</td>
-                <td>${htmlEscape(row.machineLabel)}</td>
-                <td style="text-align:right; font-weight:700;">${row.debt}</td>
-                <td style="text-align:right; color:#64748b;">${row.plannedPast}</td>
-            </tr>
-        `).join('');
-        overdueAlertBody.innerHTML = `
-            <div style="font-size:11px; color:#64748b; margin-bottom:8px;">Отсечка «сегодня»: ${htmlEscape(formatDateRu(todayIso))} (${htmlEscape(todayIso)})</div>
-            <table style="width:100%; border-collapse:collapse; font-size:12px;">
-                <thead>
-                    <tr style="background:#f8fafc;">
-                        <th style="text-align:left; border:1px solid #e2e8f0; padding:6px 8px;">Заявка</th>
-                        <th style="text-align:left; border:1px solid #e2e8f0; padding:6px 8px;">Фильтр</th>
-                        <th style="text-align:left; border:1px solid #e2e8f0; padding:6px 8px;">Машина</th>
-                        <th style="text-align:right; border:1px solid #e2e8f0; padding:6px 8px;">Долг, шт</th>
-                        <th style="text-align:right; border:1px solid #e2e8f0; padding:6px 8px;">Всего заплан. до даты</th>
-                    </tr>
-                </thead>
-                <tbody>${tableRows}</tbody>
-            </table>
-        `;
+        overdueAlertBody.innerHTML = `<table style="width:100%;font-size:12px;border-collapse:collapse">
+            <tr><th style="text-align:left;border:1px solid #e2e8f0;padding:6px">Заявка</th>
+            <th style="text-align:left;border:1px solid #e2e8f0;padding:6px">Фильтр</th>
+            <th style="text-align:right;border:1px solid #e2e8f0;padding:6px">Долг</th></tr>
+            ${rowsList.map((r) => `<tr><td style="border:1px solid #e2e8f0;padding:6px">${htmlEscape(r.order)}</td>
+            <td style="border:1px solid #e2e8f0;padding:6px">${htmlEscape(r.filter)}</td>
+            <td style="border:1px solid #e2e8f0;padding:6px;text-align:right;font-weight:700">${r.debt}</td></tr>`).join('')}
+            </table>`;
         if (!overdueModalAutoOpened) {
             overdueModalAutoOpened = true;
-            openOverdueAlertModal();
+            if (overdueAlertModal) {
+                overdueAlertModal.style.display = 'flex';
+            }
         }
     }
 
-    function returnAllAllocationsForRow(rowKey) {
-        const state = rowStateMap.get(rowKey);
-        if (!state) {
-            return;
-        }
-        const dates = Object.keys(state.allocatedObjectsByDate || {});
-        dates.forEach((date) => {
-            while (state.allocatedObjectsByDate[date] && state.allocatedObjectsByDate[date].length > 0) {
-                returnAllocationToPool(rowKey, date, 0, true);
-            }
-        });
-    }
-
-    function dismissPositionRow(rowKey) {
-        const state = rowStateMap.get(rowKey);
-        if (!state || state.dismissed) {
-            return;
-        }
-        returnAllAllocationsForRow(rowKey);
-        strips = strips.filter((s) => String(s.source_row || '') !== String(rowKey));
-        Array.from(selectedStripIds).forEach((id) => {
-            if (!strips.some((s) => s.id === id)) {
-                selectedStripIds.delete(id);
-            }
-        });
-        if (selectedStripIds.size === 0) {
-            selectedSourceRow = '';
-        }
-        state.dismissed = true;
-        state.row.style.display = 'none';
-        dismissedRowKeys.add(rowKey);
-        persistDismissedRowKeys(dismissedRowKeys);
-        renderStrips();
-        updateCoverage();
-    }
-
-    function resetDismissedRows() {
-        const restoredRowKeys = [...dismissedRowKeys];
-        dismissedRowKeys = new Set();
-        persistDismissedRowKeys(dismissedRowKeys);
-        restoredRowKeys.forEach((rowKey) => {
-            const state = rowStateMap.get(rowKey);
-            if (!state) {
-                return;
-            }
-            state.dismissed = false;
-            state.row.style.display = '';
-            if (!state.packageKey || state.gofroNeed <= 0 || state.packagesPerRoll <= 0) {
-                return;
-            }
-            const rollsNeeded = Math.ceil(state.gofroNeed / state.packagesPerRoll);
-            for (let i = 0; i < rollsNeeded; i += 1) {
-                const qtyFromRoll = state.packagesPerRoll;
-                const length = qtyFromRoll * NORM_PER_UNIT;
-                strips.push({
-                    id: `S${stripSeq++}`,
-                    length,
-                    qty_capacity: qtyFromRoll,
-                    package_type: state.packageKey,
-                    package_label: state.filterName || state.packageName || getPackageLabel(state.packageKey),
-                    order: state.order || '',
-                    source_row: rowKey,
-                });
-            }
-        });
-        if (selectedSourceRow && restoredRowKeys.includes(selectedSourceRow)) {
-            selectedSourceRow = '';
-            selectedStripIds.clear();
-        }
-        renderStrips();
-        updateCoverage();
-        setSaveStatus('Скрытые позиции сброшены');
-    }
-
-    function returnAllocationToPool(rowKey, date, objIdx, silentRefresh) {
-        const state = rowStateMap.get(rowKey);
-        if (!state) {
-            return;
-        }
-        const list = Array.isArray(state.allocatedObjectsByDate[date]) ? state.allocatedObjectsByDate[date] : [];
-        if (objIdx < 0 || objIdx >= list.length) {
-            return;
-        }
-        const allocObj = list[objIdx];
-        const qty = getAllocatedObjectQty(allocObj);
-        if (qty <= 0) {
-            return;
-        }
-        const itemsToRestore = getAllocatedObjectItems(allocObj);
-        if (itemsToRestore.length === 0) {
-            return;
-        }
-
-        list.splice(objIdx, 1);
-        state.allocatedByDate[date] = Math.max(0, (parseInt(state.allocatedByDate[date] || 0, 10) || 0) - qty);
-        if (list.length === 0) {
-            delete state.allocatedObjectsByDate[date];
-        }
-
-        if (supplyMap[rowKey]) {
-            supplyMap[rowKey][date] = Math.max(0, (parseInt(supplyMap[rowKey][date] || 0, 10) || 0) - qty);
-            if ((parseInt(supplyMap[rowKey][date] || 0, 10) || 0) <= 0) {
-                delete supplyMap[rowKey][date];
-            }
-        }
-
-        itemsToRestore.forEach((entry) => {
-            allocations.push({
-                strip_id: entry.strip_id || `RETURN-${stripSeq}`,
-                row_key: rowKey,
-                date,
-                qty: -entry.qty,
-                used_length: -(entry.qty * NORM_PER_UNIT),
-                action: 'return_to_pool',
-            });
-        });
-
-        itemsToRestore.forEach((entry) => {
-            strips.push({
-                id: entry.strip_id || `S${stripSeq++}`,
-                length: entry.qty * NORM_PER_UNIT,
-                qty_capacity: entry.qty,
-                package_type: state.packageKey,
-                package_label: state.filterName || state.packageName || getPackageLabel(state.packageKey),
-                order: state.order || '',
-                source_row: rowKey,
-            });
-        });
-
-        if (!silentRefresh) {
-            renderStrips();
-            updateCoverage();
-        }
-    }
-
-    function buildSavePayload() {
-        const trimTo = (s, maxLen) => {
-            const str = String(s ?? '');
-            if (str.length <= maxLen) {
-                return str;
-            }
-            return str.slice(0, maxLen);
-        };
-        const items = [];
-        rowStateMap.forEach((state, rowKey) => {
-            if (state.dismissed) {
-                return;
-            }
-            Object.keys(state.allocatedObjectsByDate).forEach((date) => {
-                const objects = Array.isArray(state.allocatedObjectsByDate[date]) ? state.allocatedObjectsByDate[date] : [];
-                objects.forEach((obj, idx) => {
-                    const groupIdRaw = (obj && typeof obj === 'object' && String(obj.group_id || '') !== '')
-                        ? String(obj.group_id)
-                        : `ROW:${rowKey}|DATE:${date}|IDX:${idx}`;
-                    const groupId = trimTo(groupIdRaw, 128);
-                    const entries = getAllocatedObjectItems(obj);
-                    entries.forEach((entry) => {
-                        const qty = Math.max(0, parseInt(entry.qty || 0, 10) || 0);
-                        if (qty <= 0) {
-                            return;
-                        }
-                        const stripId = trimTo(String(entry.strip_id || '').trim() || `GEN${planSaveStripSeq++}`, 128);
-                        const orderNum = trimTo(state.order || '-', 64);
-                        const filterNm = trimTo(state.filterName || state.packageName || state.packageKey || '-', 255);
-                        const pkgKey = trimTo(state.packageKey || '-', 255);
-                        const pkgName = trimTo(state.packageName || state.filterName || state.packageKey || '-', 255);
-                        items.push({
-                            source_row_key: trimTo(rowKey, 255),
-                            order_number: orderNum,
-                            filter_name: filterNm,
-                            package_key: pkgKey,
-                            package_name: pkgName,
-                            plan_date: date,
-                            group_id: groupId,
-                            strip_id: stripId,
-                            qty,
-                        });
-                    });
-                });
-            });
-        });
-        const qtyInPayloadForRowDate = (rk, dt) => {
-            let s = 0;
-            items.forEach((it) => {
-                if (String(it.source_row_key) === String(rk) && String(it.plan_date) === String(dt)) {
-                    s += Math.max(0, parseInt(it.qty || 0, 10) || 0);
-                }
-            });
-            return s;
-        };
-        const itemsLenAfterObjects = items.length;
-        rowStateMap.forEach((state, rowKey) => {
-            if (state.dismissed) {
-                return;
-            }
-            Object.keys(state.allocatedByDate || {}).forEach((date) => {
-                if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
-                    return;
-                }
-                const target = Math.max(0, parseInt(state.allocatedByDate[date] || 0, 10) || 0);
-                if (target <= 0) {
-                    return;
-                }
-                const inPayload = qtyInPayloadForRowDate(rowKey, date);
-                let deficit = target - inPayload;
-                if (deficit <= 0) {
-                    return;
-                }
-                const ppr = Math.max(1, parseInt(state.packagesPerRoll || 1, 10) || 1);
-                const syncGid = trimTo(`SYNC:${rowKey}:${date}`, 128);
-                while (deficit > 0) {
-                    const q = Math.min(deficit, ppr);
-                    items.push({
-                        source_row_key: trimTo(rowKey, 255),
-                        order_number: trimTo(state.order || '-', 64),
-                        filter_name: trimTo(state.filterName || state.packageName || state.packageKey || '-', 255),
-                        package_key: trimTo(state.packageKey || '-', 255),
-                        package_name: trimTo(state.packageName || state.filterName || state.packageKey || '-', 255),
-                        plan_date: date,
-                        group_id: syncGid,
-                        strip_id: trimTo(`GENSYNC${planSaveStripSeq++}`, 128),
-                        qty: q,
-                    });
-                    deficit -= q;
-                }
-            });
-        });
-        // #region agent log
-        const interestRows = [];
-        rowStateMap.forEach((state, rk) => {
-            const fl = String(state.filterName || '');
-            const ord = String(state.order || '');
-            if (!/LW206/i.test(fl) && !/LUFT.*LW206/i.test(rk) && !/TF 325\*218\*760\*13/i.test(fl) && !/TF-19-20-20-26-2/i.test(ord)) {
-                return;
-            }
-            const objDates = Object.keys(state.allocatedObjectsByDate || {});
-            let objItemCount = 0;
-            objDates.forEach((d) => {
-                const arr = state.allocatedObjectsByDate[d];
-                if (!Array.isArray(arr)) {
-                    return;
-                }
-                arr.forEach((o) => {
-                    objItemCount += getAllocatedObjectItems(o).length;
-                });
-            });
-            const byDateKeys = Object.keys(state.allocatedByDate || {});
-            let sumAlloc = 0;
-            byDateKeys.forEach((d) => {
-                sumAlloc += parseInt(state.allocatedByDate[d] || 0, 10) || 0;
-            });
-            interestRows.push({
-                rowKey: rk,
-                dismissed: !!state.dismissed,
-                order: ord,
-                filter: fl,
-                objDates,
-                objItemCount,
-                sumAllocatedByDate: sumAlloc,
-            });
-        });
-        fetch('http://127.0.0.1:7721/ingest/fec3737a-7de3-4e7b-bbe9-58f5d30241f0', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '32dac2' },
-            body: JSON.stringify({
-                sessionId: '32dac2',
-                runId: 'save_payload',
-                hypothesisId: 'H1-H2-H4',
-                location: 'buildSavePayload:end',
-                message: 'interest rows vs payload',
-                data: {
-                    totalItems: items.length,
-                    itemsLenAfterObjects,
-                    reconcileAdded: items.length - itemsLenAfterObjects,
-                    lwOrTfItems: items.filter((x) => /LW206|LUFT WAL LW206|TF-19-20|TF 325/i.test(String(x.source_row_key || '') + String(x.filter_name || ''))).length,
-                    interestRows,
-                },
-                timestamp: Date.now(),
-            }),
-        }).catch(() => {});
-        // #endregion
-        return { items };
-    }
-
-    async function savePlanV2() {
-        if (!savePlanBtn) {
-            return;
-        }
-        savePlanBtn.disabled = true;
-        setSaveStatus('Сохраняем...');
-        try {
-            const payload = buildSavePayload();
-            const res = await fetch('?api=save_plan_v2', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
-            const data = await res.json();
-            // #region agent log
-            fetch('http://127.0.0.1:7721/ingest/fec3737a-7de3-4e7b-bbe9-58f5d30241f0', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '32dac2' },
-                body: JSON.stringify({
-                    sessionId: '32dac2',
-                    runId: 'save_response',
-                    hypothesisId: 'H3',
-                    location: 'savePlanV2:after',
-                    message: 'server save counts',
-                    data: { ok: !!(data && data.ok), saved: data && data.saved, received: data && data.received, status: res.status },
-                    timestamp: Date.now(),
-                }),
-            }).catch(() => {});
-            // #endregion
-            if (!res.ok || !data || !data.ok) {
-                throw new Error((data && data.error) ? data.error : 'Ошибка сохранения');
-            }
-            const savedN = Number(data.saved || 0);
-            const recvN = Number(data.received);
-            if (Number.isFinite(recvN) && recvN !== savedN) {
-                setSaveStatus(`Сохранено: ${savedN} из ${recvN} строк (часть отклонена проверкой)`, true);
-            } else {
-                setSaveStatus(`Сохранено: ${savedN} строк`);
-            }
-        } catch (err) {
-            setSaveStatus(`Ошибка сохранения: ${err.message || err}`, true);
-        } finally {
-            savePlanBtn.disabled = false;
-        }
-    }
-
-    /**
-     * Снимает с пула qty г/п по позиции (source_row), без угадывания по ёмкости полосы.
-     * Нужен при загрузке плана V2: strip_id из БД не совпадает с новыми S1,S2,… после перезагрузки.
-     */
-    function consumePoolGofroQtyFromRow(rowKey, qty) {
-        const out = [];
-        let remaining = Math.max(0, parseInt(qty, 10) || 0);
-        const rk = String(rowKey || '');
-        while (remaining > 0) {
-            const idx = strips.findIndex((s) => String(s.source_row || '') === rk);
-            if (idx < 0) {
-                break;
-            }
-            const s = strips[idx];
-            const cap = Math.max(0, parseInt(s.qty_capacity || 0, 10) || computeQtyFromLength(Number(s.length) || 0));
-            if (cap <= 0) {
-                selectedStripIds.delete(s.id);
-                strips.splice(idx, 1);
-                continue;
-            }
-            if (remaining >= cap) {
-                out.push({ strip_id: s.id, qty: cap });
-                remaining -= cap;
-                selectedStripIds.delete(s.id);
-                strips.splice(idx, 1);
-            } else {
-                out.push({ strip_id: s.id, qty: remaining });
-                s.qty_capacity = cap - remaining;
-                s.length = s.qty_capacity * NORM_PER_UNIT;
-                remaining = 0;
-            }
-        }
-        return out;
-    }
-
-    function removeStripFromPoolByIdOrQty(state, stripId, qty) {
-        const idx = strips.findIndex((s) => s.id === stripId);
-        if (idx < 0) {
-            return null;
-        }
-        const removed = strips[idx];
-        const cap = Math.max(0, parseInt(removed.qty_capacity || 0, 10) || computeQtyFromLength(Number(removed.length) || 0));
-        const need = Math.max(0, parseInt(qty, 10) || 0);
-        if (need <= 0) {
-            return null;
-        }
-        if (need >= cap) {
-            selectedStripIds.delete(removed.id);
-            strips.splice(idx, 1);
-            return removed;
-        }
-        removed.qty_capacity = cap - need;
-        removed.length = removed.qty_capacity * NORM_PER_UNIT;
-        return removed;
-    }
-
-    /**
-     * После загрузки плана: если в календаре суммарно меньше г/п, чем gofroNeed, а в пуле не хватает
-     * ёмкости под остаток — добавляем полосы (защита от рассинхрона БД / strip_id / порядка групп).
-     */
-    function replenishPoolForUnallocatedNeedAfterPlan() {
-        rowStateMap.forEach((state, rowKey) => {
-            if (state.dismissed || !state.packageKey || state.gofroNeed <= 0 || state.packagesPerRoll <= 0) {
-                return;
-            }
-            let allocatedSum = 0;
-            Object.keys(state.allocatedByDate || {}).forEach((d) => {
-                allocatedSum += parseInt(state.allocatedByDate[d] || 0, 10) || 0;
-            });
-            const needStill = Math.max(0, state.gofroNeed - allocatedSum);
-            let poolCap = 0;
-            strips.forEach((s) => {
-                if (String(s.source_row || '') !== String(rowKey)) {
-                    return;
-                }
-                poolCap += Math.max(0, parseInt(s.qty_capacity || 0, 10) || computeQtyFromLength(Number(s.length) || 0));
-            });
-            let deficit = needStill - poolCap;
-            if (deficit <= 0) {
-                return;
-            }
-            while (deficit > 0) {
-                const q = Math.min(state.packagesPerRoll, deficit);
-                strips.push({
-                    id: `S${stripSeq++}`,
-                    length: q * NORM_PER_UNIT,
-                    qty_capacity: q,
-                    package_type: state.packageKey,
-                    package_label: state.filterName || state.packageName || getPackageLabel(state.packageKey),
-                    order: state.order || '',
-                    source_row: rowKey,
-                });
-                deficit -= q;
-            }
-        });
-    }
-
-    function applyLoadedPlanRows(rows) {
-        const grouped = new Map();
-        rows.forEach((r) => {
-            const rowKey = String(r.source_row_key || '').trim();
-            const date = String(r.plan_date || '').trim();
-            const groupId = String(r.group_id || '').trim();
-            const stripId = String(r.strip_id || '').trim();
-            const qty = Math.max(0, parseInt(r.qty || 0, 10) || 0);
-            if (!rowKey || !date || !groupId || !stripId || qty <= 0) {
-                return;
-            }
-            const mapKey = `${rowKey}||${date}||${groupId}`;
-            if (!grouped.has(mapKey)) {
-                grouped.set(mapKey, { rowKey, date, groupId, items: [] });
-            }
-            grouped.get(mapKey).items.push({ strip_id: stripId, qty });
-        });
-
-        const sortedGroups = Array.from(grouped.values()).sort((a, b) => {
-            if (String(a.rowKey) !== String(b.rowKey)) {
-                return String(a.rowKey).localeCompare(String(b.rowKey), 'ru');
-            }
-            if (String(a.date) !== String(b.date)) {
-                return String(a.date).localeCompare(String(b.date));
-            }
-            return String(a.groupId).localeCompare(String(b.groupId), 'ru');
-        });
-
-        sortedGroups.forEach((group) => {
-            const state = rowStateMap.get(group.rowKey);
-            if (!state || state.dismissed) {
-                return;
-            }
-            const hasDateInHorizon = state.dateCells.some((cell) => String(cell.dataset.date || '') === group.date);
-            if (!hasDateInHorizon) {
-                return;
-            }
-            const restoredItems = [];
-            group.items.forEach((item) => {
-                const qty = Math.max(0, parseInt(item.qty || 0, 10) || 0);
-                if (qty <= 0) {
-                    return;
-                }
-                const idx = strips.findIndex((s) => s.id === item.strip_id);
-                if (idx >= 0) {
-                    const s0 = strips[idx];
-                    const cap0 = Math.max(0, parseInt(s0.qty_capacity || 0, 10) || computeQtyFromLength(Number(s0.length) || 0));
-                    const applyQty = Math.min(qty, cap0);
-                    const removed = removeStripFromPoolByIdOrQty(state, item.strip_id, qty);
-                    if (!removed) {
-                        return;
-                    }
-                    restoredItems.push({
-                        strip_id: item.strip_id || removed.id,
-                        qty: applyQty,
-                    });
-                    return;
-                }
-                const segs = consumePoolGofroQtyFromRow(group.rowKey, qty);
-                if (segs.length === 0) {
-                    return;
-                }
-                segs.forEach((seg) => {
-                    restoredItems.push({
-                        strip_id: item.strip_id || seg.strip_id,
-                        qty: seg.qty,
-                    });
-                });
-            });
-            if (restoredItems.length === 0) {
-                return;
-            }
-            const totalQty = restoredItems.reduce((acc, x) => acc + (parseInt(x.qty || 0, 10) || 0), 0);
-            if (!Array.isArray(state.allocatedObjectsByDate[group.date])) {
-                state.allocatedObjectsByDate[group.date] = [];
-            }
-            state.allocatedObjectsByDate[group.date].push({
-                qty: totalQty,
-                group_id: group.groupId,
-                items: restoredItems,
-            });
-            state.allocatedByDate[group.date] = (parseInt(state.allocatedByDate[group.date] || 0, 10) || 0) + totalQty;
-            if (!supplyMap[group.rowKey]) {
-                supplyMap[group.rowKey] = {};
-            }
-            supplyMap[group.rowKey][group.date] = (parseInt(supplyMap[group.rowKey][group.date] || 0, 10) || 0) + totalQty;
-        });
-        replenishPoolForUnallocatedNeedAfterPlan();
-        if (selectedStripIds.size === 0) {
-            selectedSourceRow = '';
-        }
-    }
-
-    async function loadPlanV2() {
-        setSaveStatus('Загружаем сохраненный план...');
-        try {
-            const res = await fetch('?api=load_plan_v2');
-            const data = await res.json();
-            if (!res.ok || !data || !data.ok) {
-                throw new Error((data && data.error) ? data.error : 'Ошибка загрузки');
-            }
-            applyLoadedPlanRows(Array.isArray(data.items) ? data.items : []);
-            renderStrips();
-            updateCoverage();
-            setSaveStatus('Сохраненный план загружен');
-        } catch (err) {
-            setSaveStatus(`Ошибка загрузки: ${err.message || err}`, true);
-        }
-    }
-
-    function applyDrop(cell) {
-        if (!isValidDropCell(cell)) {
-            return;
-        }
-        const row = cell.closest('tr[data-row-key]');
-        if (!row || !dragContext) {
-            return;
-        }
-        const rowKey = row.dataset.rowKey || '';
-        const date = cell.dataset.date || '';
-        if (!rowKey || !date) {
-            return;
-        }
-        const stripIds = Array.isArray(dragContext.strip_ids) && dragContext.strip_ids.length > 0
-            ? dragContext.strip_ids
-            : [];
-        if (stripIds.length === 0) {
-            return;
-        }
-
-        const selectedStripData = [];
-        stripIds.forEach((id) => {
-            const idx = strips.findIndex((s) => s.id === id);
-            if (idx < 0) {
-                return;
-            }
-            const strip = strips[idx];
-            const qty = computeQtyFromLength(strip.length);
-            if (qty <= 0) {
-                return;
-            }
-            const usedLength = qty * NORM_PER_UNIT;
-            if (usedLength > strip.length + 1e-9) {
-                return;
-            }
-            selectedStripData.push({
-                id: strip.id,
-                qty,
-                usedLength,
-                index: idx,
-            });
-        });
-        if (selectedStripData.length === 0) {
-            return;
-        }
-        let totalQty = 0;
-        selectedStripData.forEach((entry) => {
-            totalQty += entry.qty;
-            allocations.push({
-                strip_id: entry.id,
-                row_key: rowKey,
-                date,
-                qty: entry.qty,
-                used_length: entry.usedLength,
-            });
-        });
-        if (!supplyMap[rowKey]) {
-            supplyMap[rowKey] = {};
-        }
-        supplyMap[rowKey][date] = (parseInt(supplyMap[rowKey][date] || 0, 10) || 0) + totalQty;
-
-        const state = rowStateMap.get(rowKey);
-        if (state) {
-            state.allocatedByDate[date] = (parseInt(state.allocatedByDate[date] || 0, 10) || 0) + totalQty;
-            if (!Array.isArray(state.allocatedObjectsByDate[date])) {
-                state.allocatedObjectsByDate[date] = [];
-            }
-            const groupId = `G${allocationGroupSeq++}`;
-            state.allocatedObjectsByDate[date].push({
-                qty: totalQty,
-                group_id: groupId,
-                items: selectedStripData.map((entry) => ({
-                    strip_id: entry.id,
-                    qty: entry.qty,
-                })),
-            });
-        }
-
-        selectedStripData
-            .map((entry) => entry.index)
-            .sort((a, b) => b - a)
-            .forEach((idx) => {
-                if (idx >= 0 && idx < strips.length) {
-                    const removed = strips[idx];
-                    selectedStripIds.delete(removed.id);
-                    strips.splice(idx, 1);
-                }
-            });
-        if (selectedStripIds.size === 0) {
-            selectedSourceRow = '';
-        }
-
-        renderStrips();
-        updateCoverage();
-    }
-
-    document.querySelectorAll('td.date-cell[data-date]').forEach((cell) => {
-        cell.addEventListener('dragover', (e) => {
-            if (!dragContext) {
-                return;
-            }
-            const valid = isValidDropCell(cell);
-            if (valid) {
-                e.preventDefault();
-                if (e.dataTransfer) {
-                    e.dataTransfer.dropEffect = 'move';
-                }
-            }
-            const txt = `${(Number(dragContext.length) || 0).toFixed(1)} м -> ${dragContext.qty} шт`;
-            showPreview(e.clientX, e.clientY, txt);
-            setDragDateHover(valid ? (cell.dataset.date || '') : '');
-        });
-        cell.addEventListener('dragenter', (e) => {
-            if (dragContext && isValidDropCell(cell)) {
-                e.preventDefault();
-            }
-        });
-        cell.addEventListener('dragleave', () => {
-            hidePreview();
-            setDragDateHover('');
-        });
-        cell.addEventListener('drop', (e) => {
-            if (!dragContext) {
-                return;
-            }
-            e.preventDefault();
-            hidePreview();
-            applyDrop(cell);
-            clearDropHints();
-            setDragDateHover('');
-        });
+    planTable.querySelectorAll('td.date-cell[data-date]').forEach((cell) => {
+        bindDateCellInteractions(cell);
     });
 
-    applyStoredDismissedRows();
-    bootstrapStrips();
-    renderStrips();
-    updateCoverage();
-
-    const tableBody = document.querySelector('.panel table tbody');
-    if (tableBody) {
-        tableBody.addEventListener('click', (e) => {
-            const btn = e.target.closest('.row-dismiss-btn');
-            if (!btn) {
-                return;
-            }
-            e.preventDefault();
-            const rk = String(btn.dataset.dismissRow || '');
-            if (!rk) {
-                return;
-            }
-            dismissPositionRow(rk);
-        });
-    }
     document.addEventListener('click', (e) => {
-        const target = e.target;
-        const menu = supplyActionMenuEl;
-        if (!menu || !menu.classList.contains('open')) {
-            return;
-        }
-        if (!(target instanceof Element)) {
-            closeSupplyActionMenu();
-            return;
-        }
-        if (!menu.contains(target)) {
-            closeSupplyActionMenu();
-            return;
-        }
-        const actionBtn = target.closest('[data-supply-action]');
-        if (!actionBtn || !activeSupplyAction) {
-            return;
-        }
-        const action = String(actionBtn.dataset.supplyAction || '');
-        const { rowKey, date, objIdx } = activeSupplyAction;
-        if (action === 'delete') {
-            closeSupplyActionMenu();
-            returnAllocationToPool(rowKey, date, objIdx);
-            return;
-        }
-        if (action === 'move') {
-            renderSupplyActionMenu('move');
-            return;
-        }
-        if (action === 'move-back') {
-            renderSupplyActionMenu('actions');
-            return;
-        }
-        if (action === 'move-date') {
-            const nextDate = String(actionBtn.dataset.targetDate || '').trim();
-            closeSupplyActionMenu();
-            if (!nextDate) {
-                return;
+        if (!gofroCellPicker.hidden && !gofroCellPicker.contains(e.target)) {
+            const onCell = e.target.closest('td.date-cell');
+            if (!onCell) {
+                closeGofroCellPicker();
             }
-            const moved = moveAllocationToDate(rowKey, date, objIdx, nextDate);
-            if (!moved) {
-                alert('Не удалось сдвинуть позицию.');
-                return;
+        }
+        if (debtExpandPopover && !debtExpandPopover.hidden) {
+            const inPopover = debtExpandPopover.contains(e.target);
+            const onDebtCell = e.target.closest('td.debt-cell');
+            if (!inPopover && !onDebtCell) {
+                closeDebtExpandPopover();
             }
-            updateCoverage();
         }
     });
+
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            closeSupplyActionMenu();
+        if (e.key !== 'Escape') {
+            return;
+        }
+        if (!gofroCellPicker.hidden) {
+            e.preventDefault();
+            closeGofroCellPicker();
         }
     });
-    window.addEventListener('scroll', closeSupplyActionMenu, true);
-    window.addEventListener('resize', closeSupplyActionMenu);
-    if (savePlanBtn) {
-        savePlanBtn.addEventListener('click', savePlanV2);
+
+    if (applyPendingMovesBtn) {
+        applyPendingMovesBtn.addEventListener('click', applyPendingMovesToServer);
     }
-    if (resetDismissedBtn) {
-        resetDismissedBtn.addEventListener('click', resetDismissedRows);
+    if (applyPendingMovesPanelBtn) {
+        applyPendingMovesPanelBtn.addEventListener('click', applyPendingMovesToServer);
+    }
+    if (undoPendingMoveBtn) {
+        undoPendingMoveBtn.addEventListener('click', () => {
+            const last = pendingMoves.pop();
+            if (last) {
+                revertMoveLocally(last);
+                refreshPendingUi();
+            }
+        });
+    }
+    if (clearPendingMovesBtn) {
+        clearPendingMovesBtn.addEventListener('click', () => {
+            while (pendingMoves.length > 0) {
+                revertMoveLocally(pendingMoves.pop());
+            }
+            refreshPendingUi();
+        });
+    }
+    if (toggleQueuePanelBtn && moveQueuePanel) {
+        toggleQueuePanelBtn.addEventListener('click', () => {
+            const open = moveQueuePanel.hidden;
+            moveQueuePanel.hidden = !open;
+            toggleQueuePanelBtn.setAttribute('aria-pressed', open ? 'true' : 'false');
+        });
+    }
+    if (closeQueuePanelBtn && moveQueuePanel) {
+        closeQueuePanelBtn.addEventListener('click', () => {
+            moveQueuePanel.hidden = true;
+            if (toggleQueuePanelBtn) {
+                toggleQueuePanelBtn.setAttribute('aria-pressed', 'false');
+            }
+        });
+    }
+    if (addPlanDayBtn) {
+        addPlanDayBtn.addEventListener('click', () => {
+            if (isApplyingPendingMoves) {
+                return;
+            }
+            addPlanDayColumn();
+        });
+    }
+    if (toggleGofroCoverageBtn) {
+        setGofroCoverageVisible(isGofroCoverageVisible);
+        toggleGofroCoverageBtn.addEventListener('click', () => {
+            setGofroCoverageVisible(!isGofroCoverageVisible);
+        });
     }
     if (taskSheetBtn) {
         taskSheetBtn.addEventListener('click', openTaskSheetModal);
@@ -2913,149 +3290,64 @@ $pageTitle = 'Планирование сборки гофропакетов';
     if (taskSheetCancel) {
         taskSheetCancel.addEventListener('click', closeTaskSheetModal);
     }
+    if (taskPrintModePeriod) {
+        taskPrintModePeriod.addEventListener('change', syncTaskPrintModeUi);
+    }
+    if (taskPrintModeDay) {
+        taskPrintModeDay.addEventListener('change', syncTaskPrintModeUi);
+    }
     if (taskSheetPrint) {
         taskSheetPrint.addEventListener('click', () => {
-            const dateFrom = taskDateFrom ? String(taskDateFrom.value || '') : '';
-            const dateTo = taskDateTo ? String(taskDateTo.value || '') : '';
-            if (!dateFrom || !dateTo) {
-                alert('Укажите период задания.');
+            const modeEl = document.querySelector('input[name="task-print-mode"]:checked');
+            const mode = modeEl && modeEl.value === 'day' ? 'day' : 'period';
+            if (mode === 'day') {
+                const d = taskDateOne ? taskDateOne.value : '';
+                if (!d) {
+                    alert('Укажите дату наряда.');
+                    return;
+                }
+                closeTaskSheetModal();
+                printTaskSheet('day', d, d);
                 return;
             }
-            if (dateFrom > dateTo) {
-                alert('Дата начала больше даты окончания.');
+            const df = taskDateFrom ? taskDateFrom.value : '';
+            const dt = taskDateTo ? taskDateTo.value : '';
+            if (!df || !dt) {
+                alert('Укажите период.');
+                return;
+            }
+            if (df > dt) {
+                alert('Дата «с» не может быть позже даты «по».');
                 return;
             }
             closeTaskSheetModal();
-            printTaskSheet(dateFrom, dateTo);
-        });
-    }
-    if (taskSheetModal) {
-        taskSheetModal.addEventListener('click', (e) => {
-            if (e.target === taskSheetModal) {
-                closeTaskSheetModal();
-            }
+            printTaskSheet('period', df, dt);
         });
     }
     if (overdueAlertBtn) {
         overdueAlertBtn.addEventListener('click', () => {
-            openOverdueAlertModal();
+            if (overdueAlertModal) {
+                overdueAlertModal.style.display = 'flex';
+            }
         });
     }
     if (overdueAlertClose) {
-        overdueAlertClose.addEventListener('click', closeOverdueAlertModal);
-    }
-    if (overdueAlertModal) {
-        overdueAlertModal.addEventListener('click', (e) => {
-            if (e.target === overdueAlertModal) {
-                closeOverdueAlertModal();
+        overdueAlertClose.addEventListener('click', () => {
+            if (overdueAlertModal) {
+                overdueAlertModal.style.display = 'none';
             }
         });
     }
-    if (testTodayDateInput) {
-        testTodayDateInput.addEventListener('change', () => {
-            const next = String(testTodayDateInput.value || '').trim();
-            if (/^\d{4}-\d{2}-\d{2}$/.test(next)) {
-                currentTodayIso = next;
-                updateCoverage();
-            }
-        });
-    }
-    if (testTodayResetBtn) {
-        testTodayResetBtn.addEventListener('click', () => {
-            currentTodayIso = REAL_TODAY_ISO;
-            if (testTodayDateInput) {
-                testTodayDateInput.value = REAL_TODAY_ISO;
-            }
-            updateCoverage();
-        });
-    }
 
-    const planTable = document.querySelector('.layout > .panel table');
-    if (planTable) {
-        let hoveredPlanDate = '';
-        let hoveredRowKey = '';
-
-        function clearDateColumnHover() {
-            planTable.querySelectorAll('th.date-col.date-hover').forEach((el) => {
-                el.classList.remove('date-hover');
-            });
-            hoveredPlanDate = '';
-        }
-
-        function clearNameHover() {
-            planTable.querySelectorAll('td.filter-name-cell.name-hover').forEach((el) => {
-                el.classList.remove('name-hover');
-            });
-            hoveredRowKey = '';
-        }
-
-        function setDateColumnHover(dateIso) {
-            const next = String(dateIso || '');
-            if (next === hoveredPlanDate) {
-                return;
-            }
-            planTable.querySelectorAll('th.date-col.date-hover').forEach((el) => {
-                el.classList.remove('date-hover');
-            });
-            hoveredPlanDate = next;
-            if (!next || !/^\d{4}-\d{2}-\d{2}$/.test(next)) {
-                hoveredPlanDate = '';
-                return;
-            }
-            planTable.querySelectorAll(`th.date-col[data-date-total="${next}"]`).forEach((el) => {
-                el.classList.add('date-hover');
-            });
-        }
-
-        function setNameHoverForRow(rowKey) {
-            const next = String(rowKey || '');
-            if (next === hoveredRowKey) {
-                return;
-            }
-            planTable.querySelectorAll('td.filter-name-cell.name-hover').forEach((el) => {
-                el.classList.remove('name-hover');
-            });
-            hoveredRowKey = next;
-            if (!next) {
-                return;
-            }
-            const row = planTable.querySelector(`tbody tr[data-row-key="${next}"]`);
-            if (!row) {
-                hoveredRowKey = '';
-                return;
-            }
-            const nameCell = row.querySelector('td.filter-name-cell');
-            if (!nameCell) {
-                hoveredRowKey = '';
-                return;
-            }
-            nameCell.classList.add('name-hover');
-        }
-
-        planTable.addEventListener('mouseover', (e) => {
-            const cell = e.target.closest('th.date-col, td.date-cell[data-date]');
-            if (!cell || !planTable.contains(cell)) {
-                clearDateColumnHover();
-                clearNameHover();
-                return;
-            }
-            if (cell.matches('th.date-col')) {
-                setDateColumnHover(cell.dataset.dateTotal || '');
-                clearNameHover();
-            } else {
-                setDateColumnHover(cell.dataset.date || '');
-                const row = cell.closest('tr[data-row-key]');
-                setNameHoverForRow(row ? row.dataset.rowKey : '');
-            }
-        });
-        planTable.addEventListener('mouseleave', () => {
-            clearDateColumnHover();
-            clearNameHover();
-        });
-    }
-
-    loadPlanV2();
+    applyFrozenColumns();
+    window.addEventListener('resize', applyFrozenColumns);
+    rowStateMap.forEach((state, rowKey) => {
+        renderDebtCellByKey(rowKey);
+    });
+    updateCoverage();
+    refreshPendingUi();
 })();
+
 </script>
 <?php endif; ?>
 </body>
