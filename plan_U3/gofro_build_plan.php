@@ -1372,7 +1372,15 @@ $pageTitle = 'Планирование сборки гофропакетов';
             font-size: 8px;
             line-height: 1;
             color: #94a3b8;
+          
             pointer-events: none;
+        }
+        .cell-gofro-qty {
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+        }
+        .gofro-plan-table--hide-filter-plan-digits .cell-plan-hint {
+            display: none !important;
         }
         .gofro-cell-picker {
             position: fixed;
@@ -1442,6 +1450,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
     <div class="toolbar">
         <button type="button" id="add-plan-day-btn" class="toolbar-btn secondary" title="Добавить колонку следующего дня в конец таблицы (только в интерфейсе)">+ день</button>
         <button type="button" id="toggle-gofro-coverage-btn" class="toolbar-btn secondary" aria-pressed="true">Покрытие г/п: вкл</button>
+        <button type="button" id="toggle-filter-plan-digits-btn" class="toolbar-btn secondary" aria-pressed="true" title="Мелкие цифры в ячейке даты — план сборки фильтров на день">Фильтры: вкл</button>
         <button type="button" id="task-sheet-btn" class="toolbar-btn secondary">Задание</button>
         <button type="button" id="overdue-alert-btn" class="toolbar-btn secondary" style="display:none; color:#b91c1c; border-color:#fecaca;">Просрочено</button>
         <span id="apply-status" class="muted" style="font-size:12px; margin-left:4px;"></span>
@@ -1612,7 +1621,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                                     data-gofro-qty="<?= (int)$gofroQty ?>"
                                     title="<?= $buildQty > 0 ? 'План сборки фильтров: ' . (int)$buildQty . ' шт' : 'Клик: задать г/п на дату' ?>">
                                     <?php if ($buildQty > 0): ?><span class="cell-plan-hint"><?= (int)$buildQty ?></span><?php endif; ?>
-                                    <?= $gofroQty > 0 ? (int)$gofroQty : '' ?>
+                                    <?php if ($gofroQty > 0): ?><span class="cell-gofro-qty"><?= (int)$gofroQty ?></span><?php endif; ?>
                                 </td>
                             <?php endforeach; ?>
                         </tr>
@@ -1692,6 +1701,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
 (() => {
     const REAL_TODAY_ISO = <?= json_encode($todayIso, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
     const GOFRO_COVERAGE_VISIBLE_STORAGE_KEY = 'gofroBuildPlanCoverageVisible';
+    const FILTER_PLAN_DIGITS_VISIBLE_STORAGE_KEY = 'gofroBuildPlanFilterPlanDigitsVisible';
     const FROZEN_COL_COUNT = 8;
     const DEBT_COMPACT_VISIBLE = 3;
     const initialGofroDebtShiftMap = <?= json_encode($gofroDebtShiftMap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?> || {};
@@ -1729,6 +1739,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
     const taskSheetPrint = document.getElementById('task-sheet-print');
     const addPlanDayBtn = document.getElementById('add-plan-day-btn');
     const toggleGofroCoverageBtn = document.getElementById('toggle-gofro-coverage-btn');
+    const toggleFilterPlanDigitsBtn = document.getElementById('toggle-filter-plan-digits-btn');
     const gofroCoverageLegend = document.getElementById('gofro-coverage-legend');
     const overdueAlertBtn = document.getElementById('overdue-alert-btn');
     const overdueAlertModal = document.getElementById('overdue-alert-modal');
@@ -1747,10 +1758,17 @@ $pageTitle = 'Планирование сборки гофропакетов';
     let isApplyingPendingMoves = false;
     let overdueModalAutoOpened = false;
     let isGofroCoverageVisible = true;
+    let isFilterPlanDigitsVisible = true;
     try {
         const storedCoverage = localStorage.getItem(GOFRO_COVERAGE_VISIBLE_STORAGE_KEY);
         if (storedCoverage === '0') {
             isGofroCoverageVisible = false;
+        }
+    } catch (_) { /* ignore */ }
+    try {
+        const storedFilterDigits = localStorage.getItem(FILTER_PLAN_DIGITS_VISIBLE_STORAGE_KEY);
+        if (storedFilterDigits === '0') {
+            isFilterPlanDigitsVisible = false;
         }
     } catch (_) { /* ignore */ }
 
@@ -1767,6 +1785,20 @@ $pageTitle = 'Планирование сборки гофропакетов';
             localStorage.setItem(GOFRO_COVERAGE_VISIBLE_STORAGE_KEY, isGofroCoverageVisible ? '1' : '0');
         } catch (_) { /* ignore */ }
         updateCoverage();
+    }
+
+    function setFilterPlanDigitsVisible(visible) {
+        isFilterPlanDigitsVisible = !!visible;
+        if (toggleFilterPlanDigitsBtn) {
+            toggleFilterPlanDigitsBtn.setAttribute('aria-pressed', isFilterPlanDigitsVisible ? 'true' : 'false');
+            toggleFilterPlanDigitsBtn.textContent = isFilterPlanDigitsVisible ? 'Фильтры: вкл' : 'Фильтры: выкл';
+        }
+        if (planTable) {
+            planTable.classList.toggle('gofro-plan-table--hide-filter-plan-digits', !isFilterPlanDigitsVisible);
+        }
+        try {
+            localStorage.setItem(FILTER_PLAN_DIGITS_VISIBLE_STORAGE_KEY, isFilterPlanDigitsVisible ? '1' : '0');
+        } catch (_) { /* ignore */ }
     }
 
     function buildFilterCoverageTitle(filterQty, stockPart, planPart, date) {
@@ -2122,8 +2154,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
         if (!theadRow || !tfootRow) {
             return;
         }
-        const lastHeadTh = theadRow.querySelector('th.date-col[data-date-total]:last-of-type');
-        const newHeadTh = lastHeadTh ? lastHeadTh.cloneNode(true) : buildDateHeaderTh(nextIso);
+        const newHeadTh = buildDateHeaderTh(nextIso);
         const newFootTh = newHeadTh.cloneNode(true);
         theadRow.appendChild(newHeadTh);
         tfootRow.appendChild(newFootTh);
@@ -2628,6 +2659,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
         } else if (hint) {
             hint.remove();
         }
+        cell.querySelectorAll('.cell-gofro-qty').forEach((el) => el.remove());
         const textNodes = [];
         cell.childNodes.forEach((n) => {
             if (n.nodeType === Node.TEXT_NODE && String(n.textContent || '').trim() !== '') {
@@ -2636,7 +2668,10 @@ $pageTitle = 'Планирование сборки гофропакетов';
         });
         textNodes.forEach((n) => n.remove());
         if (qty > 0) {
-            cell.appendChild(document.createTextNode(String(qty)));
+            const main = document.createElement('span');
+            main.className = 'cell-gofro-qty';
+            main.textContent = String(qty);
+            cell.appendChild(main);
         }
     }
 
@@ -3282,6 +3317,12 @@ $pageTitle = 'Планирование сборки гофропакетов';
         setGofroCoverageVisible(isGofroCoverageVisible);
         toggleGofroCoverageBtn.addEventListener('click', () => {
             setGofroCoverageVisible(!isGofroCoverageVisible);
+        });
+    }
+    if (toggleFilterPlanDigitsBtn) {
+        setFilterPlanDigitsVisible(isFilterPlanDigitsVisible);
+        toggleFilterPlanDigitsBtn.addEventListener('click', () => {
+            setFilterPlanDigitsVisible(!isFilterPlanDigitsVisible);
         });
     }
     if (taskSheetBtn) {
