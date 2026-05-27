@@ -360,6 +360,8 @@ $userLogs = $db->select("
             </p>
             <div style="margin-top: 15px;">
                 <a href="users.php" class="btn btn-secondary">🔙 К списку пользователей</a>
+                <a href="page-stats.php" class="btn btn-secondary">📊 Страницы</a>
+                <a href="index.php" class="btn btn-secondary">🏠 Панель</a>
             </div>
         </div>
 

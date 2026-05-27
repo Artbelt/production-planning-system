@@ -317,6 +317,7 @@ foreach ($roleStats as $stat) {
             </div>
             <div class="btn-group">
                 <button onclick="openCreateModal()" class="btn btn-primary">➕ Добавить роль</button>
+                <a href="page-stats.php" class="btn btn-secondary">📊 Страницы</a>
                 <a href="index.php" class="btn btn-secondary">🔙 Назад</a>
             </div>
         </div>

@@ -333,6 +333,7 @@ $roles = $db->select("SELECT * FROM auth_roles WHERE is_active = 1 ORDER BY id")
             </div>
             <div class="btn-group">
                 <button onclick="openCreateModal()" class="btn btn-primary">➕ Добавить пользователя</button>
+                <a href="page-stats.php" class="btn btn-secondary">📊 Страницы</a>
                 <a href="index.php" class="btn btn-secondary">🔙 Назад</a>
             </div>
         </div>

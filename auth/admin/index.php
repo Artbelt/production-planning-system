@@ -1,364 +1,260 @@
 <?php
 /**
- * Главная страница административной панели
+ * Главная страница административной панели (дашборд)
  */
 
 define('AUTH_SYSTEM', true);
 require_once '../includes/config.php';
 require_once '../includes/auth-functions.php';
 
-// Инициализация системы
 initAuthSystem();
 
 $auth = new AuthManager();
 
-// Проверка авторизации и прав администратора
 $session = $auth->checkSession();
 if (!$session) {
     header('Location: ../login.php');
     exit;
 }
 
-// Проверка прав директора
+function getUserRoleInDepartment($userId, $departmentCode) {
+    $db = Database::getInstance();
+    $sql = "SELECT r.name FROM auth_user_departments ud 
+            JOIN auth_roles r ON ud.role_id = r.id 
+            WHERE ud.user_id = ? AND ud.department_code = ? AND ud.is_active = 1";
+
+    $result = $db->selectOne($sql, [$userId, $departmentCode]);
+    return $result ? $result['name'] : null;
+}
+
 $userRole = getUserRoleInDepartment($session['user_id'], $_SESSION['auth_department'] ?? 'U2');
 if ($userRole !== 'director') {
     header('Location: ../select-department.php?error=access_denied');
     exit;
 }
 
-// Получение статистики
 $db = Database::getInstance();
 
-$stats = [
-    'total_users' => $db->selectOne("SELECT COUNT(*) as count FROM auth_users")['count'],
-    'active_users' => $db->selectOne("SELECT COUNT(*) as count FROM auth_users WHERE is_active = 1")['count'],
-    'total_sessions' => $db->selectOne("SELECT COUNT(*) as count FROM auth_sessions WHERE expires_at > NOW()")['count'],
-    'total_departments' => $db->selectOne("SELECT COUNT(DISTINCT department_code) as count FROM auth_user_departments")['count'],
-    'recent_logins' => $db->selectOne("SELECT COUNT(*) as count FROM auth_logs WHERE action = 'login' AND created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)")['count']
+$totalUsers = (int) ($db->selectOne('SELECT COUNT(*) AS c FROM auth_users')['c'] ?? 0);
+$activeUsers = (int) ($db->selectOne('SELECT COUNT(*) AS c FROM auth_users WHERE is_active = 1')['c'] ?? 0);
+$activeSessionsCount = (int) ($db->selectOne('SELECT COUNT(*) AS c FROM auth_sessions WHERE expires_at > NOW()')['c'] ?? 0);
+$workshopsCount = (int) ($db->selectOne(
+    'SELECT COUNT(DISTINCT department_code) AS c FROM auth_user_departments WHERE department_code IS NOT NULL AND TRIM(department_code) <> \'\''
+)['c'] ?? 0);
+$logins24h = (int) ($db->selectOne(
+    "SELECT COUNT(*) AS c FROM auth_logs WHERE action = 'login' AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)"
+)['c'] ?? 0);
+
+$recentLogs = $db->select("
+    SELECT l.created_at, l.action, l.user_id, u.phone, u.full_name
+    FROM auth_logs l
+    LEFT JOIN auth_users u ON u.id = l.user_id
+    WHERE l.action <> 'page_view'
+    ORDER BY l.created_at DESC
+    LIMIT 28
+") ?: [];
+
+$activeSessionsList = $db->select("
+    SELECT s.user_id, s.last_activity, s.ip_address, s.department_code, u.phone, u.full_name,
+           TIMESTAMPDIFF(MINUTE, s.last_activity, NOW()) AS inactive_minutes
+    FROM auth_sessions s
+    JOIN auth_users u ON u.id = s.user_id
+    WHERE s.expires_at > NOW()
+    ORDER BY s.last_activity DESC
+    LIMIT 18
+") ?: [];
+
+$actionLabels = [
+    'login' => ['ru' => 'Вход', 'class' => 'badge-in'],
+    'logout' => ['ru' => 'Выход', 'class' => 'badge-out'],
+    'failed_login' => ['ru' => 'Ошибка входа', 'class' => 'badge-warn'],
+    'page_view' => ['ru' => 'Страница', 'class' => 'badge-muted'],
+    'department_switch' => ['ru' => 'Смена цеха', 'class' => 'badge-muted'],
+    'account_locked' => ['ru' => 'Блокировка', 'class' => 'badge-warn'],
+    'account_unlocked' => ['ru' => 'Разблокировка', 'class' => 'badge-muted'],
+    'session_terminated_by_admin' => ['ru' => 'Сессия снята', 'class' => 'badge-warn'],
+    'all_sessions_terminated_by_admin' => ['ru' => 'Все сессии сняты', 'class' => 'badge-warn'],
+    'expired_sessions_cleanup' => ['ru' => 'Очистка сессий', 'class' => 'badge-muted'],
 ];
 
-// Последние действия
-$recentLogs = $db->select("
-    SELECT l.*, u.phone, u.full_name 
-    FROM auth_logs l 
-    LEFT JOIN auth_users u ON l.user_id = u.id 
-    ORDER BY l.created_at DESC 
-    LIMIT 10
-");
-
-// Активные сессии
-$activeSessions = $db->select("
-    SELECT s.*, u.phone, u.full_name 
-    FROM auth_sessions s 
-    JOIN auth_users u ON s.user_id = u.id 
-    WHERE s.expires_at > NOW() 
-    ORDER BY s.last_activity DESC 
-    LIMIT 5
-");
-
-function getUserRoleInDepartment($userId, $departmentCode) {
-    $db = Database::getInstance();
-    $sql = "SELECT r.name FROM auth_user_departments ud 
-            JOIN auth_roles r ON ud.role_id = r.id 
-            WHERE ud.user_id = ? AND ud.department_code = ? AND ud.is_active = 1";
-    
-    $result = $db->selectOne($sql, [$userId, $departmentCode]);
-    return $result ? $result['name'] : null;
-}
 ?>
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Административная панель - <?= UI_CONFIG['app_name'] ?></title>
+    <title>Административная панель — <?= htmlspecialchars(UI_CONFIG['app_name'] ?? 'AlphaFilter') ?></title>
     <link rel="stylesheet" href="../assets/css/auth.css">
     <style>
-        .admin-container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background: var(--gray-50);
-            min-height: 100vh;
+        .admin-wrap { max-width: 1280px; margin: 0 auto; padding: 20px; min-height: 100vh; }
+        .top-bar {
+            background: #fff; border-radius: var(--border-radius-lg); box-shadow: var(--shadow);
+            padding: 16px 20px; margin-bottom: 18px;
+            display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
         }
-        
-        .admin-header {
-            background: white;
-            padding: 20px;
-            border-radius: var(--border-radius-lg);
-            box-shadow: var(--shadow);
-            margin-bottom: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .admin-nav {
-            display: flex;
-            gap: 15px;
-        }
-        
-        .nav-link {
-            padding: 8px 16px;
-            background: var(--primary);
-            color: white;
-            text-decoration: none;
-            border-radius: var(--border-radius);
-            font-size: 14px;
-            transition: all 0.15s ease;
-        }
-        
-        .nav-link:hover {
-            background: var(--primary-hover);
-            transform: translateY(-1px);
-        }
-        
-        .nav-link.secondary {
-            background: var(--gray-500);
-        }
-        
-        .nav-link.secondary:hover {
-            background: var(--gray-600);
-        }
-        
-        .stats-grid {
+        .welcome { margin: 0; font-size: 1.15rem; font-weight: 600; color: var(--gray-900); }
+        .welcome span { color: var(--gray-600); font-weight: 400; }
+        .nav-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+        .nav-top .btn { white-space: nowrap; font-size: 13px; padding: 8px 14px; }
+        .stats-row {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px; margin-bottom: 18px;
         }
-        
         .stat-card {
-            background: white;
-            padding: 20px;
-            border-radius: var(--border-radius-lg);
-            box-shadow: var(--shadow);
-            text-align: center;
+            background: #fff; border-radius: var(--border-radius-lg); box-shadow: var(--shadow);
+            padding: 16px; text-align: center;
         }
-        
-        .stat-number {
-            font-size: 32px;
-            font-weight: bold;
-            color: var(--primary);
-            margin-bottom: 5px;
-        }
-        
-        .stat-label {
-            color: var(--gray-600);
-            font-size: 14px;
-        }
-        
-        .content-grid {
+        .stat-card .num { font-size: 1.75rem; font-weight: 700; color: var(--primary); line-height: 1.2; }
+        .stat-card .lbl { font-size: 12px; color: var(--gray-600); margin-top: 4px; }
+        .two-cols {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 20px;
+            gap: 18px;
+            margin-bottom: 18px;
         }
-        
-        .content-card {
-            background: white;
-            border-radius: var(--border-radius-lg);
-            box-shadow: var(--shadow);
+        @media (max-width: 900px) { .two-cols { grid-template-columns: 1fr; } }
+        .panel {
+            background: #fff; border-radius: var(--border-radius-lg); box-shadow: var(--shadow);
             overflow: hidden;
         }
-        
-        .card-header {
-            padding: 15px 20px;
-            background: var(--gray-100);
-            border-bottom: 1px solid var(--gray-200);
-            font-weight: 600;
+        .panel-h {
+            padding: 12px 16px; background: var(--gray-100); border-bottom: 1px solid var(--gray-200);
+            font-weight: 600; font-size: 15px;
         }
-        
-        .card-content {
-            padding: 20px;
+        .panel-b { max-height: 420px; overflow-y: auto; }
+        .row-item {
+            padding: 10px 16px; border-bottom: 1px solid var(--gray-100);
+            display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
+            font-size: 13px;
         }
-        
-        .log-item, .session-item {
-            padding: 10px 0;
-            border-bottom: 1px solid var(--gray-100);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        .row-item:last-child { border-bottom: none; }
+        .who .phone { font-weight: 500; color: var(--gray-900); }
+        .who .name { font-size: 12px; color: var(--gray-600); }
+        .meta { text-align: right; font-size: 12px; color: var(--gray-500); }
+        .badge-in, .badge-out, .badge-warn, .badge-muted {
+            display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;
         }
-        
-        .log-item:last-child, .session-item:last-child {
-            border-bottom: none;
+        .badge-in { background: var(--success-light); color: var(--success); }
+        .badge-out { background: var(--gray-200); color: var(--gray-700); }
+        .badge-warn { background: var(--warning-light); color: var(--warning); }
+        .badge-muted { background: var(--gray-100); color: var(--gray-600); }
+        .hint-box {
+            background: #fff; border-radius: var(--border-radius-lg); box-shadow: var(--shadow);
+            padding: 18px 20px; font-size: 14px; color: var(--gray-700); line-height: 1.55;
         }
-        
-        .log-action {
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 500;
-        }
-        
-        .action-login { background: var(--success-light); color: var(--success); }
-        .action-logout { background: var(--gray-200); color: var(--gray-700); }
-        .action-failed_login { background: var(--danger-light); color: var(--danger); }
-        .action-department_switch { background: var(--primary-light); color: var(--primary); }
-        
-        .user-info {
-            font-size: 14px;
-        }
-        
-        .user-phone {
-            font-weight: 500;
-            color: var(--gray-900);
-        }
-        
-        .user-name {
-            color: var(--gray-600);
-            font-size: 12px;
-        }
-        
-        .time-info {
-            font-size: 12px;
-            color: var(--gray-500);
-        }
-        
-        @media (max-width: 768px) {
-            .content-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .admin-header {
-                flex-direction: column;
-                gap: 15px;
-            }
-            
-            .admin-nav {
-                flex-wrap: wrap;
-                justify-content: center;
-            }
-        }
+        .hint-box h2 { margin: 0 0 10px; font-size: 1rem; color: var(--gray-900); }
+        .hint-box ol { margin: 8px 0 0 18px; padding: 0; }
+        .hint-box li { margin-bottom: 6px; }
     </style>
 </head>
 <body>
-    <div class="admin-container">
-        <div class="admin-header">
-            <div>
-                <h1 style="margin: 0; color: var(--gray-900);">Административная панель</h1>
-                <p style="margin: 5px 0 0; color: var(--gray-600);">
-                    Добро пожаловать, <?= htmlspecialchars($session['full_name']) ?>
-                </p>
+    <div class="admin-wrap">
+        <div class="top-bar">
+            <p class="welcome">Добро пожаловать, <span><?= htmlspecialchars($session['full_name'] ?? '') ?></span>.</p>
+            <nav class="nav-top">
+                <a class="btn btn-primary" href="users.php">Пользователи</a>
+                <a class="btn btn-primary" href="roles.php">Роли</a>
+                <a class="btn btn-primary" href="sessions.php">Сессии</a>
+                <a class="btn btn-primary" href="password-stats.php">Пароли</a>
+                <a class="btn btn-primary" href="page-stats.php">Посещения страниц</a>
+                <a class="btn btn-primary" href="logs.php">Логи</a>
+                <a class="btn btn-secondary" href="../select-department.php">К системам</a>
+                <a class="btn btn-secondary" href="../logout.php">Выход</a>
+            </nav>
+        </div>
+
+        <div class="stats-row">
+            <div class="stat-card">
+                <div class="num"><?= $totalUsers ?></div>
+                <div class="lbl">Всего пользователей</div>
             </div>
-            <div class="admin-nav">
-                <a href="users.php" class="nav-link">👥 Пользователи</a>
-                <a href="roles.php" class="nav-link">🔐 Роли</a>
-                <a href="sessions.php" class="nav-link">🔄 Сессии</a>
-                <a href="password-stats.php" class="nav-link">🔑 Пароли</a>
-                <a href="logs.php" class="nav-link">📋 Логи</a>
-                <a href="../select-department.php" class="nav-link secondary">🔙 К системам</a>
-                <a href="../logout.php" class="nav-link secondary">🚪 Выход</a>
+            <div class="stat-card">
+                <div class="num"><?= $activeUsers ?></div>
+                <div class="lbl">Активных пользователей</div>
+            </div>
+            <div class="stat-card">
+                <div class="num"><?= $activeSessionsCount ?></div>
+                <div class="lbl">Активных сессий</div>
+            </div>
+            <div class="stat-card">
+                <div class="num"><?= $workshopsCount ?></div>
+                <div class="lbl">Цехов в системе</div>
+            </div>
+            <div class="stat-card">
+                <div class="num"><?= $logins24h ?></div>
+                <div class="lbl">Входов за 24ч</div>
             </div>
         </div>
 
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-number"><?= $stats['total_users'] ?></div>
-                <div class="stat-label">Всего пользователей</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number"><?= $stats['active_users'] ?></div>
-                <div class="stat-label">Активных пользователей</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number"><?= $stats['total_sessions'] ?></div>
-                <div class="stat-label">Активных сессий</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number"><?= $stats['total_departments'] ?></div>
-                <div class="stat-label">Цехов в системе</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number"><?= $stats['recent_logins'] ?></div>
-                <div class="stat-label">Входов за 24ч</div>
-            </div>
-        </div>
-
-        <div class="content-grid">
-            <div class="content-card">
-                <div class="card-header">📋 Последние действия</div>
-                <div class="card-content">
+        <div class="two-cols">
+            <div class="panel">
+                <div class="panel-h">Последние действия</div>
+                <div class="panel-b">
                     <?php if (empty($recentLogs)): ?>
-                        <p class="text-center text-gray-500">Нет записей</p>
+                        <div class="row-item"><span class="meta">Нет записей в auth_logs</span></div>
                     <?php else: ?>
                         <?php foreach ($recentLogs as $log): ?>
-                            <div class="log-item">
-                                <div>
-                                    <div class="user-info">
-                                        <span class="user-phone">
-                                            <?= $log['phone'] ? htmlspecialchars($log['phone']) : 'Неизвестный' ?>
-                                        </span>
-                                        <?php if ($log['full_name']): ?>
-                                            <div class="user-name"><?= htmlspecialchars($log['full_name']) ?></div>
-                                        <?php endif; ?>
-                                    </div>
+                            <?php
+                            $al = $actionLabels[$log['action']] ?? ['ru' => $log['action'], 'class' => 'badge-muted'];
+                            $t = strtotime($log['created_at']);
+                            $timeStr = $t ? date('H:i d.m', $t) : '';
+                            ?>
+                            <div class="row-item">
+                                <div class="who">
+                                    <div class="phone"><?= htmlspecialchars($log['phone'] ?? '—') ?></div>
+                                    <div class="name"><?= htmlspecialchars($log['full_name'] ?? '') ?></div>
                                 </div>
-                                <div style="text-align: right;">
-                                    <div class="log-action action-<?= $log['action'] ?>">
-                                        <?= ucfirst(str_replace('_', ' ', $log['action'])) ?>
-                                    </div>
-                                    <div class="time-info">
-                                        <?= date('H:i d.m', strtotime($log['created_at'])) ?>
-                                    </div>
+                                <div>
+                                    <span class="<?= htmlspecialchars($al['class']) ?>"><?= htmlspecialchars($al['ru']) ?></span>
+                                    <div class="meta"><?= htmlspecialchars($timeStr) ?></div>
                                 </div>
                             </div>
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </div>
             </div>
-
-            <div class="content-card">
-                <div class="card-header">🟢 Активные сессии</div>
-                <div class="card-content">
-                    <?php if (empty($activeSessions)): ?>
-                        <p class="text-center text-gray-500">Нет активных сессий</p>
+            <div class="panel">
+                <div class="panel-h">Активные сессии</div>
+                <div class="panel-b">
+                    <?php if (empty($activeSessionsList)): ?>
+                        <div class="row-item"><span class="meta">Нет активных сессий</span></div>
                     <?php else: ?>
-                        <?php foreach ($activeSessions as $session): ?>
-                            <div class="session-item">
-                                <div>
-                                    <div class="user-info">
-                                        <span class="user-phone"><?= htmlspecialchars($session['phone']) ?></span>
-                                        <div class="user-name"><?= htmlspecialchars($session['full_name']) ?></div>
-                                        <?php if ($session['department_code']): ?>
-                                            <div class="user-name">Цех: <?= htmlspecialchars($session['department_code']) ?></div>
-                                        <?php endif; ?>
-                                    </div>
+                        <?php foreach ($activeSessionsList as $s): ?>
+                            <?php
+                            $la = strtotime($s['last_activity']);
+                            $actStr = $la ? date('H:i d.m', $la) : '';
+                            ?>
+                            <div class="row-item">
+                                <div class="who">
+                                    <div class="phone"><?= htmlspecialchars($s['phone'] ?? '') ?></div>
+                                    <div class="name"><?= htmlspecialchars($s['full_name'] ?? '') ?></div>
+                                    <div class="name">Цех: <?= htmlspecialchars($s['department_code'] ?? '—') ?></div>
                                 </div>
-                                <div style="text-align: right;">
-                                    <div class="time-info">
-                                        Активность: <?= date('H:i d.m', strtotime($session['last_activity'])) ?>
-                                    </div>
-                                    <div class="time-info">
-                                        IP: <?= htmlspecialchars($session['ip_address']) ?>
-                                    </div>
+                                <div class="meta">
+                                    Акт.: <?= htmlspecialchars($actStr) ?><br>
+                                    <?= htmlspecialchars($s['ip_address'] ?? '') ?>
                                 </div>
                             </div>
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </div>
             </div>
+        </div>
 
-            <div class="content-card">
-                <div class="card-header">📊 Доступ к странице аналитики</div>
-                <div class="card-content">
-                    <p style="font-size: 14px; color: var(--gray-700); margin-top: 0;">
-                        Кнопка <strong>«Аналитика по участкам»</strong> на главной странице видна только пользователям
-                        с ролью <strong>«Директор» (director)</strong> хотя бы в одном участке.
-                    </p>
-                    <p style="font-size: 13px; color: var(--gray-600);">
-                        Чтобы выдать доступ к аналитике:
-                    </p>
-                    <ol style="font-size: 13px; color: var(--gray-600); padding-left: 18px; margin-top: 0;">
-                        <li>Откройте раздел <strong>«Пользователи»</strong> и выберите нужного пользователя.</li>
-                        <li>На странице редактирования в блоке <strong>«Права доступа к цехам»</strong> назначьте ему
-                            роль <strong>«Директор»</strong> в нужном участке (U2–U5).</li>
-                    </ol>
-                    <p style="font-size: 13px; color: var(--gray-600); margin-bottom: 0;">
-                        После этого кнопка аналитики появится у пользователя на странице <strong>/index.php</strong>.
-                    </p>
-                </div>
-            </div>
+        <div class="hint-box">
+            <h2>Доступ к странице аналитики</h2>
+            <p style="margin: 0 0 8px;">
+                Кнопка «Аналитика по участкам» на главной странице приложения видна только пользователям с ролью
+                <strong>«Директор»</strong> хотя бы в одном цеху.
+            </p>
+            <ol>
+                <li>Откройте раздел <strong>«Пользователи»</strong> и выберите пользователя.</li>
+                <li>В блоке прав доступа к цехам назначьте роль <strong>«Директор»</strong> для нужного цеха (например, U2, U5).</li>
+            </ol>
+            <p style="margin: 10px 0 0;">
+                После этого у этого пользователя на странице <code>/index.php</code> приложения появится доступ к аналитике.
+            </p>
         </div>
     </div>
 </body>

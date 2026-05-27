@@ -201,6 +201,7 @@ $recentChanges = $db->select("
             </p>
             <div style="margin-top: 15px;">
                 <a href="index.php" class="btn btn-secondary">🔙 К панели управления</a>
+                <a href="page-stats.php" class="btn btn-secondary">📊 Страницы</a>
             </div>
         </div>
 

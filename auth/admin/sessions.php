@@ -380,6 +380,7 @@ foreach ($activeSessions as $sess) {
                 </p>
             </div>
             <div class="btn-group">
+                <a href="page-stats.php" class="btn btn-secondary">📊 Страницы</a>
                 <a href="index.php" class="btn btn-secondary">🔙 К панели управления</a>
             </div>
         </div>

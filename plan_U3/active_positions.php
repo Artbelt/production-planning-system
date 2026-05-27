@@ -1243,6 +1243,19 @@ $pageTitle = 'Активные позиции';
             white-space: nowrap;
             width: 1%;
         }
+        /* Фокус по датам: ширина по контенту, без растягивания видимых колонок на всю панель */
+        .panel.plan-date-focus-active > table {
+            width: auto;
+            max-width: 100%;
+        }
+        .panel.plan-date-focus-active th,
+        .panel.plan-date-focus-active td {
+            width: auto;
+        }
+        .panel.plan-date-focus-active th.debt-col,
+        .panel.plan-date-focus-active td.debt-cell {
+            width: auto;
+        }
         th:last-child, td:last-child { border-right: 0; }
         th {
             background: #f9fafb;
@@ -1478,6 +1491,31 @@ $pageTitle = 'Активные позиции';
             background: #eff6ff;
             box-shadow: inset 0 0 0 1px #93c5fd;
         }
+        .panel.range-select-mode th[data-plan-date] {
+            cursor: crosshair;
+        }
+        .panel.range-select-mode th[data-plan-date] .date-head {
+            cursor: crosshair !important;
+        }
+        th[data-plan-date].range-preview {
+            background: #fef9c3;
+            box-shadow: inset 0 0 0 1px #facc15;
+        }
+        th[data-plan-date].range-active {
+            background: #dbeafe;
+            box-shadow: inset 0 0 0 1px #3b82f6;
+        }
+        .plan-focus-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin: 4px 0 10px;
+            font-size: 14px;
+        }
+        .plan-focus-label {
+            font-size: 13px;
+        }
         .date-indicators {
             display: none;
             flex-direction: column;
@@ -1649,6 +1687,65 @@ $pageTitle = 'Активные позиции';
             gap: 8px;
             justify-content: flex-end;
         }
+        .ind-modal__dialog--orders {
+            width: min(520px, 100%);
+            max-height: min(85vh, 720px);
+            display: flex;
+            flex-direction: column;
+        }
+        .ind-modal__body--orders {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-height: 0;
+        }
+        .ind-modal__foot--orders {
+            justify-content: flex-start;
+            flex-wrap: wrap;
+        }
+        .ind-modal__foot-spacer {
+            flex: 1 1 auto;
+            min-width: 8px;
+        }
+        .orders-badge {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 1px 7px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+            background: #fee2e2;
+            color: #991b1b;
+            vertical-align: middle;
+        }
+        .hidden-orders-search {
+            width: 100%;
+        }
+        .hidden-orders-list {
+            max-height: min(48vh, 420px);
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 8px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            background: #fafafa;
+        }
+        .hidden-orders-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            cursor: pointer;
+            color: #1f2937;
+        }
+        .hidden-orders-row.hidden-orders-row--filtered {
+            display: none !important;
+        }
+        .hidden-orders-row input {
+            flex: 0 0 auto;
+        }
         .norm-modal[hidden] { display: none; }
         .norm-modal {
             position: fixed;
@@ -1728,6 +1825,165 @@ $pageTitle = 'Активные позиции';
             justify-content: flex-end;
             background: #f9fafb;
         }
+
+        #debtSpreadModal.norm-modal {
+            backdrop-filter: blur(3px);
+        }
+
+        /* Модалка «Разнести долг» — отдельное оформление (не делим строку label|120px как в настройках) */
+        #debtSpreadModal .norm-modal__dialog.debt-spread-dialog {
+            width: min(420px, calc(100vw - 32px));
+            max-height: min(90vh, 640px);
+            display: flex;
+            flex-direction: column;
+            grid-template: none;
+            overflow: hidden;
+            border-radius: 14px;
+            border: 1px solid #e2e8f0;
+            box-shadow:
+                0 4px 6px -1px rgba(15, 23, 42, 0.06),
+                0 22px 48px -12px rgba(15, 23, 42, 0.28);
+        }
+        #debtSpreadModal .debt-spread-dialog__title {
+            padding: 18px 20px 14px;
+            font-size: 1.0625rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: #0f172a;
+            background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            border-bottom: 1px solid #e2e8f0;
+            line-height: 1.3;
+        }
+        #debtSpreadModal .debt-spread-dialog__meta {
+            padding: 12px 20px;
+            font-size: 13px;
+            line-height: 1.45;
+            color: #334155;
+            background: #f1f5f9;
+            border-bottom: 1px solid #e2e8f0;
+            word-break: break-word;
+        }
+        #debtSpreadModal .debt-spread-dialog__body {
+            padding: 18px 20px 4px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+        }
+        #debtSpreadModal .debt-spread-field {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0;
+        }
+        #debtSpreadModal .debt-spread-field > label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1e293b;
+            margin: 0 0 4px;
+        }
+        #debtSpreadModal .debt-spread-field__hint {
+            font-size: 11px;
+            color: #64748b;
+            line-height: 1.35;
+            margin: 0 0 8px;
+        }
+        #debtSpreadModal .debt-spread-input {
+            width: 100%;
+            box-sizing: border-box;
+            margin: 0;
+            border: 1px solid #cbd5e1;
+            border-radius: 9px;
+            padding: 10px 12px;
+            font-size: 14px;
+            font-family: inherit;
+            color: #0f172a;
+            background: #fff;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+        #debtSpreadModal select.debt-spread-input {
+            cursor: pointer;
+            appearance: none;
+            background-color: #fff;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M3 4.5L6 8l3-3.5'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 36px;
+        }
+        #debtSpreadModal .debt-spread-input:hover {
+            border-color: #94a3b8;
+        }
+        #debtSpreadModal .debt-spread-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+        }
+        #debtSpreadModal .debt-spread-dialog__info {
+            margin-top: 2px;
+            padding: 12px 14px;
+            font-size: 12px;
+            line-height: 1.5;
+            color: #475569;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 9px;
+        }
+        #debtSpreadModal .debt-spread-dialog__foot {
+            padding: 14px 20px 16px;
+            margin-top: 0;
+            background: #fafafa;
+            border-top: 1px solid #e5e7eb;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        #debtSpreadModal .debt-spread-dialog__btn {
+            appearance: none;
+            margin: 0;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.2;
+            border-radius: 9px;
+            padding: 10px 18px;
+            min-height: 40px;
+            transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+        }
+        #debtSpreadModal .debt-spread-dialog__btn--secondary {
+            border: 1px solid #cbd5e1;
+            background: #fff;
+            color: #475569;
+        }
+        #debtSpreadModal .debt-spread-dialog__btn--secondary:hover {
+            background: #f8fafc;
+            border-color: #94a3b8;
+            color: #334155;
+        }
+        #debtSpreadModal .debt-spread-dialog__btn--primary {
+            border: 1px solid transparent;
+            background: linear-gradient(180deg, #059669 0%, #047857 100%);
+            color: #fff;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 4px 12px rgba(4, 120, 87, 0.28);
+        }
+        #debtSpreadModal .debt-spread-dialog__btn--primary:hover {
+            filter: brightness(1.06);
+        }
+        #debtSpreadModal .debt-spread-dialog__btn--primary:active {
+            filter: brightness(0.96);
+        }
+        #debtSpreadModal .debt-spread-dialog__btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            pointer-events: none;
+            filter: none;
+            box-shadow: none;
+        }
+
         .date-cell-context-menu {
             position: fixed;
             z-index: 1200;
@@ -1760,6 +2016,9 @@ $pageTitle = 'Активные позиции';
             opacity: 0.45;
             cursor: not-allowed;
         }
+        .debt-cell-context-menu {
+            min-width: 200px;
+        }
     </style>
 </head>
 <body>
@@ -1784,7 +2043,14 @@ $pageTitle = 'Активные позиции';
             <button type="button" id="openGofroPackagesBtn" class="toolbar-btn secondary">Гофропакеты</button>
             <button type="button" id="toggleGofroCoverageBtn" class="toolbar-btn secondary" aria-pressed="false">Покрытие гофропакетами</button>
             <button type="button" id="addPlanDayBtn" class="toolbar-btn secondary" title="Добавить колонку следующего дня в конец таблицы (только в интерфейсе; в БД не пишется)">+ день</button>
+            <button type="button" id="openHiddenOrdersBtn" class="toolbar-btn secondary">Заявки <span id="hiddenOrdersBadge" class="orders-badge" hidden></span></button>
         </div>
+        <div id="planFocusBar" class="plan-focus-bar">
+            <button type="button" id="enterRangeSelectModeBtn" class="toolbar-btn secondary" aria-pressed="false">Выбрать период мышью</button>
+            <button type="button" id="resetFocusRangeBtn" class="toolbar-btn secondary" disabled>Сбросить</button>
+            <span id="planFocusLabel" class="plan-focus-label muted"></span>
+        </div>
+        <p id="rangeSelectHint" class="muted" hidden style="margin: 0 0 8px;">Проведите мышью по датам в шапке таблицы</p>
         <div id="pendingMovesBar" class="pending-bar">
             <span id="pendingMovesText" class="pending-text">Изменений в очереди: 0</span>
             <button type="button" id="toggleQueuePanelBtn" class="toolbar-btn secondary" aria-pressed="false">Очередь</button>
@@ -1810,6 +2076,9 @@ $pageTitle = 'Активные позиции';
         <div id="dateCellContextMenu" class="date-cell-context-menu" hidden role="menu">
             <button type="button" id="dateCellCtxClear" role="menuitem">Очистить</button>
             <button type="button" id="dateCellCtxEdit" role="menuitem">Изменить…</button>
+        </div>
+        <div id="debtCellContextMenu" class="date-cell-context-menu debt-cell-context-menu" hidden role="menu">
+            <button type="button" id="debtCellCtxSpread" role="menuitem">Разнести по дням…</button>
         </div>
         <div id="dragPreview" class="drag-preview" hidden></div>
         <div class="panel">
@@ -1881,7 +2150,7 @@ $pageTitle = 'Активные позиции';
                             }
                             $totalTitle = 'Всего в смену: ' . $totalQty . ' шт из нормы ' . (int)$indicatorNormTotal . ' шт';
                         ?>
-                            <th class="num date-col" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
+                            <th class="num date-col" data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
                                 <span class="date-head">
                                     <span><?= htmlspecialchars($dateLabel, ENT_QUOTES, 'UTF-8') ?></span>
                                     <span class="date-indicators" aria-hidden="true">
@@ -2158,7 +2427,7 @@ $pageTitle = 'Активные позиции';
                             }
                             $totalTitle = 'Всего в смену: ' . $totalQty . ' шт из нормы ' . (int)$indicatorNormTotal . ' шт';
                         ?>
-                            <th class="num date-col" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
+                            <th class="num date-col" data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
                                 <span class="date-head">
                                     <span><?= htmlspecialchars($dateLabel, ENT_QUOTES, 'UTF-8') ?></span>
                                     <span class="date-indicators" aria-hidden="true">
@@ -2256,13 +2525,61 @@ $pageTitle = 'Активные позиции';
         </div>
     </div>
 </div>
+<div id="debtSpreadModal" class="norm-modal" hidden>
+    <div class="norm-modal__dialog debt-spread-dialog" role="dialog" aria-modal="true" aria-labelledby="debtSpreadTitle" aria-describedby="debtSpreadHint">
+        <div id="debtSpreadTitle" class="norm-modal__head debt-spread-dialog__title">Разнести долг по дням</div>
+        <div class="debt-spread-dialog__meta" id="debtSpreadMeta"></div>
+        <div class="debt-spread-dialog__body">
+            <div class="debt-spread-field">
+                <label for="debtSpreadStartSelect">Начать с даты</label>
+                <span class="debt-spread-field__hint">По колонкам слева направо; в каждую дату попадёт перенос только если ячейка пуста и не заблокирована.</span>
+                <select id="debtSpreadStartSelect" class="debt-spread-input"></select>
+            </div>
+            <div class="debt-spread-field">
+                <label for="debtSpreadBatchInput">Порция, шт. (максимум в одну дату)</label>
+                <span class="debt-spread-field__hint">Не больше этого числа штук запишется в одну выбранную дату за один шаг очереди.</span>
+                <input id="debtSpreadBatchInput" class="debt-spread-input" type="number" min="1" step="1" value="40" inputmode="numeric">
+            </div>
+            <div class="debt-spread-field">
+                <label for="debtSpreadQtyInput">Всего перенести из долга, шт.</label>
+                <span class="debt-spread-field__hint">Не больше текущего долга по строке (с учётом уже стоящих в очереди правок на этой странице).</span>
+                <input id="debtSpreadQtyInput" class="debt-spread-input" type="number" min="1" step="1" inputmode="numeric">
+            </div>
+            <p class="debt-spread-dialog__info" id="debtSpreadHint"></p>
+        </div>
+        <div class="norm-modal__foot debt-spread-dialog__foot">
+            <button type="button" id="debtSpreadCancelBtn" class="debt-spread-dialog__btn debt-spread-dialog__btn--secondary">Отмена</button>
+            <button type="button" id="debtSpreadApplyBtn" class="debt-spread-dialog__btn debt-spread-dialog__btn--primary">В очередь</button>
+        </div>
+    </div>
+</div>
 <div id="debtExpandPopover" class="debt-popover" hidden>
     <div id="debtExpandPopoverInner" class="debt-popover__inner"></div>
+</div>
+<div id="hiddenOrdersModal" class="ind-modal" hidden>
+    <div class="ind-modal__dialog ind-modal__dialog--orders" role="dialog" aria-modal="true" aria-labelledby="hiddenOrdersModalTitle">
+        <div id="hiddenOrdersModalTitle" class="ind-modal__head">Видимость заявок</div>
+        <div class="ind-modal__body ind-modal__body--orders">
+            <p class="muted" style="margin:0;font-size:12px;">Отметьте заявки, которые нужно <strong>скрыть</strong> в таблице (только интерфейс; данные не меняются). Состояние сохраняется в браузере для этого адреса страницы.</p>
+            <label class="ind-field" style="margin:0;">
+                <span>Поиск по номеру</span>
+                <input type="search" id="hiddenOrdersSearchInput" class="hidden-orders-search" placeholder="Например, 12345" autocomplete="off">
+            </label>
+            <div id="hiddenOrdersList" class="hidden-orders-list" role="group" aria-label="Список заявок"></div>
+        </div>
+        <div class="ind-modal__foot ind-modal__foot--orders">
+            <button type="button" id="hiddenOrdersShowAllBtn" class="toolbar-btn secondary">Показать все</button>
+            <div class="ind-modal__foot-spacer"></div>
+            <button type="button" id="hiddenOrdersCancelBtn" class="toolbar-btn secondary">Отмена</button>
+            <button type="button" id="hiddenOrdersApplyBtn" class="toolbar-btn">Применить</button>
+        </div>
+    </div>
 </div>
 <script>
     (function () {
         const initialDebtShiftMap = <?= json_encode($debtShiftMap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
         const pageTodayIso = <?= json_encode($todayIso, JSON_UNESCAPED_UNICODE) ?>;
+        const todayIso = pageTodayIso;
         const btn = document.getElementById('toggleIndicatorsBtn');
         const rowIndicatorsBtn = document.getElementById('toggleRowIndicatorsBtn');
         const openSettingsBtn = document.getElementById('openIndicatorSettingsBtn');
@@ -2298,10 +2615,33 @@ $pageTitle = 'Активные позиции';
         const clearLocksBtn = document.getElementById('clearLocksBtn');
         const clearPendingMovesBtn = document.getElementById('clearPendingMovesBtn');
         const addPlanDayBtn = document.getElementById('addPlanDayBtn');
+        const enterRangeSelectModeBtn = document.getElementById('enterRangeSelectModeBtn');
+        const rangeSelectHint = document.getElementById('rangeSelectHint');
+        const planFocusBar = document.getElementById('planFocusBar');
+        const planFocusLabel = document.getElementById('planFocusLabel');
+        const resetFocusRangeBtn = document.getElementById('resetFocusRangeBtn');
+        const openHiddenOrdersBtn = document.getElementById('openHiddenOrdersBtn');
+        const hiddenOrdersModal = document.getElementById('hiddenOrdersModal');
+        const hiddenOrdersSearchInput = document.getElementById('hiddenOrdersSearchInput');
+        const hiddenOrdersList = document.getElementById('hiddenOrdersList');
+        const hiddenOrdersShowAllBtn = document.getElementById('hiddenOrdersShowAllBtn');
+        const hiddenOrdersApplyBtn = document.getElementById('hiddenOrdersApplyBtn');
+        const hiddenOrdersCancelBtn = document.getElementById('hiddenOrdersCancelBtn');
+        const hiddenOrdersBadge = document.getElementById('hiddenOrdersBadge');
         const dateCellContextMenu = document.getElementById('dateCellContextMenu');
         const dateCellCtxClear = document.getElementById('dateCellCtxClear');
         const dateCellCtxEdit = document.getElementById('dateCellCtxEdit');
-        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !openGofroPackagesBtn || !toggleGofroCoverageBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !maxListPctInput || !normalizePreviewModal || !normalizePreviewList || !normalizePreviewApplyBtn || !normalizePreviewCancelBtn || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !applyPendingMovesPanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !debtExpandPopover || !debtExpandPopoverInner || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearLocksBtn || !clearPendingMovesBtn || !addPlanDayBtn) {
+        const debtCellContextMenu = document.getElementById('debtCellContextMenu');
+        const debtCellCtxSpread = document.getElementById('debtCellCtxSpread');
+        const debtSpreadModal = document.getElementById('debtSpreadModal');
+        const debtSpreadMeta = document.getElementById('debtSpreadMeta');
+        const debtSpreadStartSelect = document.getElementById('debtSpreadStartSelect');
+        const debtSpreadBatchInput = document.getElementById('debtSpreadBatchInput');
+        const debtSpreadQtyInput = document.getElementById('debtSpreadQtyInput');
+        const debtSpreadHint = document.getElementById('debtSpreadHint');
+        const debtSpreadCancelBtn = document.getElementById('debtSpreadCancelBtn');
+        const debtSpreadApplyBtn = document.getElementById('debtSpreadApplyBtn');
+        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !openGofroPackagesBtn || !toggleGofroCoverageBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !maxListPctInput || !normalizePreviewModal || !normalizePreviewList || !normalizePreviewApplyBtn || !normalizePreviewCancelBtn || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !applyPendingMovesPanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !debtExpandPopover || !debtExpandPopoverInner || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearLocksBtn || !clearPendingMovesBtn || !addPlanDayBtn || !enterRangeSelectModeBtn || !rangeSelectHint || !planFocusBar || !planFocusLabel || !resetFocusRangeBtn || !openHiddenOrdersBtn || !hiddenOrdersModal || !hiddenOrdersSearchInput || !hiddenOrdersList || !hiddenOrdersShowAllBtn || !hiddenOrdersApplyBtn || !hiddenOrdersCancelBtn || !hiddenOrdersBadge || !debtCellContextMenu || !debtCellCtxSpread || !debtSpreadModal || !debtSpreadMeta || !debtSpreadStartSelect || !debtSpreadBatchInput || !debtSpreadQtyInput || !debtSpreadHint || !debtSpreadCancelBtn || !debtSpreadApplyBtn) {
             return;
         }
         const storageKey = 'activePositionsIndicatorSettings';
@@ -2311,6 +2651,7 @@ $pageTitle = 'Активные позиции';
         const gofroCoverageVisibleStorageKey = 'activePositionsGofroCoverageVisible';
         const queuePanelStorageKey = 'activePositionsQueuePanelOpen';
         const lockStorageKey = `activePositionsLockedShifts:${window.location.pathname}`;
+        const hiddenOrdersStorageKey = `activePositionsHiddenOrders:${window.location.pathname}`;
         const FROZEN_COL_COUNT = 8;
         const debtStateMap = Object.assign({}, initialDebtShiftMap || {});
         const serverDefaultMaxListPct = <?= (int)$activePositionsMaxCompletionPct ?>;
@@ -2325,7 +2666,79 @@ $pageTitle = 'Активные позиции';
         let isGofroCoverageVisible = false;
         let dateCells = [];
         let dateCellContextMenuTarget = null;
+        let debtCellContextMenuTarget = null;
         let activeDateFilter = '';
+        let focusRange = null;
+        let isRangeSelectMode = false;
+        let isDraggingRange = false;
+        let rangeStartDate = null;
+        let rangeHoverDate = null;
+        let suppressNextDateHeaderFilterClick = false;
+
+        function loadHiddenOrdersFromStorage() {
+            try {
+                const raw = localStorage.getItem(hiddenOrdersStorageKey);
+                if (!raw) {
+                    return new Set();
+                }
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed)) {
+                    return new Set();
+                }
+                return new Set(parsed.map(function (x) { return String(x || '').trim(); }).filter(Boolean));
+            } catch (e) {
+                return new Set();
+            }
+        }
+
+        function persistHiddenOrders() {
+            try {
+                localStorage.setItem(hiddenOrdersStorageKey, JSON.stringify(Array.from(hiddenOrdersSet)));
+            } catch (e) {
+                // ignore storage write errors
+            }
+        }
+
+        function getUniqueOrdersFromTable() {
+            const unique = new Set();
+            document.querySelectorAll('tr.plan-row[data-order]').forEach(function (row) {
+                const o = String(row.getAttribute('data-order') || '').trim();
+                if (o) {
+                    unique.add(o);
+                }
+            });
+            return Array.from(unique).sort(function (a, b) {
+                const na = parseInt(a, 10);
+                const nb = parseInt(b, 10);
+                if (!Number.isNaN(na) && !Number.isNaN(nb) && String(na) === a && String(nb) === b) {
+                    return na - nb;
+                }
+                return a.localeCompare(b, undefined, { numeric: true });
+            });
+        }
+
+        function pruneHiddenOrdersNotInTable() {
+            const valid = new Set(getUniqueOrdersFromTable());
+            let changed = false;
+            Array.from(hiddenOrdersSet).forEach(function (o) {
+                if (!valid.has(o)) {
+                    hiddenOrdersSet.delete(o);
+                    changed = true;
+                }
+            });
+            if (changed) {
+                persistHiddenOrders();
+            }
+        }
+
+        let hiddenOrdersSet = loadHiddenOrdersFromStorage();
+
+        function closeDebtCellContextMenu() {
+            if (debtCellContextMenu) {
+                debtCellContextMenu.hidden = true;
+            }
+            debtCellContextMenuTarget = null;
+        }
 
         function closeDateCellContextMenu() {
             if (dateCellContextMenu) {
@@ -2334,10 +2747,42 @@ $pageTitle = 'Активные позиции';
             dateCellContextMenuTarget = null;
         }
 
+        function openDebtCellContextMenu(clientX, clientY, debtCell) {
+            if (!debtCellContextMenu || !debtCellCtxSpread || !debtCell) {
+                return;
+            }
+            closeDateCellContextMenu();
+            debtCellContextMenuTarget = debtCell;
+            const planKey = debtCell.dataset.debtKey || '';
+            const shifts = getDebtShiftsForKey(planKey);
+            const debtSum = shifts.reduce(function (acc, s) {
+                return acc + Math.max(0, parseInt(s.qty || 0, 10) || 0);
+            }, 0);
+            debtCellCtxSpread.disabled = debtSum <= 0 || isApplyingPendingMoves;
+            debtCellContextMenu.hidden = false;
+            const pad = 4;
+            let x = clientX + pad;
+            let y = clientY + pad;
+            debtCellContextMenu.style.left = `${Math.round(x)}px`;
+            debtCellContextMenu.style.top = `${Math.round(y)}px`;
+            const rect = debtCellContextMenu.getBoundingClientRect();
+            const vw = window.innerWidth || document.documentElement.clientWidth;
+            const vh = window.innerHeight || document.documentElement.clientHeight;
+            if (rect.right > vw - 8) {
+                x = Math.max(8, vw - rect.width - 8);
+                debtCellContextMenu.style.left = `${Math.round(x)}px`;
+            }
+            if (rect.bottom > vh - 8) {
+                y = Math.max(8, vh - rect.height - 8);
+                debtCellContextMenu.style.top = `${Math.round(y)}px`;
+            }
+        }
+
         function openDateCellContextMenu(clientX, clientY, cell) {
             if (!dateCellContextMenu || !dateCellCtxClear || !dateCellCtxEdit || !cell) {
                 return;
             }
+            closeDebtCellContextMenu();
             dateCellContextMenuTarget = cell;
             const qty = Math.max(0, parseInt(cell.dataset.qty || '0', 10) || 0);
             const locked = isCellLocked(cell);
@@ -2369,19 +2814,30 @@ $pageTitle = 'Активные позиции';
         function applyDateRowFilter() {
             const targetDate = String(activeDateFilter || '').trim();
             const hasFilter = targetDate !== '';
+            const focus = focusRange;
+            const visibleSet = focus ? new Set(getVisibleDates()) : null;
             document.querySelectorAll('tr.plan-row').forEach(function (row) {
-                if (!hasFilter) {
-                    row.hidden = false;
-                    return;
+                const order = String(row.getAttribute('data-order') || '').trim();
+                const hideByOrder = order !== '' && hiddenOrdersSet.has(order);
+                let passDateRules = true;
+                if (hasFilter) {
+                    passDateRules = Array.from(row.querySelectorAll('td.date-cell')).some(function (cell) {
+                        const cellDate = String(cell.dataset.date || '').trim();
+                        if (cellDate !== targetDate) {
+                            return false;
+                        }
+                        return (parseInt(cell.dataset.qty || '0', 10) || 0) > 0;
+                    });
+                } else if (focus && visibleSet) {
+                    passDateRules = Array.from(row.querySelectorAll('td.date-cell')).some(function (cell) {
+                        const cellDate = String(cell.dataset.date || '').trim();
+                        if (!cellDate || !visibleSet.has(cellDate)) {
+                            return false;
+                        }
+                        return (parseInt(cell.dataset.qty || '0', 10) || 0) > 0;
+                    });
                 }
-                const hasPlannedQtyOnDate = Array.from(row.querySelectorAll('td.date-cell')).some(function (cell) {
-                    const cellDate = String(cell.dataset.date || '').trim();
-                    if (cellDate !== targetDate) {
-                        return false;
-                    }
-                    return (parseInt(cell.dataset.qty || '0', 10) || 0) > 0;
-                });
-                row.hidden = !hasPlannedQtyOnDate;
+                row.hidden = hideByOrder || !passDateRules;
             });
             document.querySelectorAll('th[data-plan-date]').forEach(function (th) {
                 const thDate = String(th.getAttribute('data-plan-date') || '').trim();
@@ -2394,8 +2850,311 @@ $pageTitle = 'Активные позиции';
             if (!nextDate) {
                 return;
             }
+            if (focusRange) {
+                focusRange = null;
+                applyFocusColumnVisibility();
+                updateRangeActiveHeaderClasses();
+                updatePlanFocusBar();
+            }
             activeDateFilter = activeDateFilter === nextDate ? '' : nextDate;
             applyDateRowFilter();
+        }
+
+        function getOrderedPlanDatesFromHead() {
+            const table = document.querySelector('.panel table');
+            if (!table) {
+                return [];
+            }
+            const theadRow = table.querySelector('thead tr');
+            if (!theadRow) {
+                return [];
+            }
+            return Array.from(theadRow.querySelectorAll('th[data-plan-date]')).map(function (th) {
+                return String(th.getAttribute('data-plan-date') || '').trim();
+            }).filter(Boolean);
+        }
+
+        function getVisibleDates() {
+            const ordered = getOrderedPlanDatesFromHead();
+            if (!focusRange) {
+                return ordered;
+            }
+            const s = focusRange.startDate;
+            const e = focusRange.endDate;
+            return ordered.filter(function (d) {
+                return d >= s && d <= e;
+            });
+        }
+
+        function getVisiblePositions() {
+            return Array.from(document.querySelectorAll('tr.plan-row')).filter(function (row) {
+                return !row.hidden;
+            });
+        }
+
+        function applyFocusColumnVisibility() {
+            const visible = focusRange ? new Set(getVisibleDates()) : null;
+            document.querySelectorAll('th[data-plan-date]').forEach(function (el) {
+                const d = String(el.getAttribute('data-plan-date') || el.getAttribute('data-date') || '').trim();
+                if (!d) {
+                    return;
+                }
+                if (!visible) {
+                    el.style.removeProperty('display');
+                    return;
+                }
+                el.style.display = visible.has(d) ? '' : 'none';
+            });
+            document.querySelectorAll('td.date-cell').forEach(function (el) {
+                const d = String(el.dataset.date || '').trim();
+                if (!d) {
+                    return;
+                }
+                if (!visible) {
+                    el.style.removeProperty('display');
+                    return;
+                }
+                el.style.display = visible.has(d) ? '' : 'none';
+            });
+            const panel = document.querySelector('.panel');
+            if (panel) {
+                panel.classList.toggle('plan-date-focus-active', !!focusRange);
+            }
+        }
+
+        function updateRangeActiveHeaderClasses() {
+            document.querySelectorAll('th[data-plan-date]').forEach(function (th) {
+                const d = String(th.getAttribute('data-plan-date') || '').trim();
+                if (!focusRange) {
+                    th.classList.remove('range-active');
+                    return;
+                }
+                th.classList.toggle('range-active', d >= focusRange.startDate && d <= focusRange.endDate);
+            });
+        }
+
+        function updatePlanFocusBar() {
+            if (!focusRange) {
+                planFocusLabel.textContent = '';
+                resetFocusRangeBtn.disabled = true;
+                return;
+            }
+            resetFocusRangeBtn.disabled = false;
+            const t0 = formatDdMmFromIso(focusRange.startDate);
+            const t1 = formatDdMmFromIso(focusRange.endDate);
+            planFocusLabel.textContent = 'Фокус: ' + t0 + '–' + t1;
+        }
+
+        function updateRangePreviewClasses() {
+            let lo = '';
+            let hi = '';
+            if (isDraggingRange && rangeStartDate && rangeHoverDate) {
+                const a = String(rangeStartDate).trim();
+                const b = String(rangeHoverDate).trim();
+                lo = a <= b ? a : b;
+                hi = a <= b ? b : a;
+            }
+            document.querySelectorAll('th[data-plan-date]').forEach(function (th) {
+                const d = String(th.getAttribute('data-plan-date') || '').trim();
+                const inPreview = !!(lo && hi && d >= lo && d <= hi);
+                th.classList.toggle('range-preview', inPreview);
+            });
+        }
+
+        function leaveRangeSelectModeDiscard() {
+            isRangeSelectMode = false;
+            isDraggingRange = false;
+            rangeStartDate = null;
+            rangeHoverDate = null;
+            const panel = document.querySelector('.panel');
+            if (panel) {
+                panel.classList.remove('range-select-mode');
+            }
+            rangeSelectHint.hidden = true;
+            enterRangeSelectModeBtn.setAttribute('aria-pressed', 'false');
+            updateRangePreviewClasses();
+        }
+
+        function enterRangeSelectMode() {
+            if (isDraggingRange) {
+                return;
+            }
+            if (isRangeSelectMode) {
+                leaveRangeSelectModeDiscard();
+                return;
+            }
+            isRangeSelectMode = true;
+            const panel = document.querySelector('.panel');
+            if (panel) {
+                panel.classList.add('range-select-mode');
+            }
+            rangeSelectHint.hidden = false;
+            enterRangeSelectModeBtn.setAttribute('aria-pressed', 'true');
+        }
+
+        function handleDateHeaderMouseDown(date) {
+            if (!isRangeSelectMode) {
+                return;
+            }
+            const d = String(date || '').trim();
+            if (!d) {
+                return;
+            }
+            isDraggingRange = true;
+            rangeStartDate = d;
+            rangeHoverDate = d;
+            updateRangePreviewClasses();
+        }
+
+        function handleDateHeaderMouseEnter(date) {
+            if (!isDraggingRange || !rangeStartDate) {
+                return;
+            }
+            const d = String(date || '').trim();
+            if (!d) {
+                return;
+            }
+            rangeHoverDate = d;
+            updateRangePreviewClasses();
+        }
+
+        function handleDateHeaderMouseUp(endDate) {
+            if (!isDraggingRange) {
+                return;
+            }
+            isDraggingRange = false;
+            const start = rangeStartDate ? String(rangeStartDate).trim() : '';
+            const end = String(endDate || '').trim();
+            rangeStartDate = null;
+            rangeHoverDate = null;
+            updateRangePreviewClasses();
+            if (!start || !end) {
+                return;
+            }
+            applyFocusRange(start, end);
+        }
+
+        function applyFocusRange(startDate, endDate) {
+            const a = String(startDate || '').trim();
+            const b = String(endDate || '').trim();
+            if (!a || !b) {
+                leaveRangeSelectModeDiscard();
+                return;
+            }
+            const lo = a <= b ? a : b;
+            const hi = a <= b ? b : a;
+            focusRange = { startDate: lo, endDate: hi };
+            activeDateFilter = '';
+            isRangeSelectMode = false;
+            isDraggingRange = false;
+            rangeStartDate = null;
+            rangeHoverDate = null;
+            suppressNextDateHeaderFilterClick = true;
+            const panel = document.querySelector('.panel');
+            if (panel) {
+                panel.classList.remove('range-select-mode');
+            }
+            rangeSelectHint.hidden = true;
+            enterRangeSelectModeBtn.setAttribute('aria-pressed', 'false');
+            updateRangePreviewClasses();
+            applyFocusColumnVisibility();
+            applyDateRowFilter();
+            updateRangeActiveHeaderClasses();
+            updatePlanFocusBar();
+            applyFrozenColumns();
+        }
+
+        function resetFocusRange() {
+            focusRange = null;
+            if (isRangeSelectMode || isDraggingRange) {
+                leaveRangeSelectModeDiscard();
+            }
+            applyFocusColumnVisibility();
+            applyDateRowFilter();
+            updateRangeActiveHeaderClasses();
+            updatePlanFocusBar();
+            applyFrozenColumns();
+        }
+
+        function updateHiddenOrdersBadge() {
+            const n = hiddenOrdersSet.size;
+            if (n <= 0) {
+                hiddenOrdersBadge.hidden = true;
+                hiddenOrdersBadge.textContent = '';
+            } else {
+                hiddenOrdersBadge.hidden = false;
+                hiddenOrdersBadge.textContent = String(n);
+            }
+        }
+
+        function filterHiddenOrdersModalList() {
+            const q = String(hiddenOrdersSearchInput.value || '').trim().toLowerCase();
+            hiddenOrdersList.querySelectorAll('.hidden-orders-row').forEach(function (row) {
+                const order = String(row.getAttribute('data-order') || '').trim();
+                const show = !q || order.toLowerCase().indexOf(q) !== -1;
+                row.classList.toggle('hidden-orders-row--filtered', !show);
+            });
+        }
+
+        function buildHiddenOrdersModalList() {
+            hiddenOrdersList.innerHTML = '';
+            getUniqueOrdersFromTable().forEach(function (order) {
+                const row = document.createElement('label');
+                row.className = 'hidden-orders-row';
+                row.setAttribute('data-order', order);
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.setAttribute('data-order', order);
+                cb.checked = hiddenOrdersSet.has(order);
+                const span = document.createElement('span');
+                span.textContent = 'Скрыть заявку ' + order;
+                row.appendChild(cb);
+                row.appendChild(span);
+                hiddenOrdersList.appendChild(row);
+            });
+        }
+
+        function openHiddenOrdersModal() {
+            if (isApplyingPendingMoves) {
+                return;
+            }
+            pruneHiddenOrdersNotInTable();
+            hiddenOrdersSearchInput.value = '';
+            buildHiddenOrdersModalList();
+            hiddenOrdersModal.hidden = false;
+            hiddenOrdersSearchInput.focus();
+        }
+
+        function closeHiddenOrdersModal() {
+            hiddenOrdersModal.hidden = true;
+        }
+
+        function applyHiddenOrdersFromModal() {
+            const next = new Set();
+            hiddenOrdersList.querySelectorAll('.hidden-orders-row input[type="checkbox"]').forEach(function (cb) {
+                if (cb.checked) {
+                    const o = String(cb.getAttribute('data-order') || '').trim();
+                    if (o) {
+                        next.add(o);
+                    }
+                }
+            });
+            hiddenOrdersSet = next;
+            persistHiddenOrders();
+            applyDateRowFilter();
+            updateHiddenOrdersBadge();
+            closeHiddenOrdersModal();
+        }
+
+        function showAllHiddenOrdersInTable() {
+            hiddenOrdersSet = new Set();
+            persistHiddenOrders();
+            applyDateRowFilter();
+            updateHiddenOrdersBadge();
+            if (!hiddenOrdersModal.hidden) {
+                buildHiddenOrdersModalList();
+                filterHiddenOrdersModalList();
+            }
         }
 
         function getSettings() {
@@ -2827,6 +3586,7 @@ $pageTitle = 'Активные позиции';
             const th = document.createElement('th');
             th.className = 'num date-col';
             th.setAttribute('data-plan-date', iso);
+            th.setAttribute('data-date', iso);
             th.setAttribute('title', 'План сборки на ' + iso);
 
             const head = document.createElement('span');
@@ -3063,6 +3823,7 @@ $pageTitle = 'Активные позиции';
             });
 
             applySettings(getSettings());
+            applyFocusColumnVisibility();
             applyDateRowFilter();
         }
 
@@ -3605,7 +4366,7 @@ $pageTitle = 'Активные позиции';
             if (total === 0) {
                 debtCell.title = '';
             } else {
-                debtCell.title = `Долг: ${total} смен`;
+                debtCell.title = `Долг: ${total} смен. ЛКМ — список; ПКМ — разнести по дням`;
             }
             list.innerHTML = '';
             const visible = shifts.slice(0, DEBT_COMPACT_VISIBLE);
@@ -4206,6 +4967,241 @@ $pageTitle = 'Активные позиции';
             return queuedMove;
         }
 
+        /**
+         * Очередь переноса из долга в пустую ячейку (без drag): эквивалент buildQueuedSingleMove с sourceType debt.
+         */
+        function buildQueuedDebtMove(targetCell, order, filter, debtKey, fromDebtDate, qty) {
+            const targetQty = Math.max(0, parseInt(targetCell.dataset.qty || '0', 10) || 0);
+            const toDate = String(targetCell.dataset.date || '').trim();
+            const o = String(order || '').trim();
+            const f = String(filter || '').trim();
+            const fromD = String(fromDebtDate || '').trim();
+            const q = Math.max(0, parseInt(qty, 10) || 0);
+            if (!targetCell || !o || !f || !fromD || !toDate) {
+                return { error: 'Не удалось сформировать перенос из долга.' };
+            }
+            if (toDate < todayIso) {
+                return { error: 'Перенос в прошлые даты недоступен.' };
+            }
+            if (isCellLocked(targetCell)) {
+                return { error: 'Смена зафиксирована: сначала снимите блокировку (' + toShortDate(toDate) + ').' };
+            }
+            if (q <= 0) {
+                return { error: 'Укажите положительное количество.' };
+            }
+            if (targetQty > 0) {
+                return { error: 'Нельзя складывать смены: дата ' + toShortDate(toDate) + ' уже занята.' };
+            }
+            return {
+                payload: {
+                    mode: 'debt',
+                    order_number: o,
+                    filter_name: f,
+                    from_date: fromD,
+                    to_date: toDate,
+                    moved_qty: q,
+                },
+                movedQty: q,
+                changes: [
+                    { cell: targetCell, prev: targetQty, next: targetQty + q },
+                ],
+                debtChange: {
+                    key: debtKey || getPlanKey(o, f),
+                    shift: { date: fromD, qty: q },
+                    movedQty: q,
+                },
+            };
+        }
+
+        function sortDebtShiftsChrono(shifts) {
+            return shifts
+                .map(function (s) {
+                    return {
+                        date: String(s.date || ''),
+                        qty: Math.max(0, parseInt(s.qty || 0, 10) || 0),
+                    };
+                })
+                .filter(function (s) {
+                    return s.date !== '' && s.qty > 0;
+                })
+                .sort(function (a, b) {
+                    if (a.date !== b.date) {
+                        return a.date.localeCompare(b.date);
+                    }
+                    return 0;
+                });
+        }
+
+        function sumDebtShiftsQty(shifts) {
+            return shifts.reduce(function (acc, s) {
+                return acc + Math.max(0, parseInt(s.qty || 0, 10) || 0);
+            }, 0);
+        }
+
+        function buildDebtSpreadQueuedMoves(rowCells, planKey, order, filter, startDateIso, batchSize, totalMove) {
+            const rowCellsArr = Array.isArray(rowCells) ? rowCells : [];
+            if (rowCellsArr.length === 0) {
+                return { error: 'Не найдена строка позиции в таблице.' };
+            }
+            let virtual = sortDebtShiftsChrono(cloneDebtShifts(getDebtShiftsForKey(planKey)));
+            const maxFromDebt = sumDebtShiftsQty(virtual);
+            if (maxFromDebt <= 0) {
+                return { error: 'Нет долга для разнесения (учитывая очередь правок на странице).' };
+            }
+            const want = Math.max(0, parseInt(totalMove, 10) || 0);
+            let remaining = Math.min(want, maxFromDebt);
+            const batch = Math.max(1, parseInt(batchSize, 10) || 1);
+            if (want <= 0) {
+                return { error: 'Укажите, сколько штук перенести (целое число от 1).' };
+            }
+            if (remaining <= 0) {
+                return { error: 'Некорректное количество для переноса.' };
+            }
+            const allDates = getUniquePlanDates();
+            const startIdx = allDates.findIndex(function (d) {
+                return d >= startDateIso;
+            });
+            if (startIdx === -1) {
+                return { error: 'Выбранная дата не найдена в колонках плана.' };
+            }
+            const claimedDates = new Set();
+            const moves = [];
+            let skippedBusy = 0;
+            let skippedLocked = 0;
+            for (let i = startIdx; i < allDates.length && remaining > 0; i += 1) {
+                const d = allDates[i];
+                if (d < todayIso) {
+                    continue;
+                }
+                const cell = getCellByDate(rowCellsArr, d);
+                if (!cell) {
+                    continue;
+                }
+                const curQty = Math.max(0, parseInt(cell.dataset.qty || '0', 10) || 0);
+                if (curQty > 0) {
+                    skippedBusy += 1;
+                    continue;
+                }
+                if (claimedDates.has(d)) {
+                    continue;
+                }
+                if (isCellLocked(cell)) {
+                    skippedLocked += 1;
+                    continue;
+                }
+                virtual = sortDebtShiftsChrono(virtual);
+                const head = virtual.find(function (s) {
+                    return s.qty > 0;
+                });
+                if (!head) {
+                    break;
+                }
+                const chunk = Math.min(batch, remaining, head.qty);
+                if (chunk <= 0) {
+                    break;
+                }
+                const qm = buildQueuedDebtMove(cell, order, filter, planKey, head.date, chunk);
+                if (qm.error) {
+                    return qm;
+                }
+                moves.push(qm);
+                claimedDates.add(d);
+                head.qty -= chunk;
+                remaining -= chunk;
+            }
+            if (moves.length === 0) {
+                let extra = 'Проверьте пустые даты в строке или расширьте период («+ день»).';
+                if (skippedBusy > 0) {
+                    extra = 'Все даты начиная с выбранной заняты в этой строке (' + skippedBusy + ' колонок с планом). ' + extra;
+                } else if (skippedLocked > 0) {
+                    extra = 'Свободные даты зафиксированы блокировкой (' + skippedLocked + '). Снимите блокировку или выберите другую дату. ' + extra;
+                }
+                return { error: 'Не удалось добавить ни одного переноса. ' + extra };
+            }
+            return {
+                moves: moves,
+                leftover: remaining,
+                skippedBusy: skippedBusy,
+            };
+        }
+
+        let debtSpreadAnchorCell = null;
+
+        function closeDebtSpreadModal() {
+            debtSpreadAnchorCell = null;
+            debtSpreadModal.hidden = true;
+            debtSpreadStartSelect.innerHTML = '';
+            closeDebtCellContextMenu();
+        }
+
+        function openDebtSpreadModal(debtCell) {
+            if (!debtCell || isApplyingPendingMoves || isMoving) {
+                return;
+            }
+            closeDebtCellContextMenu();
+            closeDebtExpandPopover();
+            refreshDateCellsCache();
+            const planKey = String(debtCell.dataset.debtKey || '').trim();
+            const order = String(debtCell.dataset.order || '').trim();
+            const filter = String(debtCell.dataset.filter || '').trim();
+            const shifts = getDebtShiftsForKey(planKey);
+            const sum = shifts.reduce(function (acc, s) {
+                return acc + Math.max(0, parseInt(s.qty || 0, 10) || 0);
+            }, 0);
+            if (!planKey || !order || !filter || sum <= 0) {
+                alert('Нет долга для разнесения.');
+                return;
+            }
+            const dates = getUniquePlanDates().filter(function (d) {
+                return d >= todayIso;
+            });
+            if (dates.length === 0) {
+                alert('В таблице нет колонок дат плана (начиная с сегодня).');
+                return;
+            }
+            debtSpreadAnchorCell = debtCell;
+            debtSpreadMeta.textContent = order + ' • ' + filter + ' — долг: ' + sum + ' шт.';
+            debtSpreadStartSelect.innerHTML = '';
+            dates.forEach(function (d) {
+                const opt = document.createElement('option');
+                opt.value = d;
+                opt.textContent = toShortDate(d) + ' (' + d + ')';
+                debtSpreadStartSelect.appendChild(opt);
+            });
+            debtSpreadStartSelect.value = dates[0];
+            debtSpreadBatchInput.value = '40';
+            debtSpreadQtyInput.value = String(sum);
+            debtSpreadQtyInput.max = String(sum);
+            debtSpreadQtyInput.min = '1';
+            debtSpreadHint.textContent = 'Операции попадут в очередь изменений на странице. Проверьте список в панели «Очередь» и нажмите «Применить», чтобы записать план в базу. Если свободных дат не хватает, добавьте колонки кнопкой «+ день».';
+            debtSpreadModal.hidden = false;
+        }
+
+        function applyDebtSpreadFromModal() {
+            if (!debtSpreadAnchorCell || isApplyingPendingMoves) {
+                closeDebtSpreadModal();
+                return;
+            }
+            const planKey = String(debtSpreadAnchorCell.dataset.debtKey || '').trim();
+            const order = String(debtSpreadAnchorCell.dataset.order || '').trim();
+            const filter = String(debtSpreadAnchorCell.dataset.filter || '').trim();
+            const startDate = String(debtSpreadStartSelect.value || '').trim();
+            const batchRaw = debtSpreadBatchInput.value;
+            const qtyRaw = debtSpreadQtyInput.value;
+            const rowCells = getRowDateCellsByOrderFilter(order, filter);
+            const built = buildDebtSpreadQueuedMoves(rowCells, planKey, order, filter, startDate, batchRaw, qtyRaw);
+            if (built.error) {
+                alert(built.error);
+                return;
+            }
+            const moves = built.moves || [];
+            moves.forEach(function (m) {
+                pushPendingMove(m);
+            });
+            closeDebtSpreadModal();
+            setQueuePanelOpen(true);
+        }
+
         function getUniquePlanDates() {
             const unique = new Set();
             dateCells.forEach(function (cell) {
@@ -4772,6 +5768,15 @@ $pageTitle = 'Активные позиции';
             }
             th.dataset.dateFilterBound = '1';
             th.addEventListener('click', function (e) {
+                if (suppressNextDateHeaderFilterClick) {
+                    suppressNextDateHeaderFilterClick = false;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                }
+                if (isRangeSelectMode) {
+                    return;
+                }
                 if (e.target && e.target.closest('.date-indicator')) {
                     return;
                 }
@@ -4780,8 +5785,44 @@ $pageTitle = 'Активные позиции';
             });
         }
 
+        function bindRangeSelectOnDateHeader(th) {
+            if (!th || th.dataset.rangeSelectBound === '1') {
+                return;
+            }
+            th.dataset.rangeSelectBound = '1';
+            th.addEventListener('mousedown', function (e) {
+                if (!isRangeSelectMode) {
+                    return;
+                }
+                if (e.button !== 0) {
+                    return;
+                }
+                if (e.target && e.target.closest('.date-indicator')) {
+                    return;
+                }
+                const d = String(th.getAttribute('data-plan-date') || th.getAttribute('data-date') || '').trim();
+                if (!d) {
+                    return;
+                }
+                e.preventDefault();
+                e.stopPropagation();
+                handleDateHeaderMouseDown(d);
+            });
+            th.addEventListener('mouseenter', function () {
+                if (!isDraggingRange) {
+                    return;
+                }
+                const d = String(th.getAttribute('data-plan-date') || th.getAttribute('data-date') || '').trim();
+                if (!d) {
+                    return;
+                }
+                handleDateHeaderMouseEnter(d);
+            });
+        }
+
         function resetNewPlanDateHeader(th, iso) {
             th.setAttribute('data-plan-date', iso);
+            th.setAttribute('data-date', iso);
             th.setAttribute('title', 'План сборки на ' + iso);
             const labelSpan = th.querySelector('.date-head > span:first-child');
             if (labelSpan) {
@@ -4843,12 +5884,18 @@ $pageTitle = 'Активные позиции';
             }
             resetNewPlanDateHeader(newHeadTh, nextIso);
             const newFootTh = newHeadTh.cloneNode(true);
+            delete newHeadTh.dataset.dateFilterBound;
+            delete newHeadTh.dataset.rangeSelectBound;
+            delete newFootTh.dataset.dateFilterBound;
+            delete newFootTh.dataset.rangeSelectBound;
             theadRow.appendChild(newHeadTh);
             tfootRow.appendChild(newFootTh);
             bindPressIndicatorConflictClick(newHeadTh);
             bindPressIndicatorConflictClick(newFootTh);
             bindDateHeaderFilterClick(newHeadTh);
             bindDateHeaderFilterClick(newFootTh);
+            bindRangeSelectOnDateHeader(newHeadTh);
+            bindRangeSelectOnDateHeader(newFootTh);
 
             rowList.forEach(function (tr) {
                 const order = tr.getAttribute('data-order') || '';
@@ -4872,7 +5919,7 @@ $pageTitle = 'Активные позиции';
             applyFrozenColumns();
             applyGofroCoverageHighlight();
             refreshAllPlanRowStates();
-            applyDateRowFilter();
+            updateRangeActiveHeaderClasses();
         }
 
         function bindDateCellInteractions(cell) {
@@ -4987,6 +6034,18 @@ $pageTitle = 'Активные позиции';
 
         dateCells.forEach(bindDateCellInteractions);
 
+        document.addEventListener('contextmenu', function (e) {
+            const debtTd = e.target.closest('td.debt-cell[data-debt-key]');
+            if (!debtTd) {
+                return;
+            }
+            if (isApplyingPendingMoves || isMoving) {
+                return;
+            }
+            e.preventDefault();
+            openDebtCellContextMenu(e.clientX, e.clientY, debtTd);
+        });
+
         if (dateCellCtxClear) {
             dateCellCtxClear.addEventListener('click', function (e) {
                 e.preventDefault();
@@ -5032,11 +6091,28 @@ $pageTitle = 'Активные позиции';
                 pushPendingMove(queuedMove);
             });
         }
+        if (debtCellCtxSpread) {
+            debtCellCtxSpread.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                const targetDebtCell = debtCellContextMenuTarget;
+                closeDebtCellContextMenu();
+                if (!targetDebtCell) {
+                    return;
+                }
+                openDebtSpreadModal(targetDebtCell);
+            });
+        }
 
         document.addEventListener('click', function (e) {
             if (dateCellContextMenu && !dateCellContextMenu.hidden) {
                 if (!dateCellContextMenu.contains(e.target)) {
                     closeDateCellContextMenu();
+                }
+            }
+            if (debtCellContextMenu && !debtCellContextMenu.hidden) {
+                if (!debtCellContextMenu.contains(e.target)) {
+                    closeDebtCellContextMenu();
                 }
             }
         }, true);
@@ -5078,6 +6154,71 @@ $pageTitle = 'Активные позиции';
             }
             addPlanDayColumn();
         });
+        enterRangeSelectModeBtn.addEventListener('click', function () {
+            if (isApplyingPendingMoves) {
+                return;
+            }
+            enterRangeSelectMode();
+        });
+        resetFocusRangeBtn.addEventListener('click', function () {
+            if (isApplyingPendingMoves) {
+                return;
+            }
+            resetFocusRange();
+        });
+        openHiddenOrdersBtn.addEventListener('click', function () {
+            if (isApplyingPendingMoves) {
+                return;
+            }
+            openHiddenOrdersModal();
+        });
+        hiddenOrdersCancelBtn.addEventListener('click', function () {
+            closeHiddenOrdersModal();
+        });
+        hiddenOrdersApplyBtn.addEventListener('click', function () {
+            if (isApplyingPendingMoves) {
+                return;
+            }
+            applyHiddenOrdersFromModal();
+        });
+        hiddenOrdersShowAllBtn.addEventListener('click', function () {
+            if (isApplyingPendingMoves) {
+                return;
+            }
+            showAllHiddenOrdersInTable();
+        });
+        hiddenOrdersModal.addEventListener('click', function (e) {
+            if (e.target === hiddenOrdersModal) {
+                closeHiddenOrdersModal();
+            }
+        });
+        hiddenOrdersSearchInput.addEventListener('input', function () {
+            filterHiddenOrdersModalList();
+        });
+        document.addEventListener('mousemove', function (e) {
+            if (!isDraggingRange || !isRangeSelectMode) {
+                return;
+            }
+            const el = document.elementFromPoint(e.clientX, e.clientY);
+            const th = el && el.closest && el.closest('th[data-plan-date]');
+            if (!th) {
+                return;
+            }
+            const d = String(th.getAttribute('data-plan-date') || th.getAttribute('data-date') || '').trim();
+            if (!d) {
+                return;
+            }
+            handleDateHeaderMouseEnter(d);
+        });
+        document.addEventListener('mouseup', function (e) {
+            if (!isDraggingRange) {
+                return;
+            }
+            const el = document.elementFromPoint(e.clientX, e.clientY);
+            const th = el && el.closest && el.closest('th[data-plan-date]');
+            const end = th ? String(th.getAttribute('data-plan-date') || th.getAttribute('data-date') || '').trim() : '';
+            handleDateHeaderMouseUp(end);
+        });
         openGofroPackagesBtn.addEventListener('click', function () {
             const currentlyVisible = !document.body.classList.contains('hide-gofro-cols');
             setGofroColumnsVisible(!currentlyVisible);
@@ -5099,6 +6240,17 @@ $pageTitle = 'Активные позиции';
                 closeNormalizePreviewModal();
             }
         });
+        debtSpreadCancelBtn.addEventListener('click', function () {
+            closeDebtSpreadModal();
+        });
+        debtSpreadModal.addEventListener('click', function (e) {
+            if (e.target === debtSpreadModal) {
+                closeDebtSpreadModal();
+            }
+        });
+        debtSpreadApplyBtn.addEventListener('click', function () {
+            applyDebtSpreadFromModal();
+        });
         applyPendingMovesBtn.addEventListener('click', function () {
             applyPendingMovesToServer();
         });
@@ -5107,6 +6259,7 @@ $pageTitle = 'Активные позиции';
         });
         document.querySelectorAll('th[data-plan-date]').forEach(bindPressIndicatorConflictClick);
         document.querySelectorAll('th[data-plan-date]').forEach(bindDateHeaderFilterClick);
+        document.querySelectorAll('th[data-plan-date]').forEach(bindRangeSelectOnDateHeader);
         toggleQueuePanelBtn.addEventListener('click', function () {
             setQueuePanelOpen(!isQueuePanelOpen);
         });
@@ -5115,6 +6268,7 @@ $pageTitle = 'Активные позиции';
             clearQueuePreview();
         });
         updatePendingBarState();
+        pruneHiddenOrdersNotInTable();
         recalcHeaderIndicatorsFromTable();
         renderMoveQueuePanel();
         applyFrozenColumns();
@@ -5123,6 +6277,7 @@ $pageTitle = 'Активные позиции';
             renderDebtCellByKey(cell.dataset.debtKey || '');
         });
         refreshAllPlanRowStates();
+        updateHiddenOrdersBadge();
         try {
             const savedQueuePanelState = localStorage.getItem(queuePanelStorageKey);
             setQueuePanelOpen(savedQueuePanelState === '1');
@@ -5165,12 +6320,28 @@ $pageTitle = 'Активные позиции';
             }
         });
         document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && !hiddenOrdersModal.hidden) {
+                closeHiddenOrdersModal();
+                return;
+            }
+            if (e.key === 'Escape' && isRangeSelectMode) {
+                leaveRangeSelectModeDiscard();
+                return;
+            }
             if (e.key === 'Escape' && dateCellContextMenu && !dateCellContextMenu.hidden) {
                 closeDateCellContextMenu();
                 return;
             }
+            if (e.key === 'Escape' && debtCellContextMenu && !debtCellContextMenu.hidden) {
+                closeDebtCellContextMenu();
+                return;
+            }
             if (e.key === 'Escape' && !modal.hidden) {
                 closeModal();
+                return;
+            }
+            if (e.key === 'Escape' && !debtSpreadModal.hidden) {
+                closeDebtSpreadModal();
                 return;
             }
             if (e.key === 'Escape' && !normalizePreviewModal.hidden) {

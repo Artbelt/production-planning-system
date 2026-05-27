@@ -1,0 +1,2 @@
+# Чтобы https://.../auth/admin/ открывал эту панель, а не список файлов или другой index
+DirectoryIndex index.php

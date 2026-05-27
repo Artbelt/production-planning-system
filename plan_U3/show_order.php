@@ -20,6 +20,14 @@ if ($order_number === '') {
     return;
 }
 
+/** Заявка в архиве (orders.hide = 1) — для кнопки «Вернуть в активные» */
+require_once __DIR__ . '/../auth/includes/db.php';
+$pdo_order_meta = getPdo('plan_u3');
+$st_order_archived = $pdo_order_meta->prepare('SELECT hide FROM orders WHERE order_number = ? LIMIT 1');
+$st_order_archived->execute([$order_number]);
+$row_order_archived = $st_order_archived->fetch(PDO::FETCH_ASSOC);
+$order_is_archived = $row_order_archived !== false && (int)($row_order_archived['hide'] ?? 0) === 1;
+
 /** Заголовок страницы с номером заявки */
 echo '<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>Заявка '.htmlspecialchars($order_number).'</title></head><body>';
 
@@ -296,10 +304,17 @@ echo "<div class='button-group'>";
 echo "<button onclick='showZeroProductionPositions()' class='btn-secondary btn-sm'>Позиции выпуск которых = 0</button>";
 echo "<button onclick='showLaggingPositions()' class='btn-secondary btn-sm'>Позиции отстающие &gt; 20%</button>";
 echo "<button onclick='checkGofraPackages()' class='btn-secondary btn-sm'>Проверка гофропакетов</button>";
-echo "<button onclick='confirmArchiveOrder()' class='btn-secondary btn-sm'>Отправить заявку в архив</button>";
+if ($order_is_archived) {
+    echo "<button onclick='confirmUnarchiveOrder()' class='btn-secondary btn-sm'>Вернуть в активные</button>";
+} else {
+    echo "<button onclick='confirmArchiveOrder()' class='btn-secondary btn-sm'>Отправить заявку в архив</button>";
+}
 echo "</div></div>";
 
 echo "<form id='archiveForm' action='hiding_order.php' method='post' style='display: none;'>";
+echo "<input type='hidden' name='order_number' value='".htmlspecialchars($order_number)."'>";
+echo "</form>";
+echo "<form id='unarchiveForm' action='unarchive_order.php' method='post' style='display: none;'>";
 echo "<input type='hidden' name='order_number' value='".htmlspecialchars($order_number)."'>";
 echo "</form>";
 
@@ -367,7 +382,6 @@ $count =0;
 //echo '<form action="filter_parameters.php" method="post">';
 
 /** Подключение к БД для получения гофропакетов */
-require_once __DIR__ . '/../auth/includes/db.php';
 $pdo_gofro = getPdo('plan_u3');
 
 /** Разбор массива значений по подключению */
@@ -541,8 +555,13 @@ echo "<p style='margin-top:10px;'>* - без учета перевыполнен
     const ORDER_NUMBER = <?php echo json_encode($order_number, JSON_UNESCAPED_UNICODE); ?>;
 
     function confirmArchiveOrder() {
-        const confirmed = confirm('Вы уверены, что хотите отправить заявку "' + ORDER_NUMBER + '" в архив?\\n\\nЭто действие можно отменить только администратором базы данных.');
+        const confirmed = confirm('Вы уверены, что хотите отправить заявку "' + ORDER_NUMBER + '" в архив?\\n\\nВернуть заявку в активные можно с этой же страницы (кнопка «Вернуть в активные»).');
         if (confirmed) document.getElementById('archiveForm').submit();
+    }
+
+    function confirmUnarchiveOrder() {
+        const confirmed = confirm('Вернуть заявку "' + ORDER_NUMBER + '" в список активных заявок?');
+        if (confirmed) document.getElementById('unarchiveForm').submit();
     }
 
     // === Позиции с нулевым выпуском ===

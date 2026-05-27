@@ -140,7 +140,40 @@ class AuthManager {
         // Обновление активности
         $this->updateSessionActivity($_SESSION['auth_session_id']);
         
+        if (empty($GLOBALS['_auth_page_view_logged_this_request'])) {
+            $this->logPageViewForRequest((int) $session['user_id']);
+            $GLOBALS['_auth_page_view_logged_this_request'] = true;
+        }
+        
         return $session;
+    }
+    
+    /**
+     * Запись просмотра страницы (для статистики в админке).
+     * Не вызывается для API-эндпоинтов, чтобы не раздувать auth_logs при частых опросах.
+     */
+    private function logPageViewForRequest($userId) {
+        $script = $_SERVER['SCRIPT_NAME'] ?? '';
+        if ($script === '') {
+            return;
+        }
+        if (strpos($script, '/auth/api/') !== false) {
+            return;
+        }
+        
+        $uri = isset($_SERVER['REQUEST_URI']) ? substr((string) $_SERVER['REQUEST_URI'], 0, 1000) : '';
+        $details = json_encode([
+            'path' => $script,
+            'uri' => $uri,
+            'method' => $_SERVER['REQUEST_METHOD'] ?? 'GET',
+        ], JSON_UNESCAPED_UNICODE);
+        
+        $ua = isset($_SERVER['HTTP_USER_AGENT']) ? substr((string) $_SERVER['HTTP_USER_AGENT'], 0, 500) : '';
+        
+        $this->db->insert(
+            "INSERT INTO auth_logs (user_id, action, ip_address, user_agent, details) VALUES (?, 'page_view', ?, ?, ?)",
+            [$userId, $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1', $ua, $details]
+        );
     }
     
     /**
