@@ -311,8 +311,16 @@ if (isset($_POST['action'])) {
             }
             $checkStmt->close();
             
-            // Обновляем статус
-            $stmt = $mysqli->prepare("UPDATE {$dbConfig['table']} SET done = 1 WHERE id = ?");
+            // Обновляем статус и дату фактической порезки (для аналитики по fact_cut_date)
+            $hasFactCutDate = false;
+            $colChk = $mysqli->query("SHOW COLUMNS FROM `{$dbConfig['table']}` LIKE 'fact_cut_date'");
+            if ($colChk && $colChk->num_rows > 0) {
+                $hasFactCutDate = true;
+            }
+            $updateSql = $hasFactCutDate
+                ? "UPDATE {$dbConfig['table']} SET done = 1, fact_cut_date = CURDATE() WHERE id = ?"
+                : "UPDATE {$dbConfig['table']} SET done = 1 WHERE id = ?";
+            $stmt = $mysqli->prepare($updateSql);
             if (!$stmt) {
                 throw new Exception("Ошибка подготовки запроса обновления: " . $mysqli->error);
             }

@@ -9,14 +9,16 @@ if (!isset($_POST['id'])) {
 }
 
 $id = (int)$_POST['id'];
-// Поддержка обеих схем: roll_plan (нормализованная) и roll_plans (наследие)
-$table = 'roll_plan';
-$chk = $pdo->query("SHOW TABLES LIKE 'roll_plan'");
+// Как cut_operator: для U3 основная таблица — roll_plans
+$table = 'roll_plans';
+$chk = $pdo->query("SHOW TABLES LIKE 'roll_plans'");
 if (!$chk || $chk->rowCount() === 0) {
-    $chkLegacy = $pdo->query("SHOW TABLES LIKE 'roll_plans'");
-    if ($chkLegacy && $chkLegacy->rowCount() > 0) {
-        $table = 'roll_plans';
+    $chkLegacy = $pdo->query("SHOW TABLES LIKE 'roll_plan'");
+    if ($chkLegacy && $chkLegacy->rowCount() === 0) {
+        echo json_encode(['success' => false, 'message' => 'Таблица плана порезки не найдена']);
+        exit;
     }
+    $table = 'roll_plan';
 }
 
 $stmt = $pdo->prepare("UPDATE {$table} SET done = 1, fact_cut_date = CURDATE() WHERE id = ?");

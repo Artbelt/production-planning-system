@@ -99,7 +99,7 @@ function filterPlanDatesFromToday(array $dates, string $todayIso): array
     return $fullDateRange;
 }
 
-/** Шапка колонки даты: дата, сумма ножевой (Н), сумма ротационной (Р). */
+/** Шапка колонки даты: дата, суммы ножевой и ротационной (подсказка на цифрах). */
 function renderGofroPlanDateHeaderTh(string $planDate): void
 {
     $d = DateTime::createFromFormat('Y-m-d', $planDate);
@@ -110,8 +110,8 @@ function renderGofroPlanDateHeaderTh(string $planDate): void
     <th class="<?= htmlspecialchars($dateColClass, ENT_QUOTES, 'UTF-8') ?>" data-date-total="<?= htmlspecialchars($planDate, ENT_QUOTES, 'UTF-8') ?>" title="Суммарно г/п на дату">
         <span class="date-head-label"><?= htmlspecialchars($label, ENT_QUOTES, 'UTF-8') ?></span>
         <span class="date-total-lines">
-            <span class="date-total-line date-total-line--knife" title="Ножевая машина">Н <span class="date-total-knife">0</span></span>
-            <span class="date-total-line date-total-line--rotary" title="Ротационная машина">Р <span class="date-total-rotary">0</span></span>
+            <span class="date-total-line date-total-line--knife"><span class="date-total-knife" title="Ножевая">0</span></span>
+            <span class="date-total-line date-total-line--rotary"><span class="date-total-rotary" title="Ротационная">0</span></span>
         </span>
     </th>
     <?php
@@ -829,6 +829,25 @@ $pageTitle = 'Планирование сборки гофропакетов';
             width: 1%;
             white-space: nowrap;
         }
+        table.gofro-plan-table td.order-cell form {
+            display: inline;
+            margin: 0;
+        }
+        table.gofro-plan-table td.order-cell button {
+            appearance: none;
+            border: 0;
+            background: none;
+            color: var(--accent);
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+            padding: 0;
+            text-decoration: underline;
+            font-variant-numeric: tabular-nums;
+        }
+        table.gofro-plan-table td.order-cell button:hover {
+            color: #1e47c5;
+        }
         table.gofro-plan-table th.num-metric-col,
         table.gofro-plan-table td.num-metric-col {
             width: 1%;
@@ -1027,6 +1046,83 @@ $pageTitle = 'Планирование сборки гофропакетов';
         .coverage-legend__hint {
             color: var(--muted);
             font-size: 11px;
+        }
+        .fold-height-panel {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px 10px;
+            margin: 0 0 10px;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #f8fafc;
+            font-size: 12px;
+        }
+        .fold-height-panel[hidden] {
+            display: none;
+        }
+        .fold-height-panel__title {
+            font-weight: 600;
+            color: var(--ink);
+            margin-right: 4px;
+        }
+        .fold-height-panel__buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+        }
+        .fold-height-chip {
+            border: 1px solid #cbd5e1;
+            background: #fff;
+            color: #334155;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            line-height: 1.2;
+            font-variant-numeric: tabular-nums;
+        }
+        .fold-height-chip:hover {
+            border-color: #6366f1;
+            background: #eef2ff;
+        }
+        .fold-height-chip.active {
+            border-color: #d97706;
+            background: #f59e0b;
+            color: #fff;
+            box-shadow: 0 1px 2px rgba(217, 119, 6, 0.35);
+        }
+        .fold-height-chip--none {
+            font-weight: 500;
+            color: #64748b;
+        }
+        .fold-height-chip--none.active {
+            color: #fff;
+        }
+        .fold-height-panel__hint {
+            color: var(--muted);
+            font-size: 11px;
+            flex: 1 1 100%;
+            margin: 0;
+        }
+        /*
+         * Фильтр по высоте: подсветка всей строки, кроме ячеек с заливкой
+         * (покрытие г/п, очередь изменений).
+         */
+        table.gofro-plan-table.fold-height-filter-active tbody tr[data-row-key]:not(.fold-height-match) td:not(.gofro-coverage-cell):not(.gofro-coverage-cell-partial):not(.gofro-coverage-planned-cell):not(.gofro-coverage-planned-cell-partial):not(.gofro-coverage-gap):not(.gofro-coverage-gap-partial):not(.queue-pending) {
+            opacity: 0.42;
+        }
+        table.gofro-plan-table.fold-height-filter-active tbody tr[data-row-key].fold-height-match td:not(.gofro-coverage-cell):not(.gofro-coverage-cell-partial):not(.gofro-coverage-planned-cell):not(.gofro-coverage-planned-cell-partial):not(.gofro-coverage-gap):not(.gofro-coverage-gap-partial):not(.queue-pending) {
+            background-color: #fffbeb;
+        }
+        table.gofro-plan-table.fold-height-filter-active tbody tr[data-row-key].fold-height-match:hover td:not(.gofro-coverage-cell):not(.gofro-coverage-cell-partial):not(.gofro-coverage-planned-cell):not(.gofro-coverage-planned-cell-partial):not(.gofro-coverage-gap):not(.gofro-coverage-gap-partial):not(.queue-pending) {
+            background-color: #fef3c7;
+        }
+        table.gofro-plan-table.fold-height-filter-active tbody tr[data-row-key].fold-height-match td.filter-name-cell:not(.gofro-coverage-cell):not(.gofro-coverage-cell-partial):not(.gofro-coverage-planned-cell):not(.gofro-coverage-planned-cell-partial):not(.gofro-coverage-gap):not(.gofro-coverage-gap-partial):not(.queue-pending) {
+            box-shadow: inset 4px 0 0 #f59e0b;
         }
         td.date-cell.gofro-coverage-cell {
             background: #dcfce7;
@@ -1312,6 +1408,12 @@ $pageTitle = 'Планирование сборки гофропакетов';
             position: relative;
             font-variant-numeric: tabular-nums;
             cursor: pointer;
+            min-height: 30px;
+            vertical-align: middle;
+        }
+        table.gofro-plan-table td.date-cell:not(:empty) {
+            padding-top: 4px;
+            padding-bottom: 4px;
         }
         table.gofro-plan-table th.date-col {
             font-size: 11px;
@@ -1359,25 +1461,70 @@ $pageTitle = 'Планирование сборки гофропакетов';
         .date-total-rotary {
             font-variant-numeric: tabular-nums;
             font-weight: 700;
+            cursor: help;
         }
         td.date-cell.queue-pending {
             outline: 2px solid #f59e0b;
             outline-offset: -2px;
             background: #fffbeb !important;
         }
+        .cell-plan-hint,
+        .cell-gofro-qty {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+            font-variant-numeric: tabular-nums;
+            line-height: 1;
+            white-space: nowrap;
+        }
         .cell-plan-hint {
             position: absolute;
             left: 2px;
-            top: 1px;
+            top: 2px;
+            z-index: 1;
+            min-width: 15px;
+            height: 15px;
+            padding: 0 3px;
+            border-radius: 999px;
             font-size: 8px;
-            line-height: 1;
-            color: #94a3b8;
-          
+            font-weight: 700;
+            color: #475569;
+            background: #e2e8f0;
+            border: 1px solid #cbd5e1;
+            box-shadow: 0 1px 0 rgba(15, 23, 42, 0.06);
             pointer-events: none;
         }
         .cell-gofro-qty {
-            font-weight: 500;
-            font-variant-numeric: tabular-nums;
+            min-width: 22px;
+            height: 22px;
+            padding: 0 5px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            color: #0f172a;
+            background: #fff;
+            border: 1.5px solid #64748b;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.1);
+        }
+        td.date-cell.gofro-coverage-cell .cell-gofro-qty,
+        td.date-cell.gofro-coverage-cell-partial .cell-gofro-qty {
+            border-color: #16a34a;
+            background: #f0fdf4;
+        }
+        td.date-cell.gofro-coverage-planned-cell .cell-gofro-qty,
+        td.date-cell.gofro-coverage-planned-cell-partial .cell-gofro-qty {
+            border-color: #2563eb;
+            background: #eff6ff;
+        }
+        td.date-cell.gofro-coverage-gap .cell-gofro-qty,
+        td.date-cell.gofro-coverage-gap-partial .cell-gofro-qty {
+            border-color: #dc2626;
+            background: #fef2f2;
+        }
+        td.date-cell.queue-pending .cell-gofro-qty {
+            border-color: #d97706;
+            box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.35);
         }
         .gofro-plan-table--hide-filter-plan-digits .cell-plan-hint {
             display: none !important;
@@ -1394,6 +1541,124 @@ $pageTitle = 'Планирование сборки гофропакетов';
             padding: 8px;
         }
         .gofro-cell-picker[hidden] { display: none; }
+        .ind-modal[hidden] { display: none; }
+        .ind-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 10002;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(15, 23, 42, .45);
+            padding: 16px;
+        }
+        .ind-modal__dialog {
+            width: min(460px, 100%);
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 14px 40px rgba(2, 8, 20, .25);
+            overflow: hidden;
+        }
+        .ind-modal__head {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--border);
+            font-weight: 700;
+            font-size: 15px;
+        }
+        .ind-modal__body {
+            padding: 12px 14px;
+            display: grid;
+            gap: 10px;
+        }
+        .ind-field {
+            display: grid;
+            gap: 6px;
+        }
+        .ind-field label {
+            font-size: 13px;
+            color: #374151;
+            font-weight: 600;
+        }
+        .ind-field input {
+            width: 100%;
+            max-width: 120px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 6px 8px;
+            font: inherit;
+        }
+        .ind-modal__foot {
+            padding: 12px 14px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+        }
+        .ind-modal__dialog--orders {
+            width: min(520px, 100%);
+            max-height: min(85vh, 720px);
+            display: flex;
+            flex-direction: column;
+        }
+        .ind-modal__body--orders {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-height: 0;
+        }
+        .ind-modal__foot--orders {
+            justify-content: flex-start;
+            flex-wrap: wrap;
+        }
+        .ind-modal__foot-spacer {
+            flex: 1 1 auto;
+            min-width: 8px;
+        }
+        .orders-badge {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 1px 7px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
+            background: #fee2e2;
+            color: #991b1b;
+            vertical-align: middle;
+        }
+        .hidden-orders-search {
+            width: 100%;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 6px 8px;
+            font: inherit;
+        }
+        .hidden-orders-list {
+            max-height: min(48vh, 420px);
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 8px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            background: #fafafa;
+        }
+        .hidden-orders-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            cursor: pointer;
+            color: #1f2937;
+        }
+        .hidden-orders-row.hidden-orders-row--filtered {
+            display: none !important;
+        }
+        .hidden-orders-row input {
+            flex: 0 0 auto;
+        }
         .gofro-cell-picker__title {
             font-size: 12px;
             font-weight: 600;
@@ -1452,6 +1717,9 @@ $pageTitle = 'Планирование сборки гофропакетов';
         <button type="button" id="toggle-gofro-coverage-btn" class="toolbar-btn secondary" aria-pressed="true">Покрытие г/п: вкл</button>
         <button type="button" id="toggle-filter-plan-digits-btn" class="toolbar-btn secondary" aria-pressed="true" title="Мелкие цифры в ячейке даты — план сборки фильтров на день">Фильтры: вкл</button>
         <button type="button" id="task-sheet-btn" class="toolbar-btn secondary">Задание</button>
+        <button type="button" id="open-max-pct-btn" class="toolbar-btn secondary" title="Порог % выполнения позиции для отображения в таблице">Выполнение ≤ <?= (int)$maxPct ?>%</button>
+        <button type="button" id="open-hidden-orders-btn" class="toolbar-btn secondary">Заявки <span id="hidden-orders-badge" class="orders-badge" hidden></span></button>
+        <button type="button" id="toggle-fold-height-panel-btn" class="toolbar-btn secondary" aria-pressed="false">Высота бумаги</button>
         <button type="button" id="overdue-alert-btn" class="toolbar-btn secondary" style="display:none; color:#b91c1c; border-color:#fecaca;">Просрочено</button>
         <span id="apply-status" class="muted" style="font-size:12px; margin-left:4px;"></span>
     </div>
@@ -1461,6 +1729,12 @@ $pageTitle = 'Планирование сборки гофропакетов';
         <span class="coverage-legend__item"><span class="coverage-legend__swatch coverage-legend__swatch--plan"></span>план г/п</span>
         <span class="coverage-legend__item"><span class="coverage-legend__swatch coverage-legend__swatch--gap"></span>не хватает</span>
         <span class="coverage-legend__hint">По мелкой цифре в ячейке, слева направо</span>
+    </div>
+    <div id="fold-height-panel" class="fold-height-panel" hidden>
+        <span class="fold-height-panel__title">Высота ребра, мм</span>
+        <div id="fold-height-buttons" class="fold-height-panel__buttons" role="group" aria-label="Фильтр по высоте ребра"></div>
+        <button type="button" id="fold-height-clear-btn" class="toolbar-btn secondary" style="display:none;">Сбросить</button>
+        <p id="fold-height-panel-hint" class="fold-height-panel__hint">Нажмите высоту — подсветятся строки с таким ребром (из справочника paper_package_round). Повторный клик снимает фильтр.</p>
     </div>
     <div id="pendingMovesBar" class="pending-bar">
         <span id="pendingMovesText" class="pending-text">Изменений в очереди: 0</span>
@@ -1574,6 +1848,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                             data-filter-name="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
                             data-paper-width-mm="<?= htmlspecialchars((string)$paperWidthMm, ENT_QUOTES, 'UTF-8') ?>"
                             data-fold-height="<?= htmlspecialchars((string)$foldHeight, ENT_QUOTES, 'UTF-8') ?>"
+                            data-fold-height-mm="<?= $ribHeightRounded > 0 ? (int)$ribHeightRounded : '' ?>"
                             data-fold-count="<?= htmlspecialchars((string)$foldCount, ENT_QUOTES, 'UTF-8') ?>"
                             data-package-key="<?= htmlspecialchars($packageKey, ENT_QUOTES, 'UTF-8') ?>"
                             data-package-name="<?= htmlspecialchars($package, ENT_QUOTES, 'UTF-8') ?>"
@@ -1594,7 +1869,16 @@ $pageTitle = 'Планирование сборки гофропакетов';
                                 <?php endif; ?>
                             </td>
                             <td class="analog-cell col-compact" title="<?= $rowAnalog !== '' ? htmlspecialchars('Аналог: ' . $rowAnalog, ENT_QUOTES, 'UTF-8') : '' ?>"><?= $rowAnalog !== '' ? htmlspecialchars($rowAnalog, ENT_QUOTES, 'UTF-8') : '<span class="muted">—</span>' ?></td>
-                            <td class="order-col col-compact"><?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?></td>
+                            <td class="order-col order-cell col-compact">
+                                <?php if ($rawOrder !== ''): ?>
+                                    <form action="show_order.php" method="post" target="_blank" rel="noopener">
+                                        <input type="hidden" name="order_number" value="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>">
+                                        <button type="submit"><?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?></button>
+                                    </form>
+                                <?php else: ?>
+                                    <span class="muted">—</span>
+                                <?php endif; ?>
+                            </td>
                             <td class="num-metric-col num-metric-col--left col-compact" title="Остаток к производству из заказанного по позиции"><?= (int)$remaining ?><span class="muted-light">/<?= (int)$ordered ?></span></td>
                             <td class="num-metric-col col-compact"><?= $gofroProduced ?></td>
                             <td class="num-metric-col col-compact"><?= $gofroAvailable ?></td>
@@ -1696,12 +1980,57 @@ $pageTitle = 'Планирование сборки гофропакетов';
         </div>
     </div>
 </div>
+<div id="maxPctModal" class="ind-modal" hidden>
+    <div class="ind-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="maxPctModalTitle">
+        <div id="maxPctModalTitle" class="ind-modal__head">Порог выполнения позиций</div>
+        <div class="ind-modal__body">
+            <div class="ind-field">
+                <label for="maxPctInput">Макс. % выполнения для списка (включительно)</label>
+                <input id="maxPctInput" type="number" min="0" max="100" step="1" value="<?= (int)$maxPct ?>">
+                <p class="muted" style="margin:0; font-size:12px;">
+                    Позиции с выпуском фильтров выше этого процента не показываются. При сохранении страница перезагрузится.
+                    Значение по умолчанию — <?= (int)$gofroMaxCompletionPctDefault ?>%.
+                </p>
+            </div>
+        </div>
+        <div class="ind-modal__foot">
+            <button type="button" id="maxPctResetBtn" class="toolbar-btn secondary">Сброс (<?= (int)$gofroMaxCompletionPctDefault ?>%)</button>
+            <button type="button" id="maxPctCancelBtn" class="toolbar-btn secondary">Отмена</button>
+            <button type="button" id="maxPctSaveBtn" class="toolbar-btn">Сохранить</button>
+        </div>
+    </div>
+</div>
+<div id="hiddenOrdersModal" class="ind-modal" hidden>
+    <div class="ind-modal__dialog ind-modal__dialog--orders" role="dialog" aria-modal="true" aria-labelledby="hiddenOrdersModalTitle">
+        <div id="hiddenOrdersModalTitle" class="ind-modal__head">Видимость заявок</div>
+        <div class="ind-modal__body ind-modal__body--orders">
+            <p class="muted" style="margin:0;font-size:12px;">Отметьте заявки, которые нужно <strong>скрыть</strong> в таблице (только интерфейс; данные не меняются). Состояние сохраняется в браузере.</p>
+            <label class="ind-field" style="margin:0;">
+                <span>Поиск по номеру</span>
+                <input type="search" id="hiddenOrdersSearchInput" class="hidden-orders-search" placeholder="Например, 12345" autocomplete="off">
+            </label>
+            <div id="hiddenOrdersList" class="hidden-orders-list" role="group" aria-label="Список заявок"></div>
+        </div>
+        <div class="ind-modal__foot ind-modal__foot--orders">
+            <button type="button" id="hiddenOrdersShowAllBtn" class="toolbar-btn secondary">Показать все</button>
+            <div class="ind-modal__foot-spacer"></div>
+            <button type="button" id="hiddenOrdersCancelBtn" class="toolbar-btn secondary">Отмена</button>
+            <button type="button" id="hiddenOrdersApplyBtn" class="toolbar-btn">Применить</button>
+        </div>
+    </div>
+</div>
 <?php if ($loadError === ''): ?>
 <script>
 (() => {
     const REAL_TODAY_ISO = <?= json_encode($todayIso, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    const serverDefaultMaxPct = <?= (int)$gofroMaxCompletionPctDefault ?>;
+    const currentPageMaxPct = <?= (int)$maxPct ?>;
     const GOFRO_COVERAGE_VISIBLE_STORAGE_KEY = 'gofroBuildPlanCoverageVisible';
     const FILTER_PLAN_DIGITS_VISIBLE_STORAGE_KEY = 'gofroBuildPlanFilterPlanDigitsVisible';
+    const FOLD_HEIGHT_PANEL_OPEN_STORAGE_KEY = 'gofroBuildPlanFoldHeightPanelOpen';
+    const FOLD_HEIGHT_NONE_KEY = '__none__';
+    const MAX_PCT_STORAGE_KEY = `gofroBuildPlanMaxListPct:${window.location.pathname}`;
+    const HIDDEN_ORDERS_STORAGE_KEY = `gofroBuildPlanHiddenOrders:${window.location.pathname}`;
     const FROZEN_COL_COUNT = 8;
     const DEBT_COMPACT_VISIBLE = 3;
     const initialGofroDebtShiftMap = <?= json_encode($gofroDebtShiftMap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?> || {};
@@ -1747,6 +2076,25 @@ $pageTitle = 'Планирование сборки гофропакетов';
     const overdueAlertClose = document.getElementById('overdue-alert-close');
     const debtExpandPopover = document.getElementById('debtExpandPopover');
     const debtExpandPopoverInner = document.getElementById('debtExpandPopoverInner');
+    const openMaxPctBtn = document.getElementById('open-max-pct-btn');
+    const maxPctModal = document.getElementById('maxPctModal');
+    const maxPctInput = document.getElementById('maxPctInput');
+    const maxPctSaveBtn = document.getElementById('maxPctSaveBtn');
+    const maxPctCancelBtn = document.getElementById('maxPctCancelBtn');
+    const maxPctResetBtn = document.getElementById('maxPctResetBtn');
+    const openHiddenOrdersBtn = document.getElementById('open-hidden-orders-btn');
+    const hiddenOrdersModal = document.getElementById('hiddenOrdersModal');
+    const hiddenOrdersSearchInput = document.getElementById('hiddenOrdersSearchInput');
+    const hiddenOrdersList = document.getElementById('hiddenOrdersList');
+    const hiddenOrdersShowAllBtn = document.getElementById('hiddenOrdersShowAllBtn');
+    const hiddenOrdersApplyBtn = document.getElementById('hiddenOrdersApplyBtn');
+    const hiddenOrdersCancelBtn = document.getElementById('hiddenOrdersCancelBtn');
+    const hiddenOrdersBadge = document.getElementById('hidden-orders-badge');
+    const toggleFoldHeightPanelBtn = document.getElementById('toggle-fold-height-panel-btn');
+    const foldHeightPanel = document.getElementById('fold-height-panel');
+    const foldHeightButtons = document.getElementById('fold-height-buttons');
+    const foldHeightClearBtn = document.getElementById('fold-height-clear-btn');
+    const foldHeightPanelHint = document.getElementById('fold-height-panel-hint');
     const planTable = document.querySelector('.panel table');
 
     if (!gofroCellPicker || !planTable) {
@@ -1756,9 +2104,179 @@ $pageTitle = 'Планирование сборки гофропакетов';
     const rowStateMap = new Map();
     const pendingMoves = [];
     let isApplyingPendingMoves = false;
+
+    function loadHiddenOrdersFromStorage() {
+        try {
+            const raw = localStorage.getItem(HIDDEN_ORDERS_STORAGE_KEY);
+            if (!raw) {
+                return new Set();
+            }
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) {
+                return new Set();
+            }
+            return new Set(parsed.map((x) => String(x || '').trim()).filter(Boolean));
+        } catch (_) {
+            return new Set();
+        }
+    }
+
+    function persistHiddenOrders() {
+        try {
+            localStorage.setItem(HIDDEN_ORDERS_STORAGE_KEY, JSON.stringify(Array.from(hiddenOrdersSet)));
+        } catch (_) { /* ignore */ }
+    }
+
+    function getUniqueOrdersFromTable() {
+        const unique = new Set();
+        planTable.querySelectorAll('tbody tr[data-order]').forEach((row) => {
+            const o = String(row.getAttribute('data-order') || '').trim();
+            if (o) {
+                unique.add(o);
+            }
+        });
+        return Array.from(unique).sort((a, b) => {
+            const na = parseInt(a, 10);
+            const nb = parseInt(b, 10);
+            if (!Number.isNaN(na) && !Number.isNaN(nb) && String(na) === a && String(nb) === b) {
+                return na - nb;
+            }
+            return a.localeCompare(b, undefined, { numeric: true });
+        });
+    }
+
+    function pruneHiddenOrdersNotInTable() {
+        const valid = new Set(getUniqueOrdersFromTable());
+        let changed = false;
+        Array.from(hiddenOrdersSet).forEach((o) => {
+            if (!valid.has(o)) {
+                hiddenOrdersSet.delete(o);
+                changed = true;
+            }
+        });
+        if (changed) {
+            persistHiddenOrders();
+        }
+    }
+
+    let hiddenOrdersSet = loadHiddenOrdersFromStorage();
+
+    function applyOrderRowVisibility() {
+        planTable.querySelectorAll('tbody tr[data-row-key]').forEach((row) => {
+            const order = String(row.getAttribute('data-order') || '').trim();
+            row.hidden = order !== '' && hiddenOrdersSet.has(order);
+        });
+        applyFrozenColumns();
+        applyFoldHeightRowHighlight();
+        if (isFoldHeightPanelOpen) {
+            buildFoldHeightPanelButtons();
+        }
+    }
+
+    function updateHiddenOrdersBadge() {
+        if (!hiddenOrdersBadge) {
+            return;
+        }
+        const n = hiddenOrdersSet.size;
+        if (n <= 0) {
+            hiddenOrdersBadge.hidden = true;
+            hiddenOrdersBadge.textContent = '';
+        } else {
+            hiddenOrdersBadge.hidden = false;
+            hiddenOrdersBadge.textContent = String(n);
+        }
+    }
+
+    function filterHiddenOrdersModalList() {
+        if (!hiddenOrdersList || !hiddenOrdersSearchInput) {
+            return;
+        }
+        const q = String(hiddenOrdersSearchInput.value || '').trim().toLowerCase();
+        hiddenOrdersList.querySelectorAll('.hidden-orders-row').forEach((row) => {
+            const order = String(row.getAttribute('data-order') || '').trim();
+            const show = !q || order.toLowerCase().includes(q);
+            row.classList.toggle('hidden-orders-row--filtered', !show);
+        });
+    }
+
+    function buildHiddenOrdersModalList() {
+        if (!hiddenOrdersList) {
+            return;
+        }
+        hiddenOrdersList.innerHTML = '';
+        getUniqueOrdersFromTable().forEach((order) => {
+            const row = document.createElement('label');
+            row.className = 'hidden-orders-row';
+            row.setAttribute('data-order', order);
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.setAttribute('data-order', order);
+            cb.checked = hiddenOrdersSet.has(order);
+            const span = document.createElement('span');
+            span.textContent = `Скрыть заявку ${order}`;
+            row.appendChild(cb);
+            row.appendChild(span);
+            hiddenOrdersList.appendChild(row);
+        });
+    }
+
+    function openHiddenOrdersModal() {
+        if (isApplyingPendingMoves || !hiddenOrdersModal) {
+            return;
+        }
+        pruneHiddenOrdersNotInTable();
+        if (hiddenOrdersSearchInput) {
+            hiddenOrdersSearchInput.value = '';
+        }
+        buildHiddenOrdersModalList();
+        hiddenOrdersModal.hidden = false;
+        if (hiddenOrdersSearchInput) {
+            hiddenOrdersSearchInput.focus();
+        }
+    }
+
+    function closeHiddenOrdersModal() {
+        if (hiddenOrdersModal) {
+            hiddenOrdersModal.hidden = true;
+        }
+    }
+
+    function applyHiddenOrdersFromModal() {
+        const next = new Set();
+        if (hiddenOrdersList) {
+            hiddenOrdersList.querySelectorAll('.hidden-orders-row input[type="checkbox"]').forEach((cb) => {
+                if (cb.checked) {
+                    const o = String(cb.getAttribute('data-order') || '').trim();
+                    if (o) {
+                        next.add(o);
+                    }
+                }
+            });
+        }
+        hiddenOrdersSet = next;
+        persistHiddenOrders();
+        applyOrderRowVisibility();
+        updateCoverage();
+        updateHiddenOrdersBadge();
+        closeHiddenOrdersModal();
+    }
+
+    function showAllHiddenOrdersInTable() {
+        hiddenOrdersSet = new Set();
+        persistHiddenOrders();
+        applyOrderRowVisibility();
+        updateCoverage();
+        updateHiddenOrdersBadge();
+        if (hiddenOrdersModal && !hiddenOrdersModal.hidden) {
+            buildHiddenOrdersModalList();
+            filterHiddenOrdersModalList();
+        }
+    }
     let overdueModalAutoOpened = false;
     let isGofroCoverageVisible = true;
     let isFilterPlanDigitsVisible = true;
+    let isFoldHeightPanelOpen = false;
+    let activeFoldHeightKey = null;
     try {
         const storedCoverage = localStorage.getItem(GOFRO_COVERAGE_VISIBLE_STORAGE_KEY);
         if (storedCoverage === '0') {
@@ -1787,6 +2305,49 @@ $pageTitle = 'Планирование сборки гофропакетов';
         updateCoverage();
     }
 
+    function updateMaxPctBtnLabel() {
+        if (openMaxPctBtn) {
+            openMaxPctBtn.textContent = `Выполнение ≤ ${currentPageMaxPct}%`;
+        }
+    }
+
+    function reloadWithMaxPct(pct) {
+        const url = new URL(window.location.href);
+        if (pct === serverDefaultMaxPct) {
+            url.searchParams.delete('max_pct');
+        } else {
+            url.searchParams.set('max_pct', String(pct));
+        }
+        window.location.href = url.toString();
+    }
+
+    function openMaxPctModal() {
+        if (!maxPctModal || !maxPctInput) {
+            return;
+        }
+        maxPctInput.value = String(currentPageMaxPct);
+        maxPctModal.hidden = false;
+    }
+
+    function closeMaxPctModal() {
+        if (maxPctModal) {
+            maxPctModal.hidden = true;
+        }
+    }
+
+    try {
+        if (!urlParams.has('max_pct')) {
+            const savedMaxPct = localStorage.getItem(MAX_PCT_STORAGE_KEY);
+            if (savedMaxPct !== null) {
+                const parsedSaved = Math.max(0, Math.min(100, parseInt(savedMaxPct, 10)));
+                if (!Number.isNaN(parsedSaved) && parsedSaved !== currentPageMaxPct) {
+                    reloadWithMaxPct(parsedSaved);
+                    return;
+                }
+            }
+        }
+    } catch (_) { /* ignore */ }
+
     function setFilterPlanDigitsVisible(visible) {
         isFilterPlanDigitsVisible = !!visible;
         if (toggleFilterPlanDigitsBtn) {
@@ -1799,6 +2360,137 @@ $pageTitle = 'Планирование сборки гофропакетов';
         try {
             localStorage.setItem(FILTER_PLAN_DIGITS_VISIBLE_STORAGE_KEY, isFilterPlanDigitsVisible ? '1' : '0');
         } catch (_) { /* ignore */ }
+    }
+
+    function getRowFoldHeightKey(row) {
+        const mm = String(row.dataset.foldHeightMm || '').trim();
+        if (mm !== '' && /^\d+$/.test(mm)) {
+            return mm;
+        }
+        const raw = parseFloat(String(row.dataset.foldHeight || '').replace(',', '.'));
+        if (Number.isFinite(raw) && raw > 0) {
+            return String(Math.round(raw));
+        }
+        return FOLD_HEIGHT_NONE_KEY;
+    }
+
+    function collectFoldHeightStats() {
+        const stats = new Map();
+        planTable.querySelectorAll('tbody tr[data-row-key]').forEach((row) => {
+            if (row.hidden) {
+                return;
+            }
+            const key = getRowFoldHeightKey(row);
+            stats.set(key, (stats.get(key) || 0) + 1);
+        });
+        return stats;
+    }
+
+    function updateFoldHeightPanelHint() {
+        if (!foldHeightPanelHint) {
+            return;
+        }
+        if (activeFoldHeightKey === null) {
+            foldHeightPanelHint.textContent = 'Нажмите высоту — подсветятся строки с таким ребром (из справочника paper_package_round). Повторный клик снимает фильтр.';
+            return;
+        }
+        const label = activeFoldHeightKey === FOLD_HEIGHT_NONE_KEY
+            ? 'без данных о высоте'
+            : `${activeFoldHeightKey} мм`;
+        const matched = planTable.querySelectorAll('tbody tr[data-row-key].fold-height-match').length;
+        foldHeightPanelHint.textContent = `Подсвечено: ${matched} поз. · высота ${label}`;
+    }
+
+    function applyFoldHeightRowHighlight() {
+        const filterOn = activeFoldHeightKey !== null;
+        planTable.classList.toggle('fold-height-filter-active', filterOn);
+        planTable.querySelectorAll('tbody tr[data-row-key]').forEach((row) => {
+            const match = filterOn && getRowFoldHeightKey(row) === activeFoldHeightKey;
+            row.classList.toggle('fold-height-match', match);
+        });
+        if (foldHeightClearBtn) {
+            foldHeightClearBtn.style.display = filterOn ? '' : 'none';
+        }
+        if (foldHeightButtons) {
+            foldHeightButtons.querySelectorAll('.fold-height-chip').forEach((chip) => {
+                const key = String(chip.dataset.foldHeightKey || '');
+                chip.classList.toggle('active', filterOn && key === activeFoldHeightKey);
+            });
+        }
+        updateFoldHeightPanelHint();
+    }
+
+    function clearFoldHeightFilter() {
+        activeFoldHeightKey = null;
+        applyFoldHeightRowHighlight();
+    }
+
+    function selectFoldHeightFilter(key) {
+        const nextKey = String(key || '');
+        if (nextKey === '') {
+            return;
+        }
+        activeFoldHeightKey = activeFoldHeightKey === nextKey ? null : nextKey;
+        applyFoldHeightRowHighlight();
+    }
+
+    function buildFoldHeightPanelButtons() {
+        if (!foldHeightButtons) {
+            return;
+        }
+        const stats = collectFoldHeightStats();
+        foldHeightButtons.innerHTML = '';
+        const numericKeys = Array.from(stats.keys())
+            .filter((k) => k !== FOLD_HEIGHT_NONE_KEY)
+            .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+        const keys = numericKeys.slice();
+        if (stats.has(FOLD_HEIGHT_NONE_KEY)) {
+            keys.push(FOLD_HEIGHT_NONE_KEY);
+        }
+        if (keys.length === 0) {
+            const empty = document.createElement('span');
+            empty.className = 'muted';
+            empty.textContent = 'Нет позиций в таблице';
+            foldHeightButtons.appendChild(empty);
+            return;
+        }
+        keys.forEach((key) => {
+            const count = stats.get(key) || 0;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'fold-height-chip' + (key === FOLD_HEIGHT_NONE_KEY ? ' fold-height-chip--none' : '');
+            btn.dataset.foldHeightKey = key;
+            btn.textContent = key === FOLD_HEIGHT_NONE_KEY
+                ? `— (${count})`
+                : `${key} (${count})`;
+            btn.title = key === FOLD_HEIGHT_NONE_KEY
+                ? 'Позиции без высоты ребра в справочнике'
+                : `Высота ребра ${key} мм · ${count} поз.`;
+            if (activeFoldHeightKey === key) {
+                btn.classList.add('active');
+            }
+            btn.addEventListener('click', () => {
+                selectFoldHeightFilter(key);
+            });
+            foldHeightButtons.appendChild(btn);
+        });
+    }
+
+    function setFoldHeightPanelOpen(open) {
+        isFoldHeightPanelOpen = !!open;
+        if (foldHeightPanel) {
+            foldHeightPanel.hidden = !isFoldHeightPanelOpen;
+        }
+        if (toggleFoldHeightPanelBtn) {
+            toggleFoldHeightPanelBtn.setAttribute('aria-pressed', isFoldHeightPanelOpen ? 'true' : 'false');
+        }
+        try {
+            localStorage.setItem(FOLD_HEIGHT_PANEL_OPEN_STORAGE_KEY, isFoldHeightPanelOpen ? '1' : '0');
+        } catch (_) { /* ignore */ }
+        if (isFoldHeightPanelOpen) {
+            buildFoldHeightPanelButtons();
+            applyFoldHeightRowHighlight();
+        }
     }
 
     function buildFilterCoverageTitle(filterQty, stockPart, planPart, date) {
@@ -2054,7 +2746,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
         th.dataset.dateTotal = dateIso;
         th.title = 'Суммарно г/п на дату';
         const label = formatDateRu(dateIso).slice(0, 5);
-        th.innerHTML = `<span class="date-head-label">${htmlEscape(label)}</span><span class="date-total-lines"><span class="date-total-line date-total-line--knife" title="Ножевая машина">Н <span class="date-total-knife">0</span></span><span class="date-total-line date-total-line--rotary" title="Ротационная машина">Р <span class="date-total-rotary">0</span></span></span>`;
+        th.innerHTML = `<span class="date-head-label">${htmlEscape(label)}</span><span class="date-total-lines"><span class="date-total-line date-total-line--knife"><span class="date-total-knife" title="Ножевая">0</span></span><span class="date-total-line date-total-line--rotary"><span class="date-total-rotary" title="Ротационная">0</span></span></span>`;
         return th;
     }
 
@@ -2709,15 +3401,16 @@ $pageTitle = 'Планирование сборки гофропакетов';
             if (!entry) {
                 return;
             }
-            const title = `Г/п на дату: ${totals.total}; ножевая (Н): ${totals.knife}; ротационная (Р): ${totals.rotary}`;
             entry.knifeEls.forEach((el) => {
                 el.textContent = String(totals.knife);
+                el.title = `Ножевая: ${totals.knife} шт.`;
             });
             entry.rotaryEls.forEach((el) => {
                 el.textContent = String(totals.rotary);
+                el.title = `Ротационная: ${totals.rotary} шт.`;
             });
             entry.ths.forEach((th) => {
-                th.title = title;
+                th.title = `Суммарно г/п на дату: ${totals.total} шт.`;
             });
         });
         refreshOverdueAlertModal();
@@ -3325,6 +4018,20 @@ $pageTitle = 'Планирование сборки гофропакетов';
             setFilterPlanDigitsVisible(!isFilterPlanDigitsVisible);
         });
     }
+    try {
+        const storedFoldHeightPanel = localStorage.getItem(FOLD_HEIGHT_PANEL_OPEN_STORAGE_KEY);
+        if (storedFoldHeightPanel === '1') {
+            setFoldHeightPanelOpen(true);
+        }
+    } catch (_) { /* ignore */ }
+    if (toggleFoldHeightPanelBtn) {
+        toggleFoldHeightPanelBtn.addEventListener('click', () => {
+            setFoldHeightPanelOpen(!isFoldHeightPanelOpen);
+        });
+    }
+    if (foldHeightClearBtn) {
+        foldHeightClearBtn.addEventListener('click', clearFoldHeightFilter);
+    }
     if (taskSheetBtn) {
         taskSheetBtn.addEventListener('click', openTaskSheetModal);
     }
@@ -3379,6 +4086,95 @@ $pageTitle = 'Планирование сборки гофропакетов';
             }
         });
     }
+    if (openMaxPctBtn) {
+        updateMaxPctBtnLabel();
+        openMaxPctBtn.addEventListener('click', openMaxPctModal);
+    }
+    if (maxPctCancelBtn) {
+        maxPctCancelBtn.addEventListener('click', closeMaxPctModal);
+    }
+    if (maxPctModal) {
+        maxPctModal.addEventListener('click', (e) => {
+            if (e.target === maxPctModal) {
+                closeMaxPctModal();
+            }
+        });
+    }
+    if (maxPctSaveBtn && maxPctInput) {
+        maxPctSaveBtn.addEventListener('click', () => {
+            const newPct = Math.max(0, Math.min(100, parseInt(maxPctInput.value, 10) || serverDefaultMaxPct));
+            try {
+                localStorage.setItem(MAX_PCT_STORAGE_KEY, String(newPct));
+            } catch (_) { /* ignore */ }
+            closeMaxPctModal();
+            if (newPct !== currentPageMaxPct) {
+                reloadWithMaxPct(newPct);
+            }
+        });
+    }
+    if (maxPctResetBtn) {
+        maxPctResetBtn.addEventListener('click', () => {
+            try {
+                localStorage.removeItem(MAX_PCT_STORAGE_KEY);
+            } catch (_) { /* ignore */ }
+            closeMaxPctModal();
+            if (currentPageMaxPct !== serverDefaultMaxPct) {
+                reloadWithMaxPct(serverDefaultMaxPct);
+            }
+        });
+    }
+    if (openHiddenOrdersBtn) {
+        openHiddenOrdersBtn.addEventListener('click', openHiddenOrdersModal);
+    }
+    if (hiddenOrdersCancelBtn) {
+        hiddenOrdersCancelBtn.addEventListener('click', closeHiddenOrdersModal);
+    }
+    if (hiddenOrdersApplyBtn) {
+        hiddenOrdersApplyBtn.addEventListener('click', () => {
+            if (isApplyingPendingMoves) {
+                return;
+            }
+            applyHiddenOrdersFromModal();
+        });
+    }
+    if (hiddenOrdersShowAllBtn) {
+        hiddenOrdersShowAllBtn.addEventListener('click', () => {
+            if (isApplyingPendingMoves) {
+                return;
+            }
+            showAllHiddenOrdersInTable();
+        });
+    }
+    if (hiddenOrdersModal) {
+        hiddenOrdersModal.addEventListener('click', (e) => {
+            if (e.target === hiddenOrdersModal) {
+                closeHiddenOrdersModal();
+            }
+        });
+    }
+    if (hiddenOrdersSearchInput) {
+        hiddenOrdersSearchInput.addEventListener('input', filterHiddenOrdersModalList);
+    }
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') {
+            return;
+        }
+        if (activeFoldHeightKey !== null) {
+            clearFoldHeightFilter();
+            return;
+        }
+        if (hiddenOrdersModal && !hiddenOrdersModal.hidden) {
+            closeHiddenOrdersModal();
+            return;
+        }
+        if (maxPctModal && !maxPctModal.hidden) {
+            closeMaxPctModal();
+        }
+    });
+
+    pruneHiddenOrdersNotInTable();
+    updateHiddenOrdersBadge();
+    applyOrderRowVisibility();
 
     applyFrozenColumns();
     window.addEventListener('resize', applyFrozenColumns);

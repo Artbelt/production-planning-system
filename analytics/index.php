@@ -5,6 +5,7 @@
 
 define('AUTH_SYSTEM', true);
 require_once __DIR__ . '/../auth/includes/integration.php';
+require_once __DIR__ . '/../auth/includes/roll_plan_table.php';
 
 // Авторизация
 $user = getCurrentAuthUser();
@@ -75,6 +76,8 @@ $paperCutterStats = [
     'items' => [],
     'total_plan' => 0,
     'total_fact' => 0,
+    'all_planned' => [],
+    'all_cut' => [],
 ];
 
 foreach ($planSettingsPaths as $code => $settingsPath) {
@@ -186,36 +189,13 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
             }
         }
 
-        // Бумагорезка: план за день по дате в плане; факт — по fact_cut_date (после миграции)
-        $rollTable = null;
-        $chkRp = $mysqli->query("SHOW TABLES LIKE 'roll_plan'");
-        if ($chkRp && $chkRp->num_rows > 0) {
-            $rollTable = 'roll_plan';
-        } else {
-            $chkRps = $mysqli->query("SHOW TABLES LIKE 'roll_plans'");
-            if ($chkRps && $chkRps->num_rows > 0) {
-                $rollTable = 'roll_plans';
-            }
-        }
+        // Бумагорезка: та же таблица, что cut_operator (U2 → roll_plan, U3/U4/U5 → roll_plans)
+        $rollTable = resolveRollPlanTable($mysqli, $code);
         if ($rollTable !== null) {
-            $hasPlanDate = false;
-            $hasWorkDate = false;
-            $hasFactCutDate = false;
-            $colChk = $mysqli->query("SHOW COLUMNS FROM `{$rollTable}` LIKE 'plan_date'");
-            if ($colChk && $colChk->num_rows > 0) {
-                $hasPlanDate = true;
-            }
-            $colChk = $mysqli->query("SHOW COLUMNS FROM `{$rollTable}` LIKE 'work_date'");
-            if ($colChk && $colChk->num_rows > 0) {
-                $hasWorkDate = true;
-            }
-            $colChk = $mysqli->query("SHOW COLUMNS FROM `{$rollTable}` LIKE 'fact_cut_date'");
-            if ($colChk && $colChk->num_rows > 0) {
-                $hasFactCutDate = true;
-            }
-            $planCol = $hasPlanDate ? 'plan_date' : ($hasWorkDate ? 'work_date' : null);
-            if ($planCol !== null) {
-                $stmt = $mysqli->prepare("SELECT COUNT(*) AS plan_total FROM `{$rollTable}` WHERE `{$planCol}` = ?");
+            $hasFactCutDate = rollPlanHasFactCutDate($mysqli, $rollTable);
+            $planDateExpr = rollPlanDateExpression($mysqli, $rollTable, $code);
+            if ($planDateExpr !== null) {
+                $stmt = $mysqli->prepare("SELECT COUNT(*) AS plan_total FROM `{$rollTable}` WHERE {$planDateExpr} = ?");
                 if ($stmt) {
                     $stmt->bind_param('s', $reportDate);
                     $stmt->execute();
@@ -228,9 +208,16 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
 
                     $fact = 0;
                     if ($hasFactCutDate) {
-                        $stmtF = $mysqli->prepare("SELECT COUNT(*) AS fact_total FROM `{$rollTable}` WHERE fact_cut_date = ?");
+                        // Факт: дата порезки; для done=1 без fact_cut_date — legacy после cut_operator до исправления
+                        $stmtF = $mysqli->prepare("
+                            SELECT COUNT(*) AS fact_total FROM `{$rollTable}`
+                            WHERE done = 1 AND (
+                                fact_cut_date = ?
+                                OR (fact_cut_date IS NULL AND {$planDateExpr} = ?)
+                            )
+                        ");
                         if ($stmtF) {
-                            $stmtF->bind_param('s', $reportDate);
+                            $stmtF->bind_param('ss', $reportDate, $reportDate);
                             $stmtF->execute();
                             $resF = $stmtF->get_result();
                             if ($rowF = $resF->fetch_assoc()) {
@@ -239,7 +226,7 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
                             $stmtF->close();
                         }
                     } else {
-                        $stmtF = $mysqli->prepare("SELECT COALESCE(SUM(done = 1), 0) AS fact_total FROM `{$rollTable}` WHERE `{$planCol}` = ?");
+                        $stmtF = $mysqli->prepare("SELECT COALESCE(SUM(done = 1), 0) AS fact_total FROM `{$rollTable}` WHERE {$planDateExpr} = ?");
                         if ($stmtF) {
                             $stmtF->bind_param('s', $reportDate);
                             $stmtF->execute();
@@ -251,12 +238,29 @@ foreach ($planSettingsPaths as $code => $settingsPath) {
                         }
                     }
 
+                    $balesData = fetchRollPlanBalesForReport(
+                        $mysqli,
+                        $rollTable,
+                        $planDateExpr,
+                        $reportDate,
+                        $hasFactCutDate
+                    );
+
                     $paperCutterStats['items'][$code] = [
                         'plan' => $plan,
                         'fact' => $fact,
+                        'planned_bales' => $balesData['planned'],
+                        'cut_bales' => $balesData['cut'],
                     ];
                     $paperCutterStats['total_plan'] += $plan;
                     $paperCutterStats['total_fact'] += $fact;
+
+                    foreach ($balesData['planned'] as $bale) {
+                        $paperCutterStats['all_planned'][] = array_merge($bale, ['department' => $code]);
+                    }
+                    foreach ($balesData['cut'] as $bale) {
+                        $paperCutterStats['all_cut'][] = array_merge($bale, ['department' => $code]);
+                    }
                 }
             }
         }
@@ -843,6 +847,22 @@ $departments = [
             color: var(--gray-600);
             margin-bottom: 10px;
         }
+        .papercutter-subtitle {
+            font-size: 14px;
+            font-weight: 600;
+            margin: 20px 0 8px;
+        }
+        .papercutter-subtitle:first-of-type {
+            margin-top: 14px;
+        }
+        .papercutter-status-cut {
+            color: #166534;
+            font-weight: 600;
+        }
+        .papercutter-status-pending {
+            color: #b45309;
+            font-weight: 600;
+        }
         @media (max-width: 768px) {
             .analytics-header {
                 flex-direction: column;
@@ -1189,6 +1209,57 @@ $departments = [
                             </tr>
                         </tbody>
                     </table>
+
+                    <?php if (!empty($paperCutterStats['all_planned'])): ?>
+                        <div class="papercutter-subtitle">Запланировано на дату</div>
+                        <table class="packaging-table">
+                            <thead>
+                                <tr>
+                                    <th>Участок</th>
+                                    <th>Заявка</th>
+                                    <th>Бухта</th>
+                                    <th>Статус</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($paperCutterStats['all_planned'] as $bale): ?>
+                                    <tr>
+                                        <td><?= htmlspecialchars($departments[$bale['department']]['name'] ?? $bale['department']) ?></td>
+                                        <td><?= htmlspecialchars($bale['order_number']) ?></td>
+                                        <td><?= htmlspecialchars((string)$bale['bale_id']) ?></td>
+                                        <td class="<?= !empty($bale['is_cut']) ? 'papercutter-status-cut' : 'papercutter-status-pending' ?>">
+                                            <?= !empty($bale['is_cut']) ? 'Порезана' : 'Не порезана' ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    <?php endif; ?>
+
+                    <?php if (!empty($paperCutterStats['all_cut'])): ?>
+                        <div class="papercutter-subtitle">Порезано за дату</div>
+                        <table class="packaging-table">
+                            <thead>
+                                <tr>
+                                    <th>Участок</th>
+                                    <th>Заявка</th>
+                                    <th>Бухта</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($paperCutterStats['all_cut'] as $bale): ?>
+                                    <tr>
+                                        <td><?= htmlspecialchars($departments[$bale['department']]['name'] ?? $bale['department']) ?></td>
+                                        <td><?= htmlspecialchars($bale['order_number']) ?></td>
+                                        <td><?= htmlspecialchars((string)$bale['bale_id']) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    <?php elseif (!empty($paperCutterStats['items'])): ?>
+                        <div class="papercutter-subtitle">Порезано за дату</div>
+                        <div class="packaging-empty">Нет порезанных бухт за выбранную дату.</div>
+                    <?php endif; ?>
                 <?php else: ?>
                     <div class="packaging-empty">Нет данных по порезке бухт за выбранную дату.</div>
                 <?php endif; ?>

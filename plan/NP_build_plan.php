@@ -102,10 +102,13 @@ foreach ($existing_plan as $row) {
         }
         .assigned-item.pos-wide { background-color: #DBEAFE !important; }
         .half-width { width: 50%; float: left; box-sizing: border-box; }
-        .drop-target { min-height: 16px; min-width: 60px; position: relative; user-select: none; }
-        .date-col { min-width: 60px; } /* компактная ширина для дат */
+        .drop-target { min-height: 16px; min-width: 78px; position: relative; user-select: none; }
+        .date-col { min-width: 78px; } /* ширина колонок дат (+30% к прежним 60px) */
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.4); justify-content: center; align-items: center; }
         .modal-content { background: white; padding: 20px; border-radius: 5px; width: 400px; }
+        #audit-modal.modal { z-index: 1100; }
+        #audit-modal .modal-content { width: auto; max-width: 640px; max-height: 85vh; display: flex; flex-direction: column; }
+        #audit-modal-body { white-space: pre-wrap; word-break: break-word; margin: 0 0 12px; flex: 1; min-height: 0; overflow: auto; font-size: 11px; line-height: 1.35; }
         .modal h3 { margin-top: 0; }
         .modal button { margin-top: 10px; }
         .date-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; max-height: 300px; overflow-y: auto; }
@@ -119,7 +122,7 @@ foreach ($existing_plan as $row) {
 
         /* --- Sticky колонки для нижней таблицы --- */
         .table-wrap { position: relative; overflow: auto; border: 1px solid #ddd; background: #fff; }
-        #bottom-table { width: max(100%, 1200px); } /* чтобы был горизонтальный скролл при множестве дней */
+        #bottom-table { width: max(100%, 1560px); } /* горизонтальный скролл при множестве дней (база +30%) */
         .sticky-left, .sticky-right {
             position: sticky;
             z-index: 3;
@@ -209,6 +212,11 @@ foreach ($existing_plan as $row) {
             max-height: calc(90vh - 40px);
         }
 
+        /* Режим: выбрана позиция сверху — можно назначить кликом по ячейке плана */
+        body.np-build-plan-pick-cell #bottom-table tbody td.drop-target {
+            cursor: pointer;
+        }
+
     </style>
 </head>
 <body>
@@ -226,6 +234,7 @@ foreach ($existing_plan as $row) {
     <button type="button" onclick="savePlan()" style="background:#2563eb; color:#fff; padding:5px 10px; border:1px solid #2563eb; border-radius:4px; cursor:pointer;">Сохранить план</button>
     <button type="button" onclick="completePlanning()" style="background:#059669; color:#fff; padding:5px 10px; border:1px solid #059669; border-radius:4px; cursor:pointer; font-weight:600;">Завершить</button>
     <button type="button" onclick="clearPage()" style="background:#dc2626; color:#fff; padding:5px 10px; border:1px solid #dc2626; border-radius:4px; cursor:pointer;">Очистить страницу</button>
+    <button type="button" onclick="auditBuildPlanMarkup()" style="background:#ca8a04; color:#fff; padding:5px 10px; border:1px solid #ca8a04; border-radius:4px; cursor:pointer;" title="Разметка (серые/блоки) и количества (гофроплан vs сумма внизу)">Проверить разметку</button>
 </form>
 </div>
 
@@ -313,12 +322,21 @@ foreach ($existing_plan as $row) {
 <div class="modal" id="modal">
     <div class="modal-content">
         <h3>Выберите дату</h3>
+        <p style="font-size:11px; color:#555; margin:0 0 8px;">Можно вместо выбора здесь кликнуть по пустой ячейке в таблице «Планирование сборки» — дата и место подставятся сами. Либо по уже размещённой позиции в её <strong>последний</strong> день в плане — новая позиция добавится в этот же день и строку, если в ячейке ещё есть лимит по заливкам; иначе со следующего дня.</p>
         <div id="modal-dates" class="date-grid"></div>
         <div class="places">
             <h4>Выберите место:</h4>
             <div id="modal-places" class="places-grid"></div>
         </div>
         <button onclick="closeModal()">Отмена</button>
+    </div>
+</div>
+
+<div class="modal" id="audit-modal" onclick="if (event.target === this) closeAuditModal()">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <h3 id="audit-modal-title" style="margin-top:0;">Результат проверки</h3>
+        <pre id="audit-modal-body"></pre>
+        <button type="button" onclick="closeAuditModal()">Закрыть</button>
     </div>
 </div>
 
@@ -356,8 +374,78 @@ foreach ($existing_plan as $row) {
     let activeDate = '';
     let activePlace = null;
 
+    function closePickerMode() {
+        document.body.classList.remove('np-build-plan-pick-cell');
+    }
+
+    function openPickerMode() {
+        document.body.classList.add('np-build-plan-pick-cell');
+    }
+
+    /** Позиция из верхней таблицы выбрана для назначения (модалка открыта) и ещё не «used». */
+    function getPendingPositionCell() {
+        if (!selectedId) return null;
+        const cell = document.querySelector('.position-cell[data-id="' + selectedId + '"]');
+        if (!cell || cell.classList.contains('used')) return null;
+        return cell;
+    }
+
+    function addCalendarDay(dateStr) {
+        const p = String(dateStr).trim().split('-').map(Number);
+        if (p.length < 3 || !p[0]) return dateStr;
+        const d = new Date(p[0], p[1] - 1, p[2]);
+        d.setDate(d.getDate() + 1);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return y + '-' + m + '-' + day;
+    }
+
+    /** Все фрагменты одной позиции внизу (как при удалении). */
+    function getAssignedClusterItems(anchorItem) {
+        const posId = anchorItem.getAttribute('data-id');
+        const corrId = anchorItem.getAttribute('data-corr-id');
+        const label = anchorItem.getAttribute('data-label');
+        if (posId) {
+            return Array.from(document.querySelectorAll('.assigned-item[data-id=\'' + posId + '\']'));
+        }
+        if (corrId) {
+            return Array.from(document.querySelectorAll('.assigned-item[data-corr-id=\'' + corrId + '\']'));
+        }
+        if (label) {
+            const norm = normalizePlanLabel(label);
+            if (norm) {
+                return Array.from(document.querySelectorAll('.assigned-item')).filter(item =>
+                    normalizePlanLabel(item.dataset.label || '') === norm);
+            }
+        }
+        return [];
+    }
+
+    /** Максимальная дата assign_date среди фрагментов кластера (последний день позиции в плане). */
+    function findClusterLastDate(anchorItem) {
+        const items = getAssignedClusterItems(anchorItem);
+        if (!items.length) return null;
+        let maxD = '';
+        items.forEach(it => {
+            const cell = it.closest('td.drop-target');
+            if (!cell) return;
+            const d = (cell.getAttribute('data-date') || '').trim();
+            if (d > maxD) maxD = d;
+        });
+        return maxD || null;
+    }
+
+    function getBottomPlanDateRange() {
+        const ths = Array.from(document.querySelectorAll('#bottom-table thead th'));
+        const dates = ths.slice(1, ths.length - 1).map(th => th.innerText.trim()).filter(Boolean);
+        if (!dates.length) return { min: '', max: '' };
+        return { min: dates[0], max: dates[dates.length - 1] };
+    }
+
     function closeModal() {
         document.getElementById("modal").style.display = "none";
+        closePickerMode();
         selectedLabel = '';
         selectedCutDate = '';
         selectedId = '';
@@ -435,6 +523,10 @@ foreach ($existing_plan as $row) {
 
                 // Проверяем, что позиция действительно освободилась
                 checkIfPositionFullyRemoved(posId, corrId, label);
+                // Частичное удаление: если внизу осталось меньше, чем count в гофроплане — снова активна сверху
+                document.querySelectorAll('#top-table .position-cell.used').forEach(upper => {
+                    if (!isCorrugationRowFullyPlaced(upper)) upper.classList.remove('used');
+                });
             };
         });
     }
@@ -478,8 +570,7 @@ foreach ($existing_plan as $row) {
                 // Нельзя добавлять раньше cutDate позиции.
                 const startDate = (selectedCutDate && activeDate < selectedCutDate) ? selectedCutDate : activeDate;
                 distributeToBuildPlan(startDate, activePlace);
-                const usedCell = document.querySelector('.position-cell[data-id="' + selectedId + '"]');
-                if (usedCell) usedCell.classList.add('used');
+                markTopCellUsedIfFullyPlaced();
                 closeModal();
                 return;
             }
@@ -512,8 +603,91 @@ foreach ($existing_plan as $row) {
                 }
             });
             document.getElementById("modal").style.display = "flex";
+            openPickerMode();
         });
     });
+
+    // Назначение в ячейку плана кликом по панели «Планирование сборки» (capture: перехват клика по блоку, чтобы не сработало удаление)
+    document.getElementById('bottom-table').addEventListener('click', function (e) {
+        const posCell = getPendingPositionCell();
+        if (!posCell) return;
+
+        const assignTouch = e.target.closest('.assigned-item');
+        if (assignTouch) {
+            const anchorTd = assignTouch.closest('td.drop-target');
+            if (!anchorTd || !anchorTd.classList.contains('drop-target')) return;
+
+            const clickedDate = (anchorTd.getAttribute('data-date') || '').trim();
+            const place = parseInt(anchorTd.getAttribute('data-place'), 10);
+            const clusterLast = findClusterLastDate(assignTouch);
+
+            if (!clusterLast || clickedDate !== clusterLast) {
+                e.preventDefault();
+                e.stopPropagation();
+                alert('Чтобы поставить новую позицию сразу после этой, кликните по блоку этой позиции в её последний день в плане (последняя колонка, где она ещё отображается для этой строки «место»).');
+                return;
+            }
+
+            const fillsPerDay = parseInt(document.getElementById('fills_per_day').value || '50', 10);
+            let alreadyInLastDayCell = 0;
+            anchorTd.querySelectorAll('.assigned-item').forEach(item => {
+                alreadyInLastDayCell += parseInt(item.dataset.count || 0, 10);
+            });
+            // В последний день кластера: сначала этот же день/место, если под лимит заливок ещё есть место; иначе со следующего дня
+            const startDate = (alreadyInLastDayCell < fillsPerDay) ? clusterLast : addCalendarDay(clusterLast);
+
+            const cutDate = selectedCutDate || posCell.dataset.cutDate || '';
+            if (cutDate && startDate < cutDate) {
+                e.preventDefault();
+                e.stopPropagation();
+                alert('Нельзя начать раньше даты из гофроплана для новой позиции (' + cutDate + ').');
+                return;
+            }
+
+            const range = getBottomPlanDateRange();
+            if (range.max && startDate > range.max) {
+                e.preventDefault();
+                e.stopPropagation();
+                alert('Размещение с выбранной даты (' + startDate + ') выходит за правый край таблицы. Нажмите «Добавить день» или выберите другой способ.');
+                return;
+            }
+
+            e.preventDefault();
+            e.stopPropagation();
+
+            distributeToBuildPlan(startDate, place);
+            markTopCellUsedIfFullyPlaced();
+            closeModal();
+            return;
+        }
+
+        const td = e.target.closest('td.drop-target');
+        if (!td || !td.classList.contains('drop-target')) return;
+
+        const date = (td.getAttribute('data-date') || '').trim();
+        const place = parseInt(td.getAttribute('data-place'), 10);
+        const cutDate = selectedCutDate || posCell.dataset.cutDate || '';
+        if (!date || !place) return;
+
+        if (cutDate && date < cutDate) {
+            alert('Нельзя назначить раньше даты из гофроплана для этой позиции (' + cutDate + ').');
+            return;
+        }
+
+        const fillsPerDay = parseInt(document.getElementById('fills_per_day').value || '50', 10);
+        let totalPlanned = 0;
+        td.querySelectorAll('.assigned-item').forEach(item => {
+            totalPlanned += parseInt(item.dataset.count || 0, 10);
+        });
+        if (totalPlanned >= fillsPerDay) {
+            alert('На этом месте в выбранный день уже достигнут лимит заливок (' + fillsPerDay + ').');
+            return;
+        }
+
+        distributeToBuildPlan(date, place);
+        markTopCellUsedIfFullyPlaced();
+        closeModal();
+    }, true);
 
     function highlightByLabel(label) {
         const match = label.match(/\d{4}/);
@@ -561,8 +735,7 @@ foreach ($existing_plan as $row) {
             } else {
                 btn.onclick = () => {
                     distributeToBuildPlan(date, i);
-                    const cell = document.querySelector('.position-cell[data-id="' + selectedId + '"]');
-                    if (cell) cell.classList.add('used');
+                    markTopCellUsedIfFullyPlaced();
                     closeModal();
                 };
             }
@@ -570,13 +743,52 @@ foreach ($existing_plan as $row) {
         }
     }
 
+    function getPlacedCountForTopCell(topCell) {
+        if (!topCell) return 0;
+        const needed = parseInt(topCell.dataset.count || '0', 10);
+        if (!needed) return 0;
+        const cid = String(topCell.dataset.corrId || '').trim();
+        let placed = 0;
+        if (cid) {
+            document.querySelectorAll('#bottom-table .assigned-item[data-corr-id="' + cid + '"]').forEach(item => {
+                placed += parseInt(item.dataset.count || 0, 10);
+            });
+        } else {
+            const posId = topCell.getAttribute('data-id');
+            if (posId) {
+                document.querySelectorAll('#bottom-table .assigned-item[data-id="' + posId + '"]').forEach(item => {
+                    placed += parseInt(item.dataset.count || 0, 10);
+                });
+            }
+        }
+        return placed;
+    }
+
+    function isCorrugationRowFullyPlaced(topCell) {
+        if (!topCell) return false;
+        const needed = parseInt(topCell.dataset.count || '0', 10);
+        if (!needed) return true;
+        return getPlacedCountForTopCell(topCell) >= needed;
+    }
+
+    /** Серая подсветка только если внизу размещён весь объём гофропакетов по этой строке. */
+    function markTopCellUsedIfFullyPlaced() {
+        const topCell = document.querySelector('.position-cell[data-id="' + selectedId + '"]');
+        if (topCell && isCorrugationRowFullyPlaced(topCell)) {
+            topCell.classList.add('used');
+        }
+    }
+
     function distributeToBuildPlan(startDate, place) {
         const selectedCell = document.querySelector(`.position-cell[data-id="${selectedId}"]`);
-        let total = parseInt(selectedCell.dataset.count);
+        const initialTotal = parseInt(selectedCell.dataset.count, 10) || 0;
+        let total = initialTotal;
         const selectedCorrId = selectedCell.dataset.corrId; // Получаем corrugation_plan_id
         const fillsPerDay = parseInt(document.getElementById("fills_per_day").value || "50");
         const dateHeaders = Array.from(document.querySelectorAll('#bottom-table thead th'));
-        const dateList = dateHeaders.slice(1, dateHeaders.length - 1).map(th => th.innerText).filter(d => d >= startDate);
+        const dateList = dateHeaders.slice(1, dateHeaders.length - 1)
+            .map(th => th.innerText.trim())
+            .filter(d => d >= startDate);
 
         let dateIndex = 0;
         let lastAssignedDate = null;
@@ -632,6 +844,17 @@ foreach ($existing_plan as $row) {
             activeDate = lastAssignedDate;
             activePlace = place;
         }
+
+        const remaining = total;
+        const placed = initialTotal - remaining;
+        if (remaining > 0) {
+            alert(
+                'Размещено ' + placed + ' из ' + initialTotal + ' гофропакетов (строка «место ' + place + '»).\n\n' +
+                'Не хватает ' + remaining + ' шт. — закончились свободные дни в правой части таблицы или лимит заливок в смену на этой строке.\n\n' +
+                'Нажмите «Добавить день», затем снова разместите эту позицию (или Shift+клик — продолжит с последней ячейки). Позиция сверху останется активной, пока не разложите всё количество.'
+            );
+        }
+        return { placed, remaining, initialTotal, lastAssignedDate };
     }
 
     function preparePlan() {
@@ -760,6 +983,51 @@ foreach ($existing_plan as $row) {
     window.addDay = addDay;
     window.removeDay = removeDay;
 
+    /**
+     * Единственный источник «серой» подсветки сверху — блоки в таблице сборки.
+     * Снимает ложные used и выставляет их только по data-corr-id (с починкой устаревших id в блоках).
+     */
+    function syncUsedFromBuildPlanFragments() {
+        document.querySelectorAll('#top-table .position-cell.used').forEach(c => c.classList.remove('used'));
+
+        document.querySelectorAll('#bottom-table .assigned-item').forEach(item => {
+            let cid = String(item.dataset.corrId || '').trim();
+            const itemFull = item.dataset.label || '';
+
+            let top = cid
+                ? document.querySelector('#top-table .position-cell[data-corr-id="' + cid + '"]')
+                : null;
+
+            if (!top && itemFull) {
+                top = Array.from(document.querySelectorAll('#top-table .position-cell')).find(
+                    c => !c.classList.contains('used') && (c.dataset.label || '') === itemFull
+                ) || null;
+            }
+
+            if (!top && itemFull) {
+                const norm = normalizePlanLabel(itemFull);
+                if (norm) {
+                    const candidates = Array.from(document.querySelectorAll('#top-table .position-cell')).filter(
+                        c => !c.classList.contains('used') && normalizePlanLabel(c.dataset.label || '') === norm
+                    );
+                    top = candidates.find(c => (c.dataset.label || '') === itemFull) || candidates[0] || null;
+                }
+            }
+
+            if (!top) return;
+
+            const topCid = String(top.dataset.corrId || '').trim();
+            if (topCid && cid !== topCid) {
+                item.setAttribute('data-corr-id', topCid);
+            }
+            if (isCorrugationRowFullyPlaced(top)) {
+                top.classList.add('used');
+            }
+        });
+    }
+
+    window.syncUsedFromBuildPlanFragments = syncUsedFromBuildPlanFragments;
+
     // Загрузка существующего плана
     function loadExistingPlan() {
         const planData = <?= json_encode($plan_data) ?>;
@@ -773,51 +1041,13 @@ foreach ($existing_plan as $row) {
             });
         });
 
-        const topCells = Array.from(document.querySelectorAll('.position-cell'));
-        const topByCorrId = new Map();
-        const topByNormLabel = new Map();
-        topCells.forEach(cell => {
-            const corrId = String(cell.dataset.corrId || '').trim();
-            if (corrId) topByCorrId.set(corrId, cell);
-            const norm = normalizePlanLabel(cell.dataset.label || '');
-            if (norm) {
-                if (!topByNormLabel.has(norm)) topByNormLabel.set(norm, []);
-                topByNormLabel.get(norm).push(cell);
-            }
-        });
-        
-        // ШАГ 1: Собираем уникальные corrugation_plan_id из build_plan
-        const usedCorrIds = new Set();
-        let missingCorrIds = 0;
-        
-        Object.keys(planData).forEach(date => {
-            Object.keys(planData[date]).forEach(place => {
-                planData[date][place].forEach(item => {
-                    if (item.corrugation_plan_id) {
-                        usedCorrIds.add(parseInt(item.corrugation_plan_id));
-                    }
-                });
-            });
-        });
-        console.log(`Найдено ${usedCorrIds.size} уникальных позиций для затенения`);
-        
-        // ШАГ 2: Закрашиваем позиции по corrugation_plan_id
-        const notFoundCorrIds = [];
-        usedCorrIds.forEach(corrId => {
-            const posCell = document.querySelector(`.position-cell[data-corr-id="${corrId}"]`);
-            if (posCell) {
-                posCell.classList.add('used');
-                console.log(`✓ Закрашена позиция с id=${corrId}: ${posCell.dataset.label}`);
-            } else {
-                missingCorrIds++;
-                notFoundCorrIds.push(corrId);
-            }
-        });
-        if (missingCorrIds > 0) {
-            console.log(`В верхней таблице не найдено corrugation_plan_id: ${missingCorrIds}`);
-        }
-        
-        // ШАГ 3: Отрисовываем элементы в нижней таблице
+        const claimedTopCorrIds = new Set();
+
+        // Не помечаем «used» по всему build_plan из PHP заранее: в плане могут быть даты вне текущего
+        // диапазона столбцов — ячейки внизу не рисуются, а верх помечался бы серым без парных блоков
+        // (ложные срабатывания проверки разметки). Затенение — только при отрисовке фрагментов ниже и в финальной сверке.
+
+        // Отрисовываем элементы в нижней таблице
         Object.keys(planData).forEach(date => {
             Object.keys(planData[date]).forEach(place => {
                 const td = document.querySelector(`.drop-target[data-date='${date}'][data-place='${place}']`);
@@ -831,24 +1061,40 @@ foreach ($existing_plan as $row) {
                     // Находим соответствующую позицию в верхней таблице для связи data-id.
                     // Важно: матчим в первую очередь по corrugation_plan_id, т.к. fullLabel может не совпадать 1-в-1
                     // из-за текущего диапазона дат/форматирования в верхней таблице.
-                    const corrId = item.corrugation_plan_id !== null && item.corrugation_plan_id !== undefined
-                        ? String(item.corrugation_plan_id)
+                    const rawCid = item.corrugation_plan_id;
+                    const corrId = (rawCid !== null && rawCid !== undefined && String(rawCid).trim() !== '')
+                        ? String(rawCid).trim()
                         : '';
+                    let matchedByCorrId = false;
                     let posCell = corrId
                         ? document.querySelector(`.position-cell[data-corr-id="${corrId}"]`)
                         : null;
+                    matchedByCorrId = !!(corrId && posCell);
 
-                    // fallback по label (без требования наличия класса used)
-                    if (!posCell) {
-                        posCell = Array.from(document.querySelectorAll('.position-cell')).find(cell => cell.dataset.label === fullLabel) || null;
+                    // fallback по полному label (устаревший id в БД или пустой corrugation_plan_id)
+                    if (!posCell && fullLabel) {
+                        const allByLabel = Array.from(document.querySelectorAll('.position-cell')).filter(
+                            cell => (cell.dataset.label || '') === fullLabel
+                        );
+                        posCell = allByLabel.find(cell => {
+                            const id = String(cell.dataset.corrId || '').trim();
+                            return id && !claimedTopCorrIds.has(id);
+                        }) || null;
                     }
 
-                    // Если верхняя клетка есть, но по каким-то причинам не отмечена — отмечаем.
-                    // Это позволит корректно "освобождать" позицию при удалении строки из нижней таблицы.
-                    if (posCell && !posCell.classList.contains('used')) {
-                        posCell.classList.add('used');
+                    let corrForDiv = '';
+                    if (matchedByCorrId && corrId) {
+                        corrForDiv = corrId;
+                    } else if (posCell) {
+                        corrForDiv = String(posCell.dataset.corrId || '').trim();
+                    } else if (corrId) {
+                        corrForDiv = corrId;
                     }
-                    
+                    if (posCell) {
+                        const claimId = String(posCell.dataset.corrId || '').trim();
+                        if (claimId) claimedTopCorrIds.add(claimId);
+                    }
+
                     const div = document.createElement('div');
                     // Определяем отображаемое название
                     let displayName = '';
@@ -868,12 +1114,12 @@ foreach ($existing_plan as $row) {
                     if (wMm != null && wMm > 230) div.classList.add('pos-wide');
                     div.setAttribute('data-label', fullLabel);
                     div.setAttribute('data-count', count);
-                    div.setAttribute('data-corr-id', item.corrugation_plan_id || ''); // Добавляем corrugation_plan_id
+                    div.setAttribute('data-corr-id', corrForDiv);
 
                     // Используем data-id из верхней таблицы, если она есть.
                     // Если верхней клетки нет (например, позиция вне текущего диапазона дат),
                     // всё равно рисуем элемент, но оставляем data-id пустым/синтетическим.
-                    const assignedId = posCell ? posCell.dataset.id : (corrId ? `corr_${corrId}` : '');
+                    const assignedId = posCell ? posCell.dataset.id : (corrForDiv ? `corr_${corrForDiv}` : '');
                     div.setAttribute('data-id', assignedId);
                     
                     if (td.querySelector('.assigned-item')) {
@@ -886,44 +1132,7 @@ foreach ($existing_plan as $row) {
             });
         });
 
-        // Финальная сверка: всё, что реально находится внизу (.assigned-item),
-        // обязано иметь подсветку соответствующей позиции сверху.
-        let reconciledByCorrId = 0;
-        let reconciledByLabel = 0;
-        let reconciledLabelCellMarks = 0;
-        const unresolvedItems = [];
-        document.querySelectorAll('.assigned-item').forEach(item => {
-            const corrId = String(item.dataset.corrId || '').trim();
-            const normLabel = normalizePlanLabel(item.dataset.label || '');
-
-            let topCell = null;
-            let matched = false;
-            if (corrId && topByCorrId.has(corrId)) {
-                topCell = topByCorrId.get(corrId);
-                reconciledByCorrId++;
-                matched = true;
-            } else if (normLabel && topByNormLabel.has(normLabel) && topByNormLabel.get(normLabel).length > 0) {
-                const sameLabelCells = topByNormLabel.get(normLabel);
-                sameLabelCells.forEach(c => {
-                    if (!c.classList.contains('used')) reconciledLabelCellMarks++;
-                    c.classList.add('used');
-                });
-                reconciledByLabel++;
-                matched = true;
-            }
-
-            if (topCell) {
-                topCell.classList.add('used');
-            }
-
-            if (!matched) {
-                unresolvedItems.push({
-                    corrId: corrId || null,
-                    label: item.dataset.label || ''
-                });
-            }
-        });
-
+        syncUsedFromBuildPlanFragments();
         attachRemoveHandlers();
     }
     
@@ -996,6 +1205,159 @@ foreach ($existing_plan as $row) {
     }
     
     window.clearPage = clearPage;
+
+    /** Сумма размещённого количества в видимой таблице сборки по corrugation_plan_id. */
+    function getPlacedCountByCorrId(corrId) {
+        let placed = 0;
+        if (!corrId) return 0;
+        document.querySelectorAll('#bottom-table .assigned-item[data-corr-id="' + corrId + '"]').forEach((it) => {
+            placed += parseInt(it.dataset.count || 0, 10) || 0;
+        });
+        return placed;
+    }
+
+    /** Позиции, у которых внизу (в текущей таблице) размещено меньше, чем count в гофроплане. */
+    function auditBuildPlanQuantities() {
+        const incomplete = [];
+        const overPlaced = [];
+        const notStarted = [];
+
+        document.querySelectorAll('#top-table .position-cell').forEach((cell) => {
+            const needed = parseInt(cell.dataset.count || '0', 10) || 0;
+            if (needed <= 0) return;
+            const cid = String(cell.dataset.corrId || '').trim();
+            if (!cid) return;
+
+            const placed = getPlacedCountByCorrId(cid);
+            const row = {
+                corrugation_plan_id: cid,
+                label: cell.dataset.label || '',
+                cutDate: cell.dataset.cutDate || '',
+                needed,
+                placed,
+                missing: needed - placed
+            };
+
+            if (placed === 0) {
+                if (cell.classList.contains('used')) {
+                    row.type = 'Помечена серой, но в таблице сборки 0 шт.';
+                    incomplete.push(row);
+                } else {
+                    notStarted.push(row);
+                }
+            } else if (placed < needed) {
+                row.type = 'Размещено меньше, чем в гофроплане (возможна «потеря» при нехватке дней)';
+                incomplete.push(row);
+            } else if (placed > needed) {
+                row.type = 'В плане сборки больше, чем в гофроплане';
+                overPlaced.push(row);
+            }
+        });
+
+        return { incomplete, overPlaced, notStarted };
+    }
+
+    /** Проверка разметки и количеств (гофроплан vs план сборки на экране). */
+    function auditBuildPlanMarkup() {
+        syncUsedFromBuildPlanFragments();
+
+        const problems = [];
+        const warnings = [];
+        const qty = auditBuildPlanQuantities();
+
+        document.querySelectorAll('#top-table .position-cell.used').forEach((cell) => {
+            const cid = String(cell.dataset.corrId || '').trim();
+            if (cid) {
+                const n = document.querySelectorAll('#bottom-table .assigned-item[data-corr-id="' + cid + '"]').length;
+                if (n === 0) {
+                    problems.push({
+                        type: 'Серая позиция без блоков в плане сборки с тем же corrugation_plan_id',
+                        corrugation_plan_id: cid,
+                        label: cell.dataset.label || '',
+                        cutDate: cell.dataset.cutDate || ''
+                    });
+                }
+            } else {
+                const lbl = cell.dataset.label || '';
+                const norm = normalizePlanLabel(lbl);
+                const hasAssign = norm && Array.from(document.querySelectorAll('#bottom-table .assigned-item')).some((it) => {
+                    return normalizePlanLabel(it.dataset.label || '') === norm;
+                });
+                if (!hasAssign) {
+                    problems.push({
+                        type: 'Серая позиция без data-corr-id и без совпадения по названию в таблице сборки',
+                        label: lbl
+                    });
+                }
+            }
+        });
+
+        document.querySelectorAll('#bottom-table .assigned-item').forEach((it) => {
+            const cid = String(it.dataset.corrId || '').trim();
+            if (!cid) return;
+            const top = document.querySelector('#top-table .position-cell[data-corr-id="' + cid + '"]');
+            if (top && !top.classList.contains('used')) {
+                warnings.push({
+                    type: 'В плане сборки есть блок с id, а соответствующая строка гофроплана не отмечена серой (или не в диапазоне дат)',
+                    corrugation_plan_id: cid,
+                    label: it.dataset.label || ''
+                });
+            }
+        });
+
+        const qtyProblems = qty.incomplete.length + qty.overPlaced.length;
+        const markupIssues = problems.length + warnings.length;
+        const totalIssues = markupIssues + qtyProblems;
+
+        const titleEl = document.getElementById('audit-modal-title');
+        const bodyEl = document.getElementById('audit-modal-body');
+        if (totalIssues === 0) {
+            titleEl.textContent = 'Проверка разметки и количеств';
+            bodyEl.textContent =
+                'Замечаний не найдено.\n\n' +
+                'Перед проверкой выполнена синхронизация подсветки с таблицей сборки.\n\n' +
+                'Разметка:\n' +
+                '• У каждой серой позиции сверху (с id) внизу есть блок с тем же data-corr-id.\n' +
+                '• У каждого блока внизу с id соответствующая строка гофроплана (если видна) отмечена серой.\n\n' +
+                'Количества (по видимой таблице сборки):\n' +
+                '• У всех строк гофроплана с id сумма внизу совпадает с количеством в гофроплане (или позиция ещё не начата).\n' +
+                '• Не начато позиций: ' + qty.notStarted.length + '.\n\n' +
+                'Если часть назначений на даты правее последнего столбца — расширьте диапазон «Дней» и нажмите «Построить таблицу», затем проверку снова.';
+        } else {
+            titleEl.textContent = 'Проверка: замечаний — ' + totalIssues +
+                ' (разметка: ' + markupIssues + ', количества: ' + qtyProblems + ')';
+            let text = '';
+            if (problems.length > 0) {
+                text += 'РАЗМЕТКА — ПРОБЛЕМЫ (' + problems.length + '):\n' + JSON.stringify(problems, null, 2) + '\n\n';
+            }
+            if (warnings.length > 0) {
+                text += 'РАЗМЕТКА — ПРЕДУПРЕЖДЕНИЯ (' + warnings.length + '):\n' + JSON.stringify(warnings, null, 2) + '\n\n';
+            }
+            if (qty.incomplete.length > 0) {
+                text += 'КОЛИЧЕСТВА — НЕДОРАЗМЕЩЕНО (' + qty.incomplete.length + '):\n' +
+                    '(нужно дозаполнить: «Добавить день» + снова назначить позицию)\n' +
+                    JSON.stringify(qty.incomplete, null, 2) + '\n\n';
+            }
+            if (qty.overPlaced.length > 0) {
+                text += 'КОЛИЧЕСТВА — ПРЕВЫШЕНИЕ (' + qty.overPlaced.length + '):\n' +
+                    JSON.stringify(qty.overPlaced, null, 2) + '\n\n';
+            }
+            text += 'Детали в консоли (F12 → Console).';
+            bodyEl.textContent = text;
+            console.warn('[Проверка плана сборки] разметка — проблемы:', problems);
+            console.warn('[Проверка плана сборки] разметка — предупреждения:', warnings);
+            console.warn('[Проверка плана сборки] количества — недоразмещено:', qty.incomplete);
+            console.warn('[Проверка плана сборки] количества — превышение:', qty.overPlaced);
+        }
+        document.getElementById('audit-modal').style.display = 'flex';
+    }
+
+    function closeAuditModal() {
+        document.getElementById('audit-modal').style.display = 'none';
+    }
+
+    window.auditBuildPlanMarkup = auditBuildPlanMarkup;
+    window.closeAuditModal = closeAuditModal;
     
     // Функционал плавающей панели
     let isDragging = false;

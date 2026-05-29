@@ -125,6 +125,16 @@ foreach ($targets as $target) {
             echo '<p>Индекс <code>idx_fact_cut_date</code> уже существует.</p>';
         }
 
+        $planDateExpr = hasColumn($pdo, $table, 'plan_date') && hasColumn($pdo, $table, 'work_date')
+            ? 'COALESCE(plan_date, work_date)'
+            : (hasColumn($pdo, $table, 'plan_date') ? 'plan_date' : 'work_date');
+        $backfill = $pdo->exec("
+            UPDATE {$table}
+            SET fact_cut_date = {$planDateExpr}
+            WHERE done = 1 AND fact_cut_date IS NULL AND {$planDateExpr} IS NOT NULL
+        ");
+        echo '<p>Backfill <code>fact_cut_date</code> для done=1: ' . (int)$backfill . ' строк.</p>';
+
         echo '<p style="color:#166534;"><strong>OK</strong></p>';
     } catch (Throwable $e) {
         echo '<p style="color:#b91c1c;">Ошибка: ' . htmlspecialchars($e->getMessage()) . '</p>';
