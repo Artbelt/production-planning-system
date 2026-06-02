@@ -1047,9 +1047,9 @@ $pageTitle = 'Активные позиции';
             flex-wrap: nowrap;
             align-items: center;
             justify-content: center;
-            gap: 2px;
-            height: 22px;
-            max-height: 22px;
+            gap: 1px;
+            height: 20px;
+            max-height: 20px;
             overflow: hidden;
             white-space: nowrap;
         }
@@ -1059,17 +1059,17 @@ $pageTitle = 'Активные позиции';
             align-items: center;
             justify-content: center;
             width: auto;
-            min-width: 24px;
-            min-height: 18px;
-            max-height: 20px;
-            padding: 0 4px;
+            min-width: 18px;
+            min-height: 16px;
+            max-height: 18px;
+            padding: 0 2px;
             border: 1px solid #d1d5db;
-            border-radius: 4px;
+            border-radius: 3px;
             background: #f9fafb;
             color: #374151;
-            font-size: 10px;
+            font-size: 9px;
             font-weight: 600;
-            line-height: 1.2;
+            line-height: 1.15;
             cursor: default;
             white-space: nowrap;
             flex-shrink: 0;
@@ -1078,15 +1078,15 @@ $pageTitle = 'Активные позиции';
             appearance: none;
             flex-shrink: 0;
             border: 1px dashed #94a3b8;
-            border-radius: 4px;
+            border-radius: 3px;
             background: #f1f5f9;
             color: #475569;
-            font-size: 10px;
+            font-size: 9px;
             font-weight: 700;
-            line-height: 1.2;
-            padding: 0 4px;
-            min-height: 18px;
-            max-height: 20px;
+            line-height: 1.15;
+            padding: 0 2px;
+            min-height: 16px;
+            max-height: 18px;
             cursor: pointer;
             white-space: nowrap;
         }
@@ -1115,7 +1115,7 @@ $pageTitle = 'Активные позиции';
         }
         .debt-shift.debt-shift--popover {
             width: 100%;
-            min-height: 22px;
+            min-height: 20px;
             justify-content: center;
         }
         .debt-shift.drag-source-single {
