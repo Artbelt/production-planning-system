@@ -1,0 +1,6 @@
+cd c:\xampp\htdocs\
+scp c:\xampp\htdocs\plan_U3\active_positions.php root@49.13.143.76:/var/www/html/plan_U3/
+scp c:\xampp\htdocs\plan\NP_build_plan.php root@49.13.143.76:/var/www/html/plan/
+
+scp c:\xampp\htdocs\plan_U5\NP_print_build_plan.php root@49.13.143.76:/var/www/html/plan_U5/
+NP_print_build_plan.php
