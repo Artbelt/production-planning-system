@@ -1043,6 +1043,7 @@ $pageTitle = 'Активные позиции';
             max-width: 88px;
             text-align: center;
             box-sizing: border-box;
+            position: relative;
         }
         td.debt-cell {
             vertical-align: middle;
@@ -1263,6 +1264,23 @@ $pageTitle = 'Активные позиции';
         .frozen-col.frozen-col--last {
             box-shadow: 1px 0 0 0 var(--border);
         }
+        /* Вертикаль у правого края «Долг» (::before — ::after занят у debt-cell--warn) */
+        th.debt-col.frozen-col--last,
+        td.debt-cell.frozen-col--last {
+            overflow: visible;
+        }
+        th.debt-col.frozen-col--last::before,
+        td.debt-cell.frozen-col--last::before {
+            content: '';
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 0;
+            border-right: 1px solid var(--border);
+            z-index: 45;
+            pointer-events: none;
+        }
         th, td {
             padding: 2px 5px;
             text-align: left;
@@ -1295,6 +1313,26 @@ $pageTitle = 'Активные позиции';
         tr:hover td { background: #fafbfc; }
         td.num { text-align: right; font-variant-numeric: tabular-nums; }
         th.date-col, td.date-col { text-align: center; }
+        /* Левая граница блока дат; ::before поверх inset из gofro-coverage и пр. подсветок */
+        th.date-col.plan-dates-edge,
+        td.date-cell.plan-dates-edge {
+            border-left: 1px solid var(--border);
+        }
+        th.date-col.plan-dates-edge {
+            position: relative;
+        }
+        th.date-col.plan-dates-edge::before,
+        td.date-cell.plan-dates-edge::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 0;
+            border-left: 1px solid var(--border);
+            z-index: 6;
+            pointer-events: none;
+        }
         td.date-cell {
             cursor: default;
             transition: background-color .12s ease, outline-color .12s ease;
@@ -2135,7 +2173,7 @@ $pageTitle = 'Активные позиции';
                         <th class="debt-col">Долг</th>
                         <th class="num gofro-col">Г/п изготовлено</th>
                         <th class="num gofro-col">Г/п в наличии</th>
-                        <?php foreach ($buildPlanDates as $planDate):
+                        <?php foreach ($buildPlanDates as $idx => $planDate):
                             $dateObj = DateTime::createFromFormat('Y-m-d', (string) $planDate);
                             $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
                             $indicatorState = $dateIndicators[(string)$planDate] ?? ['press_filters' => [], 'diameter_qty' => 0, 'w600_qty' => 0, 'total_qty' => 0];
@@ -2189,8 +2227,9 @@ $pageTitle = 'Активные позиции';
                                 $totalClass .= ' over';
                             }
                             $totalTitle = 'Всего в смену: ' . $totalQty . ' шт из нормы ' . (int)$indicatorNormTotal . ' шт';
+                            $planDatesEdgeClass = ($idx === 0) ? ' plan-dates-edge' : '';
                         ?>
-                            <th class="num date-col" data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
+                            <th class="num date-col<?= $planDatesEdgeClass ?>" data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
                                 <span class="date-head">
                                     <span><?= htmlspecialchars($dateLabel, ENT_QUOTES, 'UTF-8') ?></span>
                                     <span class="date-indicators" aria-hidden="true">
@@ -2383,11 +2422,12 @@ $pageTitle = 'Активные позиции';
                         <td class="num gofro-col" title="<?= $rowGofroPackage !== '' ? ('Гофропакет: ' . htmlspecialchars($rowGofroPackage, ENT_QUOTES, 'UTF-8') . '; разница = изготовлено г/п (' . (int)($rowGofroProduced ?? 0) . ') - изготовлено фильтров (' . (int)$produced . ')') : 'Для фильтра не задан гофропакет' ?>">
                             <?= $rowGofroAvailable !== null ? (int)$rowGofroAvailable : '—' ?>
                         </td>
-                        <?php foreach ($buildPlanDates as $planDate):
+                        <?php foreach ($buildPlanDates as $idx => $planDate):
                             $planQty = (int)($planQtyByDate[$planDate] ?? 0);
+                            $planDatesEdgeClass = ($idx === 0) ? ' plan-dates-edge' : '';
                         ?>
                             <td
-                                class="num date-col date-cell"
+                                class="num date-col date-cell<?= $planDatesEdgeClass ?>"
                                 data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
                                 data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
                                 data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>"
@@ -2412,7 +2452,7 @@ $pageTitle = 'Активные позиции';
                         <th class="debt-col">Долг</th>
                         <th class="num gofro-col">Г/п изготовлено</th>
                         <th class="num gofro-col">Г/п в наличии</th>
-                        <?php foreach ($buildPlanDates as $planDate):
+                        <?php foreach ($buildPlanDates as $idx => $planDate):
                             $dateObj = DateTime::createFromFormat('Y-m-d', (string) $planDate);
                             $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
                             $indicatorState = $dateIndicators[(string)$planDate] ?? ['press_filters' => [], 'diameter_qty' => 0, 'w600_qty' => 0, 'total_qty' => 0];
@@ -2466,8 +2506,9 @@ $pageTitle = 'Активные позиции';
                                 $totalClass .= ' over';
                             }
                             $totalTitle = 'Всего в смену: ' . $totalQty . ' шт из нормы ' . (int)$indicatorNormTotal . ' шт';
+                            $planDatesEdgeClass = ($idx === 0) ? ' plan-dates-edge' : '';
                         ?>
-                            <th class="num date-col" data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
+                            <th class="num date-col<?= $planDatesEdgeClass ?>" data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
                                 <span class="date-head">
                                     <span><?= htmlspecialchars($dateLabel, ENT_QUOTES, 'UTF-8') ?></span>
                                     <span class="date-indicators" aria-hidden="true">
@@ -2884,6 +2925,8 @@ $pageTitle = 'Активные позиции';
                 const thDate = String(th.getAttribute('data-plan-date') || '').trim();
                 th.classList.toggle('date-filter-active', hasFilter && thDate === targetDate);
             });
+            /* После скрытия строк ширины колонок таблицы меняются — пересчитать sticky, иначе даты «езжают» под «Долг» */
+            applyFrozenColumns();
         }
 
         function toggleDateFilter(date) {
@@ -2961,6 +3004,7 @@ $pageTitle = 'Активные позиции';
             if (panel) {
                 panel.classList.toggle('plan-date-focus-active', !!focusRange);
             }
+            syncPlanDatesEdgeColumn();
         }
 
         function updateRangeActiveHeaderClasses() {
@@ -3102,7 +3146,6 @@ $pageTitle = 'Активные позиции';
             applyDateRowFilter();
             updateRangeActiveHeaderClasses();
             updatePlanFocusBar();
-            applyFrozenColumns();
         }
 
         function resetFocusRange() {
@@ -3114,7 +3157,6 @@ $pageTitle = 'Активные позиции';
             applyDateRowFilter();
             updateRangeActiveHeaderClasses();
             updatePlanFocusBar();
-            applyFrozenColumns();
         }
 
         function updateHiddenOrdersBadge() {
@@ -3384,6 +3426,7 @@ $pageTitle = 'Активные позиции';
         function applyGofroCoverageHighlight() {
             clearGofroCoverageHighlight();
             if (!isGofroCoverageVisible) {
+                syncPlanDatesEdgeColumn();
                 return;
             }
             document.querySelectorAll('tr.plan-row').forEach(function (row) {
@@ -3442,6 +3485,7 @@ $pageTitle = 'Активные позиции';
                     totalRemaining -= plannedUsed;
                 });
             });
+            syncPlanDatesEdgeColumn();
         }
 
         function setGofroCoverageVisible(visible) {
@@ -3518,6 +3562,44 @@ $pageTitle = 'Активные позиции';
 
         refreshDateCellsCache();
 
+        function syncPlanDatesEdgeColumn() {
+            const table = document.querySelector('.panel table');
+            if (!table) {
+                return;
+            }
+            function isPlanDateCellVisible(el) {
+                if (!el) {
+                    return false;
+                }
+                const tr = el.closest('tr');
+                if (tr && tr.hidden) {
+                    return false;
+                }
+                /* Только inline-скрытие (фокус по датам); getComputedStyle давал ложные «none» до отрисовки */
+                if (el.style.display === 'none') {
+                    return false;
+                }
+                return true;
+            }
+            function updateRow(tr, selector) {
+                const cells = Array.from(tr.querySelectorAll(selector));
+                let assigned = false;
+                cells.forEach(function (cell) {
+                    const show = !assigned && isPlanDateCellVisible(cell);
+                    cell.classList.toggle('plan-dates-edge', show);
+                    if (show) {
+                        assigned = true;
+                    }
+                });
+            }
+            table.querySelectorAll('thead tr, tfoot tr').forEach(function (tr) {
+                updateRow(tr, 'th[data-plan-date]');
+            });
+            table.querySelectorAll('tbody tr.plan-row').forEach(function (tr) {
+                updateRow(tr, 'td.date-cell[data-date]');
+            });
+        }
+
         function applyFrozenColumns() {
             const table = document.querySelector('.panel table');
             if (!table) {
@@ -3549,6 +3631,7 @@ $pageTitle = 'Активные позиции';
                     }
                 });
             });
+            syncPlanDatesEdgeColumn();
         }
         const lockedShiftKeys = loadLockedShiftKeys();
         let dragContext = null;
@@ -3625,7 +3708,7 @@ $pageTitle = 'Активные позиции';
 
         function buildPlanDateTh(iso) {
             const th = document.createElement('th');
-            th.className = 'num date-col';
+            th.className = 'num date-col plan-dates-edge';
             th.setAttribute('data-plan-date', iso);
             th.setAttribute('data-date', iso);
             th.setAttribute('title', 'План сборки на ' + iso);
