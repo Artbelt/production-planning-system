@@ -2127,6 +2127,7 @@ $pageTitle = 'Активные позиции';
             <button type="button" id="openGofroPackagesBtn" class="toolbar-btn secondary">Гофропакеты</button>
             <button type="button" id="toggleGofroCoverageBtn" class="toolbar-btn secondary" aria-pressed="false">Покрытие гофропакетами</button>
             <button type="button" id="togglePressRowsOnlyBtn" class="toolbar-btn secondary" aria-pressed="false" title="Показать только позиции с маркером под пресс (П) — для расстановки плана">Только П: выкл</button>
+            <button type="button" id="toggleDiameterRowsOnlyBtn" class="toolbar-btn secondary" aria-pressed="false" title="Показать только позиции с маркером большого диаметра (D)">Только D: выкл</button>
             <button type="button" id="addPlanDayBtn" class="toolbar-btn secondary" title="Добавить колонку следующего дня в конец таблицы (только в интерфейсе; в БД не пишется)">+ день</button>
             <button type="button" id="openHiddenOrdersBtn" class="toolbar-btn secondary">Заявки <span id="hiddenOrdersBadge" class="orders-badge" hidden></span></button>
         </div>
@@ -2675,6 +2676,7 @@ $pageTitle = 'Активные позиции';
         const openGofroPackagesBtn = document.getElementById('openGofroPackagesBtn');
         const toggleGofroCoverageBtn = document.getElementById('toggleGofroCoverageBtn');
         const togglePressRowsOnlyBtn = document.getElementById('togglePressRowsOnlyBtn');
+        const toggleDiameterRowsOnlyBtn = document.getElementById('toggleDiameterRowsOnlyBtn');
         const modal = document.getElementById('indicatorSettingsModal');
         const saveBtn = document.getElementById('indicatorSettingsSaveBtn');
         const cancelBtn = document.getElementById('indicatorSettingsCancelBtn');
@@ -2731,7 +2733,7 @@ $pageTitle = 'Активные позиции';
         const debtSpreadHint = document.getElementById('debtSpreadHint');
         const debtSpreadCancelBtn = document.getElementById('debtSpreadCancelBtn');
         const debtSpreadApplyBtn = document.getElementById('debtSpreadApplyBtn');
-        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !openGofroPackagesBtn || !toggleGofroCoverageBtn || !togglePressRowsOnlyBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !maxListPctInput || !normalizePreviewModal || !normalizePreviewList || !normalizePreviewApplyBtn || !normalizePreviewCancelBtn || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !applyPendingMovesPanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !debtExpandPopover || !debtExpandPopoverInner || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearLocksBtn || !clearPendingMovesBtn || !addPlanDayBtn || !enterRangeSelectModeBtn || !rangeSelectHint || !planFocusBar || !planFocusLabel || !resetFocusRangeBtn || !openHiddenOrdersBtn || !hiddenOrdersModal || !hiddenOrdersSearchInput || !hiddenOrdersList || !hiddenOrdersShowAllBtn || !hiddenOrdersApplyBtn || !hiddenOrdersCancelBtn || !hiddenOrdersBadge || !debtCellContextMenu || !debtCellCtxSpread || !debtSpreadModal || !debtSpreadMeta || !debtSpreadStartSelect || !debtSpreadBatchInput || !debtSpreadQtyInput || !debtSpreadHint || !debtSpreadCancelBtn || !debtSpreadApplyBtn) {
+        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !openGofroPackagesBtn || !toggleGofroCoverageBtn || !togglePressRowsOnlyBtn || !toggleDiameterRowsOnlyBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !maxListPctInput || !normalizePreviewModal || !normalizePreviewList || !normalizePreviewApplyBtn || !normalizePreviewCancelBtn || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !applyPendingMovesPanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !debtExpandPopover || !debtExpandPopoverInner || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearLocksBtn || !clearPendingMovesBtn || !addPlanDayBtn || !enterRangeSelectModeBtn || !rangeSelectHint || !planFocusBar || !planFocusLabel || !resetFocusRangeBtn || !openHiddenOrdersBtn || !hiddenOrdersModal || !hiddenOrdersSearchInput || !hiddenOrdersList || !hiddenOrdersShowAllBtn || !hiddenOrdersApplyBtn || !hiddenOrdersCancelBtn || !hiddenOrdersBadge || !debtCellContextMenu || !debtCellCtxSpread || !debtSpreadModal || !debtSpreadMeta || !debtSpreadStartSelect || !debtSpreadBatchInput || !debtSpreadQtyInput || !debtSpreadHint || !debtSpreadCancelBtn || !debtSpreadApplyBtn) {
             return;
         }
         const storageKey = 'activePositionsIndicatorSettings';
@@ -2740,6 +2742,7 @@ $pageTitle = 'Активные позиции';
         const gofroColumnsVisibleStorageKey = 'activePositionsGofroColumnsVisible';
         const gofroCoverageVisibleStorageKey = 'activePositionsGofroCoverageVisible';
         const pressRowsOnlyStorageKey = 'activePositionsPressRowsOnly';
+        const diameterRowsOnlyStorageKey = 'activePositionsDiameterRowsOnly';
         const queuePanelStorageKey = 'activePositionsQueuePanelOpen';
         const lockStorageKey = `activePositionsLockedShifts:${window.location.pathname}`;
         const hiddenOrdersStorageKey = `activePositionsHiddenOrders:${window.location.pathname}`;
@@ -2827,6 +2830,7 @@ $pageTitle = 'Активные позиции';
 
         let hiddenOrdersSet = loadHiddenOrdersFromStorage();
         let pressRowsOnlyActive = false;
+        let diameterRowsOnlyActive = false;
 
         function closeDebtCellContextMenu() {
             if (debtCellContextMenu) {
@@ -2910,6 +2914,10 @@ $pageTitle = 'Активные позиции';
             return (row.dataset.hasPress || '') === '1' || !!row.querySelector('.pos-indicator.p');
         }
 
+        function rowHasDiameterFlag(row) {
+            return (row.dataset.hasD || '') === '1' || !!row.querySelector('.pos-indicator.d');
+        }
+
         function applyDateRowFilter() {
             const targetDate = String(activeDateFilter || '').trim();
             const hasFilter = targetDate !== '';
@@ -2937,7 +2945,8 @@ $pageTitle = 'Активные позиции';
                     });
                 }
                 const passPressOnly = !pressRowsOnlyActive || rowHasPressFlag(row);
-                row.hidden = hideByOrder || !passDateRules || !passPressOnly;
+                const passDiameterOnly = !diameterRowsOnlyActive || rowHasDiameterFlag(row);
+                row.hidden = hideByOrder || !passDateRules || !passPressOnly || !passDiameterOnly;
             });
             document.querySelectorAll('th[data-plan-date]').forEach(function (th) {
                 const thDate = String(th.getAttribute('data-plan-date') || '').trim();
@@ -2952,6 +2961,11 @@ $pageTitle = 'Активные позиции';
             togglePressRowsOnlyBtn.textContent = pressRowsOnlyActive ? 'Только П: вкл' : 'Только П: выкл';
         }
 
+        function syncDiameterRowsOnlyButton() {
+            toggleDiameterRowsOnlyBtn.setAttribute('aria-pressed', diameterRowsOnlyActive ? 'true' : 'false');
+            toggleDiameterRowsOnlyBtn.textContent = diameterRowsOnlyActive ? 'Только D: вкл' : 'Только D: выкл';
+        }
+
         function setPressRowsOnlyActive(active) {
             pressRowsOnlyActive = !!active;
             try {
@@ -2960,6 +2974,17 @@ $pageTitle = 'Активные позиции';
                 // ignore storage write errors
             }
             syncPressRowsOnlyButton();
+            applyDateRowFilter();
+        }
+
+        function setDiameterRowsOnlyActive(active) {
+            diameterRowsOnlyActive = !!active;
+            try {
+                localStorage.setItem(diameterRowsOnlyStorageKey, diameterRowsOnlyActive ? '1' : '0');
+            } catch (e) {
+                // ignore storage write errors
+            }
+            syncDiameterRowsOnlyButton();
             applyDateRowFilter();
         }
 
@@ -3600,7 +3625,13 @@ $pageTitle = 'Активные позиции';
         } catch (e) {
             pressRowsOnlyActive = false;
         }
+        try {
+            diameterRowsOnlyActive = localStorage.getItem(diameterRowsOnlyStorageKey) === '1';
+        } catch (e) {
+            diameterRowsOnlyActive = false;
+        }
         syncPressRowsOnlyButton();
+        syncDiameterRowsOnlyButton();
         applyDateRowFilter();
 
         function syncPlanDatesEdgeColumn() {
@@ -3993,10 +4024,6 @@ $pageTitle = 'Активные позиции';
             applySettings(getSettings());
             applyFocusColumnVisibility();
             applyDateRowFilter();
-        }
-
-        function rowHasDiameterFlag(row) {
-            return (row.dataset.hasD || '') === '1' || !!row.querySelector('.pos-indicator.d');
         }
 
         /** Клик по «П»: подсветить строки с прессом, у которых в этой дате есть план; повторный клик по тому же «П» — снять. */
@@ -6451,6 +6478,9 @@ $pageTitle = 'Активные позиции';
         });
         togglePressRowsOnlyBtn.addEventListener('click', function () {
             setPressRowsOnlyActive(!pressRowsOnlyActive);
+        });
+        toggleDiameterRowsOnlyBtn.addEventListener('click', function () {
+            setDiameterRowsOnlyActive(!diameterRowsOnlyActive);
         });
         normalizePlanBtn.addEventListener('click', function () {
             normalizePlanIntoQueue();
