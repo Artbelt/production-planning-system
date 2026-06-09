@@ -1241,9 +1241,10 @@ try{
         }catch(e){ alert('Не удалось сохранить: '+e.message); }
     }
 
-    async function loadPlanFromDB(){
+    async function loadPlanFromDB(opts){
+        const silent = !!(opts && opts.silent);
         try{
-            const url = 'NP_cut_plan.php?action=load_plan&order_number='+encodeURIComponent(ORDER_NUMBER);
+            const url = location.pathname+'?action=load_plan&order_number='+encodeURIComponent(ORDER_NUMBER);
             const res = await fetch(url, { headers:{'Accept':'application/json'} });
             const txt = await res.text();
             if (!res.ok) throw new Error(`HTTP ${res.status}: ${txt.slice(0,500)}`);
@@ -1253,7 +1254,13 @@ try{
             catch { throw new Error('Backend вернул не JSON:\n'+txt.slice(0,500)); }
 
             if(!data.ok) throw new Error(data.error||'Ошибка загрузки');
-            if(!data.exists){ alert('Сохранённый раскрой не найден.'); return; }
+            if(!data.exists){
+                if(!silent) alert('Сохранённый раскрой не найден.');
+                return;
+            }
+
+            // Автозагрузка: не затираем бухты, если пользователь уже начал работу до ответа сервера
+            if(silent && bales.length > 0) return;
 
             clearBale(); bales=[];
             data.bales.forEach((b, i)=>{
@@ -1275,9 +1282,11 @@ try{
             });
             for(const [key,sum] of sums.entries()){ if(idx[key]) updateRowMeters(idx[key], sum); }
 
-            renderBales(); highlightWidthMatches(); alert('Загружено.');
+            renderBales(); highlightWidthMatches();
+            if(!silent) alert('Загружено.');
         }catch(e){
-            alert('Не удалось загрузить: '+e.message);
+            if(silent) console.error('loadPlanFromDB:', e);
+            else alert('Не удалось загрузить: '+e.message);
         }
     }
     if (el('btnSavePlan')) el('btnSavePlan').addEventListener('click', savePlanToDB);
@@ -1913,6 +1922,9 @@ try{
     loadMarks();
     updBaleUI(); setSelection(null); highlightWidthMatches();
     applyAllMarks();
+
+    // Сразу подтягиваем сохранённый раскрой из БД (без alert), чтобы «Сохранить» не ушло с пустым состоянием из‑за гонки с ручной «Загрузить»
+    loadPlanFromDB({ silent: true });
 
     // показываем модалку, если есть новые позиции
     if (Array.isArray(MISSING) && MISSING.length){ renderMissingModal(); }

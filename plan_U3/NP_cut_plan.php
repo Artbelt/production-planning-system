@@ -1014,7 +1014,9 @@ try{
         }
     }
 
-    async function loadFromDB(){
+    async function loadFromDB(opts){
+        opts = opts || {};
+        const silent = !!opts.silent;
         try{
             // Сначала загружаем остатки на участке
             await loadStocksFromDB();
@@ -1050,10 +1052,13 @@ try{
             }
 
             highlightWidthMatches();
-            alert('Раскрой загружен из БД.');
-        }catch(e){ alert('Не удалось загрузить: ' + e.message); }
+            if (!silent) alert('Раскрой загружен из БД.');
+        }catch(e){
+            if (silent) console.error('Автозагрузка раскроя:', e.message);
+            else alert('Не удалось загрузить: ' + e.message);
+        }
     }
-    document.getElementById('btnLoadDB').addEventListener('click', loadFromDB);
+    document.getElementById('btnLoadDB').addEventListener('click', function(){ loadFromDB(); });
 
     // === ФУНКЦИИ ДЛЯ МОДАЛКИ ===
     function buildAssortSelect(id) {
@@ -1205,8 +1210,8 @@ try{
     el('btnSave').disabled=true; el('btnClear').disabled=true;
     highlightWidthMatches();
     
-    // Загружаем остатки на участке при загрузке страницы
-    loadStocksFromDB();
+    // Остатки + сохранённый раскрой из БД при открытии страницы (без всплывающего «успех»)
+    loadFromDB({ silent: true });
 
     // показываем модалку, если есть новые позиции
     if (Array.isArray(MISSING) && MISSING.length){ renderMissingModal(); }

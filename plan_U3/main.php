@@ -864,6 +864,9 @@ echo "<!-- Аккуратная панель авторизации -->
                 echo '<div style="border-top: 1px dashed var(--border); margin: 8px 0;"></div>';
                 
                 echo "<form action='NP_cut_index.php' method='post' target='_blank' class='stack'>"
+                    ."<input type='submit' value='Старый менеджер планирования'>"
+                    ."</form>";
+                echo "<form action='planning_manager_new.php' method='get' target='_blank' class='stack'>"
                     ."<input type='submit' value='Менеджер планирования'>"
                     ."</form>";
                 echo '</section>';

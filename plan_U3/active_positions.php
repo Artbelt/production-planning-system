@@ -37,6 +37,26 @@ require_once __DIR__ . '/../auth/includes/db.php';
 
 $pdo = getPdo('plan_u3');
 
+/** Право менять план на странице: только мастер (supervisor) и директор в цехе U3; менеджеры и остальные — просмотр. */
+$dbAuth = Database::getInstance();
+$userDepartmentsForU3 = $dbAuth->select(
+    'SELECT ud.department_code, r.name AS role_name
+     FROM auth_user_departments ud
+     JOIN auth_roles r ON ud.role_id = r.id
+     WHERE ud.user_id = ?',
+    [$session['user_id']]
+);
+$activePositionsEditRoleNames = ['supervisor', 'director', 'master'];
+$activePositionsCanEdit = false;
+foreach ($userDepartmentsForU3 as $dept) {
+    if (($dept['department_code'] ?? '') === 'U3'
+        && in_array((string)($dept['role_name'] ?? ''), $activePositionsEditRoleNames, true)
+    ) {
+        $activePositionsCanEdit = true;
+        break;
+    }
+}
+
 /**
  * Нормализуем имя фильтра для сопоставления позиций заявки и записей планов.
  */
@@ -352,6 +372,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string)($payload['action'] ?? '');
     if ($action === 'move_plan' || $action === 'apply_moves') {
         header('Content-Type: application/json; charset=utf-8');
+        if (!$activePositionsCanEdit) {
+            http_response_code(403);
+            echo json_encode(
+                ['ok' => false, 'error' => 'Недостаточно прав: изменять план могут только мастера и директора цеха U3.'],
+                JSON_UNESCAPED_UNICODE
+            );
+            exit;
+        }
 
         $isDate = static function (string $value): bool {
             return (bool) preg_match('/^\d{4}-\d{2}-\d{2}$/', $value);
@@ -1272,12 +1300,19 @@ $pageTitle = 'Активные позиции';
             transition: background-color .12s ease, outline-color .12s ease;
             position: relative;
         }
+        /* Зафиксировано: монолитный спокойный вид (без пёстрых полос) */
         td.date-cell.date-cell--locked,
         td.date-cell.locked {
-            background: #e5e7eb !important;
-            color: #374151;
-            opacity: .92;
+            background: linear-gradient(165deg, #8b94a0 0%, #737c88 40%, #5f6773 100%) !important;
+            color: #f4f6f8 !important;
+            font-weight: 600;
             cursor: not-allowed;
+            text-shadow: 0 1px 1px rgba(0, 0, 0, 0.22);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.2),
+                inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+                inset 1px 0 0 rgba(255, 255, 255, 0.08),
+                inset -1px 0 0 rgba(0, 0, 0, 0.16) !important;
         }
         td.date-cell.hover-dnd-center {
             outline: 2px solid #818cf8;
@@ -2022,10 +2057,15 @@ $pageTitle = 'Активные позиции';
     </style>
 </head>
 <body>
-<div class="wrap">
+<div class="wrap<?= $activePositionsCanEdit ? '' : ' wrap--active-positions-readonly' ?>">
     <div class="top">
         <h1><?= htmlspecialchars($pageTitle) ?></h1>
     </div>
+    <?php if (!$activePositionsCanEdit): ?>
+        <div class="alert" style="margin: 0 0 16px; background: #eff6ff; border-color: #bfdbfe; color: #1e3a8a;">
+            Режим просмотра: редактирование плана (переносы, очередь, нормализация) доступно только <strong>мастерам</strong> и <strong>директорам</strong> цеха U3. Менеджеры и другие роли видят данные без возможности записи в базу.
+        </div>
+    <?php endif; ?>
     <p class="muted" style="margin: 0 0 16px;">
         Позиции по заявкам без признака «скрыта», у которых заказано больше, чем изготовлено фильтров по данным выпуска.
         Показаны позиции с процентом выполнения не выше <?= (int) $maxPct ?>% (включительно).
@@ -2352,8 +2392,8 @@ $pageTitle = 'Активные позиции';
                                 data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
                                 data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>"
                                 data-qty="<?= (int)$planQty ?>"
-                                draggable="<?= $planQty > 0 ? 'true' : 'false' ?>"
-                                title="<?= $planQty > 0 ? 'Перетащите: обычный перенос — одна смена; Shift — сдвиг непрерывного блока смен по датам' : 'Сюда можно перенести план этой позиции' ?>"
+                                draggable="<?= ($activePositionsCanEdit && $planQty > 0) ? 'true' : 'false' ?>"
+                                title="<?= !$activePositionsCanEdit ? 'Просмотр: перенос недоступен' : ($planQty > 0 ? 'Перетащите: обычный перенос — одна смена; Shift — сдвиг непрерывного блока смен по датам' : 'Сюда можно перенести план этой позиции') ?>"
                             ><?= $planQty > 0 ? $planQty : '' ?></td>
                         <?php endforeach; ?>
                     </tr>
@@ -2577,6 +2617,7 @@ $pageTitle = 'Активные позиции';
 </div>
 <script>
     (function () {
+        const canEditPlan = <?= $activePositionsCanEdit ? 'true' : 'false' ?>;
         const initialDebtShiftMap = <?= json_encode($debtShiftMap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
         const pageTodayIso = <?= json_encode($todayIso, JSON_UNESCAPED_UNICODE) ?>;
         const todayIso = pageTodayIso;
@@ -3712,7 +3753,7 @@ $pageTitle = 'Активные позиции';
                 cell.title = 'Зафиксировано';
             } else {
                 delete cell.dataset.locked;
-                cell.setAttribute('draggable', qty > 0 ? 'true' : 'false');
+                cell.setAttribute('draggable', canEditPlan && qty > 0 ? 'true' : 'false');
                 cell.title = getCellTitle(qty);
             }
             if (wasUpdated) {
@@ -3721,6 +3762,9 @@ $pageTitle = 'Активные позиции';
         }
 
         function toggleCellLock(cell) {
+            if (!canEditPlan) {
+                return;
+            }
             if (!cell) {
                 return;
             }
@@ -4049,14 +4093,17 @@ $pageTitle = 'Активные позиции';
             const count = pendingMoves.length;
             pendingMovesBar.hidden = false;
             pendingMovesText.textContent = `Изменений в очереди: ${count}`;
-            const disabled = count === 0 || isApplyingPendingMoves;
-            normalizePlanBtn.disabled = isApplyingPendingMoves;
+            const readOnly = !canEditPlan;
+            const disabled = readOnly || count === 0 || isApplyingPendingMoves;
+            normalizePlanBtn.disabled = readOnly || isApplyingPendingMoves;
             applyPendingMovesBtn.disabled = disabled;
             applyPendingMovesPanelBtn.disabled = disabled;
             undoPendingMoveBtn.disabled = disabled;
-            clearLocksBtn.disabled = isApplyingPendingMoves;
+            clearLocksBtn.disabled = readOnly || isApplyingPendingMoves;
             clearPendingMovesBtn.disabled = disabled;
             toggleQueuePanelBtn.textContent = `Очередь (${count})`;
+            addPlanDayBtn.disabled = readOnly;
+            enterRangeSelectModeBtn.disabled = readOnly;
             if (isApplyingPendingMoves) {
                 applyPendingMovesBtn.textContent = 'Применение...';
                 applyPendingMovesPanelBtn.textContent = 'Применение...';
@@ -4229,6 +4276,10 @@ $pageTitle = 'Активные позиции';
 
         function bindDebtShiftDrag(item) {
             item.addEventListener('dragstart', function (e) {
+                if (!canEditPlan) {
+                    e.preventDefault();
+                    return;
+                }
                 const order = item.dataset.order || '';
                 const filter = item.dataset.filter || '';
                 const fromDate = item.dataset.date || '';
@@ -4301,7 +4352,7 @@ $pageTitle = 'Активные позиции';
                 const item = document.createElement('button');
                 item.type = 'button';
                 item.className = 'debt-shift debt-shift--popover';
-                item.draggable = true;
+                item.draggable = canEditPlan;
                 item.dataset.order = order;
                 item.dataset.filter = filter;
                 item.dataset.date = shift.date;
@@ -4374,7 +4425,7 @@ $pageTitle = 'Активные позиции';
                 const item = document.createElement('button');
                 item.type = 'button';
                 item.className = 'debt-shift';
-                item.draggable = true;
+                item.draggable = canEditPlan;
                 item.dataset.order = order;
                 item.dataset.filter = filter;
                 item.dataset.date = shift.date;
@@ -5395,6 +5446,9 @@ $pageTitle = 'Активные позиции';
         }
 
         function normalizePlanIntoQueue() {
+            if (!canEditPlan) {
+                return;
+            }
             if (isApplyingPendingMoves) {
                 return;
             }
@@ -5615,6 +5669,9 @@ $pageTitle = 'Активные позиции';
         }
 
         function pushPendingMove(queuedMove) {
+            if (!canEditPlan) {
+                return;
+            }
             applyQueuedMoveChanges(queuedMove, 'forward');
             pendingMoves.push(queuedMove);
             updatePendingBarState();
@@ -5667,6 +5724,10 @@ $pageTitle = 'Активные позиции';
         }
 
         async function applyPendingMovesToServer() {
+            if (!canEditPlan) {
+                alert('Недостаточно прав для записи плана в базу.');
+                return;
+            }
             if (pendingMoves.length === 0 || isApplyingPendingMoves) {
                 return;
             }
@@ -5940,6 +6001,9 @@ $pageTitle = 'Активные позиции';
             });
 
             cell.addEventListener('contextmenu', function (e) {
+                if (!canEditPlan) {
+                    return;
+                }
                 if (isApplyingPendingMoves || isMoving) {
                     return;
                 }
@@ -5948,6 +6012,10 @@ $pageTitle = 'Активные позиции';
             });
 
             cell.addEventListener('dragstart', function (e) {
+                if (!canEditPlan) {
+                    e.preventDefault();
+                    return;
+                }
                 clearHoverPreview();
                 const qty = parseInt(cell.dataset.qty || '0', 10) || 0;
                 if (qty <= 0 || isCellLocked(cell)) {
@@ -5983,6 +6051,9 @@ $pageTitle = 'Активные позиции';
             });
 
             cell.addEventListener('dragover', function (e) {
+                if (!canEditPlan) {
+                    return;
+                }
                 if (!canDropOn(cell)) {
                     hideDragPreview();
                     return;
@@ -5996,6 +6067,9 @@ $pageTitle = 'Активные позиции';
             });
 
             cell.addEventListener('dragenter', function (e) {
+                if (!canEditPlan) {
+                    return;
+                }
                 if (!canDropOn(cell)) {
                     hideDragPreview();
                     return;
@@ -6013,6 +6087,9 @@ $pageTitle = 'Активные позиции';
             });
 
             cell.addEventListener('drop', function (e) {
+                if (!canEditPlan) {
+                    return;
+                }
                 if (!canDropOn(cell)) {
                     return;
                 }
@@ -6037,6 +6114,9 @@ $pageTitle = 'Активные позиции';
         document.addEventListener('contextmenu', function (e) {
             const debtTd = e.target.closest('td.debt-cell[data-debt-key]');
             if (!debtTd) {
+                return;
+            }
+            if (!canEditPlan) {
                 return;
             }
             if (isApplyingPendingMoves || isMoving) {
