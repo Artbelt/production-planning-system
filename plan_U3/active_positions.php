@@ -12,7 +12,7 @@ $statePlanTolerancePct = 5;
 $indicatorNormWidth600 = 150;
 $indicatorNormDiameter = 100;
 $indicatorNormTotal = 300;
-/** Норма прессовых фильтров в смену (совпадает с дефолтом в JS localStorage; после загрузки страницы пересчитывается из настроек). */
+/** Норма суммарных шт по позициям «под пресс» в смену (не число разных позиций; совпадает с дефолтом в JS localStorage). */
 $indicatorMaxPressDefault = 1;
 
 require_once __DIR__ . '/../auth/includes/config.php';
@@ -808,7 +808,7 @@ try {
 $dateIndicators = [];
 foreach ($buildPlanDates as $planDate) {
     $dateIndicators[(string) $planDate] = [
-        'press_filters' => [],
+        'press_qty' => 0,
         'diameter_qty' => 0,
         'w600_qty' => 0,
         'total_qty' => 0,
@@ -840,7 +840,6 @@ if (!empty($rows) && !empty($buildPlanDates)) {
             $isLargeDiameter = false;
         }
         $isWidth600 = isset($meta['paper_width_mm']) && $meta['paper_width_mm'] !== null && (float)$meta['paper_width_mm'] > 450;
-        $normalizedFilter = normalizeFilterKey($rawFilter);
 
         foreach ($buildPlanDates as $planDate) {
             $dateKey = (string)$planDate;
@@ -853,7 +852,7 @@ if (!empty($rows) && !empty($buildPlanDates)) {
             }
             $dateIndicators[$dateKey]['total_qty'] += $planQty;
             if ($isPress) {
-                $dateIndicators[$dateKey]['press_filters'][$normalizedFilter] = true;
+                $dateIndicators[$dateKey]['press_qty'] += $planQty;
             }
             if ($isLargeDiameter) {
                 $dateIndicators[$dateKey]['diameter_qty'] += $planQty;
@@ -1196,12 +1195,6 @@ $pageTitle = 'Активные позиции';
             outline-offset: -2px;
             background: #eff6ff !important;
         }
-        tr.plan-row.press-conflict-flash td.pos-cell,
-        tr.plan-row.press-conflict-flash td.date-cell[data-date-conflict="1"] {
-            background: #fff7ed !important;
-            outline: 2px solid #f59e0b;
-            outline-offset: -2px;
-        }
         tr.plan-row.diameter-conflict-flash td.pos-cell,
         tr.plan-row.diameter-conflict-flash td.date-cell.diameter-flash-cell,
         tr.plan-row.diameter-conflict-flash td.date-cell[data-diameter-conflict="1"] {
@@ -1209,6 +1202,19 @@ $pageTitle = 'Активные позиции';
             outline: 2px solid #f87171 !important;
             outline-offset: -2px;
             box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.9);
+        }
+        .date-indicator[data-kind="press"] {
+            cursor: pointer;
+        }
+        th.press-column-highlight .date-indicator[data-kind="press"] {
+            outline: 2px solid #7c3aed;
+            outline-offset: 0;
+        }
+        tr.plan-row.press-highlight-row td.pos-cell,
+        tr.plan-row.press-highlight-row td.date-cell.press-highlight-cell {
+            background: #f5f3ff !important;
+            outline: 2px solid #7c3aed;
+            outline-offset: -2px;
         }
         .toolbar-btn {
             appearance: none;
@@ -2120,6 +2126,7 @@ $pageTitle = 'Активные позиции';
             <button type="button" id="openIndicatorSettingsBtn" class="toolbar-btn secondary">Настройка индикаторов</button>
             <button type="button" id="openGofroPackagesBtn" class="toolbar-btn secondary">Гофропакеты</button>
             <button type="button" id="toggleGofroCoverageBtn" class="toolbar-btn secondary" aria-pressed="false">Покрытие гофропакетами</button>
+            <button type="button" id="togglePressRowsOnlyBtn" class="toolbar-btn secondary" aria-pressed="false" title="Показать только позиции с маркером под пресс (П) — для расстановки плана">Только П: выкл</button>
             <button type="button" id="addPlanDayBtn" class="toolbar-btn secondary" title="Добавить колонку следующего дня в конец таблицы (только в интерфейсе; в БД не пишется)">+ день</button>
             <button type="button" id="openHiddenOrdersBtn" class="toolbar-btn secondary">Заявки <span id="hiddenOrdersBadge" class="orders-badge" hidden></span></button>
         </div>
@@ -2176,20 +2183,20 @@ $pageTitle = 'Активные позиции';
                         <?php foreach ($buildPlanDates as $idx => $planDate):
                             $dateObj = DateTime::createFromFormat('Y-m-d', (string) $planDate);
                             $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
-                            $indicatorState = $dateIndicators[(string)$planDate] ?? ['press_filters' => [], 'diameter_qty' => 0, 'w600_qty' => 0, 'total_qty' => 0];
-                            $pressCount = count($indicatorState['press_filters'] ?? []);
+                            $indicatorState = $dateIndicators[(string)$planDate] ?? ['press_qty' => 0, 'diameter_qty' => 0, 'w600_qty' => 0, 'total_qty' => 0];
+                            $pressCount = (int)($indicatorState['press_qty'] ?? 0);
                             $pressNorm = max(1, (int) $indicatorMaxPressDefault);
                             $pressClass = 'date-indicator slim marker-p';
-                            $pressTitle = 'Нет позиций под пресс';
+                            $pressTitle = 'Нет шт под пресс в плане на день';
                             if ($pressCount > $pressNorm) {
                                 $pressClass .= ' active over level-critical';
-                                $pressTitle = 'В смене ' . $pressCount . ' фильтра(ов) под пресс при норме ' . $pressNorm . ' (превышение)';
+                                $pressTitle = 'Под пресс в плане ' . $pressCount . ' шт при норме ' . $pressNorm . ' шт (превышение)';
                             } elseif ($pressCount === $pressNorm && $pressCount > 0) {
                                 $pressClass .= ' active level-ok';
-                                $pressTitle = 'В смене ' . $pressNorm . ' прессовый(ых) фильтр(ов) — норма';
+                                $pressTitle = 'Под пресс ' . $pressCount . ' шт — норма (' . $pressNorm . ' шт)';
                             } elseif ($pressCount > 0) {
                                 $pressClass .= ' active level-warning';
-                                $pressTitle = 'В смене ' . $pressCount . ' прессовый(ых) при норме ' . $pressNorm . ' (меньше нормы)';
+                                $pressTitle = 'Под пресс ' . $pressCount . ' шт при норме ' . $pressNorm . ' шт (ниже нормы)';
                             }
 
                             $w600Qty = (int)($indicatorState['w600_qty'] ?? 0);
@@ -2455,20 +2462,20 @@ $pageTitle = 'Активные позиции';
                         <?php foreach ($buildPlanDates as $idx => $planDate):
                             $dateObj = DateTime::createFromFormat('Y-m-d', (string) $planDate);
                             $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
-                            $indicatorState = $dateIndicators[(string)$planDate] ?? ['press_filters' => [], 'diameter_qty' => 0, 'w600_qty' => 0, 'total_qty' => 0];
-                            $pressCount = count($indicatorState['press_filters'] ?? []);
+                            $indicatorState = $dateIndicators[(string)$planDate] ?? ['press_qty' => 0, 'diameter_qty' => 0, 'w600_qty' => 0, 'total_qty' => 0];
+                            $pressCount = (int)($indicatorState['press_qty'] ?? 0);
                             $pressNorm = max(1, (int) $indicatorMaxPressDefault);
                             $pressClass = 'date-indicator slim marker-p';
-                            $pressTitle = 'Нет позиций под пресс';
+                            $pressTitle = 'Нет шт под пресс в плане на день';
                             if ($pressCount > $pressNorm) {
                                 $pressClass .= ' active over level-critical';
-                                $pressTitle = 'В смене ' . $pressCount . ' фильтра(ов) под пресс при норме ' . $pressNorm . ' (превышение)';
+                                $pressTitle = 'Под пресс в плане ' . $pressCount . ' шт при норме ' . $pressNorm . ' шт (превышение)';
                             } elseif ($pressCount === $pressNorm && $pressCount > 0) {
                                 $pressClass .= ' active level-ok';
-                                $pressTitle = 'В смене ' . $pressNorm . ' прессовый(ых) фильтр(ов) — норма';
+                                $pressTitle = 'Под пресс ' . $pressCount . ' шт — норма (' . $pressNorm . ' шт)';
                             } elseif ($pressCount > 0) {
                                 $pressClass .= ' active level-warning';
-                                $pressTitle = 'В смене ' . $pressCount . ' прессовый(ых) при норме ' . $pressNorm . ' (меньше нормы)';
+                                $pressTitle = 'Под пресс ' . $pressCount . ' шт при норме ' . $pressNorm . ' шт (ниже нормы)';
                             }
 
                             $w600Qty = (int)($indicatorState['w600_qty'] ?? 0);
@@ -2549,7 +2556,7 @@ $pageTitle = 'Активные позиции';
         <div id="indicatorSettingsTitle" class="ind-modal__head">Настройка индикаторов</div>
         <div class="ind-modal__body">
             <div class="ind-field">
-                <label for="indMaxPressInput">Максимум фильтров под пресс (П)</label>
+                <label for="indMaxPressInput">Максимум шт под пресс (П), сумма по позициям</label>
                 <input id="indMaxPressInput" type="number" min="1" step="1" value="1">
             </div>
             <div class="ind-field">
@@ -2573,7 +2580,7 @@ $pageTitle = 'Активные позиции';
                 <div class="ind-legend__title">Легенда</div>
                 <div class="ind-legend__line">300 фильтров с ППУ.</div>
                 <div class="ind-legend__line">150 фильтров с крышками.</div>
-                <div class="ind-legend__line">1 фильтр под пресс П</div>
+                <div class="ind-legend__line">П: сумма шт по всем позициям под пресс в день (порог в настройках).</div>
                 <div class="ind-legend__item">
                     <span class="ind-legend__marker">В</span>
                     <span>Пластиковая вставка</span>
@@ -2667,6 +2674,7 @@ $pageTitle = 'Активные позиции';
         const openSettingsBtn = document.getElementById('openIndicatorSettingsBtn');
         const openGofroPackagesBtn = document.getElementById('openGofroPackagesBtn');
         const toggleGofroCoverageBtn = document.getElementById('toggleGofroCoverageBtn');
+        const togglePressRowsOnlyBtn = document.getElementById('togglePressRowsOnlyBtn');
         const modal = document.getElementById('indicatorSettingsModal');
         const saveBtn = document.getElementById('indicatorSettingsSaveBtn');
         const cancelBtn = document.getElementById('indicatorSettingsCancelBtn');
@@ -2723,7 +2731,7 @@ $pageTitle = 'Активные позиции';
         const debtSpreadHint = document.getElementById('debtSpreadHint');
         const debtSpreadCancelBtn = document.getElementById('debtSpreadCancelBtn');
         const debtSpreadApplyBtn = document.getElementById('debtSpreadApplyBtn');
-        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !openGofroPackagesBtn || !toggleGofroCoverageBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !maxListPctInput || !normalizePreviewModal || !normalizePreviewList || !normalizePreviewApplyBtn || !normalizePreviewCancelBtn || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !applyPendingMovesPanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !debtExpandPopover || !debtExpandPopoverInner || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearLocksBtn || !clearPendingMovesBtn || !addPlanDayBtn || !enterRangeSelectModeBtn || !rangeSelectHint || !planFocusBar || !planFocusLabel || !resetFocusRangeBtn || !openHiddenOrdersBtn || !hiddenOrdersModal || !hiddenOrdersSearchInput || !hiddenOrdersList || !hiddenOrdersShowAllBtn || !hiddenOrdersApplyBtn || !hiddenOrdersCancelBtn || !hiddenOrdersBadge || !debtCellContextMenu || !debtCellCtxSpread || !debtSpreadModal || !debtSpreadMeta || !debtSpreadStartSelect || !debtSpreadBatchInput || !debtSpreadQtyInput || !debtSpreadHint || !debtSpreadCancelBtn || !debtSpreadApplyBtn) {
+        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !openGofroPackagesBtn || !toggleGofroCoverageBtn || !togglePressRowsOnlyBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !maxListPctInput || !normalizePreviewModal || !normalizePreviewList || !normalizePreviewApplyBtn || !normalizePreviewCancelBtn || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !applyPendingMovesPanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !debtExpandPopover || !debtExpandPopoverInner || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearLocksBtn || !clearPendingMovesBtn || !addPlanDayBtn || !enterRangeSelectModeBtn || !rangeSelectHint || !planFocusBar || !planFocusLabel || !resetFocusRangeBtn || !openHiddenOrdersBtn || !hiddenOrdersModal || !hiddenOrdersSearchInput || !hiddenOrdersList || !hiddenOrdersShowAllBtn || !hiddenOrdersApplyBtn || !hiddenOrdersCancelBtn || !hiddenOrdersBadge || !debtCellContextMenu || !debtCellCtxSpread || !debtSpreadModal || !debtSpreadMeta || !debtSpreadStartSelect || !debtSpreadBatchInput || !debtSpreadQtyInput || !debtSpreadHint || !debtSpreadCancelBtn || !debtSpreadApplyBtn) {
             return;
         }
         const storageKey = 'activePositionsIndicatorSettings';
@@ -2731,6 +2739,7 @@ $pageTitle = 'Активные позиции';
         const rowIndicatorsStorageKey = 'activePositionsRowIndicatorsVisible';
         const gofroColumnsVisibleStorageKey = 'activePositionsGofroColumnsVisible';
         const gofroCoverageVisibleStorageKey = 'activePositionsGofroCoverageVisible';
+        const pressRowsOnlyStorageKey = 'activePositionsPressRowsOnly';
         const queuePanelStorageKey = 'activePositionsQueuePanelOpen';
         const lockStorageKey = `activePositionsLockedShifts:${window.location.pathname}`;
         const hiddenOrdersStorageKey = `activePositionsHiddenOrders:${window.location.pathname}`;
@@ -2739,6 +2748,7 @@ $pageTitle = 'Активные позиции';
         const serverDefaultMaxListPct = <?= (int)$activePositionsMaxCompletionPct ?>;
         const currentPageMaxListPct = <?= (int)$maxPct ?>;
         const defaults = {
+            /** Сумма шт по всем позициям под пресс на дату (не число разных позиций). */
             maxPress: 1,
             norm600: <?= (int)$indicatorNormWidth600 ?>,
             normD: <?= (int)$indicatorNormDiameter ?>,
@@ -2756,6 +2766,8 @@ $pageTitle = 'Активные позиции';
         let rangeStartDate = null;
         let rangeHoverDate = null;
         let suppressNextDateHeaderFilterClick = false;
+        /** Дата колонки, для которой включена подсветка строк с прессом (клик по «П»); пусто — выкл. */
+        let pressHighlightDate = '';
 
         function loadHiddenOrdersFromStorage() {
             try {
@@ -2814,6 +2826,7 @@ $pageTitle = 'Активные позиции';
         }
 
         let hiddenOrdersSet = loadHiddenOrdersFromStorage();
+        let pressRowsOnlyActive = false;
 
         function closeDebtCellContextMenu() {
             if (debtCellContextMenu) {
@@ -2893,6 +2906,10 @@ $pageTitle = 'Активные позиции';
             dateCells = Array.from(document.querySelectorAll('td.date-cell'));
         }
 
+        function rowHasPressFlag(row) {
+            return (row.dataset.hasPress || '') === '1' || !!row.querySelector('.pos-indicator.p');
+        }
+
         function applyDateRowFilter() {
             const targetDate = String(activeDateFilter || '').trim();
             const hasFilter = targetDate !== '';
@@ -2919,7 +2936,8 @@ $pageTitle = 'Активные позиции';
                         return (parseInt(cell.dataset.qty || '0', 10) || 0) > 0;
                     });
                 }
-                row.hidden = hideByOrder || !passDateRules;
+                const passPressOnly = !pressRowsOnlyActive || rowHasPressFlag(row);
+                row.hidden = hideByOrder || !passDateRules || !passPressOnly;
             });
             document.querySelectorAll('th[data-plan-date]').forEach(function (th) {
                 const thDate = String(th.getAttribute('data-plan-date') || '').trim();
@@ -2927,6 +2945,22 @@ $pageTitle = 'Активные позиции';
             });
             /* После скрытия строк ширины колонок таблицы меняются — пересчитать sticky, иначе даты «езжают» под «Долг» */
             applyFrozenColumns();
+        }
+
+        function syncPressRowsOnlyButton() {
+            togglePressRowsOnlyBtn.setAttribute('aria-pressed', pressRowsOnlyActive ? 'true' : 'false');
+            togglePressRowsOnlyBtn.textContent = pressRowsOnlyActive ? 'Только П: вкл' : 'Только П: выкл';
+        }
+
+        function setPressRowsOnlyActive(active) {
+            pressRowsOnlyActive = !!active;
+            try {
+                localStorage.setItem(pressRowsOnlyStorageKey, pressRowsOnlyActive ? '1' : '0');
+            } catch (e) {
+                // ignore storage write errors
+            }
+            syncPressRowsOnlyButton();
+            applyDateRowFilter();
         }
 
         function toggleDateFilter(date) {
@@ -3343,12 +3377,12 @@ $pageTitle = 'Активные позиции';
                     pressLevel = 'warning';
                 }
                 const pressTitle = pressCount <= 0
-                    ? 'П: нет позиций под пресс.'
+                    ? 'П: нет шт под пресс в плане на день.'
                     : pressCritical
-                        ? `П: ${pressCount} прессовых фильтра при норме ${settings.maxPress} (превышение).`
+                        ? `П: ${pressCount} шт под пресс при норме ${settings.maxPress} шт (превышение).`
                         : pressNormOk
-                            ? `П: ${pressCount} прессовый(ых) фильтр(ов) в смене — норма (${settings.maxPress}).`
-                            : `П: ${pressCount} прессовый(ых) при норме ${settings.maxPress} (меньше нормы).`;
+                            ? `П: ${pressCount} шт под пресс — норма (${settings.maxPress} шт).`
+                            : `П: ${pressCount} шт под пресс при норме ${settings.maxPress} шт (ниже нормы).`;
                 setIndicatorState(pressEl, {
                     active: pressCount > 0,
                     over: pressCritical,
@@ -3561,6 +3595,13 @@ $pageTitle = 'Активные позиции';
         });
 
         refreshDateCellsCache();
+        try {
+            pressRowsOnlyActive = localStorage.getItem(pressRowsOnlyStorageKey) === '1';
+        } catch (e) {
+            pressRowsOnlyActive = false;
+        }
+        syncPressRowsOnlyButton();
+        applyDateRowFilter();
 
         function syncPlanDatesEdgeColumn() {
             const table = document.querySelector('.panel table');
@@ -3742,7 +3783,7 @@ $pageTitle = 'Активные позиции';
 
             appendInd('press', 'date-indicator slim marker-p', 'П', {
                 'data-press-count': '0',
-                title: 'Нет позиций под пресс',
+                title: 'Нет шт под пресс в плане на день',
             });
             const dEl = appendInd('d', 'date-indicator slim marker-d meter', 'D', {
                 'data-qty': '0',
@@ -3891,7 +3932,7 @@ $pageTitle = 'Активные позиции';
                         totalQty: 0,
                         w600Qty: 0,
                         dQty: 0,
-                        pressFilters: new Set(),
+                        pressQty: 0,
                     });
                 }
                 const qty = parseInt(cell.dataset.qty || '0', 10) || 0;
@@ -3914,7 +3955,7 @@ $pageTitle = 'Активные позиции';
                     state.dQty += qty;
                 }
                 if (rowHasPress) {
-                    state.pressFilters.add(((row.dataset.filter || '').trim()).toUpperCase());
+                    state.pressQty += qty;
                 }
             });
 
@@ -3924,7 +3965,7 @@ $pageTitle = 'Активные позиции';
                     totalQty: 0,
                     w600Qty: 0,
                     dQty: 0,
-                    pressFilters: new Set(),
+                    pressQty: 0,
                 };
                 const pressEl = th.querySelector('.date-indicator[data-kind="press"]');
                 const dEl = th.querySelector('.date-indicator[data-kind="d"]');
@@ -3932,7 +3973,7 @@ $pageTitle = 'Активные позиции';
                 const totalEl = th.querySelector('.date-indicator[data-kind="total"]');
 
                 if (pressEl) {
-                    pressEl.setAttribute('data-press-count', String(state.pressFilters.size));
+                    pressEl.setAttribute('data-press-count', String(state.pressQty));
                 }
                 if (dEl) {
                     dEl.setAttribute('data-qty', String(state.dQty));
@@ -3958,31 +3999,42 @@ $pageTitle = 'Активные позиции';
             return (row.dataset.hasD || '') === '1' || !!row.querySelector('.pos-indicator.d');
         }
 
-        function flashPressConflictForDate(date) {
-            clearIndicatorConflictFlash();
-            if (!date) {
+        /** Клик по «П»: подсветить строки с прессом, у которых в этой дате есть план; повторный клик по тому же «П» — снять. */
+        function togglePressHighlightForDate(date) {
+            const dateKey = String(date || '').trim();
+            if (!dateKey) {
                 return;
             }
-            let count = 0;
-            document.querySelectorAll('tr.plan-row').forEach(function (row) {
-                if ((row.dataset.hasPress || '') !== '1') {
-                    return;
-                }
-                const conflictCell = Array.from(row.querySelectorAll('td.date-cell')).find(function (cell) {
-                    return (cell.dataset.date || '') === date && (parseInt(cell.dataset.qty || '0', 10) || 0) > 0;
-                });
-                if (!conflictCell) {
-                    return;
-                }
-                count += 1;
-                row.classList.add('press-conflict-flash');
-                conflictCell.dataset.dateConflict = '1';
-            });
-            if (count < 2) {
+            if (pressHighlightDate === dateKey) {
                 clearIndicatorConflictFlash();
                 return;
             }
-            window.setTimeout(clearIndicatorConflictFlash, 2200);
+            clearIndicatorConflictFlash();
+            let count = 0;
+            document.querySelectorAll('tr.plan-row').forEach(function (row) {
+                if (!rowHasPressFlag(row)) {
+                    return;
+                }
+                const cell = Array.from(row.querySelectorAll('td.date-cell')).find(function (c) {
+                    return String(c.dataset.date || '').trim() === dateKey && (parseInt(c.dataset.qty || '0', 10) || 0) > 0;
+                });
+                if (!cell) {
+                    return;
+                }
+                count += 1;
+                row.classList.add('press-highlight-row');
+                cell.classList.add('press-highlight-cell');
+            });
+            if (count === 0) {
+                return;
+            }
+            pressHighlightDate = dateKey;
+            document.querySelectorAll('th[data-plan-date]').forEach(function (th) {
+                const thDate = String(th.getAttribute('data-plan-date') || '').trim();
+                if (thDate === dateKey) {
+                    th.classList.add('press-column-highlight');
+                }
+            });
         }
 
         function flashDiameterConflictForDate(date) {
@@ -4059,7 +4111,7 @@ $pageTitle = 'Активные позиции';
             const state = {
                 totalQty: 0,
                 dQty: 0,
-                pressFilters: new Set(),
+                pressQty: 0,
             };
             dateCells.forEach(function (cell) {
                 if ((cell.dataset.date || '') !== date) {
@@ -4080,7 +4132,7 @@ $pageTitle = 'Активные позиции';
                     state.dQty += nextQty;
                 }
                 if ((row.dataset.hasPress || '') === '1' || !!row.querySelector('.pos-indicator.p')) {
-                    state.pressFilters.add(normalizeFilterKeyJs(row.dataset.filter || ''));
+                    state.pressQty += nextQty;
                 }
             });
             return state;
@@ -4092,7 +4144,7 @@ $pageTitle = 'Активные позиции';
                 `<div class="drag-preview__title">${hasConflict ? 'Конфликт' : 'Перенос возможен'}</div>`,
                 `<div class="drag-preview__line">Итого: ${previewState.totalQty} / ${previewState.normTotal}${previewState.totalOver ? ' • перегруз' : ''}</div>`,
                 `<div class="drag-preview__line">D: ${previewState.dQty} / ${previewState.normD}${previewState.dConflict ? ' • конфликт' : ''}</div>`,
-                `<div class="drag-preview__line">П: ${previewState.pressCount} / ${previewState.maxPress}${previewState.pressConflict ? ' • конфликт' : ''}</div>`,
+                `<div class="drag-preview__line">П: ${previewState.pressCount} шт / ${previewState.maxPress} шт${previewState.pressConflict ? ' • конфликт' : ''}</div>`,
             ];
             if (previewState.message) {
                 lines.push(`<div class="drag-preview__line">${previewState.message}</div>`);
@@ -4146,7 +4198,7 @@ $pageTitle = 'Активные позиции';
             const maxPress = Math.max(1, parseInt(settings.maxPress, 10) || 1);
             const totalOver = Math.max(0, nextState.totalQty - normTotal);
             const dConflict = nextState.dQty > normD;
-            const pressCount = nextState.pressFilters.size;
+            const pressCount = nextState.pressQty;
             const pressConflict = pressCount > maxPress;
             previewedTargetCell = targetCell;
             renderDragPreview(targetCell, {
@@ -4545,16 +4597,19 @@ $pageTitle = 'Активные позиции';
         }
 
         function clearIndicatorConflictFlash() {
-            document.querySelectorAll('tr.plan-row.press-conflict-flash').forEach(function (row) {
-                row.classList.remove('press-conflict-flash');
+            pressHighlightDate = '';
+            document.querySelectorAll('th[data-plan-date].press-column-highlight').forEach(function (th) {
+                th.classList.remove('press-column-highlight');
+            });
+            document.querySelectorAll('tr.plan-row.press-highlight-row').forEach(function (row) {
+                row.classList.remove('press-highlight-row');
             });
             document.querySelectorAll('tr.plan-row.diameter-conflict-flash').forEach(function (row) {
                 row.classList.remove('diameter-conflict-flash');
             });
             dateCells.forEach(function (cell) {
-                delete cell.dataset.dateConflict;
                 delete cell.dataset.diameterConflict;
-                cell.classList.remove('diameter-flash-cell');
+                cell.classList.remove('diameter-flash-cell', 'press-highlight-cell');
             });
         }
 
@@ -5892,17 +5947,20 @@ $pageTitle = 'Активные позиции';
             clearDragState();
         }
 
-        function bindPressIndicatorConflictClick(th) {
+        function bindPressIndicatorClick(th) {
+            if (!th || th.dataset.pressIndicatorClickBound === '1') {
+                return;
+            }
             const indicator = th.querySelector('.date-indicator[data-kind="press"]');
             if (!indicator) {
                 return;
             }
-            indicator.addEventListener('click', function () {
-                if (!indicator.classList.contains('over')) {
-                    return;
-                }
+            th.dataset.pressIndicatorClickBound = '1';
+            indicator.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
                 const date = th.getAttribute('data-plan-date') || '';
-                flashPressConflictForDate(date);
+                togglePressHighlightForDate(date);
             });
         }
 
@@ -6030,12 +6088,14 @@ $pageTitle = 'Активные позиции';
             const newFootTh = newHeadTh.cloneNode(true);
             delete newHeadTh.dataset.dateFilterBound;
             delete newHeadTh.dataset.rangeSelectBound;
+            delete newHeadTh.dataset.pressIndicatorClickBound;
             delete newFootTh.dataset.dateFilterBound;
             delete newFootTh.dataset.rangeSelectBound;
+            delete newFootTh.dataset.pressIndicatorClickBound;
             theadRow.appendChild(newHeadTh);
             tfootRow.appendChild(newFootTh);
-            bindPressIndicatorConflictClick(newHeadTh);
-            bindPressIndicatorConflictClick(newFootTh);
+            bindPressIndicatorClick(newHeadTh);
+            bindPressIndicatorClick(newFootTh);
             bindDateHeaderFilterClick(newHeadTh);
             bindDateHeaderFilterClick(newFootTh);
             bindRangeSelectOnDateHeader(newHeadTh);
@@ -6389,6 +6449,9 @@ $pageTitle = 'Активные позиции';
         toggleGofroCoverageBtn.addEventListener('click', function () {
             setGofroCoverageVisible(!isGofroCoverageVisible);
         });
+        togglePressRowsOnlyBtn.addEventListener('click', function () {
+            setPressRowsOnlyActive(!pressRowsOnlyActive);
+        });
         normalizePlanBtn.addEventListener('click', function () {
             normalizePlanIntoQueue();
         });
@@ -6420,7 +6483,7 @@ $pageTitle = 'Активные позиции';
         applyPendingMovesPanelBtn.addEventListener('click', function () {
             applyPendingMovesToServer();
         });
-        document.querySelectorAll('th[data-plan-date]').forEach(bindPressIndicatorConflictClick);
+        document.querySelectorAll('th[data-plan-date]').forEach(bindPressIndicatorClick);
         document.querySelectorAll('th[data-plan-date]').forEach(bindDateHeaderFilterClick);
         document.querySelectorAll('th[data-plan-date]').forEach(bindRangeSelectOnDateHeader);
         toggleQueuePanelBtn.addEventListener('click', function () {
@@ -6513,6 +6576,11 @@ $pageTitle = 'Активные позиции';
             }
             if (e.key === 'Escape' && !debtExpandPopover.hidden) {
                 closeDebtExpandPopover();
+                return;
+            }
+            if (e.key === 'Escape' && pressHighlightDate) {
+                clearIndicatorConflictFlash();
+                return;
             }
         });
         document.addEventListener('click', function (e) {
