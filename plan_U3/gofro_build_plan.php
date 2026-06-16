@@ -1724,6 +1724,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
         <button type="button" id="toggle-filter-plan-digits-btn" class="toolbar-btn secondary" aria-pressed="true" title="Мелкие цифры в ячейке даты — план сборки фильтров на день">Фильтры: вкл</button>
         <button type="button" id="task-sheet-btn" class="toolbar-btn secondary">Задание</button>
         <a class="toolbar-btn secondary" href="plan_roll_cutting.php">Порезка бухт</a>
+        <a class="toolbar-btn secondary" href="wireframe_build_plan.php?max_pct=<?= (int)$maxPct ?>">Каркасы</a>
         <button type="button" id="open-max-pct-btn" class="toolbar-btn secondary" title="Порог % выполнения позиции для отображения в таблице">Выполнение ≤ <?= (int)$maxPct ?>%</button>
         <button type="button" id="open-hidden-orders-btn" class="toolbar-btn secondary">Заявки <span id="hidden-orders-badge" class="orders-badge" hidden></span></button>
         <button type="button" id="toggle-fold-height-panel-btn" class="toolbar-btn secondary" aria-pressed="false">Высота бумаги</button>
