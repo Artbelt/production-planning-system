@@ -1,7 +1,8 @@
 <?php
 /**
  * Планирование изготовления каркасов: позиции с каркасами в гофропакете;
- * в ячейках дат — основной план каркасов; фоном — справочно план г/п к сборке (corrugation_plan_v2).
+ * в ячейках дат — основной план каркасов; полоска — справочное покрытие слота г/п к сборке
+ * (план corrugation_plan_v2): каркасы по датам слева направо последовательно закрывают слоты г/п.
  */
 
 require_once __DIR__ . '/../auth/includes/config.php';
@@ -786,12 +787,25 @@ $pageTitle = 'План изготовления каркасов';
             position: relative;
             min-height: 36px;
             min-width: 40px;
-            /* фон при ненулевом плане г/п задаётся скриптом по доле каркасов / гофро */
+            overflow: hidden;
             background: #fff;
+            --wf-cover-pct: 0%;
         }
-        /* тело таблицы: выходные — базовый белый; при заливке inline-стиль перекрывает */
+        /* тело таблицы: выходные — базовый белый */
         .wf-date-cell.date-col.weekend {
             background: #fff;
+        }
+        /* Гистограмма покрытия плана гофро (как pos-fill на active_positions) */
+        .wf-date-cell .wf-date-cell-fill {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: var(--wf-cover-pct, 0%);
+            pointer-events: none;
+            border-radius: 0;
+            transition: width 0.2s ease, opacity 0.15s;
+            z-index: 0;
         }
         /* Справочно: план г/п (второстепенно) */
         .wf-info-gofro {
@@ -802,7 +816,7 @@ $pageTitle = 'План изготовления каркасов';
             font-weight: 500;
             color: #94a3b8;
             line-height: 1.15;
-            z-index: 0;
+            z-index: 1;
             pointer-events: none;
             user-select: none;
             white-space: nowrap;
@@ -822,7 +836,7 @@ $pageTitle = 'План изготовления каркасов';
             font-weight: 400;
             color: #0f766e;
             line-height: 1;
-            z-index: 1;
+            z-index: 2;
             pointer-events: none;
             user-select: none;
             font-variant-numeric: tabular-nums;
@@ -841,6 +855,13 @@ $pageTitle = 'План изготовления каркасов';
             max-width: 72px;
         }
         tbody tr.wf-data-row { background: #fff; }
+        tbody tr.wf-data-row.wf-row--gofro-uncovered,
+        tbody tr.wf-data-row.wf-row--gofro-uncovered td {
+            background-color: #fff7ed;
+        }
+        tbody tr.wf-data-row.wf-row--gofro-uncovered td.wf-date-cell {
+            background-color: #fff7ed;
+        }
         table.wf-plan-table.wf-filter-wide tbody tr.wf-data-row[data-machine-group="notwide"] {
             display: none;
         }
@@ -1072,8 +1093,23 @@ $pageTitle = 'План изготовления каркасов';
                         $remaining = max(0, $ordered - $produced);
                         $mg = wfMachineGroupFromMeta($meta);
                         $rowMachineAttr = $mg['attr'];
+                        $rowPoolDiag = 0;
+                        $rowGofroUncovered = false;
+                        foreach ($buildPlanDates as $__planDate) {
+                            $__pd = (string) $__planDate;
+                            $__g = (int) ($gofroPlanMap[$rowKey][$__pd] ?? 0);
+                            $__w = (int) ($wireframePlanMap[$rowKey][$__pd] ?? 0);
+                            $rowPoolDiag += $__w;
+                            if ($__g > 0) {
+                                $__alloc = min($rowPoolDiag, $__g);
+                                if ($__alloc < $__g) {
+                                    $rowGofroUncovered = true;
+                                }
+                                $rowPoolDiag -= $__alloc;
+                            }
+                        }
                         ?>
-                        <tr class="wf-data-row" data-machine-group="<?= htmlspecialchars($rowMachineAttr, ENT_QUOTES, 'UTF-8') ?>">
+                        <tr class="wf-data-row<?= $rowGofroUncovered ? ' wf-row--gofro-uncovered' : '' ?>" data-machine-group="<?= htmlspecialchars($rowMachineAttr, ENT_QUOTES, 'UTF-8') ?>">
                             <td class="col-pos" title="<?= htmlspecialchars($rawFilter . ($wfHint !== '' ? ' — каркас: ' . $wfHint : ''), ENT_QUOTES, 'UTF-8') ?>">
                                 <?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>
                             </td>
@@ -1092,16 +1128,30 @@ $pageTitle = 'План изготовления каркасов';
                             </td>
                             <td class="wf-col-width" title="Из справочника paper_package_round (ширина бумаги)"><?= htmlspecialchars($mg['width_display'], ENT_QUOTES, 'UTF-8') ?></td>
                             <td class="wf-col-group" title="Группа станков: 600 — шире <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм по бумаге; 400 — до <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм или ширина не задана"><?= htmlspecialchars($mg['label'], ENT_QUOTES, 'UTF-8') ?></td>
-                            <?php foreach ($buildPlanDates as $planDate):
+                            <?php
+                            $pool = 0;
+                            foreach ($buildPlanDates as $planDate):
                                 $pd = (string) $planDate;
                                 $gofroQty = (int) ($gofroPlanMap[$rowKey][$pd] ?? 0);
                                 $wfQty = (int) ($wireframePlanMap[$rowKey][$pd] ?? 0);
-                                $title = 'Каркасы: ' . $wfQty . ' шт. · г/п к сборке (справочно): ' . $gofroQty . ' шт.';
+                                $pool += $wfQty;
+                                if ($gofroQty <= 0) {
+                                    $coverPct = 0.0;
+                                } else {
+                                    $allocated = min($pool, $gofroQty);
+                                    $coverPct = min(100.0, ($allocated / $gofroQty) * 100.0);
+                                    $pool -= $allocated;
+                                }
+                                $hueBar = (int) round(min(100.0, $coverPct) * 1.2);
+                                $title = 'Каркасы: ' . $wfQty . ' шт. · г/п к сборке (справочно): ' . $gofroQty . ' шт.'
+                                    . ($gofroQty > 0 ? ' · покрытие этого слота г/п (по очереди дат): ' . number_format($coverPct, 1, ',', ' ') . '%' : '');
                                 $pdObj = DateTime::createFromFormat('Y-m-d', $pd);
                                 $isWEnd = $pdObj && in_array((int) $pdObj->format('N'), [6, 7], true);
                                 $editableClass = $wireframeBuildCanEdit && $pd >= $todayIso ? ' wf-date-cell--editable' : '';
+                                $coverPctStr = number_format($coverPct, 4, '.', '');
                                 ?>
                                 <td class="wf-date-cell date-col<?= $isWEnd ? ' weekend' : '' ?><?= htmlspecialchars($editableClass, ENT_QUOTES, 'UTF-8') ?>"
+                                    style="--wf-cover-pct: <?= htmlspecialchars($coverPctStr, ENT_QUOTES, 'UTF-8') ?>%;"
                                     title="<?= htmlspecialchars($title, ENT_QUOTES, 'UTF-8') ?>"
                                     data-plan-date="<?= htmlspecialchars($pd, ENT_QUOTES, 'UTF-8') ?>"
                                     data-wf="<?= (int) $wfQty ?>"
@@ -1115,6 +1165,7 @@ $pageTitle = 'План изготовления каркасов';
                                         data-remaining="<?= (int) $remaining ?>"
                                     <?php endif; ?>
                                 >
+                                    <span class="wf-date-cell-fill" aria-hidden="true" style="background: <?= $gofroQty > 0 ? 'hsla(' . $hueBar . ', 65%, 52%, 0.28)' : 'transparent' ?>;"></span>
                                     <?php if ($gofroQty > 0): ?>
                                         <span class="wf-info-gofro" title="План гофропакетов к сборке (справочно)"><?= (int) $gofroQty ?></span>
                                     <?php endif; ?>
@@ -1328,46 +1379,52 @@ $pageTitle = 'План изготовления каркасов';
     let activeTd = null;
     window.WF_BUILD_PLAN_DATES = <?= json_encode($buildPlanDates, JSON_UNESCAPED_UNICODE) ?>;
 
-    /** Сумма плана каркасов по строке на видимые даты ≤ dateIso (включительно). */
-    function wfSumWfForRowUpToDate(tr, dateIso) {
-        let sum = 0;
-        if (!tr || !dateIso) return 0;
-        tr.querySelectorAll('td.wf-date-cell[data-plan-date]').forEach(function (cell) {
-            const pd = cell.getAttribute('data-plan-date') || '';
-            if (pd && pd <= dateIso) {
-                sum += parseInt(cell.getAttribute('data-wf') || '0', 10) || 0;
-            }
-        });
-        return sum;
-    }
-
     /**
-     * Заливка ячейки даты: план гофро на дату колонки vs накопленный по строке план каркасов
-     * на все колонки с датой ≤ этой (каркасы «раньше» в горизонте тоже учитываются).
+     * По строке: идём по датам слева направо, пул каркасов += wf на дату,
+     * на каждый ненулевой план г/п списываем min(пул, гофро) — одни и те же каркасы
+     * не могут закрыть несколько слотов сразу (как суммарный план к нескольким сборкам).
      */
-    function wfApplyGofroPlanCellFill(td) {
-        if (!td || !td.classList.contains('wf-date-cell')) return;
-        const gofro = parseInt(td.getAttribute('data-gofro') || '0', 10) || 0;
-        if (gofro <= 0) {
-            td.style.background = '';
-            return;
-        }
-        const tr = td.closest('tr');
-        const planDate = td.getAttribute('data-plan-date') || '';
-        const wfCum = wfSumWfForRowUpToDate(tr, planDate);
-        const t = Math.min(1, wfCum / gofro);
-        function lerp(a, b, x) {
-            return a + (b - a) * x;
-        }
-        const h = Math.round(lerp(22, 148, t));
-        const s = Math.round(lerp(70, 38, t));
-        const l = Math.round(lerp(94, 89, t));
-        td.style.background = 'hsl(' + h + ', ' + s + '%, ' + l + '%)';
-    }
-
     function wfRefreshGofroPlanFillsForRow(tr) {
         if (!tr) return;
-        tr.querySelectorAll('td.wf-date-cell').forEach(wfApplyGofroPlanCellFill);
+        const cells = Array.from(tr.querySelectorAll('td.wf-date-cell[data-plan-date]'));
+        cells.sort(function (a, b) {
+            const da = a.getAttribute('data-plan-date') || '';
+            const db = b.getAttribute('data-plan-date') || '';
+            return da < db ? -1 : (da > db ? 1 : 0);
+        });
+        let pool = 0;
+        let rowUncovered = false;
+        cells.forEach(function (td) {
+            const wf = parseInt(td.getAttribute('data-wf') || '0', 10) || 0;
+            const gofro = parseInt(td.getAttribute('data-gofro') || '0', 10) || 0;
+            pool += wf;
+
+            let fill = td.querySelector('.wf-date-cell-fill');
+            if (!fill) {
+                fill = document.createElement('span');
+                fill.className = 'wf-date-cell-fill';
+                fill.setAttribute('aria-hidden', 'true');
+                td.insertBefore(fill, td.firstChild);
+            }
+
+            let coverPct = 0;
+            if (gofro > 0) {
+                const alloc = Math.min(pool, gofro);
+                if (alloc < gofro) {
+                    rowUncovered = true;
+                }
+                coverPct = (alloc / gofro) * 100;
+                pool -= alloc;
+            }
+            const hue = Math.round(Math.min(100, coverPct) * 1.2);
+            td.style.setProperty('--wf-cover-pct', coverPct.toFixed(4) + '%');
+            fill.style.background = gofro > 0 ? 'hsla(' + hue + ', 65%, 52%, 0.28)' : 'transparent';
+
+            const coverStr = gofro > 0 ? String(Math.round(coverPct * 10) / 10).replace('.', ',') : '';
+            td.title = 'Каркасы: ' + wf + ' шт. · г/п к сборке (справочно): ' + gofro + ' шт.'
+                + (gofro > 0 ? ' · покрытие этого слота г/п (по очереди дат): ' + coverStr + '%' : '');
+        });
+        tr.classList.toggle('wf-row--gofro-uncovered', rowUncovered);
     }
 
     function recalcGroupFooters() {
@@ -1529,8 +1586,6 @@ $pageTitle = 'План изготовления каркасов';
         } else if (span) {
             span.remove();
         }
-        const gofro = parseInt(td.getAttribute('data-gofro') || '0', 10) || 0;
-        td.title = 'Каркасы: ' + qty + ' шт. · г/п к сборке (справочно): ' + gofro + ' шт.';
         wfRefreshGofroPlanFillsForRow(td.closest('tr'));
         recalcGroupFooters();
     }
@@ -1611,7 +1666,7 @@ $pageTitle = 'План изготовления каркасов';
     document.addEventListener('keydown', function (ev) {
         if (ev.key === 'Escape' && !panel.hidden) closePanel();
     });
-    document.querySelectorAll('tbody td.wf-date-cell').forEach(wfApplyGofroPlanCellFill);
+    document.querySelectorAll('tbody tr.wf-data-row').forEach(wfRefreshGofroPlanFillsForRow);
     recalcGroupFooters();
 })();
     </script>
