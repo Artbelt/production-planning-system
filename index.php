@@ -300,6 +300,10 @@ foreach ($userDepartments as $dept) {
 
 <div class="button-container">
 
+	<div class="row">
+		<button class="btn cut-tasks" type="button" onclick="window.open('bobbin_cut_monitor.php', '_blank')">Мониторинг бобинорезки</button>
+	</div>
+
 	<!-- Заявки и планы (для всех ролей с соответствующими правами) -->
 	<?php if ($userRole === 'assembler'): ?>
 		<!-- Для сборщиц показываем только их цеха -->

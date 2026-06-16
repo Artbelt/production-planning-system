@@ -1060,7 +1060,6 @@ echo "<!-- Аккуратная панель авторизации -->
                     <button type="button" onclick="openLoadFileModal()">Прочитать XLS заявку</button>
                     <form action='new_order.php' method='post' target='_blank' class="stack"><input type='submit' value='Создать заявку вручную'></form>
                     <button type="button" onclick="openAddToOrderModal()">Добавить к заявке...</button>
-                    <form action='combine_orders.php' method='post' target='_blank' class="stack"><input type='submit' value='Объединение заявок'></form>
                     <button type="button" onclick="openDeleteOrdersModal()">Удалить заявку</button>
                     <button type="button" onclick="window.location.href='edit_order.php'">Редактировать заявку</button>
                     

@@ -40,13 +40,14 @@ function normalizeTextKeyRoll(string $name): string
 }
 
 /**
- * Колонки шкалы: каждый календарный день от сегодня до последней даты в плане гофро / назначениях порезки,
- * чтобы можно было поставить порезку раньше первого дня гофрирования.
+ * Колонки шкалы: каждый календарный день от $startIso до последней даты в плане гофро / назначениях порезки.
+ * Старт обычно min(сегодня, первая запланированная порезка бухты, первый день плана г/п), чтобы не обрезать
+ * приход с бухт слева и корректно считать накопительное покрытие в нижней таблице.
  *
  * @param array<string, true> $buildPlanDates
  * @return list<string>
  */
-function expandTimelineDatesFromTodayThroughPlanMax(array $buildPlanDates, string $todayIso): array
+function expandTimelineDatesFromStartThroughPlanMax(array $buildPlanDates, string $startIso, string $todayIso): array
 {
     if ($buildPlanDates === []) {
         return [];
@@ -56,7 +57,7 @@ function expandTimelineDatesFromTodayThroughPlanMax(array $buildPlanDates, strin
         return [];
     }
     $endStr = max($maxK, $todayIso);
-    $start = new DateTimeImmutable($todayIso);
+    $start = new DateTimeImmutable($startIso);
     $end = new DateTimeImmutable($endStr);
     if ($start > $end) {
         return [$endStr];
@@ -520,6 +521,38 @@ $cutScheduleCountByDate = [];
 if ($loadError === '' && $selectedOrder !== '') {
     $ordersList = [$selectedOrder];
     $buildPlanDates = [];
+    /** Левая граница шкалы: не только «сегодня», иначе обрезается первая запланированная порезка и ломается покрытие. */
+    $timelineStartIso = $todayIso;
+    try {
+        ensureGofroRollCutScheduleTable($pdo);
+        $stMinCut = $pdo->prepare('
+            SELECT MIN(cut_date) AS mn
+            FROM gofro_roll_cut_schedule
+            WHERE order_number = ? AND cut_date IS NOT NULL
+        ');
+        $stMinCut->execute([$selectedOrder]);
+        $mnCut = trim((string)$stMinCut->fetchColumn());
+        if ($mnCut !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $mnCut) && $mnCut < $timelineStartIso) {
+            $timelineStartIso = $mnCut;
+        }
+    } catch (Throwable $e) {
+        // игнорируем
+    }
+    try {
+        ensureCorrugationPlanV2TableRoll($pdo);
+        $stMinPlan = $pdo->prepare('
+            SELECT MIN(plan_date) AS mn
+            FROM corrugation_plan_v2
+            WHERE order_number = ? AND qty > 0
+        ');
+        $stMinPlan->execute([$selectedOrder]);
+        $mnPlan = trim((string)$stMinPlan->fetchColumn());
+        if ($mnPlan !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $mnPlan) && $mnPlan < $timelineStartIso) {
+            $timelineStartIso = $mnPlan;
+        }
+    } catch (Throwable $e) {
+        // игнорируем
+    }
     try {
         ensureCorrugationPlanV2TableRoll($pdo);
         $stmt = $pdo->prepare("
@@ -528,7 +561,7 @@ if ($loadError === '' && $selectedOrder !== '') {
             WHERE order_number = ? AND qty > 0 AND plan_date >= ?
             ORDER BY plan_date
         ");
-        $stmt->execute([$selectedOrder, $todayIso]);
+        $stmt->execute([$selectedOrder, $timelineStartIso]);
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $d = trim((string)($row['d'] ?? ''));
             if ($d !== '') {
@@ -541,7 +574,7 @@ if ($loadError === '' && $selectedOrder !== '') {
             FROM gofro_roll_cut_schedule
             WHERE order_number = ? AND cut_date >= ?
         ");
-        $stmt2->execute([$selectedOrder, $todayIso]);
+        $stmt2->execute([$selectedOrder, $timelineStartIso]);
         while ($row = $stmt2->fetch(PDO::FETCH_ASSOC)) {
             $d = trim((string)($row['d'] ?? ''));
             if ($d !== '') {
@@ -568,7 +601,7 @@ if ($loadError === '' && $selectedOrder !== '') {
         if ($mxCut !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $mxCut)) {
             $buildPlanDates[$mxCut] = true;
         }
-        $planDates = expandTimelineDatesFromTodayThroughPlanMax($buildPlanDates, $todayIso);
+        $planDates = expandTimelineDatesFromStartThroughPlanMax($buildPlanDates, $timelineStartIso, $todayIso);
     } catch (Throwable $e) {
         if ($loadError === '') {
             $loadError = $e->getMessage();
@@ -584,7 +617,7 @@ if ($loadError === '' && $selectedOrder !== '') {
             WHERE order_number = ? AND qty > 0 AND plan_date >= ?
             GROUP BY package_key, package_name, plan_date
         ");
-        $stmt->execute([$selectedOrder, $todayIso]);
+        $stmt->execute([$selectedOrder, $timelineStartIso]);
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
             $pkRaw = trim((string)($r['package_key'] ?? ''));
             // Тот же ключ, что у бухт в gp_by_package (normalizeTextKeyRoll / план гофро).
@@ -1306,7 +1339,7 @@ if ($coverageJson === false) {
         <?php elseif ($selectedOrder === ''): ?>
             <div class="panel muted">Выберите номер заявки в списке выше и нажмите «Показать» — появятся шкала дат, бухты из раскроя этой заявки и таблица покрытия плана г/п только по ней.</div>
         <?php elseif ($planDates === []): ?>
-            <div class="panel muted">Для заявки <strong><?= htmlspecialchars($selectedOrder, ENT_QUOTES, 'UTF-8') ?></strong> нет дат в плане гофропакетов (с сегодня) и нет запланированных здесь порезок — нечего отображать на шкале.</div>
+            <div class="panel muted">Для заявки <strong><?= htmlspecialchars($selectedOrder, ENT_QUOTES, 'UTF-8') ?></strong> нет дат в плане гофропакетов и нет запланированных здесь порезок в доступном диапазоне — нечего отображать на шкале.</div>
         <?php else: ?>
         <div class="panel">
             <h2 style="margin:0 0 10px;font-size:15px;">План порезки бухт</h2>

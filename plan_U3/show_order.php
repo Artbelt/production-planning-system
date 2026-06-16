@@ -99,9 +99,12 @@ body{
     padding: 5px 10px;
     border-radius: 6px;
     position: absolute;
-    z-index: 10;
-    bottom: 125%;
+    z-index: 50;
+    /* Снизу: не уходит под шапку и не обрезается overflow у table / .table-wrap */
+    top: 100%;
+    bottom: auto;
     left: 50%;
+    margin-top: 6px;
     transform: translateX(-50%);
     opacity: 0;
     transition: opacity 0.3s;
@@ -118,7 +121,8 @@ table{
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: var(--shadow-soft);
-    overflow: hidden;
+    /* overflow:hidden обрезал абсолютные подсказки у границ таблицы */
+    overflow: visible;
 }
 th, td{
     border-bottom: 1px solid var(--border);
