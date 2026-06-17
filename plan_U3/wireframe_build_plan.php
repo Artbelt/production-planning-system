@@ -91,6 +91,29 @@ function wfFilterPlanDatesFromToday(array $dates, string $todayIso): array
     return $fullDateRange;
 }
 
+/**
+ * Долг: план каркасов на прошедшие даты (ещё не перенесён / не снят с плана).
+ *
+ * @param array<string, int> $wfByDate
+ * @return list<array{date: string, qty: int}>
+ */
+function wfBuildWireframeDebtShifts(array $wfByDate, string $todayIso): array
+{
+    $shifts = [];
+    foreach ($wfByDate as $d => $q) {
+        $qty = max(0, (int) $q);
+        if ($qty <= 0 || (string) $d >= $todayIso) {
+            continue;
+        }
+        $shifts[] = ['date' => (string) $d, 'qty' => $qty];
+    }
+    usort($shifts, static function ($a, $b) {
+        return strcmp((string) $a['date'], (string) $b['date']);
+    });
+
+    return $shifts;
+}
+
 function wfEnsureCorrugationPlanV2Table(PDO $pdo): void
 {
     $pdo->exec("
@@ -363,14 +386,14 @@ try {
     $gofroPlanMap = [];
 }
 
-/** [rowKey][date] => qty каркасов (план) */
-$wireframePlanMap = [];
+/** [rowKey][date] => qty каркасов (план), все даты */
+$wireframePlanMapAll = [];
 try {
     wfEnsureWireframeBuildPlanTable($pdo);
     $stmtWf = $pdo->query('
         SELECT source_row_key, plan_date, SUM(qty) AS qty
         FROM wireframe_build_plan
-        WHERE qty > 0 AND plan_date >= ' . $pdo->quote($todayIso) . '
+        WHERE qty > 0
         GROUP BY source_row_key, plan_date
     ');
     $dateSetWf = [];
@@ -384,17 +407,30 @@ try {
         if ($rk === '' || $pd === '' || $q <= 0) {
             continue;
         }
-        if (!isset($wireframePlanMap[$rk])) {
-            $wireframePlanMap[$rk] = [];
+        if (!isset($wireframePlanMapAll[$rk])) {
+            $wireframePlanMapAll[$rk] = [];
         }
-        $wireframePlanMap[$rk][$pd] = ($wireframePlanMap[$rk][$pd] ?? 0) + $q;
+        $wireframePlanMapAll[$rk][$pd] = ($wireframePlanMapAll[$rk][$pd] ?? 0) + $q;
         if ($pd >= $todayIso) {
             $dateSetWf[$pd] = true;
         }
     }
     $buildPlanDates = wfFilterPlanDatesFromToday(array_merge($buildPlanDates, array_keys($dateSetWf)), $todayIso);
 } catch (Throwable $e) {
-    $wireframePlanMap = [];
+    $wireframePlanMapAll = [];
+}
+
+/** [rowKey][date] => qty в видимом горизонте (даты таблицы) */
+$wireframePlanMap = [];
+foreach ($wireframePlanMapAll as $rk => $byDate) {
+    foreach ($byDate as $pd => $q) {
+        if ((string) $pd >= $todayIso) {
+            if (!isset($wireframePlanMap[$rk])) {
+                $wireframePlanMap[$rk] = [];
+            }
+            $wireframePlanMap[$rk][(string) $pd] = (int) $q;
+        }
+    }
 }
 
 $filterMetaByKey = [];
@@ -625,6 +661,22 @@ foreach ($rows as $r) {
     $wireframeRows[] = $r;
 }
 
+/** Долг по каркасам: [rowKey] => [['date' => Y-m-d, 'qty' => int], ...] */
+$wireframeDebtShiftMap = [];
+foreach ($wireframeRows as $r) {
+    $rawOrder = (string) ($r['order_number'] ?? '');
+    $rawFilter = (string) ($r['filter_name'] ?? '');
+    if ($rawOrder === '' || $rawFilter === '') {
+        continue;
+    }
+    $rowKey = $rawOrder . '|' . wfNormalizeTextKey($rawFilter);
+    $wfByDate = $wireframePlanMapAll[$rowKey] ?? [];
+    $shifts = wfBuildWireframeDebtShifts($wfByDate, $todayIso);
+    if ($shifts !== []) {
+        $wireframeDebtShiftMap[$rowKey] = $shifts;
+    }
+}
+
 $wfFooterSumWide = [];
 $wfFooterSumNotWide = [];
 foreach ($buildPlanDates as $__d) {
@@ -688,6 +740,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $userId = isset($session['user_id']) ? (int) $session['user_id'] : null;
             wfApplyWireframePlanSetCell($pdo, $rowKey, $order, $filterName, $planDate, $qty, $userId);
             echo json_encode(['ok' => true, 'qty' => $qty, 'plan_date' => $planDate, 'source_row_key' => $rowKey], JSON_UNESCAPED_UNICODE);
+        } catch (Throwable $e) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+        }
+        exit;
+    }
+    if (($payload['action'] ?? '') === 'apply_wireframe_debt') {
+        header('Content-Type: application/json; charset=utf-8');
+        $isDate = static function (string $value): bool {
+            return (bool) preg_match('/^\d{4}-\d{2}-\d{2}$/', $value);
+        };
+        try {
+            if (!$wireframeBuildCanEdit) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Недостаточно прав для изменения плана каркасов.'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $rowKey = trim((string) ($payload['source_row_key'] ?? ''));
+            $order = trim((string) ($payload['order_number'] ?? ''));
+            $filterName = trim((string) ($payload['filter_name'] ?? ''));
+            $fromDate = trim((string) ($payload['from_date'] ?? ''));
+            $toDate = trim((string) ($payload['to_date'] ?? ''));
+            $qty = max(0, (int) ($payload['qty'] ?? 0));
+            if ($rowKey === '' || $order === '' || $filterName === '' || !$isDate($fromDate) || !$isDate($toDate) || $qty <= 0) {
+                throw new RuntimeException('Некорректные параметры переноса долга.');
+            }
+            if ($toDate < $todayIso) {
+                throw new RuntimeException('Перенос долга только на сегодня или будущие даты.');
+            }
+            $userId = isset($session['user_id']) ? (int) $session['user_id'] : null;
+            wfEnsureWireframeBuildPlanTable($pdo);
+            if ($fromDate < $todayIso) {
+                $stmtFrom = $pdo->prepare('
+                    SELECT COALESCE(SUM(qty), 0) AS qty
+                    FROM wireframe_build_plan
+                    WHERE source_row_key = ? AND plan_date = ?
+                ');
+                $stmtFrom->execute([$rowKey, $fromDate]);
+                $fromQty = (int) ($stmtFrom->fetchColumn() ?: 0);
+                if ($fromQty > 0) {
+                    $newFrom = max(0, $fromQty - $qty);
+                    wfApplyWireframePlanSetCell($pdo, $rowKey, $order, $filterName, $fromDate, $newFrom, $userId);
+                }
+            }
+            $stmtTo = $pdo->prepare('
+                SELECT COALESCE(SUM(qty), 0) AS qty
+                FROM wireframe_build_plan
+                WHERE source_row_key = ? AND plan_date = ?
+            ');
+            $stmtTo->execute([$rowKey, $toDate]);
+            $toQty = (int) ($stmtTo->fetchColumn() ?: 0);
+            wfApplyWireframePlanSetCell($pdo, $rowKey, $order, $filterName, $toDate, $toQty + $qty, $userId);
+            echo json_encode([
+                'ok' => true,
+                'from_date' => $fromDate,
+                'to_date' => $toDate,
+                'qty' => $qty,
+                'to_qty' => $toQty + $qty,
+                'source_row_key' => $rowKey,
+            ], JSON_UNESCAPED_UNICODE);
         } catch (Throwable $e) {
             http_response_code(400);
             echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
@@ -876,6 +988,122 @@ $pageTitle = 'План изготовления каркасов';
             border-color: #2563eb;
             background: #eff6ff;
         }
+        th.debt-col, td.debt-cell {
+            width: 0.1%;
+            min-width: 56px;
+            max-width: 88px;
+            text-align: center;
+            box-sizing: border-box;
+        }
+        td.debt-cell {
+            vertical-align: middle;
+            padding: 1px 3px;
+            height: 24px;
+            max-height: 24px;
+            min-height: 24px;
+            overflow: hidden;
+            position: relative;
+        }
+        td.debt-cell.debt-cell--warn {
+            background: #fffbeb;
+            padding-right: 14px;
+        }
+        td.debt-cell.debt-cell--warn::after {
+            content: "⏳";
+            position: absolute;
+            right: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 10px;
+            opacity: 0.75;
+            pointer-events: none;
+        }
+        tr.wf-data-row.has-overdue-debt td.col-pos {
+            background: #fff7ed;
+            box-shadow: inset 3px 0 0 #ea580c;
+        }
+        .debt-list {
+            display: flex;
+            flex-direction: row;
+            flex-wrap: nowrap;
+            align-items: center;
+            justify-content: center;
+            gap: 1px;
+            height: 20px;
+            max-height: 20px;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+        .debt-shift {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 18px;
+            min-height: 16px;
+            max-height: 18px;
+            padding: 0 2px;
+            border: 1px solid #d1d5db;
+            border-radius: 3px;
+            background: #f9fafb;
+            color: #374151;
+            font-size: 9px;
+            font-weight: 600;
+            line-height: 1.15;
+            cursor: grab;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .debt-shift.drag-source-single {
+            outline: 2px solid #93c5fd;
+            outline-offset: -2px;
+        }
+        .debt-more {
+            appearance: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 18px;
+            min-height: 16px;
+            padding: 0 3px;
+            border: 1px solid #cbd5e1;
+            border-radius: 3px;
+            background: #f1f5f9;
+            color: #475569;
+            font-size: 9px;
+            font-weight: 700;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .debt-more:hover { background: #e2e8f0; }
+        .debt-popover[hidden] { display: none; }
+        .debt-popover {
+            position: fixed;
+            z-index: 10001;
+            max-width: min(320px, calc(100vw - 16px));
+            padding: 6px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #fff;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.15);
+        }
+        .debt-popover__inner {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            max-height: 200px;
+            overflow: auto;
+        }
+        .debt-shift.debt-shift--popover {
+            min-width: 52px;
+            padding: 4px 6px;
+            font-size: 10px;
+        }
+        .wf-date-cell.drag-drop-target {
+            outline: 2px solid #3b82f6;
+            outline-offset: -2px;
+            background: #eff6ff !important;
+        }
         tfoot td {
             background: #f1f5f9;
             border-top: 2px solid #cbd5e1;
@@ -1026,7 +1254,7 @@ $pageTitle = 'План изготовления каркасов';
         Крупное число слева — <strong>план каркасов</strong> (основной); внизу справа мелко — план гофропакетов (справочно).
         Группы станков в колонке «Станки»: <strong>600</strong> — шире <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм по ширине бумаги (= каркаса), <strong>400</strong> — до <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм включительно или ширина не задана. Внизу таблицы — суммы плана каркасов по дням для каждой группы.
         <?php if ($wireframeBuildCanEdit): ?>
-            Клик по ячейке даты — внести количество каркасов.
+            Клик по ячейке даты — внести количество каркасов. Долг — каркасы, запланированные на прошедшие даты и ещё не снятые с плана; перетащите на дату с сегодня.
         <?php else: ?>
             Изменение плана каркасов доступно мастеру / директору / supervisor цеха U3.
         <?php endif; ?>
@@ -1051,6 +1279,7 @@ $pageTitle = 'План изготовления каркасов';
                     <th class="col-order">Заявка</th>
                     <th class="wf-col-width" title="Ширина бумаги гофропакета (= ширина каркаса), мм">Ширина<br>бумаги, мм</th>
                     <th class="wf-col-group" title="600 — шире <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм по ширине бумаги; 400 — остальные">Станки</th>
+                    <th class="debt-col" title="Долг: план каркасов на прошедшие даты, не выполненный к сегодня. Перетащите на дату в плане (с сегодня).">Долг</th>
                     <?php foreach ($buildPlanDates as $planDate):
                         $d = DateTime::createFromFormat('Y-m-d', (string) $planDate);
                         $isWeekend = $d ? in_array((int) $d->format('N'), [6, 7], true) : false;
@@ -1076,7 +1305,7 @@ $pageTitle = 'План изготовления каркасов';
                 <tbody>
                 <?php if (empty($wireframeRows)): ?>
                     <tr>
-                        <td colspan="<?= 5 + count($buildPlanDates) ?>" class="muted" style="text-align:center;padding:16px;">
+                        <td colspan="<?= 6 + count($buildPlanDates) ?>" class="muted" style="text-align:center;padding:16px;">
                             Нет позиций с каркасами при текущем пороге выполнения или нет строк в справочнике.
                         </td>
                     </tr>
@@ -1109,7 +1338,11 @@ $pageTitle = 'План изготовления каркасов';
                             }
                         }
                         ?>
-                        <tr class="wf-data-row<?= $rowGofroUncovered ? ' wf-row--gofro-uncovered' : '' ?>" data-machine-group="<?= htmlspecialchars($rowMachineAttr, ENT_QUOTES, 'UTF-8') ?>">
+                        <tr class="wf-data-row<?= $rowGofroUncovered ? ' wf-row--gofro-uncovered' : '' ?>"
+                            data-machine-group="<?= htmlspecialchars($rowMachineAttr, ENT_QUOTES, 'UTF-8') ?>"
+                            data-row-key="<?= htmlspecialchars($rowKey, ENT_QUOTES, 'UTF-8') ?>"
+                            data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
+                            data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>">
                             <td class="col-pos" title="<?= htmlspecialchars($rawFilter . ($wfHint !== '' ? ' — каркас: ' . $wfHint : ''), ENT_QUOTES, 'UTF-8') ?>">
                                 <?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>
                             </td>
@@ -1128,6 +1361,12 @@ $pageTitle = 'План изготовления каркасов';
                             </td>
                             <td class="wf-col-width" title="Из справочника paper_package_round (ширина бумаги)"><?= htmlspecialchars($mg['width_display'], ENT_QUOTES, 'UTF-8') ?></td>
                             <td class="wf-col-group" title="Группа станков: 600 — шире <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм по бумаге; 400 — до <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм или ширина не задана"><?= htmlspecialchars($mg['label'], ENT_QUOTES, 'UTF-8') ?></td>
+                            <td class="debt-cell"
+                                data-debt-key="<?= htmlspecialchars($rowKey, ENT_QUOTES, 'UTF-8') ?>"
+                                data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
+                                data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>">
+                                <div class="debt-list"></div>
+                            </td>
                             <?php
                             $pool = 0;
                             foreach ($buildPlanDates as $planDate):
@@ -1181,7 +1420,7 @@ $pageTitle = 'План изготовления каркасов';
                 <?php if (!empty($wireframeRows)): ?>
                 <tfoot>
                 <tr>
-                    <td colspan="5" class="wf-tfoot-label">600</td>
+                    <td colspan="6" class="wf-tfoot-label">600</td>
                     <?php foreach ($buildPlanDates as $planDate):
                         $pd = (string) $planDate;
                         $d = DateTime::createFromFormat('Y-m-d', $pd);
@@ -1192,7 +1431,7 @@ $pageTitle = 'План изготовления каркасов';
                     <?php endforeach; ?>
                 </tr>
                 <tr>
-                    <td colspan="5" class="wf-tfoot-label">400</td>
+                    <td colspan="6" class="wf-tfoot-label">400</td>
                     <?php foreach ($buildPlanDates as $planDate):
                         $pd = (string) $planDate;
                         $d = DateTime::createFromFormat('Y-m-d', $pd);
@@ -1346,6 +1585,9 @@ $pageTitle = 'План изготовления каркасов';
 })();
     </script>
     <?php if ($loadError === '' && !empty($wireframeRows)): ?>
+    <div id="debtExpandPopover" class="debt-popover" hidden>
+        <div id="debtExpandPopoverInner" class="debt-popover__inner"></div>
+    </div>
     <div id="wfCellPanel" class="wf-cell-panel" hidden>
         <p class="wf-cell-panel__title" id="wfCellPanelTitle"></p>
         <p class="wf-cell-panel__meta" id="wfCellPanelMeta"></p>
@@ -1378,6 +1620,341 @@ $pageTitle = 'План изготовления каркасов';
     const btnApplyCustom = document.getElementById('wfCellApplyCustom');
     let activeTd = null;
     window.WF_BUILD_PLAN_DATES = <?= json_encode($buildPlanDates, JSON_UNESCAPED_UNICODE) ?>;
+    const WF_TODAY_ISO = <?= json_encode($todayIso, JSON_UNESCAPED_UNICODE) ?>;
+    const initialWireframePlanAll = <?= json_encode($wireframePlanMapAll, JSON_UNESCAPED_UNICODE) ?> || {};
+    const DEBT_COMPACT_VISIBLE = 3;
+    const debtExpandPopover = document.getElementById('debtExpandPopover');
+    const debtExpandPopoverInner = document.getElementById('debtExpandPopoverInner');
+    const debtStateMap = {};
+    const wfPlanByRow = {};
+    const rowStateMap = new Map();
+    let debtPopoverAnchorCell = null;
+    let dragContext = null;
+
+    function getTodayIso() {
+        return WF_TODAY_ISO;
+    }
+    function toShortDate(iso) {
+        const p = String(iso || '').split('-');
+        return p.length === 3 ? (p[2] + '.' + p[1]) : iso;
+    }
+    function cloneDebtShifts(shifts) {
+        return (Array.isArray(shifts) ? shifts : []).map(function (s) {
+            return {
+                date: String(s.date || ''),
+                qty: Math.max(0, parseInt(s.qty || '0', 10) || 0),
+            };
+        }).filter(function (s) { return s.date && s.qty > 0; });
+    }
+    function getDebtShiftsForKey(rowKey) {
+        return cloneDebtShifts(debtStateMap[rowKey] || []);
+    }
+    function setDebtShiftsForKey(rowKey, shifts) {
+        const next = cloneDebtShifts(shifts).sort(function (a, b) { return a.date.localeCompare(b.date); });
+        if (next.length === 0) {
+            delete debtStateMap[rowKey];
+        } else {
+            debtStateMap[rowKey] = next;
+        }
+    }
+    function getOverdueDebtQtyForRow(rowKey) {
+        return getDebtShiftsForKey(rowKey)
+            .filter(function (s) { return s.date && s.date < getTodayIso(); })
+            .reduce(function (sum, s) { return sum + s.qty; }, 0);
+    }
+    function syncDebtFromPastWfPlan(tr) {
+        const rowKey = tr.getAttribute('data-row-key') || '';
+        if (!rowKey) {
+            return;
+        }
+        syncWfPlanFromRow(tr);
+        const wf = wfPlanByRow[rowKey] || {};
+        const todayIso = getTodayIso();
+        const shifts = [];
+        Object.keys(wf).forEach(function (d) {
+            const q = Math.max(0, parseInt(wf[d] || '0', 10) || 0);
+            if (q > 0 && d < todayIso) {
+                shifts.push({ date: d, qty: q });
+            }
+        });
+        shifts.sort(function (a, b) { return a.date.localeCompare(b.date); });
+        setDebtShiftsForKey(rowKey, shifts);
+        renderDebtCell(tr);
+    }
+    function syncWfPlanFromRow(tr) {
+        const rowKey = tr.getAttribute('data-row-key') || '';
+        if (!rowKey) {
+            return;
+        }
+        if (!wfPlanByRow[rowKey]) {
+            wfPlanByRow[rowKey] = Object.assign({}, initialWireframePlanAll[rowKey] || {});
+        }
+        tr.querySelectorAll('td.wf-date-cell[data-plan-date]').forEach(function (td) {
+            const d = td.getAttribute('data-plan-date') || '';
+            if (!d) {
+                return;
+            }
+            const q = parseInt(td.getAttribute('data-wf') || '0', 10) || 0;
+            if (q > 0) {
+                wfPlanByRow[rowKey][d] = q;
+            } else {
+                delete wfPlanByRow[rowKey][d];
+            }
+        });
+    }
+    function getRowState(tr) {
+        const rowKey = tr.getAttribute('data-row-key') || '';
+        return rowStateMap.get(rowKey) || null;
+    }
+    function bindDebtShiftDrag(item, state) {
+        item.addEventListener('dragstart', function (e) {
+            const fromDate = item.dataset.date || '';
+            const qty = Math.max(0, parseInt(item.dataset.qty || '0', 10) || 0);
+            if (!fromDate || qty <= 0 || !state || !WF_CAN_EDIT) {
+                e.preventDefault();
+                return;
+            }
+            dragContext = {
+                sourceType: 'debt',
+                rowKey: state.rowKey,
+                order: state.order,
+                filterName: state.filter,
+                fromDate: fromDate,
+                movedQty: qty,
+            };
+            item.classList.add('drag-source-single');
+            if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', state.rowKey + '|' + fromDate + '|debt');
+            }
+        });
+        item.addEventListener('dragend', function () {
+            item.classList.remove('drag-source-single');
+            dragContext = null;
+            document.querySelectorAll('td.wf-date-cell.drag-drop-target').forEach(function (el) {
+                el.classList.remove('drag-drop-target');
+            });
+        });
+    }
+    function closeDebtExpandPopover() {
+        debtPopoverAnchorCell = null;
+        if (debtExpandPopover) {
+            debtExpandPopover.hidden = true;
+        }
+        if (debtExpandPopoverInner) {
+            debtExpandPopoverInner.innerHTML = '';
+        }
+    }
+    function positionDebtExpandPopover(anchorCell) {
+        if (!anchorCell || !debtExpandPopover || debtExpandPopover.hidden) {
+            return;
+        }
+        const rect = anchorCell.getBoundingClientRect();
+        const gap = 6;
+        const vw = window.innerWidth || 800;
+        const vh = window.innerHeight || 600;
+        debtExpandPopover.style.left = Math.round(rect.left) + 'px';
+        debtExpandPopover.style.top = Math.round(rect.bottom + gap) + 'px';
+        const popRect = debtExpandPopover.getBoundingClientRect();
+        let left = rect.left + (rect.width - popRect.width) / 2;
+        let top = rect.bottom + gap;
+        if (left + popRect.width > vw - 8) {
+            left = Math.max(8, vw - popRect.width - 8);
+        }
+        if (left < 8) {
+            left = 8;
+        }
+        if (top + popRect.height > vh - 8) {
+            top = Math.max(8, rect.top - popRect.height - gap);
+        }
+        debtExpandPopover.style.left = Math.round(left) + 'px';
+        debtExpandPopover.style.top = Math.round(top) + 'px';
+    }
+    function fillDebtPopoverShifts(debtCell, state) {
+        if (!debtExpandPopoverInner || !state) {
+            return;
+        }
+        debtExpandPopoverInner.innerHTML = '';
+        getDebtShiftsForKey(state.rowKey).forEach(function (shift) {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'debt-shift debt-shift--popover';
+            item.draggable = true;
+            item.dataset.date = shift.date;
+            item.dataset.qty = String(shift.qty);
+            item.title = 'Долг ' + toShortDate(shift.date) + ': ' + shift.qty + ' шт — перетащите на дату';
+            item.textContent = toShortDate(shift.date) + ' • ' + shift.qty;
+            bindDebtShiftDrag(item, state);
+            debtExpandPopoverInner.appendChild(item);
+        });
+    }
+    function openDebtExpandPopover(debtCell, state) {
+        if (!debtCell || !state || getDebtShiftsForKey(state.rowKey).length === 0) {
+            closeDebtExpandPopover();
+            return;
+        }
+        debtPopoverAnchorCell = debtCell;
+        fillDebtPopoverShifts(debtCell, state);
+        if (debtExpandPopover) {
+            debtExpandPopover.hidden = false;
+            positionDebtExpandPopover(debtCell);
+            window.requestAnimationFrame(function () { positionDebtExpandPopover(debtCell); });
+        }
+    }
+    function renderDebtCell(tr) {
+        const rowKey = tr.getAttribute('data-row-key') || '';
+        const state = getRowState(tr);
+        const debtCell = tr.querySelector('td.debt-cell');
+        if (!rowKey || !state || !debtCell) {
+            return;
+        }
+        const list = debtCell.querySelector('.debt-list');
+        if (!list) {
+            return;
+        }
+        const shifts = getDebtShiftsForKey(rowKey);
+        const total = shifts.length;
+        const debtQty = shifts.reduce(function (s, it) { return s + it.qty; }, 0);
+        const overdueQty = getOverdueDebtQtyForRow(rowKey);
+        tr.dataset.debtQty = String(debtQty);
+        debtCell.classList.toggle('debt-cell--warn', total > DEBT_COMPACT_VISIBLE);
+        debtCell.title = total > 0
+            ? ('Долг: ' + debtQty + ' шт. на прошедшие даты (план не снят). Перетащите на дату с сегодня.')
+            : '';
+        tr.classList.toggle('has-overdue-debt', overdueQty > 0);
+        list.innerHTML = '';
+        shifts.slice(0, DEBT_COMPACT_VISIBLE).forEach(function (shift) {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'debt-shift';
+            item.draggable = WF_CAN_EDIT;
+            item.dataset.date = shift.date;
+            item.dataset.qty = String(shift.qty);
+            item.title = 'Долг ' + toShortDate(shift.date) + ': ' + shift.qty + ' шт';
+            item.textContent = String(shift.qty);
+            if (WF_CAN_EDIT) {
+                bindDebtShiftDrag(item, state);
+            }
+            list.appendChild(item);
+        });
+        const hidden = total - DEBT_COMPACT_VISIBLE;
+        if (hidden > 0) {
+            const moreBtn = document.createElement('button');
+            moreBtn.type = 'button';
+            moreBtn.className = 'debt-more';
+            moreBtn.textContent = '+' + hidden;
+            moreBtn.title = 'Ещё ' + hidden + ' — открыть список';
+            moreBtn.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                openDebtExpandPopover(debtCell, state);
+            });
+            list.appendChild(moreBtn);
+        }
+        if (debtPopoverAnchorCell === debtCell) {
+            fillDebtPopoverShifts(debtCell, state);
+            positionDebtExpandPopover(debtCell);
+        }
+    }
+    function canDropDebtOnCell(td, state) {
+        if (!dragContext || dragContext.sourceType !== 'debt' || !td || !state) {
+            return false;
+        }
+        if (dragContext.rowKey !== state.rowKey) {
+            return false;
+        }
+        const toDate = String(td.getAttribute('data-plan-date') || '');
+        if (!toDate || toDate < getTodayIso()) {
+            return false;
+        }
+        const targetQty = parseInt(td.getAttribute('data-wf') || '0', 10) || 0;
+        return targetQty <= 0;
+    }
+    function submitDebtMove(state, fromDate, toDate, qty) {
+        if (!state || !WF_CAN_EDIT) {
+            return;
+        }
+        const movedQty = Math.max(0, parseInt(qty, 10) || 0);
+        if (movedQty <= 0) {
+            return;
+        }
+        const cell = state.row.querySelector('td.wf-date-cell[data-plan-date="' + toDate + '"]');
+        if (!cell) {
+            return;
+        }
+        const prevQty = parseInt(cell.getAttribute('data-wf') || '0', 10) || 0;
+        if (!wfPlanByRow[state.rowKey]) {
+            wfPlanByRow[state.rowKey] = {};
+        }
+        const wr = wfPlanByRow[state.rowKey];
+        if (fromDate < getTodayIso()) {
+            const curFrom = Math.max(0, parseInt(wr[fromDate] || '0', 10) || 0);
+            const nextFrom = Math.max(0, curFrom - movedQty);
+            if (nextFrom > 0) {
+                wr[fromDate] = nextFrom;
+            } else {
+                delete wr[fromDate];
+            }
+        }
+        updateTdVisual(cell, prevQty + movedQty, { prevQty: prevQty, skipDebtSync: true });
+        syncDebtFromPastWfPlan(state.row);
+        fetch('', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({
+                action: 'apply_wireframe_debt',
+                source_row_key: state.rowKey,
+                order_number: state.order,
+                filter_name: state.filter,
+                from_date: fromDate,
+                to_date: toDate,
+                qty: movedQty,
+            }),
+        }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+            .then(function (res) {
+                if (!res.j || !res.j.ok) {
+                    window.alert((res.j && res.j.error) ? res.j.error : 'Ошибка переноса долга');
+                    window.location.reload();
+                }
+            })
+            .catch(function () {
+                window.alert('Сеть или сервер недоступны.');
+                window.location.reload();
+            });
+    }
+    function bindDebtDropOnDateCell(td, state) {
+        if (!WF_CAN_EDIT) {
+            return;
+        }
+        td.addEventListener('dragover', function (e) {
+            if (!dragContext || dragContext.sourceType !== 'debt') {
+                return;
+            }
+            if (canDropDebtOnCell(td, state)) {
+                e.preventDefault();
+                if (e.dataTransfer) {
+                    e.dataTransfer.dropEffect = 'move';
+                }
+                td.classList.add('drag-drop-target');
+            }
+        });
+        td.addEventListener('dragleave', function () {
+            td.classList.remove('drag-drop-target');
+        });
+        td.addEventListener('drop', function (e) {
+            if (!dragContext || dragContext.sourceType !== 'debt') {
+                return;
+            }
+            td.classList.remove('drag-drop-target');
+            if (!canDropDebtOnCell(td, state)) {
+                return;
+            }
+            e.preventDefault();
+            const toDate = String(td.getAttribute('data-plan-date') || '');
+            submitDebtMove(state, dragContext.fromDate, toDate, dragContext.movedQty);
+            dragContext = null;
+        });
+    }
 
     /**
      * По строке: идём по датам слева направо, пул каркасов += wf на дату,
@@ -1573,7 +2150,12 @@ $pageTitle = 'План изготовления каркасов';
             });
         });
     }
-    function updateTdVisual(td, qty) {
+    function updateTdVisual(td, qty, opts) {
+        opts = opts || {};
+        const tr = td.closest('tr');
+        const prev = opts.prevQty !== undefined
+            ? opts.prevQty
+            : (parseInt(td.getAttribute('data-wf') || '0', 10) || 0);
         td.setAttribute('data-wf', String(qty));
         let span = td.querySelector('.wf-main-qty');
         if (qty > 0) {
@@ -1586,12 +2168,19 @@ $pageTitle = 'План изготовления каркасов';
         } else if (span) {
             span.remove();
         }
-        wfRefreshGofroPlanFillsForRow(td.closest('tr'));
+        if (tr) {
+            syncWfPlanFromRow(tr);
+            if (!opts.skipDebtSync) {
+                syncDebtFromPastWfPlan(tr);
+            }
+            wfRefreshGofroPlanFillsForRow(tr);
+        }
         recalcGroupFooters();
     }
     function submitQty(qty) {
         if (!activeTd) return;
         hideErr();
+        const prevQty = parseInt(activeTd.getAttribute('data-wf') || '0', 10) || 0;
         const rowKey = activeTd.getAttribute('data-row-key') || '';
         const order = activeTd.getAttribute('data-order') || '';
         const filter = activeTd.getAttribute('data-filter') || '';
@@ -1613,7 +2202,7 @@ $pageTitle = 'План изготовления каркасов';
                     showErr((res.j && res.j.error) ? res.j.error : 'Ошибка сохранения');
                     return;
                 }
-                updateTdVisual(activeTd, res.j.qty);
+                updateTdVisual(activeTd, res.j.qty, { prevQty: prevQty });
                 closePanel();
             })
             .catch(function () {
@@ -1658,6 +2247,13 @@ $pageTitle = 'План изготовления каркасов';
         }
     });
     document.addEventListener('click', function (ev) {
+        if (debtExpandPopover && !debtExpandPopover.hidden) {
+            const inPopover = debtExpandPopover.contains(ev.target);
+            const onDebtCell = ev.target.closest('td.debt-cell');
+            if (!inPopover && !onDebtCell) {
+                closeDebtExpandPopover();
+            }
+        }
         if (panel.hidden) return;
         if (ev.target === panel || panel.contains(ev.target)) return;
         if (activeTd && activeTd.contains(ev.target)) return;
@@ -1665,8 +2261,24 @@ $pageTitle = 'План изготовления каркасов';
     });
     document.addEventListener('keydown', function (ev) {
         if (ev.key === 'Escape' && !panel.hidden) closePanel();
+        if (ev.key === 'Escape' && debtExpandPopover && !debtExpandPopover.hidden) closeDebtExpandPopover();
     });
-    document.querySelectorAll('tbody tr.wf-data-row').forEach(wfRefreshGofroPlanFillsForRow);
+    document.querySelectorAll('tbody tr.wf-data-row').forEach(function (tr) {
+        const rowKey = tr.getAttribute('data-row-key') || '';
+        const state = {
+            row: tr,
+            rowKey: rowKey,
+            order: tr.getAttribute('data-order') || '',
+            filter: tr.getAttribute('data-filter') || '',
+        };
+        rowStateMap.set(rowKey, state);
+        wfPlanByRow[rowKey] = Object.assign({}, initialWireframePlanAll[rowKey] || {});
+        tr.querySelectorAll('td.wf-date-cell--editable').forEach(function (td) {
+            bindDebtDropOnDateCell(td, state);
+        });
+        syncDebtFromPastWfPlan(tr);
+        wfRefreshGofroPlanFillsForRow(tr);
+    });
     recalcGroupFooters();
 })();
     </script>

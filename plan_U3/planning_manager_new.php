@@ -49,72 +49,30 @@ function planningManagerFlipOrderColumn(array $column): array
     return $out;
 }
 
-/** Пороги % выполнения для ссылок (как на боевых страницах). */
+/** Пороги % выполнения в ссылках на страницы этапов (фиксированные). */
 $maxPctAssembly = 94;
 $maxPctGofro = 95;
-if (isset($_GET['max_pct_assembly']) && $_GET['max_pct_assembly'] !== '') {
-    $maxPctAssembly = max(0, min(100, (int) $_GET['max_pct_assembly']));
-}
-if (isset($_GET['max_pct_gofro']) && $_GET['max_pct_gofro'] !== '') {
-    $maxPctGofro = max(0, min(100, (int) $_GET['max_pct_gofro']));
-}
+$maxPctWireframe = 97;
 
 $orders = [];
 $buildDone = [];
 $rollDone = [];
 $gofroV2Done = [];
+$wireframeDone = [];
 $loadErr = '';
 
-/** Заявки с хотя бы одной «активной» позицией — как на active_positions (остаток > 0, % выполнения ≤ порога). */
-$maxPctActive = max(0, min(100, (int) $maxPctAssembly));
+/** Все активные заявки (не скрытые в orders). */
 try {
-    $sqlActive = "
-        SELECT DISTINCT agg.order_number
-        FROM (
-            SELECT order_number, `filter` AS filter_name, SUM(`count`) AS ordered
-            FROM orders
-            WHERE (hide IS NULL OR hide != 1)
-            GROUP BY order_number, `filter`
-        ) agg
-        LEFT JOIN (
-            SELECT name_of_order, name_of_filter, SUM(count_of_filters) AS produced
-            FROM manufactured_production
-            GROUP BY name_of_order, name_of_filter
-        ) prod
-            ON prod.name_of_order = agg.order_number
-           AND prod.name_of_filter = agg.filter_name
-        WHERE agg.ordered > COALESCE(prod.produced, 0)
-          AND agg.ordered > 0
-          AND COALESCE(prod.produced, 0) * 100 <= {$maxPctActive} * agg.ordered
-        ORDER BY agg.order_number
-    ";
-    $activeNums = $pdo->query($sqlActive)->fetchAll(PDO::FETCH_COLUMN);
-    $activeCanon = [];
-    foreach ($activeNums as $n) {
-        $k = planningManagerOrderKey(is_string($n) || is_numeric($n) ? (string) $n : '');
-        if ($k !== '') {
-            $activeCanon[$k] = true;
-        }
-    }
-    $activeList = array_keys($activeCanon);
-    sort($activeList, SORT_STRING);
-
-    $orders = [];
-    if ($activeList !== []) {
-        $ph = implode(',', array_fill(0, count($activeList), '?'));
-        $st = $pdo->prepare("
-            SELECT TRIM(order_number) AS order_number, MAX(COALESCE(cut_ready, 0)) AS cut_ready
-            FROM orders
-            WHERE TRIM(order_number) IN ({$ph})
-              AND (hide IS NULL OR hide != 1)
-            GROUP BY TRIM(order_number)
-            ORDER BY TRIM(order_number)
-        ");
-        $st->execute($activeList);
-        $orders = $st->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($orders as $i => $row) {
-            $orders[$i]['order_number'] = planningManagerOrderKey($row['order_number'] ?? '');
-        }
+    $st = $pdo->query("
+        SELECT TRIM(order_number) AS order_number, MAX(COALESCE(cut_ready, 0)) AS cut_ready
+        FROM orders
+        WHERE (hide IS NULL OR hide != 1)
+        GROUP BY TRIM(order_number)
+        ORDER BY TRIM(order_number)
+    ");
+    $orders = $st->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($orders as $i => $row) {
+        $orders[$i]['order_number'] = planningManagerOrderKey($row['order_number'] ?? '');
     }
 } catch (Throwable $e) {
     $orders = [];
@@ -160,9 +118,17 @@ try {
     $gofroV2Done = [];
 }
 
+try {
+    $stmt = $pdo->query('SELECT DISTINCT TRIM(order_number) AS order_number FROM wireframe_build_plan WHERE COALESCE(qty, 0) > 0');
+    $wireframeDone = planningManagerFlipOrderColumn($stmt->fetchAll(PDO::FETCH_COLUMN));
+} catch (Throwable $e) {
+    $wireframeDone = [];
+}
+
 $pageTitle = 'Менеджер планирования';
 $hAssembly = (int) $maxPctAssembly;
 $hGofro = (int) $maxPctGofro;
+$hWireframe = (int) $maxPctWireframe;
 
 ?>
 <!DOCTYPE html>
@@ -263,32 +229,6 @@ $hGofro = (int) $maxPctGofro;
             display: flex;
             flex-direction: column;
             gap: 1rem;
-        }
-
-        .toolbar-card {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 1rem;
-            box-shadow: 0 1px 2px 0 hsla(220, 15%, 15%, 0.05);
-        }
-
-        .pct-form {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.75rem;
-            align-items: center;
-            font-size: 0.8125rem;
-            color: var(--muted-foreground);
-        }
-
-        .pct-form input[type="number"] {
-            width: 4rem;
-            padding: 0.375rem 0.5rem;
-            border-radius: calc(var(--radius) - 2px);
-            border: 1px solid var(--border);
-            font-family: inherit;
-            font-size: 0.8125rem;
         }
 
         .application-card {
@@ -474,22 +414,13 @@ $hGofro = (int) $maxPctGofro;
         <div class="err-msg">Не удалось загрузить заявки: <?= htmlspecialchars($loadErr, ENT_QUOTES, 'UTF-8') ?></div>
     <?php endif; ?>
 
-    <div class="toolbar-card">
-        <form class="pct-form" method="get" action="">
-            <span>Сборка ≤%</span>
-            <input type="number" name="max_pct_assembly" min="0" max="100" value="<?= $hAssembly ?>">
-            <span>Гофро ≤%</span>
-            <input type="number" name="max_pct_gofro" min="0" max="100" value="<?= $hGofro ?>">
-            <button type="submit" class="btn-primary btn-sm">Применить к списку заявок</button>
-        </form>
-    </div>
-
     <?php foreach ($orders as $o):
         $ord = $o['order_number'];
         $cut = !empty($o['cut_ready']);
         $build = !empty($buildDone[$ord]);
         $roll = !empty($rollDone[$ord]);
         $gofro = !empty($gofroV2Done[$ord]);
+        $wireframe = !empty($wireframeDone[$ord]);
         $enc = rawurlencode($ord);
         ?>
         <div class="application-card">
@@ -502,7 +433,7 @@ $hGofro = (int) $maxPctGofro;
                         </svg>
                         <h3 class="app-title"><?= htmlspecialchars($ord, ENT_QUOTES, 'UTF-8') ?></h3>
                     </div>
-                    <?php if ($cut && $build && $roll && $gofro): ?>
+                    <?php if ($cut && $build && $roll && $gofro && $wireframe): ?>
                         <span class="badge badge-success">Все этапы с данными</span>
                     <?php else: ?>
                         <span class="badge badge-warning">Есть незакрытые этапы</span>
@@ -562,12 +493,26 @@ $hGofro = (int) $maxPctGofro;
                         <a class="btn-secondary btn-sm btn-full" href="gofro_build_plan.php?max_pct=<?= $hGofro ?>" target="_blank" rel="noopener">План гофро</a>
                     </div>
                 </div>
+
+                <div class="stage-section">
+                    <h4 class="stage-title">План изготовления каркасов</h4>
+                    <?php if (!$gofro): ?>
+                        <span class="badge badge-muted">Нет плана гофро</span>
+                    <?php elseif ($wireframe): ?>
+                        <span class="badge badge-success">Готово</span>
+                    <?php else: ?>
+                        <span class="badge badge-warning">Нет плана</span>
+                    <?php endif; ?>
+                    <div class="stage-actions">
+                        <a class="btn-secondary btn-sm btn-full" href="wireframe_build_plan.php?max_pct=<?= $hWireframe ?>" target="_blank" rel="noopener">План каркасов</a>
+                    </div>
+                </div>
             </div>
         </div>
     <?php endforeach; ?>
 
     <?php if (empty($orders) && empty($loadErr)): ?>
-        <p class="empty-msg">Нет активных заявок при пороге выполнения ≤ <?= (int) $maxPctActive ?>% (или все позиции закрыты).</p>
+        <p class="empty-msg">Нет активных заявок.</p>
     <?php endif; ?>
 
         </div>
