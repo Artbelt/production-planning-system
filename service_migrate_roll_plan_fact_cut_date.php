@@ -117,6 +117,14 @@ foreach ($targets as $target) {
             echo '<p>Колонка <code>fact_cut_date</code> уже существует.</p>';
         }
 
+        if (!hasColumn($pdo, $table, 'fact_cut_at')) {
+            $after = hasColumn($pdo, $table, 'fact_cut_date') ? 'fact_cut_date' : 'done';
+            $pdo->exec("ALTER TABLE {$table} ADD COLUMN fact_cut_at DATETIME NULL AFTER {$after}");
+            echo '<p>Добавлена колонка <code>fact_cut_at</code> (время отметки порезки).</p>';
+        } else {
+            echo '<p>Колонка <code>fact_cut_at</code> уже существует.</p>';
+        }
+
         $idxStmt = $pdo->query("SHOW INDEX FROM {$table} WHERE Key_name = 'idx_fact_cut_date'");
         if (!$idxStmt || $idxStmt->rowCount() === 0) {
             $pdo->exec("CREATE INDEX idx_fact_cut_date ON {$table}(fact_cut_date)");

@@ -1,6 +1,7 @@
 <?php
 header('Content-Type: application/json');
 require_once __DIR__ . '/../../auth/includes/db.php';
+require_once __DIR__ . '/../../auth/includes/roll_plan_mark_cut.php';
 $pdo = getPdo('plan_u4');
 
 if (!isset($_POST['id'])) {
@@ -8,7 +9,7 @@ if (!isset($_POST['id'])) {
     exit;
 }
 
-$id = (int)$_POST['id'];
+$id = (int) $_POST['id'];
 $table = 'roll_plans';
 $chk = $pdo->query("SHOW TABLES LIKE 'roll_plans'");
 if (!$chk || $chk->rowCount() === 0) {
@@ -19,7 +20,6 @@ if (!$chk || $chk->rowCount() === 0) {
     }
     $table = 'roll_plan';
 }
-$stmt = $pdo->prepare("UPDATE {$table} SET done = 1, fact_cut_date = CURDATE() WHERE id = ?");
-$success = $stmt->execute([$id]);
 
-echo json_encode(['success' => $success]);
+$result = rollPlanMarkCutDoneById($pdo, $table, $id);
+echo json_encode($result);

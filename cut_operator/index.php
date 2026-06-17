@@ -275,6 +275,102 @@ if (isset($_POST['action'])) {
     ob_clean();
     header('Content-Type: application/json; charset=utf-8');
     
+    if ($_POST['action'] === 'search_orders') {
+        $department = $_POST['department'] ?? '';
+        if (!isset($databases[$department])) {
+            echo json_encode(['success' => false, 'message' => 'Неверный участок']);
+            exit;
+        }
+        $dbConfig = $databases[$department];
+        try {
+            $mysqli = new mysqli($dbConfig['host'], $dbConfig['user'], $dbConfig['pass'], $dbConfig['name']);
+            $mysqli->set_charset('utf8mb4');
+            if ($mysqli->connect_errno) {
+                throw new Exception('Ошибка подключения к БД');
+            }
+
+            $hasStatusField = false;
+            $checkResult = $mysqli->query("SHOW COLUMNS FROM orders LIKE 'status'");
+            if ($checkResult && $checkResult->num_rows > 0) {
+                $hasStatusField = true;
+            }
+
+            if ($hasStatusField) {
+                $sql = "SELECT DISTINCT r.order_number
+                        FROM {$dbConfig['table']} r
+                        INNER JOIN orders o ON r.order_number = o.order_number
+                        WHERE (o.hide IS NULL OR o.hide != 1)
+                          AND (o.status IS NULL OR o.status NOT IN ('completed', 'closed', 'finished', 'cancelled'))
+                        ORDER BY r.order_number DESC";
+            } else {
+                $sql = "SELECT DISTINCT r.order_number
+                        FROM {$dbConfig['table']} r
+                        INNER JOIN orders o ON r.order_number = o.order_number
+                        WHERE (o.hide IS NULL OR o.hide != 1)
+                        ORDER BY r.order_number DESC";
+            }
+
+            $result = $mysqli->query($sql);
+            $orders = [];
+            if ($result) {
+                while ($row = $result->fetch_assoc()) {
+                    $orders[] = $row['order_number'];
+                }
+            }
+            $mysqli->close();
+            echo json_encode(['success' => true, 'orders' => $orders]);
+            exit;
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+            exit;
+        }
+    }
+
+    if ($_POST['action'] === 'search_bales') {
+        $department = $_POST['department'] ?? '';
+        $orderNumber = trim($_POST['order_number'] ?? '');
+        if (!isset($databases[$department]) || $orderNumber === '') {
+            echo json_encode(['success' => false, 'message' => 'Неверные параметры']);
+            exit;
+        }
+        $dbConfig = $databases[$department];
+        $dateField = ($department === 'U2') ? 'plan_date' : 'work_date';
+        try {
+            $mysqli = new mysqli($dbConfig['host'], $dbConfig['user'], $dbConfig['pass'], $dbConfig['name']);
+            $mysqli->set_charset('utf8mb4');
+            if ($mysqli->connect_errno) {
+                throw new Exception('Ошибка подключения к БД');
+            }
+            $sql = "SELECT id, bale_id, {$dateField} AS plan_date, done
+                    FROM {$dbConfig['table']}
+                    WHERE order_number = ?
+                    ORDER BY CAST(bale_id AS UNSIGNED), bale_id";
+            $stmt = $mysqli->prepare($sql);
+            if (!$stmt) {
+                throw new Exception('Ошибка подготовки запроса');
+            }
+            $stmt->bind_param('s', $orderNumber);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $bales = [];
+            while ($row = $result->fetch_assoc()) {
+                $bales[] = [
+                    'id' => (int)$row['id'],
+                    'bale_id' => $row['bale_id'],
+                    'plan_date' => $row['plan_date'],
+                    'done' => (int)$row['done']
+                ];
+            }
+            $stmt->close();
+            $mysqli->close();
+            echo json_encode(['success' => true, 'bales' => $bales]);
+            exit;
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+            exit;
+        }
+    }
+
     if ($_POST['action'] === 'mark_done') {
         $taskId = (int)$_POST['id'];
         $department = $_POST['department'] ?? '';
@@ -545,6 +641,156 @@ if (isset($_POST['action'])) {
                 width: 100%;
                 margin-top: 5px;
             }
+
+            .search-bale-modal .modal-close {
+                width: auto;
+                margin-top: 0;
+            }
+        }
+
+        body {
+            padding-bottom: 70px;
+        }
+
+        .search-bale-bar {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 100;
+            background: #fff;
+            border-top: 1px solid #ddd;
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.1);
+            padding: 10px 15px;
+            text-align: center;
+        }
+
+        .search-bale-bar button {
+            background: #4a90e2;
+            min-width: 220px;
+        }
+
+        .search-bale-bar button:hover {
+            background: #357abd;
+        }
+
+        .modal-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 200;
+        }
+
+        .modal-backdrop.is-open {
+            display: block;
+        }
+
+        .search-bale-modal {
+            display: none;
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 201;
+            width: min(480px, calc(100vw - 24px));
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+            padding: 20px;
+        }
+
+        .search-bale-modal.is-open {
+            display: block;
+        }
+
+        .search-bale-modal h2 {
+            margin: 0;
+            font-size: 18px;
+            color: #333;
+        }
+
+        .search-bale-modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .search-bale-modal .modal-close {
+            flex-shrink: 0;
+            width: auto;
+            background: #6c757d;
+            color: #fff;
+            padding: 6px 12px;
+            min-width: auto;
+            font-size: 13px;
+        }
+
+        .search-bale-modal .modal-close:hover {
+            background: #5a6268;
+        }
+
+        .search-bale-field {
+            margin-bottom: 14px;
+        }
+
+        .search-bale-field label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 6px;
+            color: #555;
+        }
+
+        .search-bale-field select {
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .search-bale-field select:disabled {
+            background: #f5f5f5;
+            color: #999;
+        }
+
+        .search-bale-info {
+            margin-top: 16px;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+            display: none;
+        }
+
+        .search-bale-info.is-visible {
+            display: block;
+        }
+
+        .search-bale-info .status-done {
+            color: #28a745;
+            font-weight: bold;
+        }
+
+        .search-bale-info .status-pending {
+            color: #dc3545;
+            font-weight: bold;
+        }
+
+        .search-bale-actions {
+            margin-top: 16px;
+            text-align: center;
+        }
+
+        .search-bale-actions button {
+            width: 100%;
+        }
+
+        .search-bale-loading {
+            color: #888;
+            font-size: 13px;
+            padding: 4px 0;
         }
     </style>
 </head>
@@ -724,6 +970,54 @@ if (isset($_POST['action'])) {
         <?php endif; ?>
     <?php endforeach; ?>
 
+    <div class="search-bale-bar">
+        <button type="button" id="open-search-bale-btn">Поиск бухты</button>
+    </div>
+
+    <div class="modal-backdrop" id="search-bale-backdrop" aria-hidden="true"></div>
+    <div class="search-bale-modal" id="search-bale-modal" role="dialog" aria-modal="true" aria-labelledby="search-bale-title">
+        <div class="search-bale-modal-header">
+            <h2 id="search-bale-title">Поиск бухты</h2>
+            <button type="button" class="modal-close" id="search-bale-close">Закрыть</button>
+        </div>
+
+        <div class="search-bale-field">
+            <label for="search-bale-department">Участок</label>
+            <select id="search-bale-department">
+                <option value="">— выберите участок —</option>
+                <option value="U2">U2</option>
+                <option value="U3">U3</option>
+                <option value="U4">U4</option>
+                <option value="U5">U5</option>
+            </select>
+        </div>
+
+        <div class="search-bale-field">
+            <label for="search-bale-order">Заявка</label>
+            <select id="search-bale-order" disabled>
+                <option value="">— сначала выберите участок —</option>
+            </select>
+            <div class="search-bale-loading" id="search-bale-order-loading" style="display:none;">Загрузка заявок…</div>
+        </div>
+
+        <div class="search-bale-field">
+            <label for="search-bale-bale">Бухта</label>
+            <select id="search-bale-bale" disabled>
+                <option value="">— сначала выберите заявку —</option>
+            </select>
+            <div class="search-bale-loading" id="search-bale-bale-loading" style="display:none;">Загрузка бухт…</div>
+        </div>
+
+        <div class="search-bale-info" id="search-bale-info">
+            <p><strong>Плановая дата:</strong> <span id="search-bale-plan-date">—</span></p>
+            <p><strong>Статус:</strong> <span id="search-bale-status">—</span></p>
+        </div>
+
+        <div class="search-bale-actions" id="search-bale-actions" style="display:none;">
+            <button type="button" id="search-bale-mark-done">Отметить выполненной</button>
+        </div>
+    </div>
+
     <script>
         function toggleDetails(id) {
             const detailsRow = document.getElementById("details-" + id);
@@ -845,6 +1139,223 @@ if (isset($_POST['action'])) {
             departmentFilter.addEventListener('change', filterTable);
             statusFilter.addEventListener('change', filterTable);
         });
+
+        (function() {
+            var backdrop = document.getElementById('search-bale-backdrop');
+            var modal = document.getElementById('search-bale-modal');
+            var openBtn = document.getElementById('open-search-bale-btn');
+            var closeBtn = document.getElementById('search-bale-close');
+            var deptSelect = document.getElementById('search-bale-department');
+            var orderSelect = document.getElementById('search-bale-order');
+            var baleSelect = document.getElementById('search-bale-bale');
+            var orderLoading = document.getElementById('search-bale-order-loading');
+            var baleLoading = document.getElementById('search-bale-bale-loading');
+            var infoBlock = document.getElementById('search-bale-info');
+            var planDateEl = document.getElementById('search-bale-plan-date');
+            var statusEl = document.getElementById('search-bale-status');
+            var actionsBlock = document.getElementById('search-bale-actions');
+            var markDoneBtn = document.getElementById('search-bale-mark-done');
+            var balesCache = [];
+
+            function postAction(params) {
+                return new Promise(function(resolve, reject) {
+                    var xhr = new XMLHttpRequest();
+                    xhr.open('POST', '', true);
+                    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+                    xhr.onload = function() {
+                        if (xhr.status !== 200) {
+                            reject(new Error('Ошибка запроса: ' + xhr.status));
+                            return;
+                        }
+                        try {
+                            resolve(JSON.parse(xhr.responseText));
+                        } catch (e) {
+                            reject(new Error('Ошибка разбора ответа'));
+                        }
+                    };
+                    xhr.onerror = function() { reject(new Error('Ошибка соединения')); };
+                    var body = Object.keys(params).map(function(k) {
+                        return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+                    }).join('&');
+                    xhr.send(body);
+                });
+            }
+
+            function resetOrderSelect() {
+                orderSelect.innerHTML = '<option value="">— выберите заявку —</option>';
+                orderSelect.disabled = true;
+            }
+
+            function resetBaleSelect() {
+                baleSelect.innerHTML = '<option value="">— выберите бухту —</option>';
+                baleSelect.disabled = true;
+                balesCache = [];
+                hideBaleInfo();
+            }
+
+            function hideBaleInfo() {
+                infoBlock.classList.remove('is-visible');
+                actionsBlock.style.display = 'none';
+            }
+
+            function showBaleInfo(bale) {
+                planDateEl.textContent = bale.plan_date || '—';
+                if (bale.done) {
+                    statusEl.textContent = 'Выполнено';
+                    statusEl.className = 'status-done';
+                    actionsBlock.style.display = 'none';
+                } else {
+                    statusEl.textContent = 'Не выполнено';
+                    statusEl.className = 'status-pending';
+                    actionsBlock.style.display = 'block';
+                }
+                infoBlock.classList.add('is-visible');
+            }
+
+            function openModal() {
+                backdrop.classList.add('is-open');
+                modal.classList.add('is-open');
+                backdrop.setAttribute('aria-hidden', 'false');
+            }
+
+            function closeModal() {
+                backdrop.classList.remove('is-open');
+                modal.classList.remove('is-open');
+                backdrop.setAttribute('aria-hidden', 'true');
+            }
+
+            function resetModal() {
+                deptSelect.value = '';
+                resetOrderSelect();
+                resetBaleSelect();
+            }
+
+            openBtn.addEventListener('click', function() {
+                resetModal();
+                openModal();
+            });
+
+            closeBtn.addEventListener('click', closeModal);
+            backdrop.addEventListener('click', closeModal);
+
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && modal.classList.contains('is-open')) {
+                    closeModal();
+                }
+            });
+
+            deptSelect.addEventListener('change', function() {
+                var department = deptSelect.value;
+                resetOrderSelect();
+                resetBaleSelect();
+                if (!department) return;
+
+                orderLoading.style.display = 'block';
+                postAction({ action: 'search_orders', department: department })
+                    .then(function(data) {
+                        orderLoading.style.display = 'none';
+                        if (!data.success) {
+                            alert('Ошибка: ' + (data.message || 'не удалось загрузить заявки'));
+                            return;
+                        }
+                        if (!data.orders || data.orders.length === 0) {
+                            orderSelect.innerHTML = '<option value="">— заявки не найдены —</option>';
+                            return;
+                        }
+                        orderSelect.innerHTML = '<option value="">— выберите заявку —</option>';
+                        data.orders.forEach(function(order) {
+                            var opt = document.createElement('option');
+                            opt.value = order;
+                            opt.textContent = order;
+                            orderSelect.appendChild(opt);
+                        });
+                        orderSelect.disabled = false;
+                    })
+                    .catch(function(err) {
+                        orderLoading.style.display = 'none';
+                        alert(err.message);
+                    });
+            });
+
+            orderSelect.addEventListener('change', function() {
+                var department = deptSelect.value;
+                var orderNumber = orderSelect.value;
+                resetBaleSelect();
+                if (!department || !orderNumber) return;
+
+                baleLoading.style.display = 'block';
+                postAction({ action: 'search_bales', department: department, order_number: orderNumber })
+                    .then(function(data) {
+                        baleLoading.style.display = 'none';
+                        if (!data.success) {
+                            alert('Ошибка: ' + (data.message || 'не удалось загрузить бухты'));
+                            return;
+                        }
+                        balesCache = data.bales || [];
+                        if (balesCache.length === 0) {
+                            baleSelect.innerHTML = '<option value="">— бухты не найдены —</option>';
+                            return;
+                        }
+                        baleSelect.innerHTML = '<option value="">— выберите бухту —</option>';
+                        balesCache.forEach(function(bale) {
+                            var opt = document.createElement('option');
+                            opt.value = bale.id;
+                            var label = 'Бухта ' + bale.bale_id;
+                            if (bale.done) label += ' ✓';
+                            opt.textContent = label;
+                            baleSelect.appendChild(opt);
+                        });
+                        baleSelect.disabled = false;
+                    })
+                    .catch(function(err) {
+                        baleLoading.style.display = 'none';
+                        alert(err.message);
+                    });
+            });
+
+            baleSelect.addEventListener('change', function() {
+                var selectedId = parseInt(baleSelect.value, 10);
+                if (!selectedId) {
+                    hideBaleInfo();
+                    return;
+                }
+                var bale = balesCache.find(function(b) { return b.id === selectedId; });
+                if (bale) showBaleInfo(bale);
+            });
+
+            markDoneBtn.addEventListener('click', function() {
+                var department = deptSelect.value;
+                var selectedId = parseInt(baleSelect.value, 10);
+                if (!department || !selectedId) return;
+                if (!confirm('Отметить бухту как выполненную?')) return;
+
+                markDoneBtn.disabled = true;
+                postAction({ action: 'mark_done', id: selectedId, department: department })
+                    .then(function(data) {
+                        markDoneBtn.disabled = false;
+                        if (data.success) {
+                            var bale = balesCache.find(function(b) { return b.id === selectedId; });
+                            if (bale) {
+                                bale.done = 1;
+                                showBaleInfo(bale);
+                                var opt = baleSelect.querySelector('option[value="' + selectedId + '"]');
+                                if (opt) {
+                                    opt.textContent = 'Бухта ' + bale.bale_id + ' ✓';
+                                }
+                            }
+                            if (confirm('Бухта отмечена выполненной. Обновить страницу?')) {
+                                location.reload();
+                            }
+                        } else {
+                            alert('Ошибка: ' + (data.message || 'не удалось обновить статус'));
+                        }
+                    })
+                    .catch(function(err) {
+                        markDoneBtn.disabled = false;
+                        alert(err.message);
+                    });
+            });
+        })();
     </script>
 </body>
 </html>

@@ -505,6 +505,7 @@ echo "<!-- Аккуратная панель авторизации -->
                 <div class="stack">
                     <a href="product_output.php" target="_blank" rel="noopener" class="stack"><button>Выпуск продукции</button></a>
                     <a href="gofro_packages_input.php" target="_blank" rel="noopener" class="stack"><button class="zu-tag">Ввод изготовленных гофропакетов</button></a>
+                    <a href="wireframes_input.php" target="_blank" rel="noopener" class="stack"><button class="zu-tag">Ввод изготовленных каркасов</button></a>
                     <button type="button" onclick="openDataEditor()">Редактор данных</button>
                     <button type="button" onclick="openCapManagementModal()">Операции с крышками</button>
                     <?php if ($isCorrugatorOperator): ?>

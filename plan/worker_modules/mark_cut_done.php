@@ -1,6 +1,7 @@
 <?php
 header('Content-Type: application/json');
 require_once __DIR__ . '/../../auth/includes/db.php';
+require_once __DIR__ . '/../../auth/includes/roll_plan_mark_cut.php';
 $pdo = getPdo('plan');
 
 if (!isset($_POST['id'])) {
@@ -8,8 +9,6 @@ if (!isset($_POST['id'])) {
     exit;
 }
 
-$id = (int)$_POST['id'];
-$stmt = $pdo->prepare("UPDATE roll_plan SET done = 1, fact_cut_date = CURDATE() WHERE id = ?");
-$success = $stmt->execute([$id]);
-
-echo json_encode(['success' => $success]);
+$id = (int) $_POST['id'];
+$result = rollPlanMarkCutDoneById($pdo, 'roll_plan', $id);
+echo json_encode($result);

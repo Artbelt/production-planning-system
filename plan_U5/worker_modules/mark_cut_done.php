@@ -1,14 +1,14 @@
 <?php
 header('Content-Type: application/json');
-$pdo = new PDO("mysql:host=127.0.0.1;dbname=plan_u5;charset=utf8mb4", "root", "");
+require_once __DIR__ . '/../../auth/includes/db.php';
+require_once __DIR__ . '/../../auth/includes/roll_plan_mark_cut.php';
+$pdo = getPdo('plan_u5');
 
 if (!isset($_POST['id'])) {
     echo json_encode(['success' => false, 'message' => 'Нет ID']);
     exit;
 }
 
-$id = (int)$_POST['id'];
-$stmt = $pdo->prepare("UPDATE roll_plans SET done = 1, fact_cut_date = CURDATE() WHERE id = ?");
-$success = $stmt->execute([$id]);
-
-echo json_encode(['success' => $success]);
+$id = (int) $_POST['id'];
+$result = rollPlanMarkCutDoneById($pdo, 'roll_plans', $id);
+echo json_encode($result);

@@ -3,6 +3,7 @@
  * Мониторинг бобинорезки: У2 / У3 / У5, окно 5 календарных недель.
  * Смещение: GET w (целое) — сдвиг окна на w недель от «базы» (текущая неделя −2 … +2).
  * Отдельно: GET action=cut_by_day&day=Y-m-d — JSON «что порезано в выбранный день» (fact_cut_date).
+ * Отдельно: GET action=cut_log&w=… — JSON лог отметок (fact_cut_at / fact_cut_date) за видимый период.
  */
 
 define('AUTH_SYSTEM', true);
@@ -95,6 +96,90 @@ function fetchAssignmentsWithDate(
         ];
     }
     return $out;
+}
+
+/** Границы 5 недель монитора с учётом смещения w. */
+function computeMonitorWeekRange(int $weekOffset): array
+{
+    $today = new DateTimeImmutable('today');
+    $monday = $today->modify('-' . (((int) $today->format('N')) - 1) . ' days');
+    $rangeStart = $monday->modify('-2 weeks')->modify(($weekOffset >= 0 ? '+' : '') . ($weekOffset * 7) . ' days');
+    $rangeEnd = $rangeStart->modify('+34 days');
+    return [$rangeStart, $rangeEnd];
+}
+
+/**
+ * Записи лога порезки из одной таблицы плана.
+ *
+ * @return list<array{shop:string,order:string,bale:string,marked_at:string,has_time:bool}>
+ */
+function fetchCutLogForTable(
+    ?PDO $pdo,
+    string $table,
+    string $shopCode,
+    string $from,
+    string $to
+): array {
+    if (!$pdo || !tableExists($pdo, $table) || !columnExists($pdo, $table, 'done')) {
+        return [];
+    }
+    $hasAt = columnExists($pdo, $table, 'fact_cut_at');
+    $hasDate = columnExists($pdo, $table, 'fact_cut_date');
+    if (!$hasAt && !$hasDate) {
+        return [];
+    }
+
+    $select = 'order_number, bale_id';
+    if ($hasAt) {
+        $select .= ', fact_cut_at';
+    }
+    if ($hasDate) {
+        $select .= ', fact_cut_date';
+    }
+
+    if ($hasAt && $hasDate) {
+        $where = 'done = 1 AND (
+            (fact_cut_at IS NOT NULL AND DATE(fact_cut_at) BETWEEN :f AND :t)
+            OR (fact_cut_at IS NULL AND fact_cut_date IS NOT NULL AND fact_cut_date BETWEEN :f AND :t)
+        )';
+        $sort = 'COALESCE(fact_cut_at, CONCAT(fact_cut_date, \' 00:00:00\'))';
+    } elseif ($hasAt) {
+        $where = 'done = 1 AND fact_cut_at IS NOT NULL AND DATE(fact_cut_at) BETWEEN :f AND :t';
+        $sort = 'fact_cut_at';
+    } else {
+        $where = 'done = 1 AND fact_cut_date BETWEEN :f AND :t';
+        $sort = 'fact_cut_date';
+    }
+
+    $sql = "SELECT {$select} FROM `{$table}` WHERE {$where} ORDER BY {$sort} DESC";
+    try {
+        $st = $pdo->prepare($sql);
+        $st->execute([':f' => $from, ':t' => $to]);
+        $out = [];
+        foreach ($st->fetchAll() as $r) {
+            $hasTime = false;
+            $markedAt = '';
+            if ($hasAt && !empty($r['fact_cut_at'])) {
+                $markedAt = (string) $r['fact_cut_at'];
+                $hasTime = true;
+            } elseif ($hasDate && !empty($r['fact_cut_date'])) {
+                $markedAt = (string) $r['fact_cut_date'];
+            } else {
+                continue;
+            }
+            $out[] = [
+                'shop' => $shopCode,
+                'order' => (string) ($r['order_number'] ?? ''),
+                'bale' => (string) ($r['bale_id'] ?? ''),
+                'marked_at' => $markedAt,
+                'has_time' => $hasTime,
+            ];
+        }
+        return $out;
+    } catch (Throwable $e) {
+        error_log('bobbin_cut_monitor fetchCutLogForTable: ' . $e->getMessage());
+        return [];
+    }
 }
 
 /**
@@ -289,6 +374,75 @@ if (($_GET['action'] ?? '') === 'cut_by_day') {
             'day' => $dayYmd,
             'total' => $total,
             'shops' => $shopsOut,
+        ],
+        JSON_UNESCAPED_UNICODE
+    );
+    exit;
+}
+
+// AJAX: слой «лог порезки» — отметки done с временем fact_cut_at (или датой fact_cut_date)
+if (($_GET['action'] ?? '') === 'cut_log') {
+    header('Content-Type: application/json; charset=utf-8');
+    $logWeekOffset = (int) ($_GET['w'] ?? $weekOffset);
+    [$logRangeStart, $logRangeEnd] = computeMonitorWeekRange($logWeekOffset);
+    $from = trim((string) ($_GET['from'] ?? $logRangeStart->format('Y-m-d')));
+    $to = trim((string) ($_GET['to'] ?? $logRangeEnd->format('Y-m-d')));
+    $fromDt = DateTimeImmutable::createFromFormat('Y-m-d', $from);
+    $toDt = DateTimeImmutable::createFromFormat('Y-m-d', $to);
+    if (!$fromDt || $fromDt->format('Y-m-d') !== $from || !$toDt || $toDt->format('Y-m-d') !== $to) {
+        echo json_encode(['ok' => false, 'error' => 'Некорректный период from/to'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    if ($fromDt > $toDt) {
+        echo json_encode(['ok' => false, 'error' => 'Дата начала позже даты конца'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $entries = [];
+    $notes = [];
+
+    $u2 = connectShop($dbHost, $dbUser, $dbPass, 'plan');
+    $entries = array_merge($entries, fetchCutLogForTable($u2, 'roll_plan', 'U2', $from, $to));
+
+    $u3 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u3');
+    $seenU3 = [];
+    foreach (['roll_plans', 'roll_plan'] as $tblU3) {
+        foreach (fetchCutLogForTable($u3, $tblU3, 'U3', $from, $to) as $row) {
+            $k = $row['order'] . "\0" . $row['bale'] . "\0" . $row['marked_at'];
+            if (isset($seenU3[$k])) {
+                continue;
+            }
+            $seenU3[$k] = true;
+            $entries[] = $row;
+        }
+    }
+
+    $u5 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u5');
+    $entries = array_merge($entries, fetchCutLogForTable($u5, 'roll_plans', 'U5', $from, $to));
+
+    usort($entries, static function ($a, $b) {
+        return strcmp($b['marked_at'], $a['marked_at']);
+    });
+
+    $hasLegacyTime = false;
+    foreach ($entries as $row) {
+        if (empty($row['has_time'])) {
+            $hasLegacyTime = true;
+            break;
+        }
+    }
+    if ($hasLegacyTime) {
+        $notes[] = 'Для части старых отметок время не записывалось — показана только дата (без времени).';
+    }
+
+    echo json_encode(
+        [
+            'ok' => true,
+            'from' => $from,
+            'to' => $to,
+            'total' => count($entries),
+            'entries' => $entries,
+            'notes' => $notes,
         ],
         JSON_UNESCAPED_UNICODE
     );
@@ -741,6 +895,135 @@ $navQuery = static function (int $w): string {
             flex-direction: column;
             min-height: 0;
         }
+
+        /* ——— слой «Лог порезки» (панель справа) ——— */
+        #cut-log-fab {
+            position: fixed;
+            right: 18px;
+            bottom: 62px;
+            z-index: 8000;
+            padding: 10px 14px;
+            font-size: 13px;
+            font-family: inherit;
+            border-radius: 999px;
+            border: 1px solid #7c3aed;
+            background: #8b5cf6;
+            color: #fff;
+            cursor: pointer;
+            box-shadow: 0 4px 14px rgba(139, 92, 246, 0.45);
+        }
+        #cut-log-fab:hover {
+            background: #7c3aed;
+        }
+        #cut-log-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.25);
+            z-index: 9280;
+        }
+        #cut-log-backdrop.is-open {
+            display: block;
+        }
+        #cut-log-panel {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: min(420px, 100vw);
+            height: 100%;
+            z-index: 9281;
+            background: #fff;
+            border-left: 1px solid #e5e7eb;
+            box-shadow: -8px 0 30px rgba(0, 0, 0, 0.12);
+            display: flex;
+            flex-direction: column;
+            transform: translateX(100%);
+            transition: transform 0.22s ease;
+        }
+        #cut-log-panel.is-open {
+            transform: translateX(0);
+        }
+        #cut-log-panel-header {
+            padding: 14px 44px 12px 16px;
+            border-bottom: 1px solid #e5e7eb;
+            background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+            flex-shrink: 0;
+        }
+        #cut-log-panel-header h2 {
+            margin: 0 0 6px;
+            font-size: 1.05rem;
+            color: #4c1d95;
+        }
+        #cut-log-panel-close {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            padding: 6px 12px;
+            font-size: 13px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: #fff;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        #cut-log-panel-close:hover {
+            background: #f3f4f6;
+        }
+        #cut-log-panel-body {
+            flex: 1;
+            overflow: auto;
+            padding: 10px 12px 16px;
+            font-size: 13px;
+        }
+        #cut-log-panel-body .cut-log-muted {
+            color: #6b7280;
+            font-size: 12px;
+            margin: 0 0 10px;
+        }
+        #cut-log-panel-body .cut-log-note {
+            color: #92400e;
+            font-size: 12px;
+            margin: 0 0 10px;
+            padding: 8px 10px;
+            background: #fffbeb;
+            border-radius: 6px;
+            border: 1px solid #fde68a;
+        }
+        #cut-log-panel-body ul.cut-log-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        #cut-log-panel-body li.cut-log-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 10px 8px;
+            border-bottom: 1px solid #f3f4f6;
+        }
+        #cut-log-panel-body li.cut-log-item:last-child {
+            border-bottom: none;
+        }
+        #cut-log-panel-body .cut-log-time {
+            flex-shrink: 0;
+            width: 118px;
+            font-size: 11px;
+            color: #6b7280;
+            line-height: 1.35;
+        }
+        #cut-log-panel-body .cut-log-time .no-time {
+            font-style: italic;
+        }
+        #cut-log-panel-body .cut-log-main {
+            flex: 1;
+            min-width: 0;
+        }
+        #cut-log-panel-body .cut-log-shop {
+            font-size: 11px;
+            font-weight: 700;
+            color: #5b21b6;
+            margin-bottom: 4px;
+        }
     </style>
 </head>
 <body>
@@ -822,6 +1105,22 @@ $navQuery = static function (int $w): string {
             </tbody>
         </table>
     </div>
+
+    <!-- Слой «Лог порезки» — панель справа, отдельный API cut_log -->
+    <button type="button" id="cut-log-fab" aria-expanded="false" aria-controls="cut-log-panel">
+        Лог порезки
+    </button>
+    <div id="cut-log-backdrop" aria-hidden="true"></div>
+    <aside id="cut-log-panel" role="dialog" aria-modal="true" aria-labelledby="cut-log-panel-h2" aria-hidden="true">
+        <button type="button" id="cut-log-panel-close" aria-label="Закрыть лог">×</button>
+        <div id="cut-log-panel-header">
+            <h2 id="cut-log-panel-h2">Лог порезки</h2>
+            <p class="cut-log-muted" id="cut-log-period-hint">
+                Период таблицы: <?= htmlspecialchars($rangeStart->format('d.m.Y')) ?> — <?= htmlspecialchars($rangeEnd->format('d.m.Y')) ?>
+            </p>
+        </div>
+        <div id="cut-log-panel-body"></div>
+    </aside>
 
     <!-- Слой «Порезано за день» — отдельный UI и API, основная сетка не меняется -->
     <button type="button" id="cut-day-fab" aria-expanded="false" aria-controls="cut-day-panel">
@@ -1090,6 +1389,139 @@ $navQuery = static function (int $w): string {
             if (cutBackdrop && cutBackdrop.classList.contains('is-open')) {
                 e.preventDefault();
                 closeCutDay();
+            }
+        }, true);
+    })();
+    </script>
+    <script>
+    /* Слой «Лог порезки» — панель справа */
+    (function () {
+        var fab = document.getElementById('cut-log-fab');
+        var backdrop = document.getElementById('cut-log-backdrop');
+        var panel = document.getElementById('cut-log-panel');
+        var bodyEl = document.getElementById('cut-log-panel-body');
+        var closeBtn = document.getElementById('cut-log-panel-close');
+        var balePanel = document.getElementById('bale-panel');
+        var cutDayBackdrop = document.getElementById('cut-day-backdrop');
+        var shopLabels = { U2: 'У2', U3: 'У3', U5: 'У5' };
+        var monitorFrom = <?= json_encode($dateFrom, JSON_UNESCAPED_UNICODE) ?>;
+        var monitorTo = <?= json_encode($dateTo, JSON_UNESCAPED_UNICODE) ?>;
+
+        function escapeHtml(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function formatMarkedAt(iso, hasTime) {
+            if (!iso) return '—';
+            var parts = String(iso).trim().split(/[\sT]/);
+            var d = parts[0].split('-');
+            if (d.length !== 3) return escapeHtml(iso);
+            var out = d[2] + '.' + d[1] + '.' + d[0];
+            if (hasTime && parts[1]) {
+                out += '<br>' + escapeHtml(parts[1].slice(0, 8));
+            } else {
+                out += '<br><span class="no-time">без времени</span>';
+            }
+            return out;
+        }
+
+        function openLog() {
+            backdrop.classList.add('is-open');
+            panel.classList.add('is-open');
+            backdrop.setAttribute('aria-hidden', 'false');
+            panel.setAttribute('aria-hidden', 'false');
+            fab.setAttribute('aria-expanded', 'true');
+        }
+
+        function closeLog() {
+            backdrop.classList.remove('is-open');
+            panel.classList.remove('is-open');
+            backdrop.setAttribute('aria-hidden', 'true');
+            panel.setAttribute('aria-hidden', 'true');
+            fab.setAttribute('aria-expanded', 'false');
+        }
+
+        function buildCutLogUrl() {
+            var u = new URL(window.location.href);
+            u.searchParams.set('action', 'cut_log');
+            u.searchParams.delete('day');
+            u.searchParams.set('from', monitorFrom);
+            u.searchParams.set('to', monitorTo);
+            return u.toString();
+        }
+
+        function renderLog(data) {
+            var html = '<p class="cut-log-muted">Записей: <strong>' + (data.total | 0) + '</strong></p>';
+            if (data.notes && data.notes.length) {
+                data.notes.forEach(function (n) {
+                    html += '<p class="cut-log-note">' + escapeHtml(n) + '</p>';
+                });
+            }
+            var entries = data.entries || [];
+            if (!entries.length) {
+                html += '<p class="cut-log-muted">За выбранный период отметок порезки нет.</p>';
+                bodyEl.innerHTML = html;
+                return;
+            }
+            html += '<ul class="cut-log-list">';
+            entries.forEach(function (e) {
+                var shop = e.shop || '';
+                var o = e.order || '';
+                var b = e.bale || '';
+                var text = '[[' + o + '][' + b + ']]';
+                html += '<li class="cut-log-item">';
+                html += '<div class="cut-log-time">' + formatMarkedAt(e.marked_at, !!e.has_time) + '</div>';
+                html += '<div class="cut-log-main">';
+                html += '<div class="cut-log-shop">' + escapeHtml(shopLabels[shop] || shop) + '</div>';
+                html += '<span class="tag bale-tag done" role="button" tabindex="0" title="Показать полосы бухты" data-shop="' + escapeHtml(shop) + '" data-order="' + escapeHtml(o) + '" data-bale="' + escapeHtml(b) + '">' + escapeHtml(text) + '</span>';
+                html += '</div></li>';
+            });
+            html += '</ul>';
+            bodyEl.innerHTML = html;
+        }
+
+        function loadLog() {
+            bodyEl.innerHTML = '<p class="cut-log-muted">Загрузка…</p>';
+            fetch(buildCutLogUrl(), { credentials: 'same-origin' })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (!data.ok) {
+                        bodyEl.innerHTML = '<p class="cut-log-note">' + escapeHtml(data.error || 'Ошибка') + '</p>';
+                        return;
+                    }
+                    renderLog(data);
+                })
+                .catch(function () {
+                    bodyEl.innerHTML = '<p class="cut-log-note">Не удалось загрузить лог.</p>';
+                });
+        }
+
+        fab.addEventListener('click', function () {
+            if (panel.classList.contains('is-open')) {
+                closeLog();
+            } else {
+                openLog();
+                loadLog();
+            }
+        });
+        closeBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            closeLog();
+        });
+        backdrop.addEventListener('click', function (e) {
+            if (e.target === backdrop) closeLog();
+        });
+        panel.addEventListener('click', function (e) {
+            e.stopPropagation();
+        });
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key !== 'Escape') return;
+            if (balePanel && balePanel.classList.contains('is-open')) return;
+            if (cutDayBackdrop && cutDayBackdrop.classList.contains('is-open')) return;
+            if (backdrop && backdrop.classList.contains('is-open')) {
+                e.preventDefault();
+                closeLog();
             }
         }, true);
     })();
