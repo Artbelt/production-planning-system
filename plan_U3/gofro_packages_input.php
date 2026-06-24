@@ -331,7 +331,7 @@ if (isset($_GET['q'])) {
     exit;
 }
 
-// === ПОЛУЧЕНИЕ ЗАЯВОК ПО ГОФРОПАКЕТУ (с суммарным остатком по заявке) ===
+// === ПОЛУЧЕНИЕ ЗАЯВОК ПО ГОФРОПАКЕТУ (с суммарным остатком по заявке; surplus — лишнее) ===
 if (isset($_GET['orders']) && isset($_GET['part'])) {
     header('Content-Type: application/json; charset=utf-8');
     try {
@@ -344,7 +344,15 @@ if (isset($_GET['orders']) && isset($_GET['part'])) {
             exit;
         }
 
-        // Сумма по заявке: потребность в гофропакетах (не «остаток фильтров»)
+        $gofroLineExpr = "
+            GREATEST(
+                0,
+                GREATEST(0, agg.ordered - COALESCE(prod.produced, 0))
+                - (COALESCE(mp.gofro_qty, 0) - COALESCE(prod.produced, 0))
+            )
+        ";
+
+        // Прямые позиции + чужие бренды (analog → эталон с тем же гофропакетом)
         $sql = "
             SELECT
                 z.order_number,
@@ -352,11 +360,7 @@ if (isset($_GET['orders']) && isset($_GET['part'])) {
             FROM (
                 SELECT
                     agg.order_number,
-                    GREATEST(
-                        0,
-                        GREATEST(0, agg.ordered - COALESCE(prod.produced, 0))
-                        - (COALESCE(mp.gofro_qty, 0) - COALESCE(prod.produced, 0))
-                    ) AS gofro_line
+                    {$gofroLineExpr} AS gofro_line
                 FROM (
                     SELECT
                         o.order_number,
@@ -385,20 +389,65 @@ if (isset($_GET['orders']) && isset($_GET['part'])) {
                 ) mp
                     ON mp.name_of_order = agg.order_number
                    AND mp.parts_u = ?
+
+                UNION ALL
+
+                SELECT
+                    agg.order_number,
+                    {$gofroLineExpr} AS gofro_line
+                FROM (
+                    SELECT
+                        o.order_number,
+                        o.`filter` AS filter_name,
+                        MAX(TRIM(COALESCE(rfs_brand.filter_package, ''))) AS brand_filter_package,
+                        SUM(o.`count`) AS ordered
+                    FROM orders o
+                    INNER JOIN round_filter_structure rfs_brand ON o.`filter` = rfs_brand.`filter`
+                    INNER JOIN round_filter_structure rfs_native
+                        ON rfs_brand.analog IS NOT NULL
+                       AND TRIM(rfs_brand.analog) != ''
+                       AND UPPER(TRIM(rfs_brand.analog)) = UPPER(TRIM(rfs_native.`filter`))
+                       AND (rfs_native.analog IS NULL OR TRIM(COALESCE(rfs_native.analog, '')) = '')
+                    WHERE (o.hide IS NULL OR o.hide != 1)
+                      AND UPPER(TRIM(rfs_native.filter_package)) = ?
+                    GROUP BY o.order_number, o.`filter`
+                ) agg
+                LEFT JOIN (
+                    SELECT name_of_order, name_of_filter, SUM(count_of_filters) AS produced
+                    FROM manufactured_production
+                    GROUP BY name_of_order, name_of_filter
+                ) prod
+                    ON prod.name_of_order = agg.order_number
+                   AND prod.name_of_filter = agg.filter_name
+                LEFT JOIN (
+                    SELECT
+                        name_of_order,
+                        UPPER(TRIM(name_of_parts)) AS parts_u,
+                        SUM(COALESCE(count_of_parts, 0)) AS gofro_qty
+                    FROM manufactured_parts
+                    GROUP BY name_of_order, UPPER(TRIM(name_of_parts))
+                ) mp
+                    ON mp.name_of_order = agg.order_number
+                   AND mp.parts_u = UPPER(TRIM(agg.brand_filter_package))
+                WHERE TRIM(COALESCE(agg.brand_filter_package, '')) != ''
             ) z
-            WHERE z.gofro_line > 0
             GROUP BY z.order_number
-            ORDER BY z.order_number
+            ORDER BY remaining_total DESC, z.order_number
         ";
         $stmt = $pdo->prepare($sql);
-        $stmt->execute([$partNorm, $partNorm]);
+        $stmt->execute([$partNorm, $partNorm, $partNorm]);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         $out = [];
         foreach ($rows as $row) {
-            $out[] = [
+            $remaining = (int)($row['remaining_total'] ?? 0);
+            $entry = [
                 'order_number' => (string)($row['order_number'] ?? ''),
-                'remaining_total' => (int)($row['remaining_total'] ?? 0),
+                'remaining_total' => $remaining,
             ];
+            if ($remaining <= 0) {
+                $entry['surplus'] = true;
+            }
+            $out[] = $entry;
         }
         echo json_encode($out, JSON_UNESCAPED_UNICODE);
     } catch (Exception $e) {
@@ -540,12 +589,18 @@ try {
 
             <!-- Номер заявки -->
             <label class="block text-sm">Номер заявки</label>
-            <select id="modalOrder" class="w-full border px-3 py-2 rounded mb-2">
+            <select id="modalOrder" class="w-full border px-3 py-2 rounded mb-1" onchange="updateSurplusWarning()">
                 <option value="">-- Выберите заявку --</option>
                 <?php foreach ($orders as $order): ?>
                     <option value="<?= htmlspecialchars($order) ?>"><?= htmlspecialchars($order) ?></option>
                 <?php endforeach; ?>
             </select>
+            <div id="surplusOrderHint" class="hidden mb-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                Лишний гофропакет: по этой заявке потребность уже закрыта, ввод будет учтён сверх плана.
+            </div>
+            <div id="surplusListHint" class="hidden mb-2 rounded border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-800">
+                По этому гофропакету нет незакрытой потребности. Ниже — активные заявки с этой позицией для учёта лишних гофропакетов.
+            </div>
 
             <!-- Количество -->
             <label class="block text-sm">Изготовлено</label>
@@ -577,6 +632,9 @@ try {
         document.getElementById('modalOrder').value = '';
         document.getElementById('modalCount').value = '';
         document.getElementById('partSuggestions').classList.add('hidden');
+        document.getElementById('surplusOrderHint').classList.add('hidden');
+        document.getElementById('surplusListHint').classList.add('hidden');
+        window._ordersByPart = [];
         // Восстанавливаем полный список заявок при закрытии модального окна
         updateOrdersList('');
     }
@@ -692,7 +750,7 @@ try {
                 if (!hasDirect && !hasAnalog) {
                     const row = document.createElement('div');
                     row.className = 'italic text-gray-400';
-                    row.textContent = 'Нет активных позиций в открытых заявках';
+                    row.textContent = 'Нет незакрытой потребности — можно внести как лишнее в активную заявку';
                     sub.appendChild(row);
                 } else {
                     if (hasDirect) {
@@ -756,8 +814,17 @@ try {
         }
     }
 
+    function updateSurplusWarning() {
+        const select = document.getElementById('modalOrder');
+        const hint = document.getElementById('surplusOrderHint');
+        const selected = select.options[select.selectedIndex];
+        const isSurplus = selected && selected.dataset.surplus === '1';
+        hint.classList.toggle('hidden', !isSurplus);
+    }
+
     async function updateOrdersList(partName) {
         const select = document.getElementById('modalOrder');
+        const listHint = document.getElementById('surplusListHint');
         const currentValue = select.value;
         
         try {
@@ -769,10 +836,23 @@ try {
                 // Если гофропакет не выбран, показываем все заявки
                 orders = <?= json_encode($orders) ?>;
             }
+            window._ordersByPart = Array.isArray(orders) ? orders : [];
 
             // Очищаем список
             select.innerHTML = '<option value="">-- Выберите заявку --</option>';
+            document.getElementById('surplusOrderHint').classList.add('hidden');
             
+            const hasNeed = orders.some(entry => {
+                if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+                    return true;
+                }
+                return !entry.surplus && parseInt(entry.remaining_total, 10) > 0;
+            });
+            const hasSurplus = orders.some(entry =>
+                typeof entry === 'object' && entry !== null && !Array.isArray(entry) && entry.surplus
+            );
+            listHint.classList.toggle('hidden', !(partName && partName.trim() !== '' && !hasNeed && hasSurplus));
+
             // Добавляем заявки
             if (orders.length === 0 && partName && partName.trim() !== '') {
                 const option = document.createElement('option');
@@ -781,14 +861,29 @@ try {
                 option.disabled = true;
                 select.appendChild(option);
             } else {
+                const needOrders = [];
+                const surplusOrders = [];
                 orders.forEach(entry => {
+                    const isSurplus = typeof entry === 'object' && entry !== null && !Array.isArray(entry) && !!entry.surplus;
+                    if (isSurplus) {
+                        surplusOrders.push(entry);
+                    } else {
+                        needOrders.push(entry);
+                    }
+                });
+
+                const appendOrderOption = (entry) => {
                     const option = document.createElement('option');
                     const num = typeof entry === 'string' ? entry : String(entry.order_number || '').trim();
                     const rem = (typeof entry === 'object' && entry !== null && !Array.isArray(entry))
                         ? parseInt(entry.remaining_total, 10)
                         : NaN;
+                    const isSurplus = typeof entry === 'object' && entry !== null && !Array.isArray(entry) && !!entry.surplus;
                     option.value = num;
-                    if (!Number.isNaN(rem)) {
+                    if (isSurplus) {
+                        option.dataset.surplus = '1';
+                        option.textContent = `${num} — лишнее (потребность 0 шт)`;
+                    } else if (!Number.isNaN(rem)) {
                         option.textContent = `${num} — нужно гофро ${rem} шт`;
                     } else {
                         option.textContent = num;
@@ -797,8 +892,18 @@ try {
                         option.selected = true;
                     }
                     select.appendChild(option);
-                });
+                };
+
+                needOrders.forEach(appendOrderOption);
+                if (surplusOrders.length > 0 && needOrders.length > 0) {
+                    const separator = document.createElement('option');
+                    separator.disabled = true;
+                    separator.textContent = '— лишние (потребность закрыта) —';
+                    select.appendChild(separator);
+                }
+                surplusOrders.forEach(appendOrderOption);
             }
+            updateSurplusWarning();
         } catch (err) {
             console.error('Ошибка загрузки заявок:', err);
         }

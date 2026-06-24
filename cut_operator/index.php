@@ -8,6 +8,9 @@
 define('AUTH_SYSTEM', true);
 require_once '../auth/includes/config.php';
 require_once '../auth/includes/auth-functions.php';
+require_once '../auth/includes/db.php';
+require_once '../auth/includes/roll_plan_table.php';
+require_once '../auth/includes/roll_plan_mark_cut.php';
 
 // Инициализация системы
 initAuthSystem();
@@ -383,55 +386,13 @@ if (isset($_POST['action'])) {
         $dbConfig = $databases[$department];
         
         try {
-            $mysqli = new mysqli($dbConfig['host'], $dbConfig['user'], $dbConfig['pass'], $dbConfig['name']);
-            $mysqli->set_charset("utf8mb4");
-            
-            if ($mysqli->connect_errno) {
-                throw new Exception("Ошибка подключения к БД: " . $mysqli->connect_error);
+            $pdo = getPdo($dbConfig['name']);
+            $result = rollPlanMarkCutDone($pdo, $department, $taskId);
+            if (!empty($result['success'])) {
+                echo json_encode(['success' => true, 'message' => 'Статус успешно обновлен']);
+            } else {
+                echo json_encode(['success' => false, 'message' => $result['message'] ?? 'Ошибка обновления']);
             }
-            
-            // Проверяем, существует ли запись с таким ID
-            $checkStmt = $mysqli->prepare("SELECT id FROM {$dbConfig['table']} WHERE id = ?");
-            if (!$checkStmt) {
-                throw new Exception("Ошибка подготовки проверочного запроса: " . $mysqli->error);
-            }
-            $checkStmt->bind_param('i', $taskId);
-            $checkStmt->execute();
-            $checkResult = $checkStmt->get_result();
-            
-            if ($checkResult->num_rows === 0) {
-                $checkStmt->close();
-                $mysqli->close();
-                echo json_encode(['success' => false, 'message' => 'Запись не найдена']);
-                exit;
-            }
-            $checkStmt->close();
-            
-            // Обновляем статус и дату фактической порезки (для аналитики по fact_cut_date)
-            $hasFactCutDate = false;
-            $colChk = $mysqli->query("SHOW COLUMNS FROM `{$dbConfig['table']}` LIKE 'fact_cut_date'");
-            if ($colChk && $colChk->num_rows > 0) {
-                $hasFactCutDate = true;
-            }
-            $updateSql = $hasFactCutDate
-                ? "UPDATE {$dbConfig['table']} SET done = 1, fact_cut_date = CURDATE() WHERE id = ?"
-                : "UPDATE {$dbConfig['table']} SET done = 1 WHERE id = ?";
-            $stmt = $mysqli->prepare($updateSql);
-            if (!$stmt) {
-                throw new Exception("Ошибка подготовки запроса обновления: " . $mysqli->error);
-            }
-            
-            $stmt->bind_param('i', $taskId);
-            $success = $stmt->execute();
-            
-            if (!$success) {
-                throw new Exception("Ошибка выполнения запроса: " . $stmt->error);
-            }
-            
-            $stmt->close();
-            $mysqli->close();
-            
-            echo json_encode(['success' => true, 'message' => 'Статус успешно обновлен']);
             exit;
             
         } catch (Exception $e) {

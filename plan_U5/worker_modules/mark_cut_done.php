@@ -10,5 +10,5 @@ if (!isset($_POST['id'])) {
 }
 
 $id = (int) $_POST['id'];
-$result = rollPlanMarkCutDoneById($pdo, 'roll_plans', $id);
+$result = rollPlanMarkCutDone($pdo, 'U5', $id);
 echo json_encode($result);

@@ -1,5 +1,5 @@
 <?php
-// Ввод изготовленных каркасов (наружный / внутренний) по заявкам
+// Ввод изготовленных каркасов по фильтрам (1 цифра = 1 комплект)
 require_once('../auth/includes/config.php');
 require_once('../auth/includes/auth-functions.php');
 
@@ -48,137 +48,232 @@ function wfEnsureManufacturedWireframesTable(PDO $pdo): void
     ");
 }
 
-/**
- * @return list<array{name: string, part_type: string}>
- */
-function wfDiscoverWireframeCodes(PDO $pdo, string $like): array
+function wfNormalizeKey(string $value): string
 {
-    $stmt = $pdo->prepare("
-        SELECT DISTINCT wf_name, part_type FROM (
-            SELECT TRIM(ppr.p_p_ext_wireframe) AS wf_name, 'ext' AS part_type
-            FROM paper_package_round ppr
-            INNER JOIN round_filter_structure rfs
-                ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
-            INNER JOIN orders o ON o.`filter` = rfs.`filter`
-            WHERE (o.hide IS NULL OR o.hide != 1)
-              AND TRIM(COALESCE(ppr.p_p_ext_wireframe, '')) != ''
-              AND ppr.p_p_ext_wireframe LIKE ?
-            UNION ALL
-            SELECT TRIM(ppr.p_p_int_wireframe), 'int'
-            FROM paper_package_round ppr
-            INNER JOIN round_filter_structure rfs
-                ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
-            INNER JOIN orders o ON o.`filter` = rfs.`filter`
-            WHERE (o.hide IS NULL OR o.hide != 1)
-              AND TRIM(COALESCE(ppr.p_p_int_wireframe, '')) != ''
-              AND ppr.p_p_int_wireframe LIKE ?
-            UNION ALL
-            SELECT TRIM(wr.w_name) AS wf_name,
-                CASE
-                    WHEN UPPER(TRIM(ppr.p_p_ext_wireframe)) = UPPER(TRIM(wr.w_name)) THEN 'ext'
-                    ELSE 'int'
-                END AS part_type
-            FROM wireframe_round wr
-            INNER JOIN paper_package_round ppr
-                ON UPPER(TRIM(ppr.p_p_ext_wireframe)) = UPPER(TRIM(wr.w_name))
-                OR UPPER(TRIM(ppr.p_p_int_wireframe)) = UPPER(TRIM(wr.w_name))
-            INNER JOIN round_filter_structure rfs
-                ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
-            INNER JOIN orders o ON o.`filter` = rfs.`filter`
-            WHERE (o.hide IS NULL OR o.hide != 1)
-              AND TRIM(COALESCE(wr.w_name, '')) != ''
-              AND wr.w_name LIKE ?
-        ) AS discovered
-        WHERE TRIM(COALESCE(wf_name, '')) != ''
-    ");
-    $stmt->execute([$like, $like, $like]);
-    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    $out = [];
-    $seen = [];
-    foreach ($rows as $row) {
-        $name = trim((string) ($row['wf_name'] ?? ''));
-        $type = (string) ($row['part_type'] ?? '');
-        if ($name === '' || ($type !== 'ext' && $type !== 'int')) {
-            continue;
-        }
-        $key = mb_strtoupper($name, 'UTF-8') . '|' . $type;
-        if (isset($seen[$key])) {
-            continue;
-        }
-        $seen[$key] = true;
-        $out[] = ['name' => $name, 'part_type' => $type];
-    }
-
-    return $out;
+    return mb_strtoupper(trim($value), 'UTF-8');
 }
 
-function wfLoadDirectActiveLines(PDO $pdo, string $wfNorm, string $partType): array
+/**
+ * @return array{ext: string, int: string}
+ */
+function wfWireframesFromPackage(PDO $pdo, string $packageName): array
 {
-    $col = $partType === 'int' ? 'ppr.p_p_int_wireframe' : 'ppr.p_p_ext_wireframe';
-    $sql = "
+    $stmt = $pdo->prepare("
         SELECT
-            agg.order_number,
-            agg.filter_name,
-            GREATEST(0, agg.ordered - COALESCE(mw.wf_qty, 0)) AS wf_need
-        FROM (
-            SELECT
-                o.order_number,
-                o.`filter` AS filter_name,
-                SUM(o.`count`) AS ordered
-            FROM orders o
-            INNER JOIN round_filter_structure rfs ON o.`filter` = rfs.`filter`
-            INNER JOIN paper_package_round ppr
-                ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
-            WHERE (o.hide IS NULL OR o.hide != 1)
-              AND UPPER(TRIM($col)) = ?
-            GROUP BY o.order_number, o.`filter`
-        ) agg
-        LEFT JOIN (
-            SELECT
-                order_number,
-                UPPER(TRIM(wireframe_name)) AS wf_u,
-                part_type,
-                SUM(COALESCE(count_of_parts, 0)) AS wf_qty
-            FROM manufactured_wireframes
-            GROUP BY order_number, UPPER(TRIM(wireframe_name)), part_type
-        ) mw
-            ON mw.order_number = agg.order_number
-           AND mw.wf_u = ?
-           AND mw.part_type = ?
-        WHERE GREATEST(0, agg.ordered - COALESCE(mw.wf_qty, 0)) > 0
-        ORDER BY agg.order_number, agg.filter_name
-    ";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([$wfNorm, $wfNorm, $partType]);
+            TRIM(COALESCE(p_p_ext_wireframe, '')) AS ext_wf,
+            TRIM(COALESCE(p_p_int_wireframe, '')) AS int_wf
+        FROM paper_package_round
+        WHERE UPPER(TRIM(p_p_name)) = UPPER(TRIM(?))
+        LIMIT 1
+    ");
+    $stmt->execute([$packageName]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    return [
+        'ext' => trim((string) ($row['ext_wf'] ?? '')),
+        'int' => trim((string) ($row['int_wf'] ?? '')),
+    ];
+}
+
+/**
+ * @return array{
+ *     filter_name: string,
+ *     ext_wireframe: ?string,
+ *     int_wireframe: ?string,
+ *     is_brand: bool,
+ *     native_filter_name: ?string
+ * }
+ */
+function wfGetFilterWireframes(PDO $pdo, string $filterName): array
+{
+    $filterNorm = wfNormalizeKey($filterName);
+    $result = [
+        'filter_name' => trim($filterName),
+        'ext_wireframe' => null,
+        'int_wireframe' => null,
+        'is_brand' => false,
+        'native_filter_name' => null,
+    ];
+
+    if ($filterNorm === '') {
+        return $result;
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT
+            TRIM(rfs.`filter`) AS filter_name,
+            TRIM(COALESCE(rfs.analog, '')) AS analog,
+            TRIM(COALESCE(rfs.filter_package, '')) AS filter_package
+        FROM round_filter_structure rfs
+        WHERE UPPER(TRIM(rfs.`filter`)) = ?
+        LIMIT 1
+    ");
+    $stmt->execute([$filterNorm]);
+    $rfs = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$rfs) {
+        return $result;
+    }
+
+    $result['filter_name'] = trim((string) ($rfs['filter_name'] ?? $filterName));
+    $analog = trim((string) ($rfs['analog'] ?? ''));
+
+    if ($analog === '') {
+        $packageName = trim((string) ($rfs['filter_package'] ?? ''));
+        if ($packageName !== '') {
+            $wf = wfWireframesFromPackage($pdo, $packageName);
+            if ($wf['ext'] !== '') {
+                $result['ext_wireframe'] = $wf['ext'];
+            }
+            if ($wf['int'] !== '') {
+                $result['int_wireframe'] = $wf['int'];
+            }
+        }
+        return $result;
+    }
+
+    $result['is_brand'] = true;
+    $stmtNative = $pdo->prepare("
+        SELECT
+            TRIM(rfs_native.`filter`) AS native_filter_name,
+            TRIM(COALESCE(rfs_native.filter_package, '')) AS filter_package
+        FROM round_filter_structure rfs_native
+        WHERE UPPER(TRIM(rfs_native.`filter`)) = UPPER(TRIM(?))
+          AND (rfs_native.analog IS NULL OR TRIM(COALESCE(rfs_native.analog, '')) = '')
+        LIMIT 1
+    ");
+    $stmtNative->execute([$analog]);
+    $native = $stmtNative->fetch(PDO::FETCH_ASSOC);
+    if (!$native) {
+        return $result;
+    }
+
+    $result['native_filter_name'] = trim((string) ($native['native_filter_name'] ?? '')) ?: null;
+    $packageName = trim((string) ($native['filter_package'] ?? ''));
+    if ($packageName === '') {
+        return $result;
+    }
+
+    $wf = wfWireframesFromPackage($pdo, $packageName);
+    if ($wf['ext'] !== '') {
+        $result['ext_wireframe'] = $wf['ext'];
+    }
+    if ($wf['int'] !== '') {
+        $result['int_wireframe'] = $wf['int'];
+    }
+
+    return $result;
+}
+
+function wfRemainingForWireframe(PDO $pdo, string $orderNumber, string $wireframeName, string $partType, int $ordered): int
+{
+    $stmt = $pdo->prepare("
+        SELECT COALESCE(SUM(count_of_parts), 0) AS qty
+        FROM manufactured_wireframes
+        WHERE order_number = ?
+          AND UPPER(TRIM(wireframe_name)) = ?
+          AND part_type = ?
+    ");
+    $stmt->execute([$orderNumber, wfNormalizeKey($wireframeName), $partType]);
+    $made = (int) $stmt->fetchColumn();
+
+    return max(0, $ordered - $made);
+}
+
+function wfCalcKitRemaining(int $remainingExt, int $remainingInt, ?string $extWireframe, ?string $intWireframe): int
+{
+    $hasExt = $extWireframe !== null && $extWireframe !== '';
+    $hasInt = $intWireframe !== null && $intWireframe !== '';
+
+    if ($hasExt && $hasInt) {
+        return min($remainingExt, $remainingInt);
+    }
+    if ($hasExt) {
+        return $remainingExt;
+    }
+    if ($hasInt) {
+        return $remainingInt;
+    }
+
+    return 0;
+}
+
+/**
+ * @return list<array{
+ *     order_number: string,
+ *     remaining_ext: int,
+ *     remaining_int: int,
+ *     remaining_kits: int
+ * }>
+ */
+function wfLoadFilterOrderKitLines(PDO $pdo, string $filterName, ?array $meta = null): array
+{
+    $meta = $meta ?? wfGetFilterWireframes($pdo, $filterName);
+    $extWireframe = $meta['ext_wireframe'] ?? null;
+    $intWireframe = $meta['int_wireframe'] ?? null;
+
+    if (($extWireframe === null || $extWireframe === '') && ($intWireframe === null || $intWireframe === '')) {
+        return [];
+    }
+
+    $filterNorm = wfNormalizeKey($meta['filter_name'] ?? $filterName);
+    $stmt = $pdo->prepare("
+        SELECT o.order_number, SUM(o.`count`) AS ordered
+        FROM orders o
+        WHERE (o.hide IS NULL OR o.hide != 1)
+          AND UPPER(TRIM(o.`filter`)) = ?
+        GROUP BY o.order_number
+        ORDER BY o.order_number
+    ");
+    $stmt->execute([$filterNorm]);
+
     $lines = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $orderNumber = (string) ($row['order_number'] ?? '');
+        $ordered = (int) ($row['ordered'] ?? 0);
+        if ($orderNumber === '' || $ordered <= 0) {
+            continue;
+        }
+
+        $remainingExt = 0;
+        $remainingInt = 0;
+        if ($extWireframe) {
+            $remainingExt = wfRemainingForWireframe($pdo, $orderNumber, $extWireframe, 'ext', $ordered);
+        }
+        if ($intWireframe) {
+            $remainingInt = wfRemainingForWireframe($pdo, $orderNumber, $intWireframe, 'int', $ordered);
+        }
+
+        $remainingKits = wfCalcKitRemaining($remainingExt, $remainingInt, $extWireframe, $intWireframe);
+        if ($remainingKits <= 0) {
+            continue;
+        }
+
         $lines[] = [
-            'order_number' => (string) ($row['order_number'] ?? ''),
-            'filter_name' => (string) ($row['filter_name'] ?? ''),
-            'remaining' => (int) ($row['wf_need'] ?? 0),
+            'order_number' => $orderNumber,
+            'remaining_ext' => $remainingExt,
+            'remaining_int' => $remainingInt,
+            'remaining_kits' => $remainingKits,
         ];
     }
+
     return $lines;
 }
 
-function wfLoadAnalogActiveLines(PDO $pdo, string $wfNorm, string $partType): array
+/**
+ * @return list<string>
+ */
+function wfDiscoverFilters(PDO $pdo, string $like): array
 {
-    $col = $partType === 'int' ? 'ppr.p_p_int_wireframe' : 'ppr.p_p_ext_wireframe';
-    $sql = "
-        SELECT
-            agg.order_number,
-            agg.filter_name,
-            agg.native_filter_name,
-            agg.brand_wireframe_name,
-            GREATEST(0, agg.ordered - COALESCE(mw.wf_qty, 0)) AS wf_need
-        FROM (
-            SELECT
-                o.order_number,
-                o.`filter` AS filter_name,
-                MAX(TRIM(rfs_native.`filter`)) AS native_filter_name,
-                MAX(TRIM($col)) AS brand_wireframe_name,
-                SUM(o.`count`) AS ordered
+    $stmt = $pdo->prepare("
+        SELECT DISTINCT filter_name FROM (
+            SELECT TRIM(o.`filter`) AS filter_name
+            FROM orders o
+            INNER JOIN round_filter_structure rfs ON o.`filter` = rfs.`filter`
+            WHERE (o.hide IS NULL OR o.hide != 1)
+              AND TRIM(COALESCE(o.`filter`, '')) != ''
+              AND o.`filter` LIKE ?
+            UNION
+            SELECT TRIM(o.`filter`) AS filter_name
             FROM orders o
             INNER JOIN round_filter_structure rfs_brand ON o.`filter` = rfs_brand.`filter`
             INNER JOIN round_filter_structure rfs_native
@@ -186,102 +281,103 @@ function wfLoadAnalogActiveLines(PDO $pdo, string $wfNorm, string $partType): ar
                AND TRIM(rfs_brand.analog) != ''
                AND UPPER(TRIM(rfs_brand.analog)) = UPPER(TRIM(rfs_native.`filter`))
                AND (rfs_native.analog IS NULL OR TRIM(COALESCE(rfs_native.analog, '')) = '')
-            INNER JOIN paper_package_round ppr
-                ON UPPER(TRIM(rfs_native.filter_package)) = UPPER(TRIM(ppr.p_p_name))
             WHERE (o.hide IS NULL OR o.hide != 1)
-              AND UPPER(TRIM($col)) = ?
-            GROUP BY o.order_number, o.`filter`
-        ) agg
-        LEFT JOIN (
-            SELECT
-                order_number,
-                UPPER(TRIM(wireframe_name)) AS wf_u,
-                part_type,
-                SUM(COALESCE(count_of_parts, 0)) AS wf_qty
-            FROM manufactured_wireframes
-            GROUP BY order_number, UPPER(TRIM(wireframe_name)), part_type
-        ) mw
-            ON mw.order_number = agg.order_number
-           AND mw.wf_u = UPPER(TRIM(agg.brand_wireframe_name))
-           AND mw.part_type = ?
-        WHERE TRIM(COALESCE(agg.brand_wireframe_name, '')) != ''
-          AND GREATEST(0, agg.ordered - COALESCE(mw.wf_qty, 0)) > 0
-        ORDER BY agg.order_number, agg.filter_name
-    ";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([$wfNorm, $partType]);
-    $lines = [];
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        $lines[] = [
-            'order_number' => (string) ($row['order_number'] ?? ''),
-            'filter_name' => (string) ($row['filter_name'] ?? ''),
-            'native_filter_name' => (string) ($row['native_filter_name'] ?? ''),
-            'brand_wireframe_name' => (string) ($row['brand_wireframe_name'] ?? ''),
-            'remaining' => (int) ($row['wf_need'] ?? 0),
-        ];
-    }
-    return $lines;
-}
+              AND rfs_native.`filter` LIKE ?
+        ) AS discovered
+        WHERE TRIM(COALESCE(filter_name, '')) != ''
+        ORDER BY filter_name
+        LIMIT 25
+    ");
+    $stmt->execute([$like, $like]);
 
-function wfFilterAnalogLines(array $directLines, array $analogLines): array
-{
-    $filtered = [];
-    foreach ($analogLines as $ln) {
-        $orderNumber = (string) ($ln['order_number'] ?? '');
-        $filterName = (string) ($ln['filter_name'] ?? '');
-        $alreadyDirect = false;
-        foreach ($directLines as $d) {
-            if (($d['order_number'] ?? '') === $orderNumber && ($d['filter_name'] ?? '') === $filterName) {
-                $alreadyDirect = true;
-                break;
-            }
+    $out = [];
+    $seen = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $name) {
+        $name = trim((string) $name);
+        if ($name === '') {
+            continue;
         }
-        if (!$alreadyDirect) {
-            $filtered[] = $ln;
+        $key = wfNormalizeKey($name);
+        if (isset($seen[$key])) {
+            continue;
         }
+        $seen[$key] = true;
+        $out[] = $name;
     }
-    return $filtered;
+
+    return $out;
 }
 
-function wfPartTypeLabel(string $partType): string
+function wfFormatWireframesLabel(?array $meta): string
 {
-    return $partType === 'int' ? 'внутр.' : 'нар.';
+    if (!$meta) {
+        return '';
+    }
+    $parts = [];
+    if (!empty($meta['ext_wireframe'])) {
+        $parts[] = 'нар. ' . $meta['ext_wireframe'];
+    }
+    if (!empty($meta['int_wireframe'])) {
+        $parts[] = 'внутр. ' . $meta['int_wireframe'];
+    }
+
+    return implode(' · ', $parts);
 }
 
-// === АВТОДОПОЛНЕНИЕ ===
-if (isset($_GET['q'])) {
+function wfFormatRemainingLabel(array $line, ?array $meta): string
+{
+    $kits = (int) ($line['remaining_kits'] ?? 0);
+    $hasExt = !empty($meta['ext_wireframe']);
+    $hasInt = !empty($meta['int_wireframe']);
+
+    if ($hasExt && $hasInt) {
+        return sprintf(
+            'нужно %d компл. (нар. %d, внутр. %d)',
+            $kits,
+            (int) ($line['remaining_ext'] ?? 0),
+            (int) ($line['remaining_int'] ?? 0)
+        );
+    }
+
+    return 'нужно ' . $kits . ' компл.';
+}
+
+// === АВТОДОПОЛНЕНИЕ ПО ФИЛЬТРУ ===
+if (isset($_GET['filter_q'])) {
     header('Content-Type: application/json; charset=utf-8');
     try {
         require_once __DIR__ . '/../auth/includes/db.php';
         $pdo = getPdo('plan_u3');
         wfEnsureManufacturedWireframesTable($pdo);
 
-        $query = trim((string) ($_GET['q'] ?? ''));
-        if (mb_strlen($query, 'UTF-8') < 4) {
+        $query = trim((string) ($_GET['filter_q'] ?? ''));
+        if (mb_strlen($query, 'UTF-8') < 3) {
             echo json_encode([]);
             exit;
         }
 
         $like = '%' . $query . '%';
-        $codes = wfDiscoverWireframeCodes($pdo, $like);
+        $filters = wfDiscoverFilters($pdo, $like);
         $maxSuggestions = 18;
-        if (count($codes) > $maxSuggestions) {
-            $codes = array_slice($codes, 0, $maxSuggestions);
+        if (count($filters) > $maxSuggestions) {
+            $filters = array_slice($filters, 0, $maxSuggestions);
         }
 
         $out = [];
-        foreach ($codes as $code) {
-            $name = (string) $code['name'];
-            $partType = (string) $code['part_type'];
-            $wfNorm = mb_strtoupper(trim($name), 'UTF-8');
-            $direct = wfLoadDirectActiveLines($pdo, $wfNorm, $partType);
-            $analog = wfFilterAnalogLines($direct, wfLoadAnalogActiveLines($pdo, $wfNorm, $partType));
+        foreach ($filters as $filterName) {
+            $meta = wfGetFilterWireframes($pdo, $filterName);
+            if (empty($meta['ext_wireframe']) && empty($meta['int_wireframe'])) {
+                continue;
+            }
+
             $out[] = [
-                'name' => $name,
-                'part_type' => $partType,
-                'part_type_label' => wfPartTypeLabel($partType),
-                'active_lines' => $direct,
-                'analog_active_lines' => $analog,
+                'filter_name' => $meta['filter_name'],
+                'ext_wireframe' => $meta['ext_wireframe'],
+                'int_wireframe' => $meta['int_wireframe'],
+                'wireframes_label' => wfFormatWireframesLabel($meta),
+                'is_brand' => (bool) ($meta['is_brand'] ?? false),
+                'native_filter_name' => $meta['native_filter_name'],
+                'active_lines' => wfLoadFilterOrderKitLines($pdo, $filterName, $meta),
             ];
         }
 
@@ -292,73 +388,33 @@ if (isset($_GET['q'])) {
     exit;
 }
 
-// === ЗАЯВКИ ПО КАРКАСУ ===
-if (isset($_GET['orders']) && isset($_GET['part'])) {
+// === ЗАЯВКИ ПО ФИЛЬТРУ ===
+if (isset($_GET['filter_orders']) && isset($_GET['filter'])) {
     header('Content-Type: application/json; charset=utf-8');
     try {
         require_once __DIR__ . '/../auth/includes/db.php';
         $pdo = getPdo('plan_u3');
         wfEnsureManufacturedWireframesTable($pdo);
 
-        $part = trim((string) ($_GET['part'] ?? ''));
-        $partType = (string) ($_GET['part_type'] ?? 'ext');
-        if ($partType !== 'ext' && $partType !== 'int') {
-            $partType = 'ext';
-        }
-        $partNorm = mb_strtoupper($part, 'UTF-8');
-        if ($partNorm === '') {
+        $filterName = trim((string) ($_GET['filter'] ?? ''));
+        if ($filterName === '') {
             echo json_encode([]);
             exit;
         }
 
-        $col = $partType === 'int' ? 'ppr.p_p_int_wireframe' : 'ppr.p_p_ext_wireframe';
-        $sql = "
-            SELECT
-                z.order_number,
-                SUM(z.wf_line) AS remaining_total
-            FROM (
-                SELECT
-                    agg.order_number,
-                    GREATEST(0, agg.ordered - COALESCE(mw.wf_qty, 0)) AS wf_line
-                FROM (
-                    SELECT
-                        o.order_number,
-                        o.`filter` AS filter_name,
-                        SUM(o.`count`) AS ordered
-                    FROM orders o
-                    INNER JOIN round_filter_structure rfs ON o.`filter` = rfs.`filter`
-                    INNER JOIN paper_package_round ppr
-                        ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
-                    WHERE (o.hide IS NULL OR o.hide != 1)
-                      AND UPPER(TRIM($col)) = ?
-                    GROUP BY o.order_number, o.`filter`
-                ) agg
-                LEFT JOIN (
-                    SELECT
-                        order_number,
-                        UPPER(TRIM(wireframe_name)) AS wf_u,
-                        part_type,
-                        SUM(COALESCE(count_of_parts, 0)) AS wf_qty
-                    FROM manufactured_wireframes
-                    GROUP BY order_number, UPPER(TRIM(wireframe_name)), part_type
-                ) mw
-                    ON mw.order_number = agg.order_number
-                   AND mw.wf_u = ?
-                   AND mw.part_type = ?
-            ) z
-            WHERE z.wf_line > 0
-            GROUP BY z.order_number
-            ORDER BY z.order_number
-        ";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([$partNorm, $partNorm, $partType]);
+        $meta = wfGetFilterWireframes($pdo, $filterName);
+        $lines = wfLoadFilterOrderKitLines($pdo, $filterName, $meta);
         $out = [];
-        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        foreach ($lines as $line) {
             $out[] = [
-                'order_number' => (string) ($row['order_number'] ?? ''),
-                'remaining_total' => (int) ($row['remaining_total'] ?? 0),
+                'order_number' => $line['order_number'],
+                'remaining_kits' => $line['remaining_kits'],
+                'remaining_ext' => $line['remaining_ext'],
+                'remaining_int' => $line['remaining_int'],
+                'remaining_label' => wfFormatRemainingLabel($line, $meta),
             ];
         }
+
         echo json_encode($out, JSON_UNESCAPED_UNICODE);
     } catch (Exception $e) {
         echo json_encode([]);
@@ -415,9 +471,8 @@ try {
     require_once __DIR__ . '/../auth/includes/db.php';
     $pdo = getPdo('plan_u3');
     wfEnsureManufacturedWireframesTable($pdo);
-    $orders = $pdo->query("SELECT DISTINCT order_number FROM orders WHERE hide IS NULL OR hide = 0")->fetchAll(PDO::FETCH_COLUMN);
 } catch (Exception $e) {
-    $orders = [];
+    // страница откроется без предзагрузки заявок
 }
 ?>
 <!DOCTYPE html>
@@ -431,6 +486,7 @@ try {
 <body class="bg-gray-100 p-4">
 <div class="max-w-2xl mx-auto bg-white rounded-xl shadow-md p-4 space-y-4">
     <h1 class="text-xl font-bold text-center">Ввод изготовленных каркасов</h1>
+    <p class="text-sm text-gray-500 text-center">Поиск по фильтру · одна цифра = один комплект (нар. + внутр.)</p>
 
     <div>
         <label class="block text-sm font-medium">Дата производства</label>
@@ -440,8 +496,8 @@ try {
     <div class="flex justify-between items-end mt-2 flex-wrap gap-2">
         <div></div>
         <div class="text-right">
-            <span class="text-sm text-gray-500">Всего изготовлено:</span><br>
-            <span id="totalCount" class="text-lg font-semibold">0 шт</span>
+            <span class="text-sm text-gray-500">Всего комплектов:</span><br>
+            <span id="totalCount" class="text-lg font-semibold">0</span>
         </div>
     </div>
 
@@ -449,10 +505,10 @@ try {
         <table class="w-full table-auto text-sm border mt-4">
             <thead class="bg-gray-200">
             <tr>
-                <th class="border px-2 py-1">Каркас</th>
-                <th class="border px-2 py-1">Тип</th>
+                <th class="border px-2 py-1">Фильтр</th>
+                <th class="border px-2 py-1">Каркасы</th>
                 <th class="border px-2 py-1">Заявка</th>
-                <th class="border px-2 py-1">Изготовлено</th>
+                <th class="border px-2 py-1">Комплектов</th>
                 <th class="border px-2 py-1">Удалить</th>
             </tr>
             </thead>
@@ -462,7 +518,7 @@ try {
 
     <div class="space-y-2">
         <button type="button" onclick="openModal()" class="w-full bg-blue-500 text-white py-2 rounded hover:bg-blue-600">
-            Добавить каркас
+            Добавить позицию
         </button>
         <button type="button" onclick="submitForm()" class="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700">
             Сохранить смену
@@ -473,83 +529,116 @@ try {
 <div id="modal" class="fixed inset-0 bg-black bg-opacity-40 z-50 overflow-y-auto hidden">
     <div class="flex justify-center items-start min-h-screen pt-12 px-4">
         <div class="bg-white p-6 rounded shadow w-full max-w-lg">
-            <h2 class="text-lg font-semibold mb-4">Добавить каркас</h2>
+            <h2 class="text-lg font-semibold mb-4">Добавить комплект</h2>
 
-            <label class="block text-sm">Каркас</label>
+            <label class="block text-sm">Фильтр</label>
             <div class="relative mb-2">
-                <input type="text" id="modalName" class="w-full border px-3 py-2 rounded" placeholder="минимум 4 символа" oninput="autocompletePart(this.value); handlePartInput(this.value)" onblur="updateOrdersList()">
-                <input type="hidden" id="modalPartType" value="">
-                <ul id="partSuggestions" class="absolute z-10 bg-white border w-full rounded shadow hidden max-h-72 overflow-y-auto text-left"></ul>
+                <input type="text" id="modalFilter" class="w-full border px-3 py-2 rounded" placeholder="минимум 3 символа" oninput="autocompleteFilter(this.value); handleFilterInput()">
+                <input type="hidden" id="modalExtWireframe" value="">
+                <input type="hidden" id="modalIntWireframe" value="">
+                <ul id="filterSuggestions" class="absolute z-10 bg-white border w-full rounded shadow hidden max-h-72 overflow-y-auto text-left"></ul>
             </div>
 
-            <div id="modalTypeHint" class="text-xs text-gray-500 mb-2 hidden"></div>
+            <div id="modalWireframesHint" class="text-xs text-gray-600 mb-2 hidden"></div>
 
             <label class="block text-sm">Номер заявки</label>
             <select id="modalOrder" class="w-full border px-3 py-2 rounded mb-2">
                 <option value="">-- Выберите заявку --</option>
-                <?php foreach ($orders as $order): ?>
-                    <option value="<?= htmlspecialchars($order) ?>"><?= htmlspecialchars($order) ?></option>
-                <?php endforeach; ?>
             </select>
 
-            <label class="block text-sm">Изготовлено</label>
-            <input type="number" id="modalCount" class="w-full border px-3 py-2 rounded mb-4" placeholder="150">
+            <label class="block text-sm">Комплектов</label>
+            <input type="number" id="modalCount" class="w-full border px-3 py-2 rounded mb-4" placeholder="150" min="1">
 
             <div class="flex justify-end gap-2">
                 <button type="button" onclick="closeModal()" class="px-4 py-2 bg-gray-300 rounded">Отмена</button>
-                <button type="button" onclick="addPart()" class="px-4 py-2 bg-blue-500 text-white rounded">Добавить</button>
+                <button type="button" onclick="addKit()" class="px-4 py-2 bg-blue-500 text-white rounded">Добавить</button>
             </div>
         </div>
     </div>
 </div>
 
 <script>
-    const PART_TYPE_LABELS = { ext: 'нар.', int: 'внутр.' };
+    let selectedFilterMeta = null;
 
     function openModal() {
         document.getElementById('modal').classList.remove('hidden');
-        setTimeout(() => document.getElementById('modalName')?.focus(), 100);
+        setTimeout(() => document.getElementById('modalFilter')?.focus(), 100);
     }
 
     function closeModal() {
         document.getElementById('modal').classList.add('hidden');
-        document.getElementById('modalName').value = '';
-        document.getElementById('modalPartType').value = '';
+        document.getElementById('modalFilter').value = '';
+        document.getElementById('modalExtWireframe').value = '';
+        document.getElementById('modalIntWireframe').value = '';
         document.getElementById('modalOrder').value = '';
         document.getElementById('modalCount').value = '';
-        document.getElementById('partSuggestions').classList.add('hidden');
-        document.getElementById('modalTypeHint').classList.add('hidden');
+        document.getElementById('filterSuggestions').classList.add('hidden');
+        document.getElementById('modalWireframesHint').classList.add('hidden');
+        selectedFilterMeta = null;
         updateOrdersList();
     }
 
-    function setSelectedPart(name, partType, partTypeLabel) {
-        document.getElementById('modalName').value = name;
-        document.getElementById('modalPartType').value = partType;
-        const hint = document.getElementById('modalTypeHint');
-        hint.textContent = 'Тип: ' + (partTypeLabel || PART_TYPE_LABELS[partType] || partType);
-        hint.classList.remove('hidden');
+    function setSelectedFilter(item) {
+        selectedFilterMeta = {
+            filter_name: item.filter_name || '',
+            ext_wireframe: item.ext_wireframe || '',
+            int_wireframe: item.int_wireframe || '',
+            wireframes_label: item.wireframes_label || '',
+            is_brand: !!item.is_brand,
+            native_filter_name: item.native_filter_name || ''
+        };
+
+        document.getElementById('modalFilter').value = selectedFilterMeta.filter_name;
+        document.getElementById('modalExtWireframe').value = selectedFilterMeta.ext_wireframe;
+        document.getElementById('modalIntWireframe').value = selectedFilterMeta.int_wireframe;
+
+        const hint = document.getElementById('modalWireframesHint');
+        let hintText = selectedFilterMeta.wireframes_label;
+        if (selectedFilterMeta.is_brand && selectedFilterMeta.native_filter_name) {
+            hintText += ' · эталон: ' + selectedFilterMeta.native_filter_name;
+        }
+        hint.textContent = hintText;
+        hint.classList.toggle('hidden', hintText === '');
+
         updateOrdersList();
     }
 
-    function addPart() {
-        const name = document.getElementById('modalName').value.trim();
-        const partType = document.getElementById('modalPartType').value.trim();
+    function buildWireframesLabel(extWireframe, intWireframe) {
+        const parts = [];
+        if (extWireframe) {
+            parts.push('нар. ' + extWireframe);
+        }
+        if (intWireframe) {
+            parts.push('внутр. ' + intWireframe);
+        }
+        return parts.join(' · ');
+    }
+
+    function addKit() {
+        const filterName = document.getElementById('modalFilter').value.trim();
+        const extWireframe = document.getElementById('modalExtWireframe').value.trim();
+        const intWireframe = document.getElementById('modalIntWireframe').value.trim();
         const order = document.getElementById('modalOrder').value.trim();
-        const count = document.getElementById('modalCount').value.trim();
+        const count = parseInt(document.getElementById('modalCount').value.trim(), 10);
 
-        if (!name || !partType || !order || !count) {
-            alert('Заполните все поля и выберите каркас из подсказок!');
+        if (!filterName || (!extWireframe && !intWireframe) || !order || !count || count <= 0) {
+            alert('Заполните все поля и выберите фильтр из подсказок!');
             return;
         }
 
-        const typeLabel = PART_TYPE_LABELS[partType] || partType;
         const row = document.createElement('tr');
-        row.dataset.partType = partType;
+        row.dataset.filterName = filterName;
+        row.dataset.orderNumber = order;
+        row.dataset.kits = String(count);
+        row.dataset.extWireframe = extWireframe;
+        row.dataset.intWireframe = intWireframe;
+
+        const wireframesLabel = buildWireframesLabel(extWireframe, intWireframe);
         row.innerHTML = `
-        <td class="border px-2 py-1">${escapeHtml(name)}</td>
-        <td class="border px-2 py-1">${escapeHtml(typeLabel)}</td>
+        <td class="border px-2 py-1">${escapeHtml(filterName)}</td>
+        <td class="border px-2 py-1 text-xs">${escapeHtml(wireframesLabel)}</td>
         <td class="border px-2 py-1">${escapeHtml(order)}</td>
-        <td class="border px-2 py-1">${escapeHtml(count)}</td>
+        <td class="border px-2 py-1">${escapeHtml(String(count))}</td>
         <td class="border px-2 py-1 text-center">
           <button type="button" onclick="this.closest('tr').remove(); updateTotalCount();" class="text-red-500">✖</button>
         </td>
@@ -565,22 +654,43 @@ try {
         return div.innerHTML;
     }
 
+    function rowToParts(row) {
+        const kits = parseInt(row.dataset.kits || '0', 10);
+        const orderNumber = row.dataset.orderNumber || '';
+        const extWireframe = row.dataset.extWireframe || '';
+        const intWireframe = row.dataset.intWireframe || '';
+        const parts = [];
+
+        if (extWireframe && kits > 0) {
+            parts.push({
+                name: extWireframe,
+                part_type: 'ext',
+                order_number: orderNumber,
+                produced: kits
+            });
+        }
+        if (intWireframe && kits > 0) {
+            parts.push({
+                name: intWireframe,
+                part_type: 'int',
+                order_number: orderNumber,
+                produced: kits
+            });
+        }
+
+        return parts;
+    }
+
     async function submitForm() {
         const date = document.getElementById('prodDate').value;
         const parts = [];
 
         document.querySelectorAll('#tableBody tr').forEach(row => {
-            const cells = row.querySelectorAll('td');
-            parts.push({
-                name: cells[0].innerText,
-                part_type: row.dataset.partType || 'ext',
-                order_number: cells[2].innerText,
-                produced: parseInt(cells[3].innerText, 10)
-            });
+            parts.push(...rowToParts(row));
         });
 
         if (!date || parts.length === 0) {
-            alert('Заполните дату и добавьте хотя бы один каркас');
+            alert('Заполните дату и добавьте хотя бы одну позицию');
             return;
         }
 
@@ -599,22 +709,24 @@ try {
         }
     }
 
-    const SUGGESTION_LINES_CAP = 18;
-    const SUGGESTION_ANALOG_CAP = 14;
+    const SUGGESTION_LINES_CAP = 12;
 
-    async function autocompletePart(query) {
-        const list = document.getElementById('partSuggestions');
+    async function autocompleteFilter(query) {
+        const list = document.getElementById('filterSuggestions');
         list.innerHTML = '';
         const q = query.trim();
-        if (q.length < 4) {
+
+        if (q.length < 3) {
             list.classList.add('hidden');
-            document.getElementById('modalPartType').value = '';
-            document.getElementById('modalTypeHint').classList.add('hidden');
+            document.getElementById('modalExtWireframe').value = '';
+            document.getElementById('modalIntWireframe').value = '';
+            document.getElementById('modalWireframesHint').classList.add('hidden');
+            selectedFilterMeta = null;
             updateOrdersList();
             if (q.length > 0) {
                 const li = document.createElement('li');
                 li.className = 'px-3 py-2 text-gray-500 text-xs';
-                li.textContent = 'Введите не менее 4 символов для поиска';
+                li.textContent = 'Введите не менее 3 символов для поиска';
                 list.appendChild(li);
                 list.classList.remove('hidden');
             }
@@ -622,7 +734,7 @@ try {
         }
 
         try {
-            const res = await fetch('?q=' + encodeURIComponent(q));
+            const res = await fetch('?filter_q=' + encodeURIComponent(q));
             const suggestions = await res.json();
 
             if (!suggestions.length) {
@@ -631,28 +743,41 @@ try {
                 li.className = 'px-3 py-2 text-gray-400';
                 list.appendChild(li);
                 list.classList.remove('hidden');
+                selectedFilterMeta = null;
                 updateOrdersList();
                 return;
             }
 
             suggestions.forEach(item => {
-                const name = item.name || '';
-                const partType = item.part_type || 'ext';
-                const typeLabel = item.part_type_label || PART_TYPE_LABELS[partType] || partType;
+                const filterName = item.filter_name || '';
+                const wireframesLabel = item.wireframes_label || '';
                 const lines = Array.isArray(item.active_lines) ? item.active_lines : [];
-                const analogLines = Array.isArray(item.analog_active_lines) ? item.analog_active_lines : [];
 
                 const li = document.createElement('li');
                 li.className = 'px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-b-0';
 
                 const title = document.createElement('div');
                 title.className = 'font-medium text-gray-900';
-                title.textContent = name + ' (' + typeLabel + ')';
+                title.textContent = filterName;
                 li.appendChild(title);
+
+                if (wireframesLabel) {
+                    const wf = document.createElement('div');
+                    wf.className = 'text-xs text-gray-600 mt-0.5';
+                    wf.textContent = wireframesLabel;
+                    li.appendChild(wf);
+                }
+
+                if (item.is_brand && item.native_filter_name) {
+                    const brand = document.createElement('div');
+                    brand.className = 'text-[11px] text-amber-800';
+                    brand.textContent = 'Бренд · эталон: ' + item.native_filter_name;
+                    li.appendChild(brand);
+                }
 
                 const sub = document.createElement('div');
                 sub.className = 'mt-1 text-xs text-gray-600 space-y-0.5 pl-0.5';
-                if (!lines.length && !analogLines.length) {
+                if (!lines.length) {
                     const row = document.createElement('div');
                     row.className = 'italic text-gray-400';
                     row.textContent = 'Нет активных позиций в открытых заявках';
@@ -660,7 +785,13 @@ try {
                 } else {
                     lines.slice(0, SUGGESTION_LINES_CAP).forEach(ln => {
                         const row = document.createElement('div');
-                        row.textContent = `Заявка ${ln.order_number} · ${ln.filter_name} · нужно ${ln.remaining} шт`;
+                        const kits = parseInt(ln.remaining_kits, 10) || 0;
+                        const remExt = parseInt(ln.remaining_ext, 10);
+                        const remInt = parseInt(ln.remaining_int, 10);
+                        const hasBoth = item.ext_wireframe && item.int_wireframe;
+                        row.textContent = hasBoth
+                            ? `Заявка ${ln.order_number} · ${kits} компл. (нар. ${remExt}, внутр. ${remInt})`
+                            : `Заявка ${ln.order_number} · ${kits} компл.`;
                         sub.appendChild(row);
                     });
                     if (lines.length > SUGGESTION_LINES_CAP) {
@@ -669,24 +800,11 @@ try {
                         more.textContent = `… и ещё ${lines.length - SUGGESTION_LINES_CAP}`;
                         sub.appendChild(more);
                     }
-                    if (analogLines.length) {
-                        const hdr = document.createElement('div');
-                        hdr.className = 'mt-2 text-[11px] font-semibold text-amber-900';
-                        hdr.textContent = 'Чужие бренды (аналог → эталон)';
-                        sub.appendChild(hdr);
-                        analogLines.slice(0, SUGGESTION_ANALOG_CAP).forEach(ln => {
-                            const row = document.createElement('div');
-                            const nat = ln.native_filter_name ? ` → эталон ${ln.native_filter_name}` : '';
-                            const brandWf = ln.brand_wireframe_name || name;
-                            row.textContent = `Заявка ${ln.order_number} · ${ln.filter_name}${nat} · каркас в бренде: «${brandWf}» · нужно ${ln.remaining} шт`;
-                            sub.appendChild(row);
-                        });
-                    }
                 }
                 li.appendChild(sub);
 
                 li.onclick = () => {
-                    setSelectedPart(name, partType, typeLabel);
+                    setSelectedFilter(item);
                     list.classList.add('hidden');
                 };
                 list.appendChild(li);
@@ -694,43 +812,40 @@ try {
 
             list.classList.remove('hidden');
         } catch (err) {
-            console.error('Ошибка поиска каркасов:', err);
+            console.error('Ошибка поиска фильтров:', err);
         }
     }
 
     async function updateOrdersList() {
         const select = document.getElementById('modalOrder');
         const currentValue = select.value;
-        const partName = document.getElementById('modalName').value.trim();
-        const partType = document.getElementById('modalPartType').value.trim();
+        const filterName = document.getElementById('modalFilter').value.trim();
+        const extWireframe = document.getElementById('modalExtWireframe').value.trim();
+        const intWireframe = document.getElementById('modalIntWireframe').value.trim();
 
         try {
             let orders = [];
-            if (partName && partType) {
-                const url = '?orders=1&part=' + encodeURIComponent(partName) + '&part_type=' + encodeURIComponent(partType);
+            if (filterName && (extWireframe || intWireframe)) {
+                const url = '?filter_orders=1&filter=' + encodeURIComponent(filterName);
                 const res = await fetch(url);
                 orders = await res.json();
-            } else {
-                orders = <?= json_encode($orders) ?>;
             }
 
             select.innerHTML = '<option value="">-- Выберите заявку --</option>';
 
-            if (!orders.length && partName && partType) {
+            if (!orders.length && filterName && (extWireframe || intWireframe)) {
                 const option = document.createElement('option');
                 option.value = '';
-                option.textContent = '-- Нет заявок с этим каркасом --';
+                option.textContent = '-- Нет заявок с этим фильтром --';
                 option.disabled = true;
                 select.appendChild(option);
             } else {
                 orders.forEach(entry => {
                     const option = document.createElement('option');
-                    const num = typeof entry === 'string' ? entry : String(entry.order_number || '').trim();
-                    const rem = (typeof entry === 'object' && entry !== null)
-                        ? parseInt(entry.remaining_total, 10)
-                        : NaN;
+                    const num = String(entry.order_number || '').trim();
+                    const label = entry.remaining_label || (`${num} — нужно ${entry.remaining_kits} компл.`);
                     option.value = num;
-                    option.textContent = Number.isNaN(rem) ? num : `${num} — нужно ${rem} шт`;
+                    option.textContent = `${num} — ${label.replace(/^нужно\s+/i, '')}`;
                     if (num === currentValue) {
                         option.selected = true;
                     }
@@ -742,23 +857,25 @@ try {
         }
     }
 
-    let partUpdateTimeout;
-    function handlePartInput() {
-        clearTimeout(partUpdateTimeout);
-        partUpdateTimeout = setTimeout(() => {
-            const name = document.getElementById('modalName').value.trim();
-            if (!name) {
-                document.getElementById('modalPartType').value = '';
-                document.getElementById('modalTypeHint').classList.add('hidden');
+    let filterUpdateTimeout;
+    function handleFilterInput() {
+        clearTimeout(filterUpdateTimeout);
+        filterUpdateTimeout = setTimeout(() => {
+            const filterName = document.getElementById('modalFilter').value.trim();
+            if (!filterName || !selectedFilterMeta || selectedFilterMeta.filter_name !== filterName) {
+                document.getElementById('modalExtWireframe').value = '';
+                document.getElementById('modalIntWireframe').value = '';
+                document.getElementById('modalWireframesHint').classList.add('hidden');
+                selectedFilterMeta = null;
             }
             updateOrdersList();
         }, 500);
     }
 
     document.addEventListener('click', e => {
-        const list = document.getElementById('partSuggestions');
-        const nameInput = document.getElementById('modalName');
-        if (!nameInput.contains(e.target) && !list.contains(e.target)) {
+        const list = document.getElementById('filterSuggestions');
+        const filterInput = document.getElementById('modalFilter');
+        if (!filterInput.contains(e.target) && !list.contains(e.target)) {
             list.classList.add('hidden');
         }
     });
@@ -770,7 +887,7 @@ try {
         const modal = document.getElementById('modal');
         if (!modal.classList.contains('hidden')) {
             e.preventDefault();
-            addPart();
+            addKit();
         } else {
             e.preventDefault();
             openModal();
@@ -780,11 +897,11 @@ try {
     function updateTotalCount() {
         let total = 0;
         document.querySelectorAll('#tableBody tr').forEach(row => {
-            const count = parseInt(row.children[3]?.innerText || '0', 10);
+            const count = parseInt(row.dataset.kits || '0', 10);
             total += Number.isNaN(count) ? 0 : count;
         });
         const el = document.getElementById('totalCount');
-        el.textContent = `${total} шт`;
+        el.textContent = String(total);
         el.classList.remove('scale-110');
         void el.offsetWidth;
         el.classList.add('scale-110');

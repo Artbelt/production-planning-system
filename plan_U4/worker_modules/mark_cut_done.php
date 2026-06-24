@@ -10,16 +10,5 @@ if (!isset($_POST['id'])) {
 }
 
 $id = (int) $_POST['id'];
-$table = 'roll_plans';
-$chk = $pdo->query("SHOW TABLES LIKE 'roll_plans'");
-if (!$chk || $chk->rowCount() === 0) {
-    $chkLegacy = $pdo->query("SHOW TABLES LIKE 'roll_plan'");
-    if (!$chkLegacy || $chkLegacy->rowCount() === 0) {
-        echo json_encode(['success' => false, 'message' => 'Таблица плана порезки не найдена']);
-        exit;
-    }
-    $table = 'roll_plan';
-}
-
-$result = rollPlanMarkCutDoneById($pdo, $table, $id);
+$result = rollPlanMarkCutDone($pdo, 'U4', $id);
 echo json_encode($result);

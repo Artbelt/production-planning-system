@@ -65,7 +65,7 @@ while ($currentDate <= $endDateClone) {
 }
 
 $knife_type = 'prosechnik';
-$stmt = $pdo->prepare("SELECT id, knife_name, thickness FROM knives WHERE knife_type = ? ORDER BY knife_name");
+$stmt = $pdo->prepare("SELECT id, knife_name, thickness FROM knives WHERE knife_type = ?");
 $stmt->execute([$knife_type]);
 
 $knives = [];
@@ -73,6 +73,9 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $row['thickness'] = $row['thickness'] !== null ? (float)$row['thickness'] : null;
     $knives[$row['id']] = $row;
 }
+uasort($knives, function ($a, $b) {
+    return strnatcasecmp($a['knife_name'], $b['knife_name']);
+});
 
 // Получаем данные календаря для всех ножей
 $calendar_data = [];

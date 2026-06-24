@@ -9,6 +9,7 @@
 define('AUTH_SYSTEM', true);
 require_once __DIR__ . '/auth/includes/config.php';
 require_once __DIR__ . '/auth/includes/auth-functions.php';
+require_once __DIR__ . '/auth/includes/roll_plan_table.php';
 
 initAuthSystem();
 
@@ -40,6 +41,13 @@ function connectShop(string $host, string $user, string $pass, string $dbname): 
             $pass,
             [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]
         );
+        try {
+            $tz = new DateTimeZone(date_default_timezone_get());
+            $offset = (new DateTimeImmutable('now', $tz))->format('P');
+            $pdo->exec('SET time_zone = ' . $pdo->quote($offset));
+        } catch (Throwable $e) {
+            error_log('bobbin_cut_monitor time_zone: ' . $e->getMessage());
+        }
         return $pdo;
     } catch (PDOException $e) {
         error_log('bobbin_cut_monitor: ' . $e->getMessage());
@@ -118,18 +126,23 @@ function fetchCutLogForTable(
     string $table,
     string $shopCode,
     string $from,
-    string $to
+    string $to,
+    string $departmentCode = ''
 ): array {
     if (!$pdo || !tableExists($pdo, $table) || !columnExists($pdo, $table, 'done')) {
         return [];
     }
-    $hasAt = columnExists($pdo, $table, 'fact_cut_at');
-    $hasDate = columnExists($pdo, $table, 'fact_cut_date');
-    if (!$hasAt && !$hasDate) {
+    $planDateExpr = rollPlanDateExpressionPdo($pdo, $table, $departmentCode);
+    if ($planDateExpr === null) {
         return [];
     }
 
-    $select = 'order_number, bale_id';
+    $hasAt = columnExists($pdo, $table, 'fact_cut_at');
+    $hasDate = columnExists($pdo, $table, 'fact_cut_date');
+    $cutDateExpr = rollPlanSqlEffectiveCutDate($planDateExpr, $hasAt, $hasDate);
+    $sortExpr = rollPlanSqlEffectiveCutSort($planDateExpr, $hasAt, $hasDate);
+
+    $select = "order_number, bale_id, ({$planDateExpr}) AS plan_d";
     if ($hasAt) {
         $select .= ', fact_cut_at';
     }
@@ -137,21 +150,9 @@ function fetchCutLogForTable(
         $select .= ', fact_cut_date';
     }
 
-    if ($hasAt && $hasDate) {
-        $where = 'done = 1 AND (
-            (fact_cut_at IS NOT NULL AND DATE(fact_cut_at) BETWEEN :f AND :t)
-            OR (fact_cut_at IS NULL AND fact_cut_date IS NOT NULL AND fact_cut_date BETWEEN :f AND :t)
-        )';
-        $sort = 'COALESCE(fact_cut_at, CONCAT(fact_cut_date, \' 00:00:00\'))';
-    } elseif ($hasAt) {
-        $where = 'done = 1 AND fact_cut_at IS NOT NULL AND DATE(fact_cut_at) BETWEEN :f AND :t';
-        $sort = 'fact_cut_at';
-    } else {
-        $where = 'done = 1 AND fact_cut_date BETWEEN :f AND :t';
-        $sort = 'fact_cut_date';
-    }
-
-    $sql = "SELECT {$select} FROM `{$table}` WHERE {$where} ORDER BY {$sort} DESC";
+    $sql = "SELECT {$select} FROM `{$table}`
+            WHERE done = 1 AND ({$cutDateExpr}) BETWEEN :f AND :t
+            ORDER BY {$sortExpr} DESC";
     try {
         $st = $pdo->prepare($sql);
         $st->execute([':f' => $from, ':t' => $to]);
@@ -159,11 +160,15 @@ function fetchCutLogForTable(
         foreach ($st->fetchAll() as $r) {
             $hasTime = false;
             $markedAt = '';
+            $legacyPlan = false;
             if ($hasAt && !empty($r['fact_cut_at'])) {
                 $markedAt = (string) $r['fact_cut_at'];
                 $hasTime = true;
             } elseif ($hasDate && !empty($r['fact_cut_date'])) {
                 $markedAt = (string) $r['fact_cut_date'];
+            } elseif (!empty($r['plan_d'])) {
+                $markedAt = (string) $r['plan_d'];
+                $legacyPlan = true;
             } else {
                 continue;
             }
@@ -173,6 +178,7 @@ function fetchCutLogForTable(
                 'bale' => (string) ($r['bale_id'] ?? ''),
                 'marked_at' => $markedAt,
                 'has_time' => $hasTime,
+                'legacy_plan_date' => $legacyPlan,
             ];
         }
         return $out;
@@ -187,20 +193,30 @@ function fetchCutLogForTable(
  *
  * @return array{items: list<array{order:string,bale:string}>, note: ?string}
  */
-function fetchRowsCutOnDay(?PDO $pdo, string $table, string $dayYmd): array
-{
+function fetchRowsCutOnDay(
+    ?PDO $pdo,
+    string $table,
+    string $dayYmd,
+    string $departmentCode = ''
+): array {
     if (!$pdo || !tableExists($pdo, $table)) {
         return ['items' => [], 'note' => null];
     }
-    if (!columnExists($pdo, $table, 'done') || !columnExists($pdo, $table, 'fact_cut_date')) {
-        return [
-            'items' => [],
-            'note' => 'В этой БД для плана порезки не ведётся дата факта (fact_cut_date).',
-        ];
+    if (!columnExists($pdo, $table, 'done')) {
+        return ['items' => [], 'note' => 'В таблице нет поля done.'];
     }
+    $planDateExpr = rollPlanDateExpressionPdo($pdo, $table, $departmentCode);
+    if ($planDateExpr === null) {
+        return ['items' => [], 'note' => 'Не найдено поле даты плана (plan_date/work_date).'];
+    }
+
+    $hasAt = columnExists($pdo, $table, 'fact_cut_at');
+    $hasDate = columnExists($pdo, $table, 'fact_cut_date');
+    $cutDateExpr = rollPlanSqlEffectiveCutDate($planDateExpr, $hasAt, $hasDate);
+
     try {
         $sql = "SELECT order_number, bale_id FROM `{$table}`
-                WHERE done = 1 AND DATE(fact_cut_date) = :d
+                WHERE done = 1 AND ({$cutDateExpr}) = :d
                 ORDER BY order_number, bale_id";
         $st = $pdo->prepare($sql);
         $st->execute([':d' => $dayYmd]);
@@ -331,40 +347,20 @@ if (($_GET['action'] ?? '') === 'cut_by_day') {
     $total = 0;
 
     $u2 = connectShop($dbHost, $dbUser, $dbPass, 'plan');
-    $r2 = fetchRowsCutOnDay($u2, 'roll_plan', $dayYmd);
+    $tblU2 = resolveRollPlanTablePdo($u2, 'U2') ?? 'roll_plan';
+    $r2 = fetchRowsCutOnDay($u2, $tblU2, $dayYmd, 'U2');
     $shopsOut['U2'] = $r2;
     $total += count($r2['items']);
 
     $u3 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u3');
-    $seenU3 = [];
-    $itemsU3 = [];
-    $schemaNoteU3 = null;
-    foreach (['roll_plans', 'roll_plan'] as $tblU3) {
-        $r3 = fetchRowsCutOnDay($u3, $tblU3, $dayYmd);
-        if (($r3['note'] ?? null) !== null && $schemaNoteU3 === null) {
-            $schemaNoteU3 = $r3['note'];
-        }
-        foreach ($r3['items'] as $it) {
-            $k = $it['order'] . "\0" . $it['bale'];
-            if (isset($seenU3[$k])) {
-                continue;
-            }
-            $seenU3[$k] = true;
-            $itemsU3[] = $it;
-        }
-    }
-    usort($itemsU3, static function ($a, $b) {
-        $c = strcmp($a['order'], $b['order']);
-        return $c !== 0 ? $c : strcmp($a['bale'], $b['bale']);
-    });
-    $shopsOut['U3'] = [
-        'items' => $itemsU3,
-        'note' => $itemsU3 !== [] ? null : $schemaNoteU3,
-    ];
-    $total += count($itemsU3);
+    $tblU3 = resolveRollPlanTablePdo($u3, 'U3') ?? 'roll_plans';
+    $r3 = fetchRowsCutOnDay($u3, $tblU3, $dayYmd, 'U3');
+    $shopsOut['U3'] = $r3;
+    $total += count($r3['items']);
 
     $u5 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u5');
-    $r5 = fetchRowsCutOnDay($u5, 'roll_plans', $dayYmd);
+    $tblU5 = resolveRollPlanTablePdo($u5, 'U5') ?? 'roll_plans';
+    $r5 = fetchRowsCutOnDay($u5, $tblU5, $dayYmd, 'U5');
     $shopsOut['U5'] = $r5;
     $total += count($r5['items']);
 
@@ -402,37 +398,36 @@ if (($_GET['action'] ?? '') === 'cut_log') {
     $notes = [];
 
     $u2 = connectShop($dbHost, $dbUser, $dbPass, 'plan');
-    $entries = array_merge($entries, fetchCutLogForTable($u2, 'roll_plan', 'U2', $from, $to));
+    $tblU2 = resolveRollPlanTablePdo($u2, 'U2') ?? 'roll_plan';
+    $entries = array_merge($entries, fetchCutLogForTable($u2, $tblU2, 'U2', $from, $to, 'U2'));
 
     $u3 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u3');
-    $seenU3 = [];
-    foreach (['roll_plans', 'roll_plan'] as $tblU3) {
-        foreach (fetchCutLogForTable($u3, $tblU3, 'U3', $from, $to) as $row) {
-            $k = $row['order'] . "\0" . $row['bale'] . "\0" . $row['marked_at'];
-            if (isset($seenU3[$k])) {
-                continue;
-            }
-            $seenU3[$k] = true;
-            $entries[] = $row;
-        }
-    }
+    $tblU3 = resolveRollPlanTablePdo($u3, 'U3') ?? 'roll_plans';
+    $entries = array_merge($entries, fetchCutLogForTable($u3, $tblU3, 'U3', $from, $to, 'U3'));
 
     $u5 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u5');
-    $entries = array_merge($entries, fetchCutLogForTable($u5, 'roll_plans', 'U5', $from, $to));
+    $tblU5 = resolveRollPlanTablePdo($u5, 'U5') ?? 'roll_plans';
+    $entries = array_merge($entries, fetchCutLogForTable($u5, $tblU5, 'U5', $from, $to, 'U5'));
 
     usort($entries, static function ($a, $b) {
         return strcmp($b['marked_at'], $a['marked_at']);
     });
 
     $hasLegacyTime = false;
+    $hasLegacyPlan = false;
     foreach ($entries as $row) {
         if (empty($row['has_time'])) {
             $hasLegacyTime = true;
-            break;
+        }
+        if (!empty($row['legacy_plan_date'])) {
+            $hasLegacyPlan = true;
         }
     }
     if ($hasLegacyTime) {
-        $notes[] = 'Для части старых отметок время не записывалось — показана только дата (без времени).';
+        $notes[] = 'Для части отметок время не записывалось — показана только дата (без времени).';
+    }
+    if ($hasLegacyPlan) {
+        $notes[] = 'Для старых отметок без fact_cut_date дата в логе взята из даты плана порезки (как в аналитике).';
     }
 
     echo json_encode(
@@ -1004,6 +999,9 @@ $navQuery = static function (int $w): string {
         #cut-log-panel-body li.cut-log-item:last-child {
             border-bottom: none;
         }
+        #cut-log-panel-body li.cut-log-item-today {
+            background: #f0fdf4;
+        }
         #cut-log-panel-body .cut-log-time {
             flex-shrink: 0;
             width: 118px;
@@ -1023,6 +1021,42 @@ $navQuery = static function (int $w): string {
             font-weight: 700;
             color: #5b21b6;
             margin-bottom: 4px;
+        }
+        #cut-log-panel-body li.cut-log-item.is-active {
+            background: #ede9fe;
+            border-left: 3px solid #8b5cf6;
+            padding-left: 5px;
+        }
+        #cut-log-panel-body .cut-log-bale {
+            cursor: pointer;
+        }
+        #cut-log-panel-body .cut-log-bale:hover {
+            background: #bbf7d0;
+            border-color: #4ade80;
+        }
+        #cut-log-panel-body .cut-log-not-found {
+            color: #b45309;
+            font-size: 12px;
+            margin: 6px 0 0;
+            padding: 6px 8px;
+            background: #fffbeb;
+            border-radius: 6px;
+            border: 1px solid #fde68a;
+        }
+        .tag.grid-highlight {
+            outline: 3px solid #8b5cf6;
+            outline-offset: 2px;
+            box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.35);
+            position: relative;
+            z-index: 1;
+            animation: grid-highlight-pulse 1.2s ease-in-out 3;
+        }
+        td.grid-highlight-cell {
+            background: #fef9c3 !important;
+        }
+        @keyframes grid-highlight-pulse {
+            0%, 100% { box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.35); }
+            50% { box-shadow: 0 0 0 7px rgba(139, 92, 246, 0.55); }
         }
     </style>
 </head>
@@ -1156,6 +1190,55 @@ $navQuery = static function (int $w): string {
 
     <script>
     (function () {
+        window.highlightBaleInMonitorGrid = function (shop, order, bale) {
+            window.clearBaleMonitorGridHighlight();
+            var found = null;
+            document.querySelectorAll('.wrap .bale-tag').forEach(function (tag) {
+                if (
+                    tag.getAttribute('data-shop') === shop &&
+                    tag.getAttribute('data-order') === order &&
+                    tag.getAttribute('data-bale') === bale
+                ) {
+                    found = tag;
+                }
+            });
+
+            if (!found) {
+                return false;
+            }
+
+            found.classList.add('grid-highlight');
+            var td = found.closest('td');
+            if (td) {
+                td.classList.add('grid-highlight-cell');
+            }
+
+            var wrap = document.querySelector('.wrap');
+            if (wrap) {
+                var tagRect = found.getBoundingClientRect();
+                var wrapRect = wrap.getBoundingClientRect();
+                var scrollLeft = wrap.scrollLeft + (tagRect.left - wrapRect.left) - (wrapRect.width / 2) + (tagRect.width / 2);
+                var scrollTop = wrap.scrollTop + (tagRect.top - wrapRect.top) - (wrapRect.height / 2) + (tagRect.height / 2);
+                wrap.scrollTo({ left: Math.max(0, scrollLeft), top: Math.max(0, scrollTop), behavior: 'smooth' });
+            } else {
+                found.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+            }
+
+            return true;
+        };
+
+        window.clearBaleMonitorGridHighlight = function () {
+            document.querySelectorAll('.tag.grid-highlight').forEach(function (el) {
+                el.classList.remove('grid-highlight');
+            });
+            document.querySelectorAll('td.grid-highlight-cell').forEach(function (el) {
+                el.classList.remove('grid-highlight-cell');
+            });
+        };
+    })();
+    </script>
+    <script>
+    (function () {
         var backdrop = document.getElementById('bale-panel-backdrop');
         var panel = document.getElementById('bale-panel');
         var bodyEl = document.getElementById('bale-panel-body');
@@ -1241,6 +1324,9 @@ $navQuery = static function (int $w): string {
         }
 
         document.body.addEventListener('click', function (e) {
+            if (e.target.closest('#cut-log-panel .cut-log-bale')) {
+                return;
+            }
             var tag = e.target.closest('.bale-tag');
             if (tag) {
                 e.preventDefault();
@@ -1406,6 +1492,57 @@ $navQuery = static function (int $w): string {
         var shopLabels = { U2: 'У2', U3: 'У3', U5: 'У5' };
         var monitorFrom = <?= json_encode($dateFrom, JSON_UNESCAPED_UNICODE) ?>;
         var monitorTo = <?= json_encode($dateTo, JSON_UNESCAPED_UNICODE) ?>;
+        var todayYmd = <?= json_encode((new DateTimeImmutable('today'))->format('Y-m-d'), JSON_UNESCAPED_UNICODE) ?>;
+        var activeLogItem = null;
+        var notFoundEl = null;
+
+        function clearLogHighlightState() {
+            if (activeLogItem) {
+                activeLogItem.classList.remove('is-active');
+                activeLogItem = null;
+            }
+            if (notFoundEl && notFoundEl.parentNode) {
+                notFoundEl.parentNode.removeChild(notFoundEl);
+                notFoundEl = null;
+            }
+        }
+
+        function showLogNotFound(li) {
+            if (notFoundEl && notFoundEl.parentNode) {
+                notFoundEl.parentNode.removeChild(notFoundEl);
+            }
+            notFoundEl = document.createElement('p');
+            notFoundEl.className = 'cut-log-not-found';
+            notFoundEl.textContent = 'Бухта не найдена в видимой сетке (плановая дата вне текущего периода таблицы).';
+            li.appendChild(notFoundEl);
+        }
+
+        function onLogBaleClick(tag, li) {
+            var shop = tag.getAttribute('data-shop');
+            var order = tag.getAttribute('data-order');
+            var bale = tag.getAttribute('data-bale');
+            if (!shop || !order || !bale) return;
+
+            clearLogHighlightState();
+            if (li) {
+                activeLogItem = li;
+                li.classList.add('is-active');
+            }
+
+            var ok = typeof window.highlightBaleInMonitorGrid === 'function' &&
+                window.highlightBaleInMonitorGrid(shop, order, bale);
+            if (!ok && li) {
+                showLogNotFound(li);
+            }
+        }
+
+        function entryDateYmd(entry) {
+            var s = String(entry.marked_at || '').trim();
+            if (s.length >= 10) {
+                return s.slice(0, 10);
+            }
+            return '';
+        }
 
         function escapeHtml(s) {
             return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -1439,6 +1576,10 @@ $navQuery = static function (int $w): string {
             backdrop.setAttribute('aria-hidden', 'true');
             panel.setAttribute('aria-hidden', 'true');
             fab.setAttribute('aria-expanded', 'false');
+            clearLogHighlightState();
+            if (typeof window.clearBaleMonitorGridHighlight === 'function') {
+                window.clearBaleMonitorGridHighlight();
+            }
         }
 
         function buildCutLogUrl() {
@@ -1469,11 +1610,12 @@ $navQuery = static function (int $w): string {
                 var o = e.order || '';
                 var b = e.bale || '';
                 var text = '[[' + o + '][' + b + ']]';
-                html += '<li class="cut-log-item">';
+                var todayCls = entryDateYmd(e) === todayYmd ? ' cut-log-item-today' : '';
+                html += '<li class="cut-log-item' + todayCls + '">';
                 html += '<div class="cut-log-time">' + formatMarkedAt(e.marked_at, !!e.has_time) + '</div>';
                 html += '<div class="cut-log-main">';
                 html += '<div class="cut-log-shop">' + escapeHtml(shopLabels[shop] || shop) + '</div>';
-                html += '<span class="tag bale-tag done" role="button" tabindex="0" title="Показать полосы бухты" data-shop="' + escapeHtml(shop) + '" data-order="' + escapeHtml(o) + '" data-bale="' + escapeHtml(b) + '">' + escapeHtml(text) + '</span>';
+                html += '<span class="tag bale-tag done cut-log-bale" role="button" tabindex="0" title="Подсветить в таблице мониторинга" data-shop="' + escapeHtml(shop) + '" data-order="' + escapeHtml(o) + '" data-bale="' + escapeHtml(b) + '">' + escapeHtml(text) + '</span>';
                 html += '</div></li>';
             });
             html += '</ul>';
@@ -1512,7 +1654,22 @@ $navQuery = static function (int $w): string {
             if (e.target === backdrop) closeLog();
         });
         panel.addEventListener('click', function (e) {
+            var tag = e.target.closest('.cut-log-bale');
+            if (tag) {
+                e.preventDefault();
+                e.stopPropagation();
+                onLogBaleClick(tag, tag.closest('.cut-log-item'));
+                return;
+            }
             e.stopPropagation();
+        });
+
+        panel.addEventListener('keydown', function (e) {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            var tag = e.target.closest('.cut-log-bale');
+            if (!tag || document.activeElement !== tag) return;
+            e.preventDefault();
+            onLogBaleClick(tag, tag.closest('.cut-log-item'));
         });
 
         document.addEventListener('keydown', function (e) {

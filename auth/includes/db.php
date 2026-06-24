@@ -19,6 +19,12 @@ function getPdo($database) {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES => false,
     ]);
+    try {
+        $offset = (new DateTimeImmutable('now', new DateTimeZone(date_default_timezone_get())))->format('P');
+        $pdo->exec('SET time_zone = ' . $pdo->quote($offset));
+    } catch (Throwable $e) {
+        error_log('getPdo time_zone: ' . $e->getMessage());
+    }
     $pdoCache[$database] = $pdo;
     return $pdo;
 }

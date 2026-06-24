@@ -523,6 +523,7 @@ echo "<!-- Аккуратная панель авторизации -->
                     <form action="dimensions_report.php" method="post" target="_blank" class="stack"><button type="submit" class="zu-tag">Таблица размеров для участка</button></form>
                     <form action="product_output_view.php" method="post" target="_blank" class="stack"><input type="submit" value="Обзор выпуска продукции"></form>
                     <form action="parts_output_view.php" method="post" target="_blank" class="stack"><button type="submit" class="zu-tag">Обзор выпуска гофропакетов</button></form>
+                    <form action="wireframes_output_view.php" method="post" target="_blank" class="stack"><button type="submit" class="zu-tag">Обзор выпуска каркасов</button></form>
                     <form action="gofra_packages_table.php" method="post" target="_blank" class="stack">
                         <input type="hidden" name="workshop" value="<?= htmlspecialchars($workshop) ?>">
                         <button type="submit" class="zu-tag">Кол-во гофропакетов из рулона</button>

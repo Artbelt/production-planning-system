@@ -92,26 +92,99 @@ function wfFilterPlanDatesFromToday(array $dates, string $todayIso): array
 }
 
 /**
- * Долг: план каркасов на прошедшие даты (ещё не перенесён / не снят с плана).
+ * @param list<array{date: string, qty: int}> $shifts
+ * @return list<array{date: string, qty: int}>
+ */
+function wfCapDebtShiftsToUncoveredNeed(array $shifts, int $uncoveredNeed): array
+{
+    if ($uncoveredNeed <= 0 || $shifts === []) {
+        return [];
+    }
+    $total = 0;
+    foreach ($shifts as $shift) {
+        $total += (int) ($shift['qty'] ?? 0);
+    }
+    if ($total <= $uncoveredNeed) {
+        return $shifts;
+    }
+    $remaining = $uncoveredNeed;
+    $capped = [];
+    foreach ($shifts as $shift) {
+        $qty = (int) ($shift['qty'] ?? 0);
+        if ($qty <= 0 || $remaining <= 0) {
+            continue;
+        }
+        $take = min($qty, $remaining);
+        $capped[] = ['date' => (string) $shift['date'], 'qty' => $take];
+        $remaining -= $take;
+    }
+
+    return $capped;
+}
+
+/**
+ * Комплектов каркасов (позиция фильтра) по факту выпуска ext/int в заявке.
+ *
+ * @param array<string, array<string, array<string, int>>> $wfProducedByOrderCode [order][WF_U][ext|int] => qty
+ */
+function wfProducedCompleteSetsForMeta(string $order, array $meta, array $wfProducedByOrderCode): int
+{
+    $ext = trim((string) ($meta['ext_wireframe'] ?? ''));
+    $int = trim((string) ($meta['int_wireframe'] ?? ''));
+    if ($ext === '' && $int === '') {
+        return 0;
+    }
+    $orderMap = $wfProducedByOrderCode[$order] ?? [];
+    $extQty = $ext !== ''
+        ? (int) ($orderMap[mb_strtoupper($ext, 'UTF-8')]['ext'] ?? 0)
+        : PHP_INT_MAX;
+    $intQty = $int !== ''
+        ? (int) ($orderMap[mb_strtoupper($int, 'UTF-8')]['int'] ?? 0)
+        : PHP_INT_MAX;
+    if ($ext !== '' && $int !== '') {
+        return min($extQty, $intQty);
+    }
+    if ($ext !== '') {
+        return $extQty;
+    }
+
+    return $intQty === PHP_INT_MAX ? 0 : $intQty;
+}
+
+/**
+ * Долг: прошлый план минус изготовленные каркасы; чипы по датам, FIFO до непокрытой потребности.
  *
  * @param array<string, int> $wfByDate
  * @return list<array{date: string, qty: int}>
  */
-function wfBuildWireframeDebtShifts(array $wfByDate, string $todayIso): array
+function wfBuildWireframeDebtShifts(array $wfByDate, string $todayIso, int $wfNeedDebt): array
 {
+    if ($wfNeedDebt <= 0) {
+        return [];
+    }
     $shifts = [];
+    $plannedFromToday = 0;
     foreach ($wfByDate as $d => $q) {
         $qty = max(0, (int) $q);
-        if ($qty <= 0 || (string) $d >= $todayIso) {
+        if ($qty <= 0) {
             continue;
         }
-        $shifts[] = ['date' => (string) $d, 'qty' => $qty];
+        $dateKey = (string) $d;
+        if ($dateKey < $todayIso) {
+            $shifts[] = ['date' => $dateKey, 'qty' => $qty];
+        } else {
+            $plannedFromToday += $qty;
+        }
+    }
+    if ($shifts === []) {
+        return [];
     }
     usort($shifts, static function ($a, $b) {
         return strcmp((string) $a['date'], (string) $b['date']);
     });
+    $uncoveredNeed = max(0, $wfNeedDebt - $plannedFromToday);
 
-    return $shifts;
+    return wfCapDebtShiftsToUncoveredNeed($shifts, $uncoveredNeed);
 }
 
 function wfEnsureCorrugationPlanV2Table(PDO $pdo): void
@@ -661,8 +734,41 @@ foreach ($rows as $r) {
     $wireframeRows[] = $r;
 }
 
+/** Факт выпуска каркасов: [order][WF_U][ext|int] => qty */
+$wfProducedByOrderCode = [];
+try {
+    $stmtWfProd = $pdo->query("
+        SELECT
+            order_number,
+            UPPER(TRIM(wireframe_name)) AS wf_u,
+            part_type,
+            SUM(COALESCE(count_of_parts, 0)) AS qty
+        FROM manufactured_wireframes
+        GROUP BY order_number, UPPER(TRIM(wireframe_name)), part_type
+    ");
+    foreach ($stmtWfProd->fetchAll(PDO::FETCH_ASSOC) as $wfRow) {
+        $ord = (string) ($wfRow['order_number'] ?? '');
+        $wfU = (string) ($wfRow['wf_u'] ?? '');
+        $pt = (string) ($wfRow['part_type'] ?? '');
+        if ($ord === '' || $wfU === '' || ($pt !== 'ext' && $pt !== 'int')) {
+            continue;
+        }
+        if (!isset($wfProducedByOrderCode[$ord])) {
+            $wfProducedByOrderCode[$ord] = [];
+        }
+        if (!isset($wfProducedByOrderCode[$ord][$wfU])) {
+            $wfProducedByOrderCode[$ord][$wfU] = ['ext' => 0, 'int' => 0];
+        }
+        $wfProducedByOrderCode[$ord][$wfU][$pt] = (int) ($wfRow['qty'] ?? 0);
+    }
+} catch (Throwable $e) {
+    $wfProducedByOrderCode = [];
+}
+
 /** Долг по каркасам: [rowKey] => [['date' => Y-m-d, 'qty' => int], ...] */
 $wireframeDebtShiftMap = [];
+/** Непокрытая потребность в каркасах по позиции (для пересчёта долга в UI). */
+$wireframeNeedByRowKey = [];
 foreach ($wireframeRows as $r) {
     $rawOrder = (string) ($r['order_number'] ?? '');
     $rawFilter = (string) ($r['filter_name'] ?? '');
@@ -670,8 +776,19 @@ foreach ($wireframeRows as $r) {
         continue;
     }
     $rowKey = $rawOrder . '|' . wfNormalizeTextKey($rawFilter);
+    $meta = $filterMetaByKey[wfNormalizeFilterKey($rawFilter)] ?? [];
+    $orderedDebt = (int) ($r['ordered'] ?? 0);
+    $producedDebt = (int) ($r['produced'] ?? 0);
+    $remainingDebt = max(0, $orderedDebt - $producedDebt);
+    $wfProducedDebt = wfProducedCompleteSetsForMeta($rawOrder, $meta, $wfProducedByOrderCode);
+    $wfAvailableDebt = $wfProducedDebt - $producedDebt;
+    $wfNeedDebt = max(0, $remainingDebt - $wfAvailableDebt);
+    $wireframeNeedByRowKey[$rowKey] = $wfNeedDebt;
+    if ($wfNeedDebt <= 0) {
+        continue;
+    }
     $wfByDate = $wireframePlanMapAll[$rowKey] ?? [];
-    $shifts = wfBuildWireframeDebtShifts($wfByDate, $todayIso);
+    $shifts = wfBuildWireframeDebtShifts($wfByDate, $todayIso, $wfNeedDebt);
     if ($shifts !== []) {
         $wireframeDebtShiftMap[$rowKey] = $shifts;
     }
@@ -1279,7 +1396,7 @@ $pageTitle = 'План изготовления каркасов';
                     <th class="col-order">Заявка</th>
                     <th class="wf-col-width" title="Ширина бумаги гофропакета (= ширина каркаса), мм">Ширина<br>бумаги, мм</th>
                     <th class="wf-col-group" title="600 — шире <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм по ширине бумаги; 400 — остальные">Станки</th>
-                    <th class="debt-col" title="Долг: план каркасов на прошедшие даты, не выполненный к сегодня. Перетащите на дату в плане (с сегодня).">Долг</th>
+                    <th class="debt-col" title="Долг: план на прошедшие даты, не закрытый выпуском каркасов. Перетащите на дату в плане (с сегодня).">Долг</th>
                     <?php foreach ($buildPlanDates as $planDate):
                         $d = DateTime::createFromFormat('Y-m-d', (string) $planDate);
                         $isWeekend = $d ? in_array((int) $d->format('N'), [6, 7], true) : false;
@@ -1319,7 +1436,10 @@ $pageTitle = 'План изготовления каркасов';
                         $wfHint = wfWireframeSummary($meta);
                         $ordered = (int) ($r['ordered'] ?? 0);
                         $produced = (int) ($r['produced'] ?? 0);
-                        $remaining = max(0, $ordered - $produced);
+                        $remainingRow = max(0, $ordered - $produced);
+                        $wfProducedRow = wfProducedCompleteSetsForMeta($rawOrder, $meta, $wfProducedByOrderCode);
+                        $wfAvailableRow = $wfProducedRow - $produced;
+                        $wfNeedRow = (int) ($wireframeNeedByRowKey[$rowKey] ?? max(0, $remainingRow - $wfAvailableRow));
                         $mg = wfMachineGroupFromMeta($meta);
                         $rowMachineAttr = $mg['attr'];
                         $rowPoolDiag = 0;
@@ -1342,7 +1462,10 @@ $pageTitle = 'План изготовления каркасов';
                             data-machine-group="<?= htmlspecialchars($rowMachineAttr, ENT_QUOTES, 'UTF-8') ?>"
                             data-row-key="<?= htmlspecialchars($rowKey, ENT_QUOTES, 'UTF-8') ?>"
                             data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
-                            data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>">
+                            data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
+                            data-wf-need="<?= (int) $wfNeedRow ?>"
+                            data-wf-produced="<?= (int) $wfProducedRow ?>"
+                            data-wf-available="<?= (int) max(0, $wfAvailableRow) ?>">
                             <td class="col-pos" title="<?= htmlspecialchars($rawFilter . ($wfHint !== '' ? ' — каркас: ' . $wfHint : ''), ENT_QUOTES, 'UTF-8') ?>">
                                 <?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>
                             </td>
@@ -1622,10 +1745,11 @@ $pageTitle = 'План изготовления каркасов';
     window.WF_BUILD_PLAN_DATES = <?= json_encode($buildPlanDates, JSON_UNESCAPED_UNICODE) ?>;
     const WF_TODAY_ISO = <?= json_encode($todayIso, JSON_UNESCAPED_UNICODE) ?>;
     const initialWireframePlanAll = <?= json_encode($wireframePlanMapAll, JSON_UNESCAPED_UNICODE) ?> || {};
+    const initialWireframeDebtShiftMap = <?= json_encode($wireframeDebtShiftMap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?> || {};
     const DEBT_COMPACT_VISIBLE = 3;
     const debtExpandPopover = document.getElementById('debtExpandPopover');
     const debtExpandPopoverInner = document.getElementById('debtExpandPopoverInner');
-    const debtStateMap = {};
+    const debtStateMap = Object.assign({}, initialWireframeDebtShiftMap || {});
     const wfPlanByRow = {};
     const rowStateMap = new Map();
     let debtPopoverAnchorCell = null;
@@ -1662,24 +1786,59 @@ $pageTitle = 'План изготовления каркасов';
             .filter(function (s) { return s.date && s.date < getTodayIso(); })
             .reduce(function (sum, s) { return sum + s.qty; }, 0);
     }
-    function syncDebtFromPastWfPlan(tr) {
+    function capDebtShiftsFifo(shifts, uncoveredNeed) {
+        const cap = Math.max(0, parseInt(uncoveredNeed, 10) || 0);
+        if (cap <= 0 || !shifts.length) {
+            return [];
+        }
+        const total = shifts.reduce(function (s, it) { return s + it.qty; }, 0);
+        if (total <= cap) {
+            return shifts.map(function (s) { return { date: s.date, qty: s.qty }; });
+        }
+        let remaining = cap;
+        const out = [];
+        shifts.forEach(function (item) {
+            if (remaining <= 0) {
+                return;
+            }
+            const take = Math.min(item.qty, remaining);
+            if (take > 0) {
+                out.push({ date: item.date, qty: take });
+                remaining -= take;
+            }
+        });
+        return out;
+    }
+    function reconcileWireframeDebtForRow(tr) {
         const rowKey = tr.getAttribute('data-row-key') || '';
         if (!rowKey) {
             return;
         }
         syncWfPlanFromRow(tr);
-        const wf = wfPlanByRow[rowKey] || {};
         const todayIso = getTodayIso();
-        const shifts = [];
+        const wfNeed = Math.max(0, parseInt(tr.getAttribute('data-wf-need') || '0', 10) || 0);
+        const wf = wfPlanByRow[rowKey] || {};
+        let plannedFromToday = 0;
+        const pastFromPlan = [];
         Object.keys(wf).forEach(function (d) {
             const q = Math.max(0, parseInt(wf[d] || '0', 10) || 0);
-            if (q > 0 && d < todayIso) {
-                shifts.push({ date: d, qty: q });
+            if (q <= 0) {
+                return;
+            }
+            if (d < todayIso) {
+                pastFromPlan.push({ date: d, qty: q });
+            } else {
+                plannedFromToday += q;
             }
         });
-        shifts.sort(function (a, b) { return a.date.localeCompare(b.date); });
-        setDebtShiftsForKey(rowKey, shifts);
+        pastFromPlan.sort(function (a, b) { return a.date.localeCompare(b.date); });
+        const uncovered = Math.max(0, wfNeed - plannedFromToday);
+        const cappedPast = capDebtShiftsFifo(pastFromPlan, uncovered);
+        setDebtShiftsForKey(rowKey, cappedPast);
         renderDebtCell(tr);
+    }
+    function syncDebtFromPastWfPlan(tr) {
+        reconcileWireframeDebtForRow(tr);
     }
     function syncWfPlanFromRow(tr) {
         const rowKey = tr.getAttribute('data-row-key') || '';
@@ -1819,7 +1978,7 @@ $pageTitle = 'План изготовления каркасов';
         tr.dataset.debtQty = String(debtQty);
         debtCell.classList.toggle('debt-cell--warn', total > DEBT_COMPACT_VISIBLE);
         debtCell.title = total > 0
-            ? ('Долг: ' + debtQty + ' шт. на прошедшие даты (план не снят). Перетащите на дату с сегодня.')
+            ? ('Долг: ' + debtQty + ' шт. (план не закрыт выпуском). Перетащите на дату с сегодня.')
             : '';
         tr.classList.toggle('has-overdue-debt', overdueQty > 0);
         list.innerHTML = '';
@@ -2270,6 +2429,7 @@ $pageTitle = 'План изготовления каркасов';
             rowKey: rowKey,
             order: tr.getAttribute('data-order') || '',
             filter: tr.getAttribute('data-filter') || '',
+            wfNeed: Math.max(0, parseInt(tr.getAttribute('data-wf-need') || '0', 10) || 0),
         };
         rowStateMap.set(rowKey, state);
         wfPlanByRow[rowKey] = Object.assign({}, initialWireframePlanAll[rowKey] || {});

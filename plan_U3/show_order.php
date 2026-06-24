@@ -12,6 +12,18 @@ require('settings.php');
 /** Номер заявки которую надо нарисовать (POST — при переходе с главной, иначе пусто при прямой ссылке) */
 $order_number = isset($_POST['order_number']) ? trim((string)$_POST['order_number']) : '';
 
+/** Фильтр для подсветки позиции (POST — при переходе с active_positions и др.) */
+$highlight_filter = isset($_POST['highlight_filter']) ? trim((string)$_POST['highlight_filter']) : '';
+
+function showOrderNormalizeFilterKey(string $name): string
+{
+    $name = preg_replace('/\[.*$/u', '', $name);
+    $name = trim($name);
+    return mb_strtoupper($name, 'UTF-8');
+}
+
+$highlight_filter_key = $highlight_filter !== '' ? showOrderNormalizeFilterKey($highlight_filter) : '';
+
 /** При отсутствии номера заявки — сообщение и выход (таблица не заполняется при прямой загрузке страницы) */
 if ($order_number === '') {
     echo '<h3>Заявка</h3>';
@@ -138,7 +150,7 @@ h3{ margin:0; font-size:18px; font-weight:700; }
 .table-wrap{ overflow-y:auto; overflow-x:auto; -webkit-overflow-scrolling: touch; border-radius: var(--radius); box-shadow: var(--shadow-soft); }
 
 /* Закрепляем слева 2-й и 3-й столбцы при горизонтальной прокрутке */
-#order_table_container{ --sticky-filter-width: 170px; }
+#order_table_container{ --sticky-filter-width: 0px; }
 #order_table_container th.sticky-filter{
     position: sticky;
     left: 0;
@@ -165,6 +177,21 @@ h3{ margin:0; font-size:18px; font-weight:700; }
     left: var(--sticky-filter-width);
     z-index: 5;
     background: var(--panel);
+}
+
+tr.order-row-highlight td{
+    background: #fde68a !important;
+}
+
+#order_table tbody tr:hover td{
+    background: #e8f2fc !important;
+}
+#order_table tbody tr:hover td.sticky-filter,
+#order_table tbody tr:hover td.sticky-qty{
+    background: #e8f2fc !important;
+}
+#order_table tbody tr.order-row-highlight:hover td{
+    background: #fcd34d !important;
 }
 
 /* Buttons / action panel */
@@ -330,6 +357,7 @@ echo "</form>";
 
 /** Формируем шапку таблицы для вывода заявки */
 echo "<div class='table-wrap' id='order_table_container'><table id='order_table'>
+        <thead>
         <tr>
             <th> №п/п</th>                       
             <th class='sticky-filter'> Фильтр</th>
@@ -345,7 +373,9 @@ echo "<div class='table-wrap' id='order_table_container'><table id='order_table'
             <th> Остаток, шт</th>
             <th> Изготовленные крышки, шт</th>                                                       
             <th> Изготовленные гофропакеты, шт</th>                                                       
-        </tr>";
+        </tr>
+        </thead>
+        <tbody>";
 
 /**
  * Рендер ячейки с тултипом по датам (когда делалось).
@@ -411,9 +441,14 @@ while ($row = $result->fetch(PDO::FETCH_ASSOC)){
     }
 
     $count += 1;
-    echo "<tr style='hov'>"
+    $rowFilter = (string)($row['filter'] ?? '');
+    $isHighlightedRow = $highlight_filter_key !== ''
+        && showOrderNormalizeFilterKey($rowFilter) === $highlight_filter_key;
+    $rowClass = $isHighlightedRow ? " class='order-row-highlight'" : '';
+    $rowId = $isHighlightedRow ? " id='order-row-highlight'" : '';
+    echo "<tr style='hov'{$rowClass}{$rowId} data-filter='".htmlspecialchars($rowFilter, ENT_QUOTES, 'UTF-8')."'>"
         ."<td>".$count."</td>"
-        ."<td class='sticky-filter'>".htmlspecialchars($row['filter'] ?? '')."</td>"
+        ."<td class='sticky-filter'>".htmlspecialchars($rowFilter)."</td>"
         ."<td class='sticky-qty'>".$row['count']."</td>"
         ."<td>".htmlspecialchars($row['marking'] ?? '')."</td>"
         ."<td>".htmlspecialchars($row['personal_packaging'] ?? '')."</td>"
@@ -466,7 +501,7 @@ echo "<tr style='hov'>"
     ."<td>".$gofro_packages_produced."</td>"
     ."</tr>";
 
-echo "</table>";
+echo "</tbody></table>";
 echo "</div>";
 echo "<p style='margin-top:10px;'>* - без учета перевыполнения</p>";
 
@@ -536,27 +571,65 @@ echo "<p style='margin-top:10px;'>* - без учета перевыполнен
 </div>
 
 <script>
+    const ORDER_NUMBER = <?php echo json_encode($order_number, JSON_UNESCAPED_UNICODE); ?>;
+    const HIGHLIGHT_FILTER_KEY = <?php echo json_encode($highlight_filter_key, JSON_UNESCAPED_UNICODE); ?>;
+
     function updateStickyColumnOffsets() {
         const container = document.getElementById('order_table_container');
         const table = document.getElementById('order_table');
         if (!container || !table) return;
 
-        const filterTh = table.querySelector('thead th.sticky-filter');
+        const filterTh = table.querySelector('thead th.sticky-filter')
+            || table.querySelector('th.sticky-filter');
         if (!filterTh) return;
 
         const w = Math.ceil(filterTh.getBoundingClientRect().width);
-        container.style.setProperty('--sticky-filter-width', w + 'px');
+        if (w > 0) {
+            container.style.setProperty('--sticky-filter-width', w + 'px');
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', updateStickyColumnOffsets);
+
+    function scrollToHighlightedOrderRow() {
+        if (!HIGHLIGHT_FILTER_KEY) return;
+
+        const row = document.getElementById('order-row-highlight')
+            || document.querySelector('tr.order-row-highlight');
+        if (!row) return;
+
+        const container = document.getElementById('order_table_container');
+        const useContainerScroll = container
+            && container.scrollHeight > container.clientHeight + 1;
+
+        if (useContainerScroll) {
+            const rowRect = row.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect();
+            const offset = rowRect.top - containerRect.top + container.scrollTop
+                - (container.clientHeight / 2) + (row.offsetHeight / 2);
+            container.scrollTo({ top: Math.max(0, offset), behavior: 'smooth' });
+            return;
+        }
+
+        const rowRect = row.getBoundingClientRect();
+        const targetY = window.scrollY + rowRect.top - (window.innerHeight / 2) + (rowRect.height / 2);
+        window.scrollTo({ top: Math.max(0, targetY), behavior: 'smooth' });
     }
 
     window.addEventListener('load', function () {
         const el = document.getElementById('loading');
         if (el) el.style.display = 'none';
         updateStickyColumnOffsets();
+        if (!HIGHLIGHT_FILTER_KEY) return;
+        requestAnimationFrame(function () {
+            requestAnimationFrame(function () {
+                scrollToHighlightedOrderRow();
+                setTimeout(scrollToHighlightedOrderRow, 120);
+            });
+        });
     });
 
     window.addEventListener('resize', updateStickyColumnOffsets);
-
-    const ORDER_NUMBER = <?php echo json_encode($order_number, JSON_UNESCAPED_UNICODE); ?>;
 
     function confirmArchiveOrder() {
         const confirmed = confirm('Вы уверены, что хотите отправить заявку "' + ORDER_NUMBER + '" в архив?\\n\\nВернуть заявку в активные можно с этой же страницы (кнопка «Вернуть в активные»).');

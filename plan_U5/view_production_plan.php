@@ -20,10 +20,10 @@ $isReplanning = ($orderStatus['status'] ?? 'normal') === 'replanning';
 
 /* ---------- ПЛАН (build_plan) ---------- */
 $stmt = $pdo->prepare("
-    SELECT plan_date, filter, `count`
+    SELECT plan_date, filter, `count`, brigade
     FROM build_plan
     WHERE order_number = ?
-    ORDER BY plan_date, filter
+    ORDER BY plan_date, brigade, filter
 ");
 $stmt->execute([$order]);
 $planRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -38,9 +38,11 @@ foreach ($planRows as $r) {
     $label = preg_replace('/\[.*$/', '', $r['filter']);
     $label = preg_replace('/[●◩⏃]/u', '', $label);
     $base  = trim($label);
-    $cnt   = (int)$r['count'];
+    $cnt     = (int)$r['count'];
+    $brigade = (int)($r['brigade'] ?? 1);
+    if ($brigade < 1 || $brigade > 2) $brigade = 1;
 
-    $planByDate[$date][] = ['base'=>$base, 'count'=>$cnt];
+    $planByDate[$date][] = ['base'=>$base, 'count'=>$cnt, 'brigade'=>$brigade];
     if (!isset($planMap[$base])) $planMap[$base] = [];
     if (!isset($planMap[$base][$date])) $planMap[$base][$date] = 0;
     $planMap[$base][$date] += $cnt;
@@ -255,14 +257,36 @@ $DOW = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
             background: rgba(34, 197, 94, 0.35);
             z-index: 0;
         }
-        .item-row { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: baseline; gap: 4px; }
+        .item-row { position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 4px; }
+        .item-brigade {
+            flex-shrink: 0;
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 500;
+            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.9;
+        }
+        .item-brigade-1 { background: #eef2f6; color: #94a3b8; }
+        .item-brigade-2 { background: #f3f0ee; color: #a8a29e; }
+        .item-name-wrap {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            flex: 1 1 0;
+            min-width: 0;
+        }
         .item-name {
             font-weight: 600;
             font-size: 12px;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            flex: 1 1 0;
+            min-width: 0;
         }
         .item-qty {
             font-size: 10px;
@@ -390,9 +414,19 @@ $DOW = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
         $dow = (int)date('w', $ts);
         $isWeekend = ($dow === 0 || $dow === 6);
 
-        $keys = [];
-        foreach ($planItems as $it) $keys[$it['base']] = true;
-        ksort($keys, SORT_NATURAL|SORT_FLAG_CASE);
+        $grouped = [];
+        foreach ($planItems as $it) {
+            $br = (int)($it['brigade'] ?? 1);
+            $k = $it['base'] . "\0" . $br;
+            if (!isset($grouped[$k])) {
+                $grouped[$k] = ['base' => $it['base'], 'brigade' => $br, 'count' => 0];
+            }
+            $grouped[$k]['count'] += (int)$it['count'];
+        }
+        uasort($grouped, static function ($a, $b) {
+            $c = strnatcasecmp($a['base'], $b['base']);
+            return $c !== 0 ? $c : ($a['brigade'] <=> $b['brigade']);
+        });
         ?>
         <div class="day-column">
             <div class="day-header<?= $isWeekend ? ' weekend' : '' ?>">
@@ -401,8 +435,10 @@ $DOW = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
             <div class="items-container">
 
             <?php if ($planItems || $factMapDay): ?>
-                    <?php foreach (array_keys($keys) as $base):
-                        $plan = 0; foreach ($planItems as $it) if ($it['base']===$base) $plan += (int)$it['count'];
+                    <?php foreach ($grouped as $g):
+                        $base = $g['base'];
+                        $brigade = $g['brigade'];
+                        $plan = (int)$g['count'];
                         if ($plan === 0) continue;
                         $fact = (int)($factDistribution[$d][$base] ?? 0);
                         $percentage = $plan > 0 ? ($fact / $plan * 100) : 0;
@@ -410,12 +446,15 @@ $DOW = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
                         <div class="item"
                              data-filter="<?= h($base) ?>"
                              data-key="<?= h(mb_strtolower($base)) ?>"
-                             title="Процент: <?= round($percentage, 1) ?>%">
+                             title="Машина <?= $brigade ?> · Процент: <?= round($percentage, 1) ?>%">
                             <?php if ($percentage > 0): ?>
                                 <div class="item-fill" style="width:<?= round(min(100, $percentage), 1) ?>%"></div>
                             <?php endif; ?>
                             <div class="item-row">
-                                <span class="item-name"><?= h($base) ?></span>
+                                <div class="item-name-wrap">
+                                    <span class="item-brigade item-brigade-<?= $brigade ?>" title="Машина <?= $brigade ?>"><?= $brigade ?></span>
+                                    <span class="item-name"><?= h($base) ?></span>
+                                </div>
                                 <span class="item-qty"><?= (int)$fact ?>/<?= (int)$plan ?></span>
                             </div>
                         </div>

@@ -2413,6 +2413,7 @@ $pageTitle = 'Активные позиции';
                         <td class="order-cell">
                             <form action="show_order.php" method="post" target="_blank" rel="noopener">
                                 <input type="hidden" name="order_number" value="<?= $ord ?>">
+                                <input type="hidden" name="highlight_filter" value="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>">
                                 <button type="submit"><?= $ord ?></button>
                             </form>
                         </td>
