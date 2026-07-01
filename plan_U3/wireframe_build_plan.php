@@ -765,6 +765,59 @@ try {
     $wfProducedByOrderCode = [];
 }
 
+/** Изготовленные гофропакеты: [order][packageKey] => qty (manufactured_parts) */
+$gofroProducedByOrderPackage = [];
+if (!empty($wireframeRows) && !empty($filterMetaByKey)) {
+    $ordersForGofro = [];
+    $packagesForGofro = [];
+    foreach ($wireframeRows as $rowGofro) {
+        $rawOrderG = trim((string) ($rowGofro['order_number'] ?? ''));
+        $rawFilterG = (string) ($rowGofro['filter_name'] ?? '');
+        if ($rawOrderG === '' || $rawFilterG === '') {
+            continue;
+        }
+        $metaG = $filterMetaByKey[wfNormalizeFilterKey($rawFilterG)] ?? [];
+        $packageName = trim((string) ($metaG['filter_package'] ?? ''));
+        if ($packageName === '') {
+            continue;
+        }
+        $ordersForGofro[$rawOrderG] = true;
+        $packagesForGofro[$packageName] = true;
+    }
+    if ($ordersForGofro !== [] && $packagesForGofro !== []) {
+        try {
+            $orderList = array_keys($ordersForGofro);
+            $packageList = array_keys($packagesForGofro);
+            $orderPlaceholders = implode(',', array_fill(0, count($orderList), '?'));
+            $packagePlaceholders = implode(',', array_fill(0, count($packageList), '?'));
+            $stmtGofroProduced = $pdo->prepare("
+                SELECT
+                    mp.name_of_order,
+                    mp.name_of_parts,
+                    SUM(COALESCE(mp.count_of_parts, 0)) AS qty
+                FROM manufactured_parts mp
+                WHERE mp.name_of_order IN ($orderPlaceholders)
+                  AND mp.name_of_parts IN ($packagePlaceholders)
+                GROUP BY mp.name_of_order, mp.name_of_parts
+            ");
+            $stmtGofroProduced->execute(array_merge($orderList, $packageList));
+            foreach ($stmtGofroProduced->fetchAll(PDO::FETCH_ASSOC) as $gr) {
+                $orderG = trim((string) ($gr['name_of_order'] ?? ''));
+                $partKey = wfNormalizeTextKey((string) ($gr['name_of_parts'] ?? ''));
+                if ($orderG === '' || $partKey === '') {
+                    continue;
+                }
+                if (!isset($gofroProducedByOrderPackage[$orderG])) {
+                    $gofroProducedByOrderPackage[$orderG] = [];
+                }
+                $gofroProducedByOrderPackage[$orderG][$partKey] = (int) ($gr['qty'] ?? 0);
+            }
+        } catch (Throwable $e) {
+            $gofroProducedByOrderPackage = [];
+        }
+    }
+}
+
 /** Долг по каркасам: [rowKey] => [['date' => Y-m-d, 'qty' => int], ...] */
 $wireframeDebtShiftMap = [];
 /** Непокрытая потребность в каркасах по позиции (для пересчёта долга в UI). */
@@ -857,6 +910,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $userId = isset($session['user_id']) ? (int) $session['user_id'] : null;
             wfApplyWireframePlanSetCell($pdo, $rowKey, $order, $filterName, $planDate, $qty, $userId);
             echo json_encode(['ok' => true, 'qty' => $qty, 'plan_date' => $planDate, 'source_row_key' => $rowKey], JSON_UNESCAPED_UNICODE);
+        } catch (Throwable $e) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+        }
+        exit;
+    }
+    if (($payload['action'] ?? '') === 'move_wireframe_plan') {
+        header('Content-Type: application/json; charset=utf-8');
+        $isDate = static function (string $value): bool {
+            return (bool) preg_match('/^\d{4}-\d{2}-\d{2}$/', $value);
+        };
+        try {
+            if (!$wireframeBuildCanEdit) {
+                http_response_code(403);
+                echo json_encode(['ok' => false, 'error' => 'Недостаточно прав для изменения плана каркасов.'], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+            $rowKey = trim((string) ($payload['source_row_key'] ?? ''));
+            $order = trim((string) ($payload['order_number'] ?? ''));
+            $filterName = trim((string) ($payload['filter_name'] ?? ''));
+            $fromDate = trim((string) ($payload['from_date'] ?? ''));
+            $toDate = trim((string) ($payload['to_date'] ?? ''));
+            $qty = max(0, (int) ($payload['qty'] ?? 0));
+            if ($rowKey === '' || $order === '' || $filterName === '' || !$isDate($fromDate) || !$isDate($toDate) || $qty <= 0) {
+                throw new RuntimeException('Некорректные параметры переноса плана.');
+            }
+            if ($fromDate < $todayIso || $toDate < $todayIso) {
+                throw new RuntimeException('Перенос плана только между сегодняшней и будущими датами.');
+            }
+            if ($fromDate === $toDate) {
+                throw new RuntimeException('Даты переноса должны различаться.');
+            }
+            wfEnsureWireframeBuildPlanTable($pdo);
+            $stmtFrom = $pdo->prepare('
+                SELECT COALESCE(SUM(qty), 0) AS qty
+                FROM wireframe_build_plan
+                WHERE source_row_key = ? AND plan_date = ?
+            ');
+            $stmtFrom->execute([$rowKey, $fromDate]);
+            $fromQty = (int) ($stmtFrom->fetchColumn() ?: 0);
+            if ($fromQty < $qty) {
+                throw new RuntimeException('В исходной ячейке недостаточно количества для переноса.');
+            }
+            $stmtTo = $pdo->prepare('
+                SELECT COALESCE(SUM(qty), 0) AS qty
+                FROM wireframe_build_plan
+                WHERE source_row_key = ? AND plan_date = ?
+            ');
+            $stmtTo->execute([$rowKey, $toDate]);
+            $toQty = (int) ($stmtTo->fetchColumn() ?: 0);
+            if ($toQty > 0) {
+                throw new RuntimeException('В целевой ячейке уже есть план — перенос только в пустую дату.');
+            }
+            $userId = isset($session['user_id']) ? (int) $session['user_id'] : null;
+            wfApplyWireframePlanSetCell($pdo, $rowKey, $order, $filterName, $fromDate, max(0, $fromQty - $qty), $userId);
+            wfApplyWireframePlanSetCell($pdo, $rowKey, $order, $filterName, $toDate, $qty, $userId);
+            echo json_encode([
+                'ok' => true,
+                'from_date' => $fromDate,
+                'to_date' => $toDate,
+                'qty' => $qty,
+                'from_qty' => max(0, $fromQty - $qty),
+                'to_qty' => $qty,
+                'source_row_key' => $rowKey,
+            ], JSON_UNESCAPED_UNICODE);
         } catch (Throwable $e) {
             http_response_code(400);
             echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
@@ -963,6 +1081,56 @@ $pageTitle = 'План изготовления каркасов';
         }
         .toolbar a:hover { border-color: #93c5fd; background: #eff6ff; }
         .toolbar-btn.secondary { font-weight: 500; }
+        .toolbar-btn.wf-cols-btn--customized {
+            border-color: #93c5fd;
+            background: #eff6ff;
+        }
+        .wf-cols-wrap { position: relative; display: inline-block; }
+        .wf-cols-popover {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            z-index: 60;
+            min-width: 210px;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+            padding: 10px 12px;
+        }
+        .wf-cols-popover[hidden] { display: none; }
+        .wf-cols-popover__title {
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--ink);
+        }
+        .wf-cols-popover__list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 10px;
+        }
+        .wf-cols-popover__list label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .wf-cols-popover__foot {
+            display: flex;
+            justify-content: flex-end;
+            padding-top: 6px;
+            border-top: 1px solid var(--border);
+        }
+        body.wf-hide-col-ordered .wf-col--ordered { display: none; }
+        body.wf-hide-col-analog .wf-col--analog { display: none; }
+        body.wf-hide-col-width .wf-col--width { display: none; }
+        body.wf-hide-col-gofro .wf-col--gofro { display: none; }
+        body.wf-hide-col-remainder .wf-col--remainder { display: none; }
+        body.wf-hide-col-wfprod .wf-col--wfprod { display: none; }
         table.wf-plan-table {
             border-collapse: separate;
             border-spacing: 0;
@@ -976,7 +1144,52 @@ $pageTitle = 'План изготовления каркасов';
         }
         th { background: #f9fafb; font-size: 11px; position: sticky; top: 0; z-index: 2; box-shadow: 0 1px 0 0 var(--border); }
         .col-pos { max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .col-analog, .col-order, .wf-col-width, .wf-col-group { white-space: nowrap; }
+        td.col-pos .pos-meta {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px 6px;
+            max-width: 100%;
+            vertical-align: middle;
+        }
+        td.col-pos .pos-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        td.col-pos .pos-indicators {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            flex-shrink: 0;
+        }
+        td.col-pos .pos-indicator {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 16px;
+            height: 16px;
+            padding: 0 4px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 1;
+            border: 1px solid #d1d5db;
+            background: #fff;
+            color: #4b5563;
+        }
+        td.col-pos .pos-indicator.w600 {
+            border-color: #3b82f6;
+            color: #1d4ed8;
+            background: #eff6ff;
+        }
+        .col-analog, .col-order, .wf-col-width { white-space: nowrap; }
+        .wf-col-ordered {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            max-width: 56px;
+            white-space: nowrap;
+        }
         .col-order form { display: inline; margin: 0; }
         .col-order button[type="submit"] {
             appearance: none;
@@ -1053,22 +1266,48 @@ $pageTitle = 'План изготовления каркасов';
             overflow: hidden;
             text-overflow: ellipsis;
         }
-        /* Основное: план каркасов */
+        /* Основное: план каркасов (овал как cell-gofro-qty на gofro_build_plan) */
         .wf-main-qty {
             position: absolute;
-            inset: 0;
-            display: flex;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            display: inline-flex;
             align-items: center;
-            justify-content: flex-start;
-            padding-left: 4px;
-            font-size: 17px;
-            font-weight: 400;
-            color: #0f766e;
+            justify-content: center;
+            box-sizing: border-box;
+            min-width: 22px;
+            height: 22px;
+            padding: 0 5px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            color: #0f172a;
+            background: #fff;
+            border: 1.5px solid #64748b;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.1);
             line-height: 1;
             z-index: 2;
             pointer-events: none;
             user-select: none;
             font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+        /* Если в ячейке и план каркасов, и г/п — овал слева, г/п остаётся справа внизу */
+        .wf-date-cell:has(.wf-info-gofro) .wf-main-qty {
+            left: 4px;
+            transform: translateY(-50%);
+        }
+        .wf-date-cell--editable .wf-main-qty {
+            pointer-events: auto;
+            cursor: grab;
+            touch-action: none;
+        }
+        .wf-date-cell--editable .wf-main-qty:active {
+            cursor: grabbing;
+        }
+        .wf-main-qty[draggable="true"] {
+            -webkit-user-drag: element;
         }
         .wf-date-cell--editable {
             cursor: pointer;
@@ -1078,10 +1317,23 @@ $pageTitle = 'План изготовления каркасов';
             font-variant-numeric: tabular-nums;
             max-width: 56px;
         }
-        .wf-col-group {
-            font-size: 11px;
-            text-align: center;
-            max-width: 72px;
+        .wf-col-gofro-prod {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            max-width: 52px;
+            white-space: nowrap;
+        }
+        .wf-col-remainder {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            max-width: 52px;
+            white-space: nowrap;
+        }
+        .wf-col-wfprod {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+            max-width: 52px;
+            white-space: nowrap;
         }
         tbody tr.wf-data-row { background: #fff; }
         tbody tr.wf-data-row.wf-row--gofro-uncovered,
@@ -1175,6 +1427,10 @@ $pageTitle = 'План изготовления каркасов';
             outline: 2px solid #93c5fd;
             outline-offset: -2px;
         }
+        .wf-date-cell.drag-source-single {
+            outline: 2px solid #93c5fd;
+            outline-offset: -2px;
+        }
         .debt-more {
             appearance: none;
             display: inline-flex;
@@ -1239,6 +1495,59 @@ $pageTitle = 'План изготовления каркасов';
             font-weight: 600;
             font-variant-numeric: tabular-nums;
             color: #0f172a;
+        }
+        table.wf-plan-table.wf-ctrl-hint-mode {
+            cursor: crosshair;
+        }
+        table.wf-plan-table th.date-col.wf-date-col-hover,
+        table.wf-plan-table td.wf-date-cell.wf-date-col-hover,
+        table.wf-plan-table tfoot td.wf-foot-sum.wf-date-col-hover {
+            background: #e8ecfd !important;
+            box-shadow: inset 0 0 0 2px rgba(36, 87, 230, 0.45);
+        }
+        table.wf-plan-table thead th.date-col.wf-date-col-hover {
+            z-index: 8;
+        }
+        .wf-load-hint {
+            position: fixed;
+            z-index: 15000;
+            pointer-events: none;
+            padding: 7px 10px;
+            background: #fff;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+            font-size: 11px;
+            line-height: 1.35;
+            color: #475569;
+            min-width: 118px;
+        }
+        .wf-load-hint[hidden] { display: none !important; }
+        .wf-load-hint__title {
+            font-size: 9px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #64748b;
+            margin-bottom: 4px;
+        }
+        .wf-load-hint__date {
+            font-weight: 700;
+            font-size: 12px;
+            color: #0f172a;
+            margin-bottom: 5px;
+        }
+        .wf-load-hint__row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .wf-load-hint__row + .wf-load-hint__row { margin-top: 2px; }
+        .wf-load-hint__val {
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            color: #1e293b;
         }
         .wf-cell-panel {
             position: fixed;
@@ -1369,7 +1678,7 @@ $pageTitle = 'План изготовления каркасов';
     <p class="muted" style="margin:0 0 10px;">
         Позиции с ненулевым каркасом в справочнике гофропакета (наружный/внутренний), выполнение заявки не выше <?= (int) $maxPct ?>%.
         Крупное число слева — <strong>план каркасов</strong> (основной); внизу справа мелко — план гофропакетов (справочно).
-        Группы станков в колонке «Станки»: <strong>600</strong> — шире <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм по ширине бумаги (= каркаса), <strong>400</strong> — до <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм включительно или ширина не задана. Внизу таблицы — суммы плана каркасов по дням для каждой группы.
+        Группа <strong>600</strong> — шире <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм по ширине бумаги (бейдж у позиции); <strong>400</strong> — остальные. Внизу таблицы — суммы плана каркасов по дням для каждой группы.
         <?php if ($wireframeBuildCanEdit): ?>
             Клик по ячейке даты — внести количество каркасов. Долг — каркасы, запланированные на прошедшие даты и ещё не снятые с плана; перетащите на дату с сегодня.
         <?php else: ?>
@@ -1382,6 +1691,23 @@ $pageTitle = 'План изготовления каркасов';
             <span class="muted" style="font-size:12px;">Фильтр:</span>
             <button type="button" class="toolbar-btn secondary wf-filter-btn" id="wfFilter600" data-wf-hl="wide" title="Только позиции группы 600 (шире <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм по бумаге). Повторный клик — все строки.">600</button>
             <button type="button" class="toolbar-btn secondary wf-filter-btn" id="wfFilter400" data-wf-hl="notwide" title="Только позиции группы 400 (до <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм или без ширины). Повторный клик — все строки.">400</button>
+            <span class="wf-cols-wrap">
+                <button type="button" class="toolbar-btn secondary" id="wfColsToggleBtn" title="Показать или скрыть столбцы таблицы">Столбцы ▾</button>
+                <div id="wfColsPopover" class="wf-cols-popover" hidden>
+                    <div class="wf-cols-popover__title">Столбцы таблицы</div>
+                    <div class="wf-cols-popover__list">
+                        <label><input type="checkbox" data-wf-col-toggle="ordered" checked> Фильтров в заказе</label>
+                        <label><input type="checkbox" data-wf-col-toggle="analog" checked> Аналог</label>
+                        <label><input type="checkbox" data-wf-col-toggle="width" checked> Ширина бумаги</label>
+                        <label><input type="checkbox" data-wf-col-toggle="gofro" checked> Г/п собр.</label>
+                        <label><input type="checkbox" data-wf-col-toggle="remainder" checked> Остаток</label>
+                        <label><input type="checkbox" data-wf-col-toggle="wfprod" checked> Каркасов изготовлено</label>
+                    </div>
+                    <div class="wf-cols-popover__foot">
+                        <button type="button" class="toolbar-btn secondary" id="wfColsResetBtn" style="font-size:11px;padding:4px 8px;">Сброс</button>
+                    </div>
+                </div>
+            </span>
         <?php endif; ?>
     </div>
     <?php if ($loadError !== ''): ?>
@@ -1391,12 +1717,15 @@ $pageTitle = 'План изготовления каркасов';
             <table class="wf-plan-table">
                 <thead>
                 <tr>
-                    <th class="col-pos">Позиция</th>
-                    <th class="col-analog">Аналог</th>
-                    <th class="col-order">Заявка</th>
-                    <th class="wf-col-width" title="Ширина бумаги гофропакета (= ширина каркаса), мм">Ширина<br>бумаги, мм</th>
-                    <th class="wf-col-group" title="600 — шире <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм по ширине бумаги; 400 — остальные">Станки</th>
-                    <th class="debt-col" title="Долг: план на прошедшие даты, не закрытый выпуском каркасов. Перетащите на дату в плане (с сегодня).">Долг</th>
+                    <th class="col-pos" data-wf-col="pos">Позиция</th>
+                    <th class="wf-col-ordered wf-col--ordered" data-wf-col="ordered" title="Фильтров в заказе по позиции">Фильтров<br>в заказе</th>
+                    <th class="col-analog wf-col--analog" data-wf-col="analog">Аналог</th>
+                    <th class="col-order" data-wf-col="order">Заявка</th>
+                    <th class="wf-col-width wf-col--width" data-wf-col="width" title="Ширина бумаги гофропакета (= ширина каркаса), мм">Ширина<br>бумаги, мм</th>
+                    <th class="wf-col-gofro-prod wf-col--gofro" data-wf-col="gofro" title="Количество изготовленных гофропакетов по заявке (ввод смены, manufactured_parts)">Г/п<br>собр.</th>
+                    <th class="wf-col-remainder wf-col--remainder" data-wf-col="remainder" title="Остаток: фильтров в заказе минус собрано г/п">Остаток</th>
+                    <th class="wf-col-wfprod wf-col--wfprod" data-wf-col="wfprod" title="Изготовлено каркасов по заявке (ввод смены, manufactured_wireframes)">Каркасов<br>изготовлено</th>
+                    <th class="debt-col" data-wf-col="debt" title="Долг: план на прошедшие даты, не закрытый выпуском каркасов. Перетащите на дату в плане (с сегодня).">Долг</th>
                     <?php foreach ($buildPlanDates as $planDate):
                         $d = DateTime::createFromFormat('Y-m-d', (string) $planDate);
                         $isWeekend = $d ? in_array((int) $d->format('N'), [6, 7], true) : false;
@@ -1405,9 +1734,9 @@ $pageTitle = 'План изготовления каркасов';
                         $pd = (string) $planDate;
                         $sum600 = (int) ($wfFooterSumWide[$pd] ?? 0);
                         $sum400 = (int) ($wfFooterSumNotWide[$pd] ?? 0);
-                        $t600 = $sum600 > 0 ? (string) $sum600 : '';
-                        $t400 = $sum400 > 0 ? (string) $sum400 : '';
-                        $headTitle = $pd . ' — загрузка станков (план каркасов, шт.): 600 → ' . ($sum600 > 0 ? $sum600 : 0) . ', 400 → ' . ($sum400 > 0 ? $sum400 : 0);
+                        $t600 = (string) $sum600;
+                        $t400 = (string) $sum400;
+                        $headTitle = $pd . ' — загрузка станков (план каркасов, шт.): 600 → ' . $sum600 . ', 400 → ' . $sum400;
                         ?>
                         <th class="<?= htmlspecialchars($cls, ENT_QUOTES, 'UTF-8') ?>" data-plan-date="<?= htmlspecialchars($pd, ENT_QUOTES, 'UTF-8') ?>" title="<?= htmlspecialchars($headTitle, ENT_QUOTES, 'UTF-8') ?>">
                             <span class="wf-th-date"><?= htmlspecialchars($label, ENT_QUOTES, 'UTF-8') ?></span>
@@ -1422,7 +1751,7 @@ $pageTitle = 'План изготовления каркасов';
                 <tbody>
                 <?php if (empty($wireframeRows)): ?>
                     <tr>
-                        <td colspan="<?= 6 + count($buildPlanDates) ?>" class="muted" style="text-align:center;padding:16px;">
+                        <td colspan="<?= 9 + count($buildPlanDates) ?>" class="muted wf-empty-colspan" style="text-align:center;padding:16px;">
                             Нет позиций с каркасами при текущем пороге выполнения или нет строк в справочнике.
                         </td>
                     </tr>
@@ -1440,6 +1769,12 @@ $pageTitle = 'План изготовления каркасов';
                         $wfProducedRow = wfProducedCompleteSetsForMeta($rawOrder, $meta, $wfProducedByOrderCode);
                         $wfAvailableRow = $wfProducedRow - $produced;
                         $wfNeedRow = (int) ($wireframeNeedByRowKey[$rowKey] ?? max(0, $remainingRow - $wfAvailableRow));
+                        $packageName = trim((string) ($meta['filter_package'] ?? ''));
+                        $packageKey = $packageName !== '' ? wfNormalizeTextKey($packageName) : '';
+                        $gofroProducedRow = ($packageKey !== '' && $rawOrder !== '')
+                            ? (int) ($gofroProducedByOrderPackage[$rawOrder][$packageKey] ?? 0)
+                            : 0;
+                        $gofroRemainRow = $ordered - $gofroProducedRow;
                         $mg = wfMachineGroupFromMeta($meta);
                         $rowMachineAttr = $mg['attr'];
                         $rowPoolDiag = 0;
@@ -1467,23 +1802,41 @@ $pageTitle = 'План изготовления каркасов';
                             data-wf-produced="<?= (int) $wfProducedRow ?>"
                             data-wf-available="<?= (int) max(0, $wfAvailableRow) ?>">
                             <td class="col-pos" title="<?= htmlspecialchars($rawFilter . ($wfHint !== '' ? ' — каркас: ' . $wfHint : ''), ENT_QUOTES, 'UTF-8') ?>">
-                                <?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>
+                                <span class="pos-meta">
+                                    <span class="pos-name"><?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?></span>
+                                    <?php if ($rowMachineAttr === 'wide'): ?>
+                                        <span class="pos-indicators">
+                                            <span class="pos-indicator w600" title="Группа станков 600 — шире <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм по ширине бумаги">600</span>
+                                        </span>
+                                    <?php endif; ?>
+                                </span>
                             </td>
-                            <td class="col-analog" title="<?= $rowAnalog !== '' ? htmlspecialchars('Аналог: ' . $rowAnalog, ENT_QUOTES, 'UTF-8') : '' ?>">
+                            <td class="wf-col-ordered wf-col--ordered" title="<?= htmlspecialchars('Заказано: ' . $ordered . ' шт., собрано: ' . $produced . ' шт.', ENT_QUOTES, 'UTF-8') ?>"><?= (int) $ordered ?></td>
+                            <td class="col-analog wf-col--analog" title="<?= $rowAnalog !== '' ? htmlspecialchars('Аналог: ' . $rowAnalog, ENT_QUOTES, 'UTF-8') : '' ?>">
                                 <?= $rowAnalog !== '' ? htmlspecialchars($rowAnalog, ENT_QUOTES, 'UTF-8') : '<span class="muted">—</span>' ?>
                             </td>
                             <td class="col-order">
                                 <?php if ($rawOrder !== ''): ?>
                                     <form action="show_order.php" method="post" target="_blank" rel="noopener">
                                         <input type="hidden" name="order_number" value="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>">
+                                        <input type="hidden" name="highlight_filter" value="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>">
                                         <button type="submit"><?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?></button>
                                     </form>
                                 <?php else: ?>
                                     <span class="muted">—</span>
                                 <?php endif; ?>
                             </td>
-                            <td class="wf-col-width" title="Из справочника paper_package_round (ширина бумаги)"><?= htmlspecialchars($mg['width_display'], ENT_QUOTES, 'UTF-8') ?></td>
-                            <td class="wf-col-group" title="Группа станков: 600 — шире <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм по бумаге; 400 — до <?= (int) WF_PAPER_WIDTH_SPLIT_MM ?> мм или ширина не задана"><?= htmlspecialchars($mg['label'], ENT_QUOTES, 'UTF-8') ?></td>
+                            <td class="wf-col-width wf-col--width" title="Из справочника paper_package_round (ширина бумаги)"><?= htmlspecialchars($mg['width_display'], ENT_QUOTES, 'UTF-8') ?></td>
+                            <td class="wf-col-gofro-prod wf-col--gofro" title="<?= $packageName !== ''
+                                ? htmlspecialchars('Изготовлено гофропакетов «' . $packageName . '» по заявке ' . $rawOrder . ': ' . $gofroProducedRow . ' шт.', ENT_QUOTES, 'UTF-8')
+                                : 'Гофропакет не задан в справочнике' ?>"><?= (int) $gofroProducedRow ?></td>
+                            <td class="wf-col-remainder wf-col--remainder" title="<?= htmlspecialchars('Фильтров в заказе: ' . $ordered . ' − г/п собр.: ' . $gofroProducedRow . ' = ' . $gofroRemainRow, ENT_QUOTES, 'UTF-8') ?>"><?= (int) $gofroRemainRow ?></td>
+                            <td class="wf-col-wfprod wf-col--wfprod" title="<?= htmlspecialchars(
+                                'Изготовлено каркасов (комплекты ext/int) по заявке: ' . $wfProducedRow . ' шт.'
+                                . ($wfHint !== '' ? ' · ' . $wfHint : ''),
+                                ENT_QUOTES,
+                                'UTF-8'
+                            ) ?>"><?= (int) $wfProducedRow ?></td>
                             <td class="debt-cell"
                                 data-debt-key="<?= htmlspecialchars($rowKey, ENT_QUOTES, 'UTF-8') ?>"
                                 data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
@@ -1524,7 +1877,7 @@ $pageTitle = 'План изготовления каркасов';
                                         data-row-key="<?= htmlspecialchars($rowKey, ENT_QUOTES, 'UTF-8') ?>"
                                         data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
                                         data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
-                                        data-remaining="<?= (int) $remaining ?>"
+                                        data-remaining="<?= (int) $remainingRow ?>"
                                     <?php endif; ?>
                                 >
                                     <span class="wf-date-cell-fill" aria-hidden="true" style="background: <?= $gofroQty > 0 ? 'hsla(' . $hueBar . ', 65%, 52%, 0.28)' : 'transparent' ?>;"></span>
@@ -1543,25 +1896,25 @@ $pageTitle = 'План изготовления каркасов';
                 <?php if (!empty($wireframeRows)): ?>
                 <tfoot>
                 <tr>
-                    <td colspan="6" class="wf-tfoot-label">600</td>
+                    <td colspan="9" class="wf-tfoot-label wf-foot-colspan">600</td>
                     <?php foreach ($buildPlanDates as $planDate):
                         $pd = (string) $planDate;
                         $d = DateTime::createFromFormat('Y-m-d', $pd);
                         $isWEnd = $d ? in_array((int) $d->format('N'), [6, 7], true) : false;
                         $sum = (int) ($wfFooterSumWide[$pd] ?? 0);
                         ?>
-                        <td class="wf-foot-sum date-col<?= $isWEnd ? ' weekend' : '' ?>" data-foot="wide" data-plan-date="<?= htmlspecialchars($pd, ENT_QUOTES, 'UTF-8') ?>"><?= $sum > 0 ? (int) $sum : '—' ?></td>
+                        <td class="wf-foot-sum date-col<?= $isWEnd ? ' weekend' : '' ?>" data-foot="wide" data-plan-date="<?= htmlspecialchars($pd, ENT_QUOTES, 'UTF-8') ?>"><?= (int) $sum ?></td>
                     <?php endforeach; ?>
                 </tr>
                 <tr>
-                    <td colspan="6" class="wf-tfoot-label">400</td>
+                    <td colspan="9" class="wf-tfoot-label wf-foot-colspan">400</td>
                     <?php foreach ($buildPlanDates as $planDate):
                         $pd = (string) $planDate;
                         $d = DateTime::createFromFormat('Y-m-d', $pd);
                         $isWEnd = $d ? in_array((int) $d->format('N'), [6, 7], true) : false;
                         $sum = (int) ($wfFooterSumNotWide[$pd] ?? 0);
                         ?>
-                        <td class="wf-foot-sum date-col<?= $isWEnd ? ' weekend' : '' ?>" data-foot="notwide" data-plan-date="<?= htmlspecialchars($pd, ENT_QUOTES, 'UTF-8') ?>"><?= $sum > 0 ? (int) $sum : '—' ?></td>
+                        <td class="wf-foot-sum date-col<?= $isWEnd ? ' weekend' : '' ?>" data-foot="notwide" data-plan-date="<?= htmlspecialchars($pd, ENT_QUOTES, 'UTF-8') ?>"><?= (int) $sum ?></td>
                     <?php endforeach; ?>
                 </tr>
                 </tfoot>
@@ -1638,6 +1991,124 @@ $pageTitle = 'План изготовления каркасов';
             toggleWfMachineFilter('notwide');
         });
     }
+
+    const WF_OPTIONAL_COLS = ['ordered', 'analog', 'width', 'gofro', 'remainder', 'wfprod'];
+    const WF_COLS_STORAGE_KEY = 'wireframe_build_plan_visible_cols_v1';
+
+    function countVisibleFixedCols() {
+        let n = 0;
+        document.querySelectorAll('thead tr:first-child th[data-wf-col]').forEach(function (th) {
+            const id = th.getAttribute('data-wf-col') || '';
+            if (WF_OPTIONAL_COLS.indexOf(id) >= 0 && document.body.classList.contains('wf-hide-col-' + id)) {
+                return;
+            }
+            n++;
+        });
+        return n;
+    }
+    function recalcTableColspans() {
+        const fixed = countVisibleFixedCols();
+        const dateCols = document.querySelectorAll('thead tr:first-child th.date-col').length;
+        document.querySelectorAll('.wf-foot-colspan').forEach(function (td) {
+            td.colSpan = fixed;
+        });
+        document.querySelectorAll('.wf-empty-colspan').forEach(function (td) {
+            td.colSpan = fixed + dateCols;
+        });
+    }
+    function updateWfColsBtnState(prefs) {
+        const btn = document.getElementById('wfColsToggleBtn');
+        if (!btn) {
+            return;
+        }
+        const customized = WF_OPTIONAL_COLS.some(function (id) {
+            return prefs && prefs[id] === false;
+        });
+        btn.classList.toggle('wf-cols-btn--customized', customized);
+    }
+    function applyWfColVisibility(prefs) {
+        WF_OPTIONAL_COLS.forEach(function (id) {
+            const visible = !prefs || prefs[id] !== false;
+            document.body.classList.toggle('wf-hide-col-' + id, !visible);
+            const cb = document.querySelector('input[data-wf-col-toggle="' + id + '"]');
+            if (cb) {
+                cb.checked = visible;
+            }
+        });
+        recalcTableColspans();
+        updateWfColsBtnState(prefs);
+    }
+    function loadWfColPrefs() {
+        try {
+            const raw = localStorage.getItem(WF_COLS_STORAGE_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed === 'object') {
+                    return parsed;
+                }
+            }
+        } catch (_) { /* ignore */ }
+        return null;
+    }
+    function saveWfColPrefs(prefs) {
+        try {
+            localStorage.setItem(WF_COLS_STORAGE_KEY, JSON.stringify(prefs));
+        } catch (_) { /* ignore */ }
+    }
+    function getWfColPrefsFromUi() {
+        const prefs = {};
+        WF_OPTIONAL_COLS.forEach(function (id) {
+            const cb = document.querySelector('input[data-wf-col-toggle="' + id + '"]');
+            prefs[id] = cb ? !!cb.checked : true;
+        });
+        return prefs;
+    }
+    function initWfColsPanel() {
+        const toggleBtn = document.getElementById('wfColsToggleBtn');
+        const popover = document.getElementById('wfColsPopover');
+        const resetBtn = document.getElementById('wfColsResetBtn');
+        if (!toggleBtn || !popover || !wfPlanTable) {
+            return;
+        }
+        const stored = loadWfColPrefs();
+        applyWfColVisibility(stored);
+        toggleBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            popover.hidden = !popover.hidden;
+        });
+        popover.querySelectorAll('input[data-wf-col-toggle]').forEach(function (cb) {
+            cb.addEventListener('change', function () {
+                const prefs = getWfColPrefsFromUi();
+                saveWfColPrefs(prefs);
+                applyWfColVisibility(prefs);
+            });
+        });
+        if (resetBtn) {
+            resetBtn.addEventListener('click', function () {
+                try {
+                    localStorage.removeItem(WF_COLS_STORAGE_KEY);
+                } catch (_) { /* ignore */ }
+                applyWfColVisibility(null);
+                popover.hidden = true;
+            });
+        }
+        document.addEventListener('click', function (e) {
+            if (popover.hidden) {
+                return;
+            }
+            if (popover.contains(e.target) || toggleBtn.contains(e.target)) {
+                return;
+            }
+            popover.hidden = true;
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && !popover.hidden) {
+                popover.hidden = true;
+            }
+        });
+    }
+    initWfColsPanel();
+
     function updateMaxPctBtnLabel() {
         if (openMaxPctBtn) {
             openMaxPctBtn.textContent = 'Выполнение ≤ ' + currentPageMaxPct + '%';
@@ -1711,6 +2182,12 @@ $pageTitle = 'План изготовления каркасов';
     <div id="debtExpandPopover" class="debt-popover" hidden>
         <div id="debtExpandPopoverInner" class="debt-popover__inner"></div>
     </div>
+    <div id="wfLoadHintPanel" class="wf-load-hint" hidden>
+        <div class="wf-load-hint__title">Загрузка просечников</div>
+        <div class="wf-load-hint__date" id="wfLoadHintDate"></div>
+        <div class="wf-load-hint__row"><span>600</span><span class="wf-load-hint__val" id="wfLoadHint600">0</span></div>
+        <div class="wf-load-hint__row"><span>400</span><span class="wf-load-hint__val" id="wfLoadHint400">0</span></div>
+    </div>
     <div id="wfCellPanel" class="wf-cell-panel" hidden>
         <p class="wf-cell-panel__title" id="wfCellPanelTitle"></p>
         <p class="wf-cell-panel__meta" id="wfCellPanelMeta"></p>
@@ -1719,7 +2196,7 @@ $pageTitle = 'План изготовления каркасов';
         <div class="wf-cell-panel__label">Своё количество</div>
         <div class="wf-cell-panel__manual">
             <input type="number" id="wfCellQtyInput" min="0" max="999999" step="1" inputmode="numeric" placeholder="0">
-            <button type="button" class="wf-cell-input-clear" id="wfCellInputClearBtn" title="Очистить поле ввода">Очистить</button>
+            <button type="button" class="wf-cell-input-clear" id="wfCellInputClearBtn" title="Очистить ячейку (0) и закрыть">Очистить</button>
             <button type="button" class="wf-btn-primary" id="wfCellApplyCustom">OK</button>
         </div>
         <div class="wf-cell-panel__actions">
@@ -1754,6 +2231,14 @@ $pageTitle = 'План изготовления каркасов';
     const rowStateMap = new Map();
     let debtPopoverAnchorCell = null;
     let dragContext = null;
+    let suppressCellClick = false;
+
+    function clearDragState() {
+        dragContext = null;
+        document.querySelectorAll('td.wf-date-cell.drag-drop-target, td.wf-date-cell.drag-source-single').forEach(function (el) {
+            el.classList.remove('drag-drop-target', 'drag-source-single');
+        });
+    }
 
     function getTodayIso() {
         return WF_TODAY_ISO;
@@ -1889,10 +2374,7 @@ $pageTitle = 'План изготовления каркасов';
         });
         item.addEventListener('dragend', function () {
             item.classList.remove('drag-source-single');
-            dragContext = null;
-            document.querySelectorAll('td.wf-date-cell.drag-drop-target').forEach(function (el) {
-                el.classList.remove('drag-drop-target');
-            });
+            clearDragState();
         });
     }
     function closeDebtExpandPopover() {
@@ -2029,6 +2511,76 @@ $pageTitle = 'План изготовления каркасов';
         const targetQty = parseInt(td.getAttribute('data-wf') || '0', 10) || 0;
         return targetQty <= 0;
     }
+    function canDropPlanOnCell(td, state) {
+        if (!dragContext || dragContext.sourceType !== 'plan' || !td || !state) {
+            return false;
+        }
+        if (dragContext.rowKey !== state.rowKey) {
+            return false;
+        }
+        const fromDate = String(dragContext.fromDate || '');
+        const toDate = String(td.getAttribute('data-plan-date') || '');
+        if (!toDate || toDate < getTodayIso() || fromDate === toDate) {
+            return false;
+        }
+        const targetQty = parseInt(td.getAttribute('data-wf') || '0', 10) || 0;
+        return targetQty <= 0;
+    }
+    function canDropOnCell(td, state) {
+        if (!dragContext || !td || !state) {
+            return false;
+        }
+        if (dragContext.sourceType === 'debt') {
+            return canDropDebtOnCell(td, state);
+        }
+        if (dragContext.sourceType === 'plan') {
+            return canDropPlanOnCell(td, state);
+        }
+        return false;
+    }
+    function submitPlanMove(state, fromDate, toDate, qty) {
+        if (!state || !WF_CAN_EDIT) {
+            return;
+        }
+        const movedQty = Math.max(0, parseInt(qty, 10) || 0);
+        if (movedQty <= 0) {
+            return;
+        }
+        const fromCell = state.row.querySelector('td.wf-date-cell[data-plan-date="' + fromDate + '"]');
+        const toCell = state.row.querySelector('td.wf-date-cell[data-plan-date="' + toDate + '"]');
+        if (!fromCell || !toCell) {
+            return;
+        }
+        const fromPrev = parseInt(fromCell.getAttribute('data-wf') || '0', 10) || 0;
+        const toPrev = parseInt(toCell.getAttribute('data-wf') || '0', 10) || 0;
+        closePanel();
+        updateTdVisual(fromCell, 0, { prevQty: fromPrev, skipDebtSync: true });
+        updateTdVisual(toCell, movedQty, { prevQty: toPrev, skipDebtSync: true });
+        syncDebtFromPastWfPlan(state.row);
+        fetch('', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({
+                action: 'move_wireframe_plan',
+                source_row_key: state.rowKey,
+                order_number: state.order,
+                filter_name: state.filter,
+                from_date: fromDate,
+                to_date: toDate,
+                qty: movedQty,
+            }),
+        }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+            .then(function (res) {
+                if (!res.j || !res.j.ok) {
+                    window.alert((res.j && res.j.error) ? res.j.error : 'Ошибка переноса плана');
+                    window.location.reload();
+                }
+            })
+            .catch(function () {
+                window.alert('Сеть или сервер недоступны.');
+                window.location.reload();
+            });
+    }
     function submitDebtMove(state, fromDate, toDate, qty) {
         if (!state || !WF_CAN_EDIT) {
             return;
@@ -2081,15 +2633,75 @@ $pageTitle = 'План изготовления каркасов';
                 window.location.reload();
             });
     }
-    function bindDebtDropOnDateCell(td, state) {
+    function bindPlanQtyDrag(wfEl, td) {
+        if (!WF_CAN_EDIT || !wfEl || !td) {
+            return;
+        }
+        function refreshDragState() {
+            const qty = parseInt(td.getAttribute('data-wf') || '0', 10) || 0;
+            const fromDate = String(td.getAttribute('data-plan-date') || '');
+            const canDrag = qty > 0 && fromDate >= getTodayIso();
+            wfEl.draggable = canDrag;
+            wfEl.title = canDrag ? 'Перетащите на другую дату' : '';
+        }
+        if (wfEl.dataset.wfPlanDragBound === '1') {
+            refreshDragState();
+            return;
+        }
+        wfEl.dataset.wfPlanDragBound = '1';
+        refreshDragState();
+        wfEl.addEventListener('dragstart', function (e) {
+            const qty = parseInt(td.getAttribute('data-wf') || '0', 10) || 0;
+            const fromDate = String(td.getAttribute('data-plan-date') || '');
+            if (qty <= 0 || !fromDate || fromDate < getTodayIso()) {
+                e.preventDefault();
+                return;
+            }
+            const tr = td.closest('tr.wf-data-row');
+            const state = tr ? getRowState(tr) : null;
+            if (!state) {
+                e.preventDefault();
+                return;
+            }
+            closePanel();
+            dragContext = {
+                sourceType: 'plan',
+                rowKey: state.rowKey,
+                fromDate: fromDate,
+                movedQty: qty,
+                sourceCell: td,
+                state: state,
+            };
+            td.classList.add('drag-source-single');
+            suppressCellClick = true;
+            if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', state.rowKey + '|' + fromDate + '|plan');
+                if (wfEl.getBoundingClientRect().width > 0) {
+                    e.dataTransfer.setDragImage(
+                        wfEl,
+                        Math.round(wfEl.offsetWidth / 2),
+                        Math.round(wfEl.offsetHeight / 2)
+                    );
+                }
+            }
+        });
+        wfEl.addEventListener('dragend', function () {
+            clearDragState();
+            setTimeout(function () {
+                suppressCellClick = false;
+            }, 0);
+        });
+    }
+    function bindDateCellDrop(td, state) {
         if (!WF_CAN_EDIT) {
             return;
         }
         td.addEventListener('dragover', function (e) {
-            if (!dragContext || dragContext.sourceType !== 'debt') {
+            if (!dragContext) {
                 return;
             }
-            if (canDropDebtOnCell(td, state)) {
+            if (canDropOnCell(td, state)) {
                 e.preventDefault();
                 if (e.dataTransfer) {
                     e.dataTransfer.dropEffect = 'move';
@@ -2101,17 +2713,21 @@ $pageTitle = 'План изготовления каркасов';
             td.classList.remove('drag-drop-target');
         });
         td.addEventListener('drop', function (e) {
-            if (!dragContext || dragContext.sourceType !== 'debt') {
+            if (!dragContext) {
                 return;
             }
             td.classList.remove('drag-drop-target');
-            if (!canDropDebtOnCell(td, state)) {
+            if (!canDropOnCell(td, state)) {
                 return;
             }
             e.preventDefault();
             const toDate = String(td.getAttribute('data-plan-date') || '');
-            submitDebtMove(state, dragContext.fromDate, toDate, dragContext.movedQty);
-            dragContext = null;
+            if (dragContext.sourceType === 'debt') {
+                submitDebtMove(state, dragContext.fromDate, toDate, dragContext.movedQty);
+            } else if (dragContext.sourceType === 'plan') {
+                submitPlanMove(state, dragContext.fromDate, toDate, dragContext.movedQty);
+            }
+            clearDragState();
         });
     }
 
@@ -2189,8 +2805,8 @@ $pageTitle = 'План изготовления каркасов';
             const elN = document.querySelector('tfoot .wf-foot-sum[data-foot="notwide"][data-plan-date="' + d + '"]');
             const sw = sumWide[d] || 0;
             const sn = sumNotWide[d] || 0;
-            const wTxt = sw > 0 ? String(sw) : '';
-            const nTxt = sn > 0 ? String(sn) : '';
+            const wTxt = String(sw);
+            const nTxt = String(sn);
             if (elW) elW.textContent = wTxt;
             if (elN) elN.textContent = nTxt;
             const th = document.querySelector('thead th[data-plan-date="' + d + '"]');
@@ -2324,6 +2940,9 @@ $pageTitle = 'План изготовления каркасов';
                 td.appendChild(span);
             }
             span.textContent = String(qty);
+            if (td.classList.contains('wf-date-cell--editable')) {
+                bindPlanQtyDrag(span, td);
+            }
         } else if (span) {
             span.remove();
         }
@@ -2370,6 +2989,9 @@ $pageTitle = 'План изготовления каркасов';
     }
     document.querySelectorAll('.wf-date-cell--editable').forEach(function (td) {
         td.addEventListener('click', function (ev) {
+            if (suppressCellClick) {
+                return;
+            }
             ev.stopPropagation();
             openPanel(td, ev);
         });
@@ -2383,9 +3005,7 @@ $pageTitle = 'План изготовления каркасов';
     btnClose.addEventListener('click', closePanel);
     if (btnInputClear) {
         btnInputClear.addEventListener('click', function () {
-            inputEl.value = '';
-            hideErr();
-            inputEl.focus();
+            submitQty(0);
         });
     }
     btnClear.addEventListener('click', function () {
@@ -2434,12 +3054,176 @@ $pageTitle = 'План изготовления каркасов';
         rowStateMap.set(rowKey, state);
         wfPlanByRow[rowKey] = Object.assign({}, initialWireframePlanAll[rowKey] || {});
         tr.querySelectorAll('td.wf-date-cell--editable').forEach(function (td) {
-            bindDebtDropOnDateCell(td, state);
+            bindDateCellDrop(td, state);
+            const qtyEl = td.querySelector('.wf-main-qty');
+            if (qtyEl) {
+                bindPlanQtyDrag(qtyEl, td);
+            }
         });
         syncDebtFromPastWfPlan(tr);
         wfRefreshGofroPlanFillsForRow(tr);
     });
     recalcGroupFooters();
+
+    const wfPlanTableEl = document.querySelector('table.wf-plan-table');
+    const loadHintPanel = document.getElementById('wfLoadHintPanel');
+    const loadHintDateEl = document.getElementById('wfLoadHintDate');
+    const loadHint600El = document.getElementById('wfLoadHint600');
+    const loadHint400El = document.getElementById('wfLoadHint400');
+    let ctrlHintDate = '';
+    let lastMouseX = 0;
+    let lastMouseY = 0;
+
+    function wfGetPlanDateFromCell(cell) {
+        if (!cell) {
+            return '';
+        }
+        const direct = cell.getAttribute('data-plan-date');
+        if (direct) {
+            return direct;
+        }
+        const table = cell.closest('table.wf-plan-table');
+        if (!table) {
+            return '';
+        }
+        const headRow = table.querySelector('thead tr');
+        if (!headRow || typeof cell.cellIndex !== 'number' || cell.cellIndex < 0) {
+            return '';
+        }
+        const headCell = headRow.children[cell.cellIndex];
+        if (headCell && headCell.classList.contains('date-col')) {
+            return headCell.getAttribute('data-plan-date') || '';
+        }
+        return '';
+    }
+
+    function clearWfDateColHighlight() {
+        ctrlHintDate = '';
+        document.querySelectorAll('.wf-date-col-hover').forEach(function (el) {
+            el.classList.remove('wf-date-col-hover');
+        });
+    }
+
+    function highlightWfDateCol(dateIso) {
+        if (!dateIso || ctrlHintDate === dateIso) {
+            return;
+        }
+        clearWfDateColHighlight();
+        ctrlHintDate = dateIso;
+        document.querySelectorAll(
+            'thead th[data-plan-date="' + dateIso + '"],'
+            + 'tbody td.wf-date-cell[data-plan-date="' + dateIso + '"],'
+            + 'tfoot td[data-plan-date="' + dateIso + '"]'
+        ).forEach(function (el) {
+            el.classList.add('wf-date-col-hover');
+        });
+    }
+
+    function getWfLoadForDate(dateIso) {
+        const th = document.querySelector('thead th[data-plan-date="' + dateIso + '"]');
+        if (!th) {
+            return { wide: 0, notwide: 0 };
+        }
+        const wEl = th.querySelector('.wf-th-load-val--wide');
+        const nEl = th.querySelector('.wf-th-load-val--notwide');
+        return {
+            wide: parseInt(wEl && wEl.textContent || '0', 10) || 0,
+            notwide: parseInt(nEl && nEl.textContent || '0', 10) || 0,
+        };
+    }
+
+    function hideLoadHint() {
+        if (loadHintPanel) {
+            loadHintPanel.hidden = true;
+        }
+        document.body.classList.remove('wf-ctrl-hint-mode');
+        clearWfDateColHighlight();
+    }
+
+    function positionLoadHint(clientX, clientY) {
+        if (!loadHintPanel) {
+            return;
+        }
+        const pad = 12;
+        const w = loadHintPanel.offsetWidth || 140;
+        const h = loadHintPanel.offsetHeight || 72;
+        let left = clientX + pad;
+        let top = clientY + pad;
+        if (left + w > window.innerWidth - pad) {
+            left = Math.max(pad, clientX - w - pad);
+        }
+        if (top + h > window.innerHeight - pad) {
+            top = Math.max(pad, clientY - h - pad);
+        }
+        loadHintPanel.style.left = Math.round(left) + 'px';
+        loadHintPanel.style.top = Math.round(top) + 'px';
+    }
+
+    function updateLoadHint(ev) {
+        if (!ev.ctrlKey || !loadHintPanel || !wfPlanTableEl) {
+            hideLoadHint();
+            return;
+        }
+        const target = ev.target && ev.target.nodeType === 1
+            ? ev.target
+            : document.elementFromPoint(ev.clientX, ev.clientY);
+        const cell = target && target.closest ? target.closest('td, th') : null;
+        if (!cell || !wfPlanTableEl.contains(cell)) {
+            hideLoadHint();
+            return;
+        }
+        const dateIso = wfGetPlanDateFromCell(cell);
+        if (!dateIso) {
+            hideLoadHint();
+            return;
+        }
+        const load = getWfLoadForDate(dateIso);
+        if (loadHintDateEl) {
+            loadHintDateEl.textContent = formatDateRu(dateIso);
+        }
+        if (loadHint600El) {
+            loadHint600El.textContent = String(load.wide);
+        }
+        if (loadHint400El) {
+            loadHint400El.textContent = String(load.notwide);
+        }
+        document.body.classList.add('wf-ctrl-hint-mode');
+        highlightWfDateCol(dateIso);
+        loadHintPanel.hidden = false;
+        positionLoadHint(ev.clientX, ev.clientY);
+    }
+
+    document.addEventListener('mousemove', function (ev) {
+        lastMouseX = ev.clientX;
+        lastMouseY = ev.clientY;
+        if (ev.ctrlKey) {
+            updateLoadHint(ev);
+        }
+    });
+    document.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Control' && wfPlanTableEl) {
+            const target = document.elementFromPoint(lastMouseX, lastMouseY);
+            updateLoadHint({
+                ctrlKey: true,
+                clientX: lastMouseX,
+                clientY: lastMouseY,
+                target: target || document.body,
+            });
+        }
+    });
+    document.addEventListener('keyup', function (ev) {
+        if (ev.key === 'Control') {
+            hideLoadHint();
+        }
+    });
+    window.addEventListener('blur', hideLoadHint);
+    if (wfPlanTableEl) {
+        wfPlanTableEl.addEventListener('mouseleave', function (ev) {
+            if (!ev.relatedTarget || !wfPlanTableEl.contains(ev.relatedTarget)) {
+                hideLoadHint();
+            }
+        });
+    }
 })();
     </script>
     <?php endif; ?>

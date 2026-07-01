@@ -41,6 +41,14 @@
             font-size:15px; font-weight:600; color:#111827;
             margin:0 0 12px; padding-bottom:6px; border-bottom:1px solid var(--border);
         }
+        .panel-header-row{
+            display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+        }
+        .panel-header-row .section-title{
+            margin-bottom:6px; padding-bottom:0; border-bottom:none;
+        }
+        .panel-header-row .muted{margin:0}
+        .btn-calendar-i{flex-shrink:0}
         .muted{color:var(--muted); font-size:12px}
 
         button, input[type="submit"], .btn{
@@ -63,6 +71,19 @@
             transform:translateY(-1px);
         }
         button:active, input[type="submit"]:active, .btn:active{ transform:translateY(0); }
+
+        button.btn-calendar-i{
+            width:32px; height:32px; padding:0;
+            border:1px solid var(--border); border-radius:8px;
+            background:#f8fafc; color:#374151;
+            font:700 15px/1 Georgia,"Times New Roman",serif;
+            font-style:italic; letter-spacing:-.02em;
+            box-shadow:0 1px 3px rgba(0,0,0,.08);
+        }
+        button.btn-calendar-i:hover{
+            background:#eef2ff; border-color:#c7d2fe; color:#1e40af;
+            box-shadow:0 2px 6px rgba(0,0,0,.1);
+        }
 
         input[type="text"], input[type="date"], input[type="number"], input[type="password"],
         textarea, select{
@@ -126,6 +147,45 @@
         }
         .tooltip:hover .tooltiptext{visibility:visible;opacity:1}
 
+        #show_parts_place h3{
+            margin:0 0 12px;
+            font-size:16px;
+            font-weight:700;
+            color:#0f172a;
+        }
+
+        @media print{
+            @page{size:A4 landscape;margin:7mm}
+            body.gofro-cal-printing *{visibility:hidden}
+            body.gofro-cal-printing .gofro-cal-report,
+            body.gofro-cal-printing .gofro-cal-report *{visibility:visible}
+            body.gofro-cal-printing .gofro-cal-report{
+                position:absolute;left:0;top:0;width:100%;margin:0;padding:0;
+            }
+            body.gofro-cal-printing .no-print{display:none!important}
+            body.gofro-cal-printing .gofro-cal-report .gofro-machine-totals{display:none!important}
+            body.gofro-cal-printing .container > .panel:not(:has(#show_parts_place)){display:none!important}
+            .gofro-cal-report{font-size:9px;line-height:1.15}
+            .gofro-cal-report__head{margin:0 0 4px;padding:0 0 4px;border-bottom:1px solid #ccc}
+            .gofro-cal-report__title{font-size:11px}
+            .gofro-cal-report__range{font-size:9px}
+            .gofro-cal-report__legend{font-size:8px;margin-bottom:4px}
+            .gofro-cal-months{
+                display:grid!important;
+                grid-template-columns:repeat(3,minmax(0,1fr))!important;
+                gap:4px!important;
+            }
+            .gofro-cal-month{border:1px solid #bbb;border-radius:3px;break-inside:avoid;page-break-inside:avoid}
+            .gofro-cal-month__title{padding:2px 4px;font-size:9px;background:#f3f4f6;border-bottom:1px solid #bbb}
+            .gofro-cal-grid{gap:0;background:#bbb}
+            .gofro-cal-grid__wd{padding:1px 0;font-size:7px;background:#f3f4f6;color:#666}
+            .gofro-cal-day{min-height:24px!important;padding:1px 0!important;background:#fff!important}
+            .gofro-cal-day__num{font-size:7px;margin-bottom:1px}
+            .gofro-cal-day__n,.gofro-cal-day__r{font-size:7px;line-height:1.1}
+            .gofro-cal-day__n{color:#15803d!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+            .gofro-cal-day__r{color:#1d4ed8!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+        }
+
         @media (max-width:768px){
             .panels-row{grid-template-columns:1fr; gap:12px}
             .form-group{flex-direction:column; align-items:stretch; gap:6px}
@@ -139,8 +199,13 @@
 <body>
 <div class="container">
     <div class="panel">
-        <div class="section-title">Обзор выпуска гофропакетов</div>
-        <p class="muted">Просмотр и анализ изготовленных гофропакетов по датам</p>
+        <div class="panel-header-row">
+            <div>
+                <div class="section-title">Обзор выпуска гофропакетов</div>
+                <p class="muted">Просмотр и анализ изготовленных гофропакетов по датам</p>
+            </div>
+            <button type="button" class="btn-calendar-i" onclick="show_calendar()" title="Календарь за полгода: ножевая и ротационная машина по дням">I</button>
+        </div>
     </div>
 
     <div class="panels-row">
@@ -177,6 +242,25 @@
 </div>
 
 <script>
+    function show_calendar() {
+        post('show_parts_calendar_half_year.php', '');
+    }
+
+    function printGofroCalendar() {
+        const report = document.querySelector('#show_parts_place .gofro-cal-report');
+        if (!report) {
+            alert('Сначала загрузите календарь');
+            return;
+        }
+        document.body.classList.add('gofro-cal-printing');
+        const cleanup = function() {
+            document.body.classList.remove('gofro-cal-printing');
+            window.removeEventListener('afterprint', cleanup);
+        };
+        window.addEventListener('afterprint', cleanup);
+        window.print();
+    }
+
     function show_one() {
         const d = document.getElementById('date_one').value;
         if (!d) { alert('Выберите дату'); return; }

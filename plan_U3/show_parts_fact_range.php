@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../auth/includes/db.php';
+require_once __DIR__ . '/gofro_machine_helpers.php';
 $pdo = getPdo('plan_u3');
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
@@ -36,6 +37,22 @@ if (!$rows) {
     echo '<p>Нет данных</p>';
     exit;
 }
+
+$foldHeightMap = loadGofroFoldHeightByPackage($pdo);
+$knifeTotal = 0;
+$rotaryTotal = 0;
+foreach ($rows as $r) {
+    $fact = (int)($r['fact_sum'] ?? 0);
+    $machineType = gofroMachineTypeForPackage((string)($r['name_of_parts'] ?? ''), $foldHeightMap);
+    if ($machineType === 'rotary') {
+        $rotaryTotal += $fact;
+    } else {
+        $knifeTotal += $fact;
+    }
+}
+$grandTotal = $knifeTotal + $rotaryTotal;
+
+echo renderGofroMachineTotalsSummary($knifeTotal, $rotaryTotal, $grandTotal);
 
 function rangeDetails(PDO $pdo, string $order, string $part, string $start, string $end): array
 {
@@ -76,11 +93,14 @@ function rangeDetails(PDO $pdo, string $order, string $part, string $start, stri
 }
 
 echo '<table>';
-echo '<tr><th>Заявка</th><th>Гофропакет</th><th>Даты выпуска</th><th>Факт, шт</th></tr>';
+echo '<tr><th>Заявка</th><th>Гофропакет</th><th>Маш.</th><th>Даты выпуска</th><th>Факт, шт</th></tr>';
 foreach ($rows as $r) {
     $order = (string)($r['name_of_order'] ?? '');
     $part = (string)($r['name_of_parts'] ?? '');
     $fact = (int)($r['fact_sum'] ?? 0);
+    $machineType = gofroMachineTypeForPackage($part, $foldHeightMap);
+    $machineLabel = gofroMachineShortLabel($machineType);
+    $machineTitle = htmlspecialchars(gofroMachineTitle($machineType), ENT_QUOTES, 'UTF-8');
     $details = rangeDetails($pdo, $order, $part, $start, $end);
     $dates = $details['dates'];
     $tip = $details['tooltip'];
@@ -89,6 +109,7 @@ foreach ($rows as $r) {
         echo '<tr>'
             . '<td>' . htmlspecialchars($order, ENT_QUOTES, 'UTF-8') . '</td>'
             . '<td>' . htmlspecialchars($part, ENT_QUOTES, 'UTF-8') . '</td>'
+            . '<td title="' . $machineTitle . '" style="text-align:center;font-weight:600;">' . htmlspecialchars($machineLabel, ENT_QUOTES, 'UTF-8') . '</td>'
             . '<td>' . $dates . '</td>'
             . '<td><div class="tooltip">' . $fact . '<span class="tooltiptext">' . $tip . '</span></div></td>'
             . '</tr>';
@@ -96,6 +117,7 @@ foreach ($rows as $r) {
         echo '<tr>'
             . '<td>' . htmlspecialchars($order, ENT_QUOTES, 'UTF-8') . '</td>'
             . '<td>' . htmlspecialchars($part, ENT_QUOTES, 'UTF-8') . '</td>'
+            . '<td title="' . $machineTitle . '" style="text-align:center;font-weight:600;">' . htmlspecialchars($machineLabel, ENT_QUOTES, 'UTF-8') . '</td>'
             . '<td>—</td>'
             . '<td>' . $fact . '</td>'
             . '</tr>';

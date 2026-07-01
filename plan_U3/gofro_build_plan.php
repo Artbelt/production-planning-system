@@ -263,6 +263,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         throw new RuntimeException('Операция #' . ($idx + 1) . ': изменение плана в прошлых датах недоступно.');
                     }
                     applyGofroPlanSetCell($pdo, $rowKey, $order, $filterName, $packageKey, $packageName, $planDate, $qty, $userId);
+                } elseif ($mode === 'move') {
+                    $fromDate = trim((string)($move['from_date'] ?? ''));
+                    $toDate = trim((string)($move['to_date'] ?? ''));
+                    if (!$isDate($fromDate) || !$isDate($toDate)) {
+                        throw new RuntimeException('Операция #' . ($idx + 1) . ': некорректные даты переноса.');
+                    }
+                    if ($fromDate < $todayIso || $toDate < $todayIso) {
+                        throw new RuntimeException('Операция #' . ($idx + 1) . ': перенос плана только между сегодняшней и будущими датами.');
+                    }
+                    if ($qty <= 0) {
+                        throw new RuntimeException('Операция #' . ($idx + 1) . ': не указано количество для переноса.');
+                    }
+                    applyGofroPlanSetCell($pdo, $rowKey, $order, $filterName, $packageKey, $packageName, $fromDate, 0, $userId);
+                    applyGofroPlanSetCell($pdo, $rowKey, $order, $filterName, $packageKey, $packageName, $toDate, $qty, $userId);
                 } else {
                     throw new RuntimeException('Операция #' . ($idx + 1) . ': неизвестный режим.');
                 }
@@ -1269,7 +1283,8 @@ $pageTitle = 'Планирование сборки гофропакетов';
             white-space: nowrap;
             flex-shrink: 0;
         }
-        .debt-shift.drag-source-single {
+        .debt-shift.drag-source-single,
+        td.date-cell.drag-source-single {
             outline: 2px solid #93c5fd;
             outline-offset: -2px;
             background: #eff6ff;
@@ -1512,6 +1527,15 @@ $pageTitle = 'Планирование сборки гофропакетов';
             background: #fff;
             border: 1.5px solid #64748b;
             box-shadow: 0 1px 2px rgba(15, 23, 42, 0.1);
+            pointer-events: auto;
+            cursor: grab;
+            touch-action: none;
+        }
+        .cell-gofro-qty:active {
+            cursor: grabbing;
+        }
+        .cell-gofro-qty[draggable="true"] {
+            -webkit-user-drag: element;
         }
         td.date-cell.gofro-coverage-cell .cell-gofro-qty,
         td.date-cell.gofro-coverage-cell-partial .cell-gofro-qty {
@@ -2598,6 +2622,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
     }
     let pickerTarget = null;
     let dragContext = null;
+    let suppressCellClick = false;
     let debtPopoverAnchorCell = null;
     const debtStateMap = Object.assign({}, initialGofroDebtShiftMap || {});
     const dateHeaderTotals = {};
@@ -2777,12 +2802,20 @@ $pageTitle = 'Планирование сборки гофропакетов';
         return cell;
     }
 
+    function clearDragState() {
+        dragContext = null;
+        planTable.querySelectorAll('td.date-cell.drag-drop-target, td.date-cell.drop-valid, td.date-cell.drop-invalid, td.date-cell.drag-source-single').forEach((el) => {
+            el.classList.remove('drag-drop-target', 'drop-valid', 'drop-invalid', 'drag-source-single');
+        });
+    }
+
     function bindDateCellInteractions(cell) {
         cell.addEventListener('click', (e) => {
-            if (dragContext) {
+            if (dragContext || suppressCellClick) {
+                suppressCellClick = false;
                 return;
             }
-            if (e.target.closest('.gofro-cell-picker')) {
+            if (e.target.closest('.gofro-cell-picker') || e.target.closest('.cell-gofro-qty')) {
                 return;
             }
             const row = cell.closest('tr[data-row-key]');
@@ -2796,36 +2829,90 @@ $pageTitle = 'Планирование сборки гофропакетов';
             openGofroCellPicker(cell, state);
         });
         cell.addEventListener('dragover', (e) => {
-            if (!dragContext || dragContext.sourceType !== 'debt') {
+            if (!dragContext) {
                 return;
             }
             const row = cell.closest('tr[data-row-key]');
             const state = row ? rowStateMap.get(String(row.dataset.rowKey || '')) : null;
-            if (canDropDebtOnCell(cell, state)) {
+            const canDrop = canDropOnCell(cell, state);
+            cell.classList.remove('drop-valid', 'drop-invalid');
+            if (canDrop) {
                 e.preventDefault();
                 if (e.dataTransfer) {
                     e.dataTransfer.dropEffect = 'move';
                 }
-                cell.classList.add('drag-drop-target');
+                cell.classList.add('drag-drop-target', 'drop-valid');
+            } else if (state && dragContext.rowKey === state.rowKey) {
+                cell.classList.add('drop-invalid');
             }
         });
         cell.addEventListener('dragleave', () => {
-            cell.classList.remove('drag-drop-target');
+            cell.classList.remove('drag-drop-target', 'drop-valid', 'drop-invalid');
         });
         cell.addEventListener('drop', (e) => {
-            if (!dragContext || dragContext.sourceType !== 'debt') {
+            if (!dragContext) {
                 return;
             }
             const row = cell.closest('tr[data-row-key]');
             const state = row ? rowStateMap.get(String(row.dataset.rowKey || '')) : null;
-            cell.classList.remove('drag-drop-target');
-            if (!canDropDebtOnCell(cell, state)) {
+            cell.classList.remove('drag-drop-target', 'drop-valid', 'drop-invalid');
+            if (!canDropOnCell(cell, state)) {
                 return;
             }
             e.preventDefault();
             const toDate = String(cell.dataset.date || '');
-            queueDebtMove(state, dragContext.fromDate, toDate, dragContext.movedQty);
-            dragContext = null;
+            if (dragContext.sourceType === 'debt') {
+                queueDebtMove(state, dragContext.fromDate, toDate, dragContext.movedQty);
+            } else if (dragContext.sourceType === 'plan') {
+                queuePlanMove(state, dragContext.fromDate, toDate, dragContext.movedQty);
+            }
+            clearDragState();
+        });
+    }
+
+    function bindPlanQtyDrag(gofroEl, cell) {
+        gofroEl.draggable = true;
+        gofroEl.addEventListener('dragstart', (e) => {
+            const qty = parseInt(cell.dataset.gofroQty || '0', 10) || 0;
+            const fromDate = String(cell.dataset.date || '');
+            if (qty <= 0 || !fromDate || fromDate < getTodayIso()) {
+                e.preventDefault();
+                return;
+            }
+            const row = cell.closest('tr[data-row-key]');
+            const state = row ? rowStateMap.get(String(row.dataset.rowKey || '')) : null;
+            if (!state) {
+                e.preventDefault();
+                return;
+            }
+            closeGofroCellPicker();
+            dragContext = {
+                sourceType: 'plan',
+                rowKey: state.rowKey,
+                fromDate,
+                movedQty: qty,
+                sourceCell: cell,
+                state,
+            };
+            cell.classList.add('drag-source-single');
+            suppressCellClick = true;
+            if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', `${state.rowKey}|${fromDate}|plan`);
+                if (gofroEl.getBoundingClientRect().width > 0) {
+                    e.dataTransfer.setDragImage(
+                        gofroEl,
+                        Math.round(gofroEl.offsetWidth / 2),
+                        Math.round(gofroEl.offsetHeight / 2)
+                    );
+                }
+            }
+        });
+        gofroEl.addEventListener('dragend', () => {
+            clearDragState();
+            setTimeout(() => {
+                suppressCellClick = false;
+            }, 0);
         });
     }
 
@@ -2983,10 +3070,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
         });
         item.addEventListener('dragend', () => {
             item.classList.remove('drag-source-single');
-            dragContext = null;
-            planTable.querySelectorAll('td.date-cell.drag-drop-target').forEach((el) => {
-                el.classList.remove('drag-drop-target');
-            });
+            clearDragState();
         });
     }
 
@@ -3219,6 +3303,62 @@ $pageTitle = 'Планирование сборки гофропакетов';
         return targetQty <= 0;
     }
 
+    function canDropPlanOnCell(cell, state) {
+        if (!dragContext || dragContext.sourceType !== 'plan' || !cell || !state) {
+            return false;
+        }
+        if (dragContext.rowKey !== state.rowKey) {
+            return false;
+        }
+        const fromDate = String(dragContext.fromDate || '');
+        const toDate = String(cell.dataset.date || '');
+        if (!toDate || toDate < getTodayIso() || fromDate === toDate) {
+            return false;
+        }
+        const targetQty = parseInt(cell.dataset.gofroQty || '0', 10) || 0;
+        return targetQty <= 0;
+    }
+
+    function canDropOnCell(cell, state) {
+        if (!dragContext || !cell || !state) {
+            return false;
+        }
+        if (dragContext.sourceType === 'debt') {
+            return canDropDebtOnCell(cell, state);
+        }
+        if (dragContext.sourceType === 'plan') {
+            return canDropPlanOnCell(cell, state);
+        }
+        return false;
+    }
+
+    function queuePlanMove(state, fromDate, toDate, qty) {
+        const movedQty = Math.max(0, parseInt(qty, 10) || 0);
+        if (movedQty <= 0 || !state) {
+            return;
+        }
+        const move = {
+            label: `${state.filterName} / ${formatDateRu(fromDate)} → ${formatDateRu(toDate)}, ${movedQty} шт`,
+            fromBeforeQty: movedQty,
+            toBeforeQty: 0,
+            payload: {
+                mode: 'move',
+                source_row_key: state.rowKey,
+                order_number: state.order,
+                filter_name: state.filterName,
+                package_key: state.packageKey,
+                package_name: state.packageName,
+                from_date: fromDate,
+                to_date: toDate,
+                plan_date: toDate,
+                qty: movedQty,
+            },
+        };
+        pendingMoves.push(move);
+        applyMoveLocally(move);
+        refreshPendingUi();
+    }
+
     function queueDebtMove(state, fromDate, toDate, qty) {
         const movedQty = Math.max(0, parseInt(qty, 10) || 0);
         if (movedQty <= 0) {
@@ -3367,10 +3507,17 @@ $pageTitle = 'Планирование сборки гофропакетов';
             }
         });
         textNodes.forEach((n) => n.remove());
+        const dateIso = String(cell.dataset.date || '');
+        const canDrag = qty > 0 && dateIso >= getTodayIso();
+        cell.draggable = false;
         if (qty > 0) {
             const main = document.createElement('span');
             main.className = 'cell-gofro-qty';
             main.textContent = String(qty);
+            main.title = canDrag ? 'Перетащите на другую дату' : '';
+            if (canDrag) {
+                bindPlanQtyDrag(main, cell);
+            }
             cell.appendChild(main);
         }
     }
@@ -3429,15 +3576,30 @@ $pageTitle = 'Планирование сборки гофропакетов';
         planTable.querySelectorAll('td.date-cell.queue-pending').forEach((c) => c.classList.remove('queue-pending'));
         pendingMoves.forEach((move) => {
             const rowKey = move.payload.source_row_key;
-            const date = move.payload.to_date || move.payload.plan_date;
             const state = rowStateMap.get(rowKey);
             if (!state) {
                 return;
             }
-            const cell = state.dateCells.find((c) => String(c.dataset.date) === date);
-            if (cell) {
-                cell.classList.add('queue-pending');
+            const dates = [];
+            if (move.payload.mode === 'move') {
+                if (move.payload.from_date) {
+                    dates.push(String(move.payload.from_date));
+                }
+                if (move.payload.to_date) {
+                    dates.push(String(move.payload.to_date));
+                }
+            } else {
+                const date = move.payload.to_date || move.payload.plan_date;
+                if (date) {
+                    dates.push(String(date));
+                }
             }
+            dates.forEach((date) => {
+                const cell = state.dateCells.find((c) => String(c.dataset.date) === date);
+                if (cell) {
+                    cell.classList.add('queue-pending');
+                }
+            });
         });
     }
 
@@ -3482,6 +3644,21 @@ $pageTitle = 'Планирование сборки гофропакетов';
             updateCoverage();
             return;
         }
+        if (move.payload.mode === 'move') {
+            const fromDate = String(move.payload.from_date || '');
+            const toDate = String(move.payload.to_date || '');
+            const qty = Math.max(0, parseInt(move.payload.qty, 10) || 0);
+            if (fromDate) {
+                delete state.planByDate[fromDate];
+                delete state.allocatedByDate[fromDate];
+            }
+            if (toDate && qty > 0) {
+                state.planByDate[toDate] = qty;
+                state.allocatedByDate[toDate] = qty;
+            }
+            updateCoverage();
+            return;
+        }
         const date = move.payload.plan_date;
         if (move.payload.mode === 'clear_cell') {
             delete state.allocatedByDate[date];
@@ -3513,6 +3690,27 @@ $pageTitle = 'Планирование сборки гофропакетов';
             delete state.planByDate[toDate];
             if (fromDate && movedQty > 0) {
                 state.planByDate[fromDate] = (parseInt(state.planByDate[fromDate], 10) || 0) + movedQty;
+            }
+            updateCoverage();
+            return;
+        }
+        if (move.payload.mode === 'move') {
+            const fromDate = String(move.payload.from_date || '');
+            const toDate = String(move.payload.to_date || '');
+            const fromBeforeQty = Math.max(0, parseInt(move.fromBeforeQty, 10) || 0);
+            const toBeforeQty = Math.max(0, parseInt(move.toBeforeQty, 10) || 0);
+            if (toDate) {
+                if (toBeforeQty > 0) {
+                    state.planByDate[toDate] = toBeforeQty;
+                    state.allocatedByDate[toDate] = toBeforeQty;
+                } else {
+                    delete state.planByDate[toDate];
+                    delete state.allocatedByDate[toDate];
+                }
+            }
+            if (fromDate && fromBeforeQty > 0) {
+                state.planByDate[fromDate] = fromBeforeQty;
+                state.allocatedByDate[fromDate] = fromBeforeQty;
             }
             updateCoverage();
             return;
