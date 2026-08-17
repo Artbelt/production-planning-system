@@ -137,11 +137,11 @@ if (isset($_GET['action']) && $_GET['action']=='save_snapshot') {
     $stockMap = [];
     if (!empty($items)) {
         $placeholders = str_repeat('?,', count($items) - 1) . '?';
-        $stmtStock = $pdo->prepare("SELECT cap_name, current_quantity FROM cap_stock WHERE cap_name IN ($placeholders)");
+        $stmtStock = $pdo->prepare("SELECT TRIM(cap_name) AS cap_name, current_quantity FROM cap_stock WHERE TRIM(cap_name) IN ($placeholders)");
         $stmtStock->execute($items);
         $stockRows = $stmtStock->fetchAll(PDO::FETCH_ASSOC);
         foreach ($stockRows as $sr) {
-            $stockMap[$sr['cap_name']] = (int)$sr['current_quantity'];
+            $stockMap[trim($sr['cap_name'])] = (int)$sr['current_quantity'];
         }
     }
     
@@ -322,11 +322,11 @@ if (isset($_GET['export']) && $_GET['export']=='excel') {
         $stockMap = [];
         if (!empty($items)) {
             $placeholders = str_repeat('?,', count($items) - 1) . '?';
-            $stmtStock = $pdo->prepare("SELECT cap_name, current_quantity FROM cap_stock WHERE cap_name IN ($placeholders)");
+            $stmtStock = $pdo->prepare("SELECT TRIM(cap_name) AS cap_name, current_quantity FROM cap_stock WHERE TRIM(cap_name) IN ($placeholders)");
             $stmtStock->execute($items);
             $stockRows = $stmtStock->fetchAll(PDO::FETCH_ASSOC);
             foreach ($stockRows as $sr) {
-                $stockMap[$sr['cap_name']] = (int)$sr['current_quantity'];
+                $stockMap[trim($sr['cap_name'])] = (int)$sr['current_quantity'];
             }
         }
         $snapshotDate = null;
@@ -641,11 +641,11 @@ if (isset($_GET['ajax']) && $_GET['ajax']=='1') {
         $stockMap = [];
         if (!empty($items)) {
             $placeholders = str_repeat('?,', count($items) - 1) . '?';
-            $stmtStock = $pdo->prepare("SELECT cap_name, current_quantity FROM cap_stock WHERE cap_name IN ($placeholders)");
+            $stmtStock = $pdo->prepare("SELECT TRIM(cap_name) AS cap_name, current_quantity FROM cap_stock WHERE TRIM(cap_name) IN ($placeholders)");
             $stmtStock->execute($items);
             $stockRows = $stmtStock->fetchAll(PDO::FETCH_ASSOC);
             foreach ($stockRows as $sr) {
-                $stockMap[$sr['cap_name']] = (int)$sr['current_quantity'];
+                $stockMap[trim($sr['cap_name'])] = (int)$sr['current_quantity'];
             }
         }
         $snapshotInfo = null;

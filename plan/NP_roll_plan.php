@@ -517,19 +517,17 @@ foreach ($rows as $r) {
         <div class="btn-group">
             <button type="button" class="btn" id="btnLoad">Загрузить</button>
             <button type="button" class="btn" id="btnSave">Сохранить</button>
-            <?php if ($plan_ready): ?>
-                <button type="button" class="btn-complete" onclick="window.location.href='NP_cut_index.php'">
-                    ✅ Завершить
-                </button>
-            <?php endif; ?>
+            <button type="button" class="btn-complete" id="btnComplete"
+                    style="<?= $plan_ready ? '' : 'display:none;' ?>"
+                    onclick="window.location.href='NP_cut_index.php'">
+                ✅ Завершить
+            </button>
         </div>
     </form>
 
-    <?php if ($plan_ready): ?>
-        <p style="font-size: 12px; color: #666; margin-top: 5px; text-align: center;">
-            План сохранён. Переход к планированию гофрирования.
-        </p>
-    <?php endif; ?>
+    <p id="planSavedHint" style="font-size: 12px; color: #666; margin-top: 5px; text-align: center;<?= $plan_ready ? '' : ' display:none;' ?>">
+        План сохранён. Переход к планированию гофрирования.
+    </p>
 
     <div id="heightBarWrap" style="display:none">
         <div id="heightBarTitle">Фільтр за висотами:</div>
@@ -956,10 +954,11 @@ foreach ($rows as $r) {
             });
             const data = await res.json();
             if (!data.ok) throw new Error(data.error || 'save failed');
+            const btnComplete = document.getElementById('btnComplete');
+            const hint = document.getElementById('planSavedHint');
+            if (btnComplete) btnComplete.style.display = '';
+            if (hint) hint.style.display = '';
             alert('План сохранён');
-            
-            // Перезагружаем страницу чтобы показать кнопку "Завершить"
-            location.reload();
         }catch(e){
             alert('Ошибка сохранения: ' + e.message);
         }
@@ -1004,36 +1003,41 @@ foreach ($rows as $r) {
     // Кнопки в форме
     document.getElementById('btnSave').addEventListener('click', savePlan);
 
-    // «Загрузить сохранённый»:
-    // 1) тянем план из БД
-    // 2) определяем min/max даты
-    // 3) подставляем их в инпуты (startDate — min, days — разница + 1)
-    // 4) строим таблицу и применяем план (drawTable сам снова загрузит и применит)
-    document.getElementById('btnLoad').addEventListener('click', async ()=>{
-        try{
+    // Загрузка сохранённого плана: даты из БД → инпуты → drawTable (применит plan)
+    async function loadSavedPlanIntoForm({ silent = false } = {}) {
+        try {
             const plan = await loadSavedPlan();
             const dates = Object.keys(plan).filter(Boolean).sort();
-            if (!dates.length) { alert('Сохранённый план не найден.'); return; }
+            if (!dates.length) {
+                if (!silent) alert('Сохранённый план не найден.');
+                return false;
+            }
 
             const startISO = dates[0];
             const endISO   = dates[dates.length - 1];
             const days     = daysBetween(startISO, endISO) + 1;
 
-            document.getElementById('startDate').value  = startISO;
-            document.getElementById('daysCount').value  = Math.max(1, days);
+            document.getElementById('startDate').value = startISO;
+            document.getElementById('daysCount').value = Math.max(1, days);
 
-            await drawTable(); // он сам подгрузит и применит plan
-        }catch(e){
-            alert('Не удалось загрузить план: ' + e.message);
+            await drawTable();
+            return true;
+        } catch (e) {
+            if (!silent) alert('Не удалось загрузить план: ' + e.message);
+            return false;
         }
-    });
+    }
 
-    // стартовая дата = сегодня и инициализация фильтра высот
+    document.getElementById('btnLoad').addEventListener('click', () => loadSavedPlanIntoForm());
+
+    // стартовая дата = сегодня и инициализация фильтра высот;
+    // если есть сохранённый план — подтягиваем его автоматически
     (function setToday(){
         const el = document.getElementById('startDate');
         const today = new Date(); today.setHours(12);
         el.value = today.toISOString().slice(0,10);
         buildHeightBar();
+        loadSavedPlanIntoForm({ silent: true });
     })();
     
     // ==================== ПОИСК ФИЛЬТРОВ ====================

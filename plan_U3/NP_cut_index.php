@@ -143,12 +143,103 @@ try{
     $pdo = getPdo('plan_u3');
 
     // Статусы заявок
-    $orders = $pdo->query("
-        SELECT DISTINCT order_number, cut_ready, cut_confirmed, plan_ready, corr_ready, build_ready
+    $rows = $pdo->query("
+        SELECT
+            order_number,
+            `filter`,
+            `count`,
+            cut_ready,
+            plan_ready,
+            corr_ready,
+            build_ready
         FROM orders
         WHERE hide IS NULL OR hide != 1
         ORDER BY order_number
     ")->fetchAll(PDO::FETCH_ASSOC);
+
+    $cardsByOrder = [];
+    foreach ($rows as $r) {
+        $ord = (string)($r['order_number'] ?? '');
+        if ($ord === '') continue;
+
+        $comboKey = implode('|', [
+            (int)($r['cut_ready'] ?? 0),
+            (int)($r['plan_ready'] ?? 0),
+            (int)($r['corr_ready'] ?? 0),
+            (int)($r['build_ready'] ?? 0),
+        ]);
+
+        if (!isset($cardsByOrder[$ord]['combos'][$comboKey])) {
+            $cardsByOrder[$ord]['combos'][$comboKey] = [
+                'order_number' => $ord,
+                'cut_ready' => (int)($r['cut_ready'] ?? 0),
+                'plan_ready' => (int)($r['plan_ready'] ?? 0),
+                'corr_ready' => (int)($r['corr_ready'] ?? 0),
+                'build_ready' => (int)($r['build_ready'] ?? 0),
+                'filter_counts' => [],
+            ];
+        }
+
+        $filter = trim((string)($r['filter'] ?? ''));
+        $cnt = (int)($r['count'] ?? 0);
+        if ($filter !== '' && $cnt > 0) {
+            if (!isset($cardsByOrder[$ord]['combos'][$comboKey]['filter_counts'][$filter])) {
+                $cardsByOrder[$ord]['combos'][$comboKey]['filter_counts'][$filter] = 0;
+            }
+            $cardsByOrder[$ord]['combos'][$comboKey]['filter_counts'][$filter] += $cnt;
+        }
+    }
+
+    $orders = [];
+    $stageLabel = function(array $s): string {
+        if (empty($s['cut_ready'])) return 'раскрой';
+        if (empty($s['plan_ready'])) return 'план раскроя рулона';
+        if (empty($s['corr_ready'])) return 'план гофрирования';
+        if (empty($s['build_ready'])) return 'план сборки';
+        return 'этап';
+    };
+
+    foreach ($cardsByOrder as $ord => $data) {
+        $comboList = array_values($data['combos']);
+        $comboCount = count($comboList);
+
+        usort($comboList, function($a, $b) {
+            $scoreA = ((int)$a['cut_ready'] << 3) | ((int)$a['plan_ready'] << 2) | ((int)$a['corr_ready'] << 1) | ((int)$a['build_ready']);
+            $scoreB = ((int)$b['cut_ready'] << 3) | ((int)$b['plan_ready'] << 2) | ((int)$b['corr_ready'] << 1) | ((int)$b['build_ready']);
+            return $scoreA <=> $scoreB;
+        });
+
+        foreach ($comboList as $card) {
+            $card['duplicate_reason'] = '';
+            $isIncomplete = empty($card['cut_ready'])
+                || empty($card['plan_ready'])
+                || empty($card['corr_ready'])
+                || empty($card['build_ready']);
+
+            // Памятка только на «недопланированной» карточке-дубликате
+            if ($comboCount > 1 && $isIncomplete) {
+                $stage = $stageLabel($card);
+                $filterCounts = $card['filter_counts'] ?? [];
+                arsort($filterCounts);
+                $top = array_slice($filterCounts, 0, 3, true);
+
+                $parts = [];
+                foreach ($top as $fname => $fcount) {
+                    $fcount = (int)$fcount;
+                    if ($fcount > 0) $parts[] = $fname . ' (' . $fcount . ' шт)';
+                }
+
+                $more = (count($filterCounts) > 3) ? (' и ещё ' . (count($filterCounts) - 3) . ' фильтров') : '';
+                $filtersPart = $parts ? implode(', ', $parts) . $more : '—';
+
+                $card['duplicate_reason'] = 'Добавлены и ещё не распланированы: ' . $filtersPart
+                    . ' — этап «' . $stage . '».';
+            }
+
+            unset($card['filter_counts']);
+            $orders[] = $card;
+        }
+    }
 
     // Заявки, по которым уже есть гофроплан
     $stmt = $pdo->query("SELECT DISTINCT order_number FROM corrugation_plans");
@@ -270,6 +361,22 @@ try{
 
         .application-card:hover {
             box-shadow: 0 4px 6px -1px hsla(220, 15%, 15%, 0.1);
+        }
+
+        .application-card.is-duplicate {
+            border-color: hsl(38, 92%, 75%);
+        }
+
+        .duplicate-caption {
+            width: 100%;
+            margin: 0 0 0.75rem;
+            padding: 0.5rem 0.75rem;
+            background: hsl(38, 92%, 95%);
+            border: 1px solid hsl(38, 92%, 80%);
+            border-radius: calc(var(--radius) - 2px);
+            color: hsl(32, 80%, 28%);
+            font-size: 0.8125rem;
+            line-height: 1.4;
         }
 
         .card-grid {
@@ -691,7 +798,10 @@ try{
         <div class="container">
             <div class="applications-list">
         <?php foreach ($orders as $o): $ord = $o['order_number']; $hasBuildPlan = !empty($build_done[$ord]) || !empty($o['build_ready']); ?>
-                <div class="application-card">
+                <div class="application-card<?= !empty($o['duplicate_reason']) ? ' is-duplicate' : '' ?>">
+                    <?php if (!empty($o['duplicate_reason'])): ?>
+                        <div class="duplicate-caption"><?= htmlspecialchars($o['duplicate_reason'], ENT_QUOTES) ?></div>
+                    <?php endif; ?>
                     <div class="card-grid">
                         <div class="app-info">
                             <div class="app-header">

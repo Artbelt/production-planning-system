@@ -28,6 +28,26 @@ $auth = new AuthManager();
 $session = $auth->checkSession();
 
 if (!$session) {
+    // AJAX/JSON (сохранение плана и т.п.): не редиректить на HTML логина —
+    // иначе fetch получает HTML и падает с непонятной ошибкой парсинга.
+    $isJsonPost = $_SERVER['REQUEST_METHOD'] === 'POST'
+        || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && $_SERVER['HTTP_X_REQUESTED_WITH'] !== '')
+        || (isset($_SERVER['HTTP_ACCEPT']) && stripos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false)
+        || (isset($_SERVER['CONTENT_TYPE']) && stripos($_SERVER['CONTENT_TYPE'], 'application/json') !== false)
+        || (isset($_SERVER['HTTP_CONTENT_TYPE']) && stripos($_SERVER['HTTP_CONTENT_TYPE'], 'application/json') !== false);
+    if ($isJsonPost) {
+        header('Content-Type: application/json; charset=utf-8');
+        http_response_code(401);
+        echo json_encode(
+            [
+                'ok' => false,
+                'error' => 'Сессия истекла. Войдите снова, чтобы сохранить изменения.',
+                'login_url' => '../auth/login.php',
+            ],
+            JSON_UNESCAPED_UNICODE
+        );
+        exit;
+    }
     header('Location: ../auth/login.php');
     exit;
 }
@@ -2747,6 +2767,7 @@ $pageTitle = 'Активные позиции';
         const queuePanelStorageKey = 'activePositionsQueuePanelOpen';
         const lockStorageKey = `activePositionsLockedShifts:${window.location.pathname}`;
         const hiddenOrdersStorageKey = `activePositionsHiddenOrders:${window.location.pathname}`;
+        const pendingMovesStorageKey = `activePositionsPendingMoves:${window.location.pathname}`;
         const FROZEN_COL_COUNT = 8;
         const debtStateMap = Object.assign({}, initialDebtShiftMap || {});
         const serverDefaultMaxListPct = <?= (int)$activePositionsMaxCompletionPct ?>;
@@ -5842,6 +5863,148 @@ $pageTitle = 'Активные позиции';
             pendingMoves.push(queuedMove);
             updatePendingBarState();
             renderMoveQueuePanel();
+            persistPendingMovesBackup();
+        }
+
+        function persistPendingMovesBackup() {
+            if (!canEditPlan) {
+                return;
+            }
+            try {
+                if (pendingMoves.length === 0) {
+                    localStorage.removeItem(pendingMovesStorageKey);
+                    return;
+                }
+                localStorage.setItem(pendingMovesStorageKey, JSON.stringify({
+                    savedAt: Date.now(),
+                    pageUrl: window.location.pathname + window.location.search,
+                    moves: pendingMoves.map(function (move) {
+                        return move.payload;
+                    }),
+                }));
+            } catch (e) {
+                // ignore storage write errors
+            }
+        }
+
+        function clearPendingMovesBackup() {
+            try {
+                localStorage.removeItem(pendingMovesStorageKey);
+            } catch (e) {
+                // ignore storage write errors
+            }
+        }
+
+        function rebuildQueuedMoveFromPayload(payload) {
+            if (!payload || typeof payload !== 'object') {
+                return null;
+            }
+            const mode = String(payload.mode || 'single');
+            const order = String(payload.order_number || '').trim();
+            const filter = String(payload.filter_name || '').trim();
+            const fromDate = String(payload.from_date || '').trim();
+            const toDate = String(payload.to_date || '').trim();
+            const rowCells = getRowDateCellsByOrderFilter(order, filter);
+            if (rowCells.length === 0) {
+                return null;
+            }
+
+            if (mode === 'clear_cell') {
+                const cell = getCellByDate(rowCells, fromDate);
+                return cell ? buildQueuedClearCellMove(cell) : null;
+            }
+            if (mode === 'set_qty') {
+                const cell = getCellByDate(rowCells, fromDate);
+                return cell ? buildQueuedSetQtyMove(cell, payload.moved_qty) : null;
+            }
+            if (mode === 'debt') {
+                const targetCell = getCellByDate(rowCells, toDate);
+                const qty = Math.max(0, parseInt(payload.moved_qty || 0, 10) || 0);
+                return targetCell
+                    ? buildQueuedDebtMove(targetCell, order, filter, getPlanKey(order, filter), fromDate, qty)
+                    : null;
+            }
+            if (mode === 'single') {
+                const sourceCell = getCellByDate(rowCells, fromDate);
+                const targetCell = getCellByDate(rowCells, toDate);
+                if (!sourceCell || !targetCell) {
+                    return null;
+                }
+                return buildQueuedSingleMove(sourceCell, targetCell, {
+                    mode: 'single',
+                    order: order,
+                    filter: filter,
+                    fromDate: fromDate,
+                });
+            }
+            if (mode === 'block') {
+                const sourceCell = getCellByDate(rowCells, fromDate);
+                const targetCell = getCellByDate(rowCells, toDate);
+                if (!sourceCell || !targetCell) {
+                    return null;
+                }
+                dragContext = {
+                    mode: 'block',
+                    order: order,
+                    filter: filter,
+                    fromDate: fromDate,
+                    sourceCell: sourceCell,
+                };
+                const rebuilt = buildQueuedMove(targetCell);
+                dragContext = null;
+                return rebuilt;
+            }
+            return null;
+        }
+
+        function restorePendingMovesFromBackup() {
+            if (!canEditPlan || pendingMoves.length > 0) {
+                return;
+            }
+            let backup = null;
+            try {
+                const raw = localStorage.getItem(pendingMovesStorageKey);
+                if (!raw) {
+                    return;
+                }
+                backup = JSON.parse(raw);
+            } catch (e) {
+                return;
+            }
+            if (!backup || !Array.isArray(backup.moves) || backup.moves.length === 0) {
+                return;
+            }
+            const currentUrl = window.location.pathname + window.location.search;
+            const savedUrl = String(backup.pageUrl || '');
+            if (savedUrl !== '' && savedUrl !== currentUrl) {
+                return;
+            }
+            const count = backup.moves.length;
+            if (!window.confirm(`Найдены несохранённые изменения (${count} операций). Восстановить в очередь?`)) {
+                return;
+            }
+            let restored = 0;
+            let failed = 0;
+            backup.moves.forEach(function (payload) {
+                const move = rebuildQueuedMoveFromPayload(payload);
+                if (!move || move.error) {
+                    failed += 1;
+                    return;
+                }
+                pushPendingMove(move);
+                restored += 1;
+            });
+            if (restored > 0) {
+                setQueuePanelOpen(true);
+                alert(
+                    `Восстановлено изменений: ${restored}`
+                    + (failed > 0 ? `. Не удалось восстановить: ${failed}` : '')
+                    + '. Нажмите «Применить», чтобы записать в базу.'
+                );
+            } else if (failed > 0) {
+                alert('Не удалось восстановить сохранённую очередь изменений.');
+                clearPendingMovesBackup();
+            }
         }
 
         function undoLastPendingMove() {
@@ -5852,6 +6015,7 @@ $pageTitle = 'Активные позиции';
             applyQueuedMoveChanges(lastMove, 'backward');
             updatePendingBarState();
             renderMoveQueuePanel();
+            persistPendingMovesBackup();
         }
 
         function removePendingMoveAt(index) {
@@ -5878,6 +6042,7 @@ $pageTitle = 'Активные позиции';
             updatePendingBarState();
             renderMoveQueuePanel();
             clearQueuePreview();
+            persistPendingMovesBackup();
         }
 
         function clearPendingMoves() {
@@ -5887,6 +6052,24 @@ $pageTitle = 'Активные позиции';
             }
             updatePendingBarState();
             renderMoveQueuePanel();
+            persistPendingMovesBackup();
+        }
+
+        function promptRelogin(message, loginUrl) {
+            const text = message || 'Сессия истекла. Войдите снова, чтобы сохранить изменения.';
+            const url = loginUrl || '../auth/login.php';
+            persistPendingMovesBackup();
+            const count = pendingMoves.length;
+            const queueHint = count > 0
+                ? `\n\nВ очереди ${count} изменений — они останутся на этой странице.`
+                : '';
+            if (window.confirm(
+                text
+                + queueHint
+                + '\n\nОткрыть вход в новой вкладке? Эту страницу не закрываем.'
+            )) {
+                window.open(url, '_blank', 'noopener');
+            }
         }
 
         async function applyPendingMovesToServer() {
@@ -5902,8 +6085,10 @@ $pageTitle = 'Активные позиции';
             try {
                 const response = await fetch(window.location.pathname + window.location.search, {
                     method: 'POST',
+                    credentials: 'same-origin',
                     headers: {
                         'Content-Type': 'application/json',
+                        'Accept': 'application/json',
                         'X-Requested-With': 'fetch',
                     },
                     body: JSON.stringify({
@@ -5911,17 +6096,42 @@ $pageTitle = 'Активные позиции';
                         moves: pendingMoves.map(function (move) { return move.payload; }),
                     }),
                 });
-                const data = await response.json();
+                const contentType = response.headers.get('content-type') || '';
+                const looksLikeLoginPage = response.status === 401
+                    || response.redirected
+                    || /login\.php/i.test(response.url || '')
+                    || contentType.indexOf('text/html') !== -1;
+                let data = null;
+                if (contentType.indexOf('application/json') !== -1) {
+                    try {
+                        data = await response.json();
+                    } catch (parseErr) {
+                        data = null;
+                    }
+                }
+                if (looksLikeLoginPage || (data && data.ok === false && response.status === 401)) {
+                    promptRelogin(
+                        (data && data.error) ? data.error : 'Сессия истекла. Войдите снова, чтобы сохранить изменения.',
+                        (data && data.login_url) ? data.login_url : '../auth/login.php'
+                    );
+                    return;
+                }
                 if (!response.ok || !data || !data.ok) {
                     throw new Error((data && data.error) ? data.error : 'Не удалось применить пакет изменений.');
                 }
                 pendingMoves.length = 0;
+                clearPendingMovesBackup();
                 clearQueuePreview();
                 renderMoveQueuePanel();
                 recalcHeaderIndicatorsFromTable();
                 closeDebtExpandPopover();
             } catch (err) {
-                alert((err && err.message) ? err.message : 'Ошибка применения изменений');
+                const msg = (err && err.message) ? err.message : 'Ошибка применения изменений';
+                if (/Unexpected token|JSON|Failed to fetch|NetworkError/i.test(msg)) {
+                    promptRelogin('Не удалось сохранить: возможно, сессия истекла.');
+                } else {
+                    alert(msg);
+                }
             } finally {
                 isApplyingPendingMoves = false;
                 updatePendingBarState();
@@ -6541,6 +6751,7 @@ $pageTitle = 'Активные позиции';
         } catch (e) {
             setQueuePanelOpen(false);
         }
+        restorePendingMovesFromBackup();
 
         openSettingsBtn.addEventListener('click', openModal);
         cancelBtn.addEventListener('click', closeModal);

@@ -49,19 +49,34 @@ if (isset($_GET['q'])) {
 }
 
 // === ПОЛУЧЕНИЕ ЗАЯВОК ПО ФИЛЬТРУ ===
-if (isset($_GET['orders']) && isset($_GET['filter'])) {
+if (isset($_GET['orders']) && (isset($_GET['filter']) || isset($_GET['archive']))) {
     header('Content-Type: application/json');
     try {
         $pdo = getPdo('plan_u3');
-        $filter = $_GET['filter'];
-        $stmt = $pdo->prepare("
-            SELECT DISTINCT order_number 
-            FROM orders 
-            WHERE filter = ? 
-            AND (hide IS NULL OR hide = 0)
-            ORDER BY order_number
-        ");
-        $stmt->execute([$filter]);
+        $filter = trim((string)($_GET['filter'] ?? ''));
+        $archive = isset($_GET['archive']) && $_GET['archive'] == '1';
+
+        // Архивные заявки — это скрытые заявки (orders.hide = 1)
+        $hideCondition = $archive ? 'hide = 1' : '(hide IS NULL OR hide = 0)';
+
+        if ($filter !== '') {
+            $stmt = $pdo->prepare("
+                SELECT DISTINCT order_number
+                FROM orders
+                WHERE filter = ?
+                AND $hideCondition
+                ORDER BY order_number DESC
+            ");
+            $stmt->execute([$filter]);
+        } else {
+            $stmt = $pdo->prepare("
+                SELECT DISTINCT order_number
+                FROM orders
+                WHERE $hideCondition
+                ORDER BY order_number DESC
+            ");
+            $stmt->execute();
+        }
         echo json_encode($stmt->fetchAll(PDO::FETCH_COLUMN));
     } catch (Exception $e) {
         echo json_encode([]);
@@ -275,18 +290,20 @@ try {
             <!-- Наименование -->
             <label class="block text-sm">Наименование</label>
             <div class="relative mb-2">
-                <input type="text" id="modalName" class="w-full border px-3 py-2 rounded" placeholder="AF1600" oninput="autocompleteFilter(this.value); handleFilterInput(this.value)" onblur="updateOrdersList(this.value)">
+                <input type="text" id="modalName" class="w-full border px-3 py-2 rounded" placeholder="AF1600" oninput="autocompleteFilter(this.value); handleFilterInput(this.value)" onblur="updateOrdersList(this.value, archiveMode)">
                 <ul id="filterSuggestions" class="absolute z-10 bg-white border w-full rounded shadow hidden max-h-48 overflow-y-auto"></ul>
             </div>
 
             <!-- Номер заявки -->
             <label class="block text-sm">Номер заявки</label>
-            <select id="modalOrder" class="w-full border px-3 py-2 rounded mb-2">
+            <select id="modalOrder" class="w-full border px-3 py-2 rounded mb-1" onchange="handleOrderSelectChange()">
                 <option value="">-- Выберите заявку --</option>
                 <?php foreach ($orders as $order): ?>
                     <option value="<?= htmlspecialchars($order) ?>"><?= htmlspecialchars($order) ?></option>
                 <?php endforeach; ?>
+                <option value="__archive__">📁 Выбрать архивную заявку</option>
             </select>
+            <p id="archiveHint" class="text-xs text-amber-600 mb-2 hidden">Режим архива: показаны закрытые (скрытые) заявки</p>
 
             <!-- Количество -->
             <label class="block text-sm">Изготовлено</label>
@@ -318,21 +335,30 @@ try {
         document.getElementById('modalOrder').value = '';
         document.getElementById('modalCount').value = '';
         document.getElementById('filterSuggestions').classList.add('hidden');
-        // Восстанавливаем полный список заявок при закрытии модального окна
-        updateOrdersList('');
+        // Восстанавливаем полный список активных заявок при закрытии модального окна
+        updateOrdersList('', false);
     }
 
     function addProduct() {
+        const select = document.getElementById('modalOrder');
         const name = document.getElementById('modalName').value.trim();
-        const order = document.getElementById('modalOrder').value.trim();
+        const order = select.value.trim();
         const count = document.getElementById('modalCount').value.trim();
 
+        if (order === '__archive__' || order === '__active__') return alert('Выберите номер заявки!');
         if (!name || !order || !count) return alert('Заполните все поля!');
 
+        const isArchived = select.options[select.selectedIndex]?.dataset.archive === '1';
+        if (isArchived && !confirm(`Заявка ${order} находится в архиве.\n\nВы уверены, что хотите внести продукцию по архивной заявке?`)) {
+            return;
+        }
+
         const row = document.createElement('tr');
+        row.dataset.order = order;
+        row.dataset.archive = isArchived ? '1' : '0';
         row.innerHTML = `
         <td class="border px-2 py-1">${name}</td>
-        <td class="border px-2 py-1">${order}</td>
+        <td class="border px-2 py-1">${order}${isArchived ? ' <span class="text-xs text-amber-600 whitespace-nowrap">(архив)</span>' : ''}</td>
         <td class="border px-2 py-1">${count}</td>
         <td class="border px-2 py-1 text-center">
           <button onclick="this.closest('tr').remove();  updateTotalCount();" class="text-red-500">✖</button>
@@ -348,11 +374,15 @@ try {
         const date = document.getElementById('prodDate').value;
         const products = [];
 
+        const archivedOrders = [];
+
         document.querySelectorAll('#tableBody tr').forEach(row => {
             const cells = row.querySelectorAll('td');
+            const orderNumber = row.dataset.order || cells[1].innerText.trim();
+            if (row.dataset.archive === '1') archivedOrders.push(orderNumber);
             products.push({
                 name: cells[0].innerText,
-                order_number: cells[1].innerText,
+                order_number: orderNumber,
                 produced: parseInt(cells[2].innerText)
             });
         });
@@ -360,6 +390,13 @@ try {
         if (!date || products.length === 0) {
             alert('Заполните дату и добавьте хотя бы одно изделие');
             return;
+        }
+
+        if (archivedOrders.length > 0) {
+            const list = [...new Set(archivedOrders)].join(', ');
+            if (!confirm(`Внимание! В смене есть архивные заявки: ${list}.\n\nСохранить смену с архивными заявками?`)) {
+                return;
+            }
         }
 
         const payload = { date, products };
@@ -385,7 +422,7 @@ try {
         if (query.length < 2) {
             list.classList.add('hidden');
             // Если поле пустое, показываем все заявки
-            updateOrdersList('');
+            updateOrdersList('', archiveMode);
             return;
         }
 
@@ -400,7 +437,7 @@ try {
                 list.appendChild(li);
                 list.classList.remove('hidden');
                 // Очищаем список заявок, если нет совпадений
-                updateOrdersList('');
+                updateOrdersList('', archiveMode);
                 return;
             }
 
@@ -412,7 +449,7 @@ try {
                     document.getElementById('modalName').value = text;
                     list.classList.add('hidden');
                     // Обновляем список заявок при выборе фильтра
-                    updateOrdersList(text);
+                    updateOrdersList(text, archiveMode);
                 };
                 list.appendChild(li);
             });
@@ -423,14 +460,23 @@ try {
         }
     }
 
-    async function updateOrdersList(filterName) {
+    // Признак того, что в списке заявок сейчас показан архив (скрытые заявки)
+    let archiveMode = false;
+
+    async function updateOrdersList(filterName, useArchive = false) {
         const select = document.getElementById('modalOrder');
+        const hint = document.getElementById('archiveHint');
         const currentValue = select.value;
-        
+        const filter = (filterName || '').trim();
+        archiveMode = !!useArchive;
+
         try {
             let orders = [];
-            if (filterName && filterName.trim() !== '') {
-                const res = await fetch('?orders=1&filter=' + encodeURIComponent(filterName.trim()));
+            if (archiveMode) {
+                const res = await fetch('?orders=1&archive=1&filter=' + encodeURIComponent(filter));
+                orders = await res.json();
+            } else if (filter !== '') {
+                const res = await fetch('?orders=1&filter=' + encodeURIComponent(filter));
                 orders = await res.json();
             } else {
                 // Если фильтр не выбран, показываем все заявки
@@ -438,28 +484,56 @@ try {
             }
 
             // Очищаем список
-            select.innerHTML = '<option value="">-- Выберите заявку --</option>';
-            
+            select.innerHTML = '';
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = archiveMode ? '-- Выберите архивную заявку --' : '-- Выберите заявку --';
+            select.appendChild(placeholder);
+
             // Добавляем заявки
-            if (orders.length === 0 && filterName && filterName.trim() !== '') {
+            if (orders.length === 0) {
                 const option = document.createElement('option');
                 option.value = '';
-                option.textContent = '-- Нет заявок с этим фильтром --';
+                option.textContent = archiveMode
+                    ? (filter !== '' ? '-- Нет архивных заявок с этим фильтром --' : '-- Нет архивных заявок --')
+                    : '-- Нет заявок с этим фильтром --';
                 option.disabled = true;
                 select.appendChild(option);
             } else {
                 orders.forEach(order => {
                     const option = document.createElement('option');
                     option.value = order;
-                    option.textContent = order;
+                    option.textContent = archiveMode ? order + ' (архив)' : order;
+                    option.dataset.archive = archiveMode ? '1' : '0';
                     if (order === currentValue) {
                         option.selected = true;
                     }
                     select.appendChild(option);
                 });
             }
+
+            // Переключатель между активными и архивными заявками
+            const switchOption = document.createElement('option');
+            switchOption.value = archiveMode ? '__active__' : '__archive__';
+            switchOption.textContent = archiveMode ? '↩ Вернуться к активным заявкам' : '📁 Выбрать архивную заявку';
+            select.appendChild(switchOption);
+
+            select.classList.toggle('border-amber-500', archiveMode);
+            select.classList.toggle('bg-amber-50', archiveMode);
+            hint.classList.toggle('hidden', !archiveMode);
         } catch (err) {
             console.error('Ошибка загрузки заявок:', err);
+        }
+    }
+
+    function handleOrderSelectChange() {
+        const select = document.getElementById('modalOrder');
+        const filter = document.getElementById('modalName').value;
+
+        if (select.value === '__archive__') {
+            updateOrdersList(filter, true);
+        } else if (select.value === '__active__') {
+            updateOrdersList(filter, false);
         }
     }
 
@@ -468,11 +542,7 @@ try {
     function handleFilterInput(value) {
         clearTimeout(filterUpdateTimeout);
         filterUpdateTimeout = setTimeout(() => {
-            if (value && value.trim() !== '') {
-                updateOrdersList(value.trim());
-            } else {
-                updateOrdersList('');
-            }
+            updateOrdersList((value || '').trim(), archiveMode);
         }, 500); // Задержка 500мс для избежания лишних запросов
     }
 

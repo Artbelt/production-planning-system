@@ -393,14 +393,14 @@ if (in_array($action, ['save_plan','load_plan','load_foreign','load_meta','list_
             if (!empty($allCaps)) {
                 $capIn = implode(',', array_fill(0, count($allCaps), '?'));
                 $st = $pdo->prepare("
-                    SELECT cap_name, current_quantity
+                    SELECT TRIM(cap_name) AS cap_name, current_quantity
                     FROM cap_stock
-                    WHERE cap_name IN ($capIn)
+                    WHERE TRIM(cap_name) IN ($capIn)
                 ");
                 $st->execute(array_keys($allCaps));
                 $stockRows = $st->fetchAll();
                 foreach ($stockRows as $sr) {
-                    $capStockMap[$sr['cap_name']] = (int)$sr['current_quantity'];
+                    $capStockMap[trim($sr['cap_name'])] = (int)$sr['current_quantity'];
                 }
             }
             

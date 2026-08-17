@@ -75,6 +75,27 @@ function wfWireframesFromPackage(PDO $pdo, string $packageName): array
     ];
 }
 
+function wfApplyPackageWireframes(PDO $pdo, array &$result, string $packageName): void
+{
+    $packageName = trim($packageName);
+    if ($packageName === '') {
+        return;
+    }
+
+    $wf = wfWireframesFromPackage($pdo, $packageName);
+    if ($wf['ext'] !== '') {
+        $result['ext_wireframe'] = $wf['ext'];
+    }
+    if ($wf['int'] !== '') {
+        $result['int_wireframe'] = $wf['int'];
+    }
+}
+
+function wfResultHasWireframes(array $result): bool
+{
+    return !empty($result['ext_wireframe']) || !empty($result['int_wireframe']);
+}
+
 /**
  * @return array{
  *     filter_name: string,
@@ -86,6 +107,8 @@ function wfWireframesFromPackage(PDO $pdo, string $packageName): array
  */
 function wfGetFilterWireframes(PDO $pdo, string $filterName): array
 {
+    static $cache = [];
+
     $filterNorm = wfNormalizeKey($filterName);
     $result = [
         'filter_name' => trim($filterName),
@@ -97,6 +120,10 @@ function wfGetFilterWireframes(PDO $pdo, string $filterName): array
 
     if ($filterNorm === '') {
         return $result;
+    }
+
+    if (isset($cache[$filterNorm])) {
+        return $cache[$filterNorm];
     }
 
     $stmt = $pdo->prepare("
@@ -111,6 +138,8 @@ function wfGetFilterWireframes(PDO $pdo, string $filterName): array
     $stmt->execute([$filterNorm]);
     $rfs = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$rfs) {
+        $cache[$filterNorm] = $result;
+
         return $result;
     }
 
@@ -118,20 +147,14 @@ function wfGetFilterWireframes(PDO $pdo, string $filterName): array
     $analog = trim((string) ($rfs['analog'] ?? ''));
 
     if ($analog === '') {
-        $packageName = trim((string) ($rfs['filter_package'] ?? ''));
-        if ($packageName !== '') {
-            $wf = wfWireframesFromPackage($pdo, $packageName);
-            if ($wf['ext'] !== '') {
-                $result['ext_wireframe'] = $wf['ext'];
-            }
-            if ($wf['int'] !== '') {
-                $result['int_wireframe'] = $wf['int'];
-            }
-        }
+        wfApplyPackageWireframes($pdo, $result, (string) ($rfs['filter_package'] ?? ''));
+        $cache[$filterNorm] = $result;
+
         return $result;
     }
 
     $result['is_brand'] = true;
+    $ownPackageName = trim((string) ($rfs['filter_package'] ?? ''));
     $stmtNative = $pdo->prepare("
         SELECT
             TRIM(rfs_native.`filter`) AS native_filter_name,
@@ -143,28 +166,73 @@ function wfGetFilterWireframes(PDO $pdo, string $filterName): array
     ");
     $stmtNative->execute([$analog]);
     $native = $stmtNative->fetch(PDO::FETCH_ASSOC);
-    if (!$native) {
-        return $result;
+    if ($native) {
+        $result['native_filter_name'] = trim((string) ($native['native_filter_name'] ?? '')) ?: null;
+        wfApplyPackageWireframes($pdo, $result, (string) ($native['filter_package'] ?? ''));
     }
 
-    $result['native_filter_name'] = trim((string) ($native['native_filter_name'] ?? '')) ?: null;
-    $packageName = trim((string) ($native['filter_package'] ?? ''));
-    if ($packageName === '') {
-        return $result;
+    if (!wfResultHasWireframes($result) && $ownPackageName !== '') {
+        wfApplyPackageWireframes($pdo, $result, $ownPackageName);
     }
 
-    $wf = wfWireframesFromPackage($pdo, $packageName);
-    if ($wf['ext'] !== '') {
-        $result['ext_wireframe'] = $wf['ext'];
-    }
-    if ($wf['int'] !== '') {
-        $result['int_wireframe'] = $wf['int'];
-    }
+    $cache[$filterNorm] = $result;
 
     return $result;
 }
 
-function wfRemainingForWireframe(PDO $pdo, string $orderNumber, string $wireframeName, string $partType, int $ordered): int
+function wfWireframePairKey(?string $extWireframe, ?string $intWireframe): string
+{
+    $ext = ($extWireframe !== null && $extWireframe !== '') ? wfNormalizeKey($extWireframe) : '';
+    $int = ($intWireframe !== null && $intWireframe !== '') ? wfNormalizeKey($intWireframe) : '';
+    if ($ext === '' && $int === '') {
+        return '';
+    }
+
+    return $ext . "\0" . $int;
+}
+
+/**
+ * Сумма по всем строкам заявки с тем же набором каркасов (эталон + бренды).
+ */
+function wfAggregateOrderedForWireframePair(
+    PDO $pdo,
+    string $orderNumber,
+    ?string $extWireframe,
+    ?string $intWireframe
+): int {
+    $targetKey = wfWireframePairKey($extWireframe, $intWireframe);
+    if ($targetKey === '') {
+        return 0;
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT UPPER(TRIM(`filter`)) AS filter_key, SUM(`count`) AS cnt
+        FROM orders
+        WHERE order_number = ?
+          AND (hide IS NULL OR hide != 1)
+        GROUP BY UPPER(TRIM(`filter`))
+    ");
+    $stmt->execute([$orderNumber]);
+
+    $total = 0;
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $lineFilterKey = trim((string) ($row['filter_key'] ?? ''));
+        $cnt = (int) ($row['cnt'] ?? 0);
+        if ($lineFilterKey === '' || $cnt <= 0) {
+            continue;
+        }
+
+        $lineMeta = wfGetFilterWireframes($pdo, $lineFilterKey);
+        $lineKey = wfWireframePairKey($lineMeta['ext_wireframe'] ?? null, $lineMeta['int_wireframe'] ?? null);
+        if ($lineKey !== '' && $lineKey === $targetKey) {
+            $total += $cnt;
+        }
+    }
+
+    return $total;
+}
+
+function wfManufacturedForWireframe(PDO $pdo, string $orderNumber, string $wireframeName, string $partType): int
 {
     $stmt = $pdo->prepare("
         SELECT COALESCE(SUM(count_of_parts), 0) AS qty
@@ -174,24 +242,28 @@ function wfRemainingForWireframe(PDO $pdo, string $orderNumber, string $wirefram
           AND part_type = ?
     ");
     $stmt->execute([$orderNumber, wfNormalizeKey($wireframeName), $partType]);
-    $made = (int) $stmt->fetchColumn();
 
-    return max(0, $ordered - $made);
+    return (int) $stmt->fetchColumn();
 }
 
-function wfCalcKitRemaining(int $remainingExt, int $remainingInt, ?string $extWireframe, ?string $intWireframe): int
-{
+function wfCalcKitRemainingFromMade(
+    int $demand,
+    int $madeExt,
+    int $madeInt,
+    ?string $extWireframe,
+    ?string $intWireframe
+): int {
     $hasExt = $extWireframe !== null && $extWireframe !== '';
     $hasInt = $intWireframe !== null && $intWireframe !== '';
 
     if ($hasExt && $hasInt) {
-        return min($remainingExt, $remainingInt);
+        return max(0, $demand - min($madeExt, $madeInt));
     }
     if ($hasExt) {
-        return $remainingExt;
+        return max(0, $demand - $madeExt);
     }
     if ($hasInt) {
-        return $remainingInt;
+        return max(0, $demand - $madeInt);
     }
 
     return 0;
@@ -202,10 +274,11 @@ function wfCalcKitRemaining(int $remainingExt, int $remainingInt, ?string $extWi
  *     order_number: string,
  *     remaining_ext: int,
  *     remaining_int: int,
- *     remaining_kits: int
+ *     remaining_kits: int,
+ *     is_surplus: bool
  * }>
  */
-function wfLoadFilterOrderKitLines(PDO $pdo, string $filterName, ?array $meta = null): array
+function wfLoadFilterOrderKitLines(PDO $pdo, string $filterName, ?array $meta = null, bool $includeSurplus = false): array
 {
     $meta = $meta ?? wfGetFilterWireframes($pdo, $filterName);
     $extWireframe = $meta['ext_wireframe'] ?? null;
@@ -229,23 +302,33 @@ function wfLoadFilterOrderKitLines(PDO $pdo, string $filterName, ?array $meta = 
     $lines = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
         $orderNumber = (string) ($row['order_number'] ?? '');
-        $ordered = (int) ($row['ordered'] ?? 0);
-        if ($orderNumber === '' || $ordered <= 0) {
+        if ($orderNumber === '') {
             continue;
         }
 
-        $remainingExt = 0;
-        $remainingInt = 0;
+        $ordered = wfAggregateOrderedForWireframePair($pdo, $orderNumber, $extWireframe, $intWireframe);
+        if ($ordered <= 0) {
+            continue;
+        }
+
+        $madeExt = 0;
+        $madeInt = 0;
         if ($extWireframe) {
-            $remainingExt = wfRemainingForWireframe($pdo, $orderNumber, $extWireframe, 'ext', $ordered);
+            $madeExt = wfManufacturedForWireframe($pdo, $orderNumber, $extWireframe, 'ext');
         }
         if ($intWireframe) {
-            $remainingInt = wfRemainingForWireframe($pdo, $orderNumber, $intWireframe, 'int', $ordered);
+            $madeInt = wfManufacturedForWireframe($pdo, $orderNumber, $intWireframe, 'int');
         }
 
-        $remainingKits = wfCalcKitRemaining($remainingExt, $remainingInt, $extWireframe, $intWireframe);
-        if ($remainingKits <= 0) {
+        $remainingExt = $extWireframe ? max(0, $ordered - $madeExt) : 0;
+        $remainingInt = $intWireframe ? max(0, $ordered - $madeInt) : 0;
+        $remainingKits = wfCalcKitRemainingFromMade($ordered, $madeExt, $madeInt, $extWireframe, $intWireframe);
+        $isSurplus = $remainingKits <= 0 && $remainingExt <= 0 && $remainingInt <= 0;
+        if ($isSurplus && !$includeSurplus) {
             continue;
+        }
+        if ($remainingKits <= 0) {
+            $remainingKits = max($remainingExt, $remainingInt);
         }
 
         $lines[] = [
@@ -253,6 +336,7 @@ function wfLoadFilterOrderKitLines(PDO $pdo, string $filterName, ?array $meta = 
             'remaining_ext' => $remainingExt,
             'remaining_int' => $remainingInt,
             'remaining_kits' => $remainingKits,
+            'is_surplus' => $isSurplus,
         ];
     }
 
@@ -268,27 +352,41 @@ function wfDiscoverFilters(PDO $pdo, string $like): array
         SELECT DISTINCT filter_name FROM (
             SELECT TRIM(o.`filter`) AS filter_name
             FROM orders o
-            INNER JOIN round_filter_structure rfs ON o.`filter` = rfs.`filter`
             WHERE (o.hide IS NULL OR o.hide != 1)
               AND TRIM(COALESCE(o.`filter`, '')) != ''
-              AND o.`filter` LIKE ?
+              AND TRIM(o.`filter`) LIKE ?
+            UNION
+            SELECT TRIM(rfs.`filter`) AS filter_name
+            FROM round_filter_structure rfs
+            WHERE TRIM(COALESCE(rfs.`filter`, '')) LIKE ?
+            UNION
+            SELECT TRIM(rfs.`filter`) AS filter_name
+            FROM round_filter_structure rfs
+            WHERE TRIM(COALESCE(rfs.analog, '')) LIKE ?
             UNION
             SELECT TRIM(o.`filter`) AS filter_name
             FROM orders o
-            INNER JOIN round_filter_structure rfs_brand ON o.`filter` = rfs_brand.`filter`
+            INNER JOIN round_filter_structure rfs_brand
+                ON UPPER(TRIM(o.`filter`)) = UPPER(TRIM(rfs_brand.`filter`))
             INNER JOIN round_filter_structure rfs_native
-                ON rfs_brand.analog IS NOT NULL
-               AND TRIM(rfs_brand.analog) != ''
+                ON TRIM(COALESCE(rfs_brand.analog, '')) != ''
                AND UPPER(TRIM(rfs_brand.analog)) = UPPER(TRIM(rfs_native.`filter`))
                AND (rfs_native.analog IS NULL OR TRIM(COALESCE(rfs_native.analog, '')) = '')
             WHERE (o.hide IS NULL OR o.hide != 1)
-              AND rfs_native.`filter` LIKE ?
+              AND TRIM(rfs_native.`filter`) LIKE ?
+            UNION
+            SELECT TRIM(rfs.`filter`) AS filter_name
+            FROM round_filter_structure rfs
+            INNER JOIN paper_package_round ppr
+                ON UPPER(TRIM(rfs.filter_package)) = UPPER(TRIM(ppr.p_p_name))
+            WHERE TRIM(COALESCE(ppr.p_p_ext_wireframe, '')) LIKE ?
+               OR TRIM(COALESCE(ppr.p_p_int_wireframe, '')) LIKE ?
         ) AS discovered
         WHERE TRIM(COALESCE(filter_name, '')) != ''
         ORDER BY filter_name
-        LIMIT 25
+        LIMIT 50
     ");
-    $stmt->execute([$like, $like]);
+    $stmt->execute([$like, $like, $like, $like, $like, $like]);
 
     $out = [];
     $seen = [];
@@ -308,35 +406,19 @@ function wfDiscoverFilters(PDO $pdo, string $like): array
     return $out;
 }
 
-function wfFormatWireframesLabel(?array $meta): string
-{
-    if (!$meta) {
-        return '';
-    }
-    $parts = [];
-    if (!empty($meta['ext_wireframe'])) {
-        $parts[] = 'нар. ' . $meta['ext_wireframe'];
-    }
-    if (!empty($meta['int_wireframe'])) {
-        $parts[] = 'внутр. ' . $meta['int_wireframe'];
-    }
-
-    return implode(' · ', $parts);
-}
-
 function wfFormatRemainingLabel(array $line, ?array $meta): string
 {
     $kits = (int) ($line['remaining_kits'] ?? 0);
+    $isSurplus = !empty($line['is_surplus']);
     $hasExt = !empty($meta['ext_wireframe']);
     $hasInt = !empty($meta['int_wireframe']);
 
+    if ($isSurplus) {
+        return 'излишек';
+    }
+
     if ($hasExt && $hasInt) {
-        return sprintf(
-            'нужно %d компл. (нар. %d, внутр. %d)',
-            $kits,
-            (int) ($line['remaining_ext'] ?? 0),
-            (int) ($line['remaining_int'] ?? 0)
-        );
+        return sprintf('нужно %d компл.', $kits);
     }
 
     return 'нужно ' . $kits . ' компл.';
@@ -358,7 +440,27 @@ if (isset($_GET['filter_q'])) {
 
         $like = '%' . $query . '%';
         $filters = wfDiscoverFilters($pdo, $like);
-        $maxSuggestions = 18;
+        $queryNorm = wfNormalizeKey($query);
+        usort($filters, static function (string $a, string $b) use ($queryNorm): int {
+            $aNorm = wfNormalizeKey($a);
+            $bNorm = wfNormalizeKey($b);
+            if ($aNorm === $queryNorm && $bNorm !== $queryNorm) {
+                return -1;
+            }
+            if ($bNorm === $queryNorm && $aNorm !== $queryNorm) {
+                return 1;
+            }
+            if (str_starts_with($aNorm, $queryNorm) && !str_starts_with($bNorm, $queryNorm)) {
+                return -1;
+            }
+            if (str_starts_with($bNorm, $queryNorm) && !str_starts_with($aNorm, $queryNorm)) {
+                return 1;
+            }
+
+            return strcmp($a, $b);
+        });
+
+        $maxSuggestions = 25;
         if (count($filters) > $maxSuggestions) {
             $filters = array_slice($filters, 0, $maxSuggestions);
         }
@@ -366,7 +468,7 @@ if (isset($_GET['filter_q'])) {
         $out = [];
         foreach ($filters as $filterName) {
             $meta = wfGetFilterWireframes($pdo, $filterName);
-            if (empty($meta['ext_wireframe']) && empty($meta['int_wireframe'])) {
+            if (!wfResultHasWireframes($meta)) {
                 continue;
             }
 
@@ -374,7 +476,6 @@ if (isset($_GET['filter_q'])) {
                 'filter_name' => $meta['filter_name'],
                 'ext_wireframe' => $meta['ext_wireframe'],
                 'int_wireframe' => $meta['int_wireframe'],
-                'wireframes_label' => wfFormatWireframesLabel($meta),
                 'is_brand' => (bool) ($meta['is_brand'] ?? false),
                 'native_filter_name' => $meta['native_filter_name'],
                 'active_lines' => wfLoadFilterOrderKitLines($pdo, $filterName, $meta),
@@ -397,13 +498,14 @@ if (isset($_GET['filter_orders']) && isset($_GET['filter'])) {
         wfEnsureManufacturedWireframesTable($pdo);
 
         $filterName = trim((string) ($_GET['filter'] ?? ''));
+        $includeSurplus = (int) ($_GET['include_surplus'] ?? 0) === 1;
         if ($filterName === '') {
             echo json_encode([]);
             exit;
         }
 
         $meta = wfGetFilterWireframes($pdo, $filterName);
-        $lines = wfLoadFilterOrderKitLines($pdo, $filterName, $meta);
+        $lines = wfLoadFilterOrderKitLines($pdo, $filterName, $meta, $includeSurplus);
         $out = [];
         foreach ($lines as $line) {
             $out[] = [
@@ -411,6 +513,7 @@ if (isset($_GET['filter_orders']) && isset($_GET['filter'])) {
                 'remaining_kits' => $line['remaining_kits'],
                 'remaining_ext' => $line['remaining_ext'],
                 'remaining_int' => $line['remaining_int'],
+                'is_surplus' => !empty($line['is_surplus']),
                 'remaining_label' => wfFormatRemainingLabel($line, $meta),
             ];
         }
@@ -506,7 +609,6 @@ try {
             <thead class="bg-gray-200">
             <tr>
                 <th class="border px-2 py-1">Фильтр</th>
-                <th class="border px-2 py-1">Каркасы</th>
                 <th class="border px-2 py-1">Заявка</th>
                 <th class="border px-2 py-1">Комплектов</th>
                 <th class="border px-2 py-1">Удалить</th>
@@ -539,12 +641,17 @@ try {
                 <ul id="filterSuggestions" class="absolute z-10 bg-white border w-full rounded shadow hidden max-h-72 overflow-y-auto text-left"></ul>
             </div>
 
-            <div id="modalWireframesHint" class="text-xs text-gray-600 mb-2 hidden"></div>
+            <div id="modalFilterHint" class="text-xs text-gray-600 mb-2 hidden"></div>
 
             <label class="block text-sm">Номер заявки</label>
             <select id="modalOrder" class="w-full border px-3 py-2 rounded mb-2">
                 <option value="">-- Выберите заявку --</option>
             </select>
+
+            <label class="flex items-center gap-2 text-sm mb-2">
+                <input type="checkbox" id="modalIncludeSurplus" onchange="updateOrdersList()">
+                <span>Разрешить излишек по закрытой позиции</span>
+            </label>
 
             <label class="block text-sm">Комплектов</label>
             <input type="number" id="modalCount" class="w-full border px-3 py-2 rounded mb-4" placeholder="150" min="1">
@@ -571,9 +678,10 @@ try {
         document.getElementById('modalExtWireframe').value = '';
         document.getElementById('modalIntWireframe').value = '';
         document.getElementById('modalOrder').value = '';
+        document.getElementById('modalIncludeSurplus').checked = false;
         document.getElementById('modalCount').value = '';
         document.getElementById('filterSuggestions').classList.add('hidden');
-        document.getElementById('modalWireframesHint').classList.add('hidden');
+        document.getElementById('modalFilterHint').classList.add('hidden');
         selectedFilterMeta = null;
         updateOrdersList();
     }
@@ -583,7 +691,6 @@ try {
             filter_name: item.filter_name || '',
             ext_wireframe: item.ext_wireframe || '',
             int_wireframe: item.int_wireframe || '',
-            wireframes_label: item.wireframes_label || '',
             is_brand: !!item.is_brand,
             native_filter_name: item.native_filter_name || ''
         };
@@ -592,10 +699,10 @@ try {
         document.getElementById('modalExtWireframe').value = selectedFilterMeta.ext_wireframe;
         document.getElementById('modalIntWireframe').value = selectedFilterMeta.int_wireframe;
 
-        const hint = document.getElementById('modalWireframesHint');
-        let hintText = selectedFilterMeta.wireframes_label;
+        const hint = document.getElementById('modalFilterHint');
+        let hintText = '';
         if (selectedFilterMeta.is_brand && selectedFilterMeta.native_filter_name) {
-            hintText += ' · эталон: ' + selectedFilterMeta.native_filter_name;
+            hintText = 'Бренд · эталон: ' + selectedFilterMeta.native_filter_name;
         }
         hint.textContent = hintText;
         hint.classList.toggle('hidden', hintText === '');
@@ -603,15 +710,12 @@ try {
         updateOrdersList();
     }
 
-    function buildWireframesLabel(extWireframe, intWireframe) {
-        const parts = [];
-        if (extWireframe) {
-            parts.push('нар. ' + extWireframe);
+    function buildFilterLabel(filterName, isBrand, nativeFilterName) {
+        if (isBrand && nativeFilterName) {
+            return filterName + ' · эталон: ' + nativeFilterName;
         }
-        if (intWireframe) {
-            parts.push('внутр. ' + intWireframe);
-        }
-        return parts.join(' · ');
+
+        return filterName;
     }
 
     function addKit() {
@@ -633,10 +737,13 @@ try {
         row.dataset.extWireframe = extWireframe;
         row.dataset.intWireframe = intWireframe;
 
-        const wireframesLabel = buildWireframesLabel(extWireframe, intWireframe);
+        const filterLabel = buildFilterLabel(
+            filterName,
+            !!(selectedFilterMeta && selectedFilterMeta.is_brand),
+            selectedFilterMeta ? selectedFilterMeta.native_filter_name : ''
+        );
         row.innerHTML = `
-        <td class="border px-2 py-1">${escapeHtml(filterName)}</td>
-        <td class="border px-2 py-1 text-xs">${escapeHtml(wireframesLabel)}</td>
+        <td class="border px-2 py-1">${escapeHtml(filterLabel)}</td>
         <td class="border px-2 py-1">${escapeHtml(order)}</td>
         <td class="border px-2 py-1">${escapeHtml(String(count))}</td>
         <td class="border px-2 py-1 text-center">
@@ -720,7 +827,7 @@ try {
             list.classList.add('hidden');
             document.getElementById('modalExtWireframe').value = '';
             document.getElementById('modalIntWireframe').value = '';
-            document.getElementById('modalWireframesHint').classList.add('hidden');
+            document.getElementById('modalFilterHint').classList.add('hidden');
             selectedFilterMeta = null;
             updateOrdersList();
             if (q.length > 0) {
@@ -750,7 +857,6 @@ try {
 
             suggestions.forEach(item => {
                 const filterName = item.filter_name || '';
-                const wireframesLabel = item.wireframes_label || '';
                 const lines = Array.isArray(item.active_lines) ? item.active_lines : [];
 
                 const li = document.createElement('li');
@@ -758,22 +864,12 @@ try {
 
                 const title = document.createElement('div');
                 title.className = 'font-medium text-gray-900';
-                title.textContent = filterName;
+                title.textContent = buildFilterLabel(
+                    filterName,
+                    !!item.is_brand,
+                    item.native_filter_name || ''
+                );
                 li.appendChild(title);
-
-                if (wireframesLabel) {
-                    const wf = document.createElement('div');
-                    wf.className = 'text-xs text-gray-600 mt-0.5';
-                    wf.textContent = wireframesLabel;
-                    li.appendChild(wf);
-                }
-
-                if (item.is_brand && item.native_filter_name) {
-                    const brand = document.createElement('div');
-                    brand.className = 'text-[11px] text-amber-800';
-                    brand.textContent = 'Бренд · эталон: ' + item.native_filter_name;
-                    li.appendChild(brand);
-                }
 
                 const sub = document.createElement('div');
                 sub.className = 'mt-1 text-xs text-gray-600 space-y-0.5 pl-0.5';
@@ -786,12 +882,9 @@ try {
                     lines.slice(0, SUGGESTION_LINES_CAP).forEach(ln => {
                         const row = document.createElement('div');
                         const kits = parseInt(ln.remaining_kits, 10) || 0;
-                        const remExt = parseInt(ln.remaining_ext, 10);
-                        const remInt = parseInt(ln.remaining_int, 10);
-                        const hasBoth = item.ext_wireframe && item.int_wireframe;
-                        row.textContent = hasBoth
-                            ? `Заявка ${ln.order_number} · ${kits} компл. (нар. ${remExt}, внутр. ${remInt})`
-                            : `Заявка ${ln.order_number} · ${kits} компл.`;
+                        row.textContent = ln.is_surplus
+                            ? `Заявка ${ln.order_number} · ${filterName} · излишек`
+                            : `Заявка ${ln.order_number} · ${filterName} · ${kits} компл.`;
                         sub.appendChild(row);
                     });
                     if (lines.length > SUGGESTION_LINES_CAP) {
@@ -822,11 +915,12 @@ try {
         const filterName = document.getElementById('modalFilter').value.trim();
         const extWireframe = document.getElementById('modalExtWireframe').value.trim();
         const intWireframe = document.getElementById('modalIntWireframe').value.trim();
+        const includeSurplus = document.getElementById('modalIncludeSurplus').checked;
 
         try {
             let orders = [];
             if (filterName && (extWireframe || intWireframe)) {
-                const url = '?filter_orders=1&filter=' + encodeURIComponent(filterName);
+                const url = '?filter_orders=1&filter=' + encodeURIComponent(filterName) + '&include_surplus=' + (includeSurplus ? '1' : '0');
                 const res = await fetch(url);
                 orders = await res.json();
             }
@@ -836,16 +930,19 @@ try {
             if (!orders.length && filterName && (extWireframe || intWireframe)) {
                 const option = document.createElement('option');
                 option.value = '';
-                option.textContent = '-- Нет заявок с этим фильтром --';
+                option.textContent = includeSurplus
+                    ? '-- Нет заявок с этим фильтром даже для излишка --'
+                    : '-- Нет активных заявок с этим фильтром --';
                 option.disabled = true;
                 select.appendChild(option);
             } else {
                 orders.forEach(entry => {
                     const option = document.createElement('option');
                     const num = String(entry.order_number || '').trim();
-                    const label = entry.remaining_label || (`${num} — нужно ${entry.remaining_kits} компл.`);
+                    const label = entry.remaining_label || (`нужно ${entry.remaining_kits} компл.`);
+                    const filterLabel = filterName ? `${filterName} · ` : '';
                     option.value = num;
-                    option.textContent = `${num} — ${label.replace(/^нужно\s+/i, '')}`;
+                    option.textContent = `${num} — ${filterLabel}${label.replace(/^нужно\s+/i, '')}`;
                     if (num === currentValue) {
                         option.selected = true;
                     }
@@ -865,7 +962,7 @@ try {
             if (!filterName || !selectedFilterMeta || selectedFilterMeta.filter_name !== filterName) {
                 document.getElementById('modalExtWireframe').value = '';
                 document.getElementById('modalIntWireframe').value = '';
-                document.getElementById('modalWireframesHint').classList.add('hidden');
+                document.getElementById('modalFilterHint').classList.add('hidden');
                 selectedFilterMeta = null;
             }
             updateOrdersList();

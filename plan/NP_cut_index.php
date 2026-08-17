@@ -171,12 +171,105 @@ try{
     $pdo = getPdo('plan');
 
     // Статусы заявок (для plan нет поля status, убираем его)
-$orders = $pdo->query("
-    SELECT DISTINCT order_number, cut_ready, cut_confirmed, plan_ready, corr_ready, build_ready
+$rows = $pdo->query("
+    SELECT
+        order_number,
+        `filter`,
+        `count`,
+        cut_ready,
+        plan_ready,
+        corr_ready,
+        build_ready
     FROM orders
     WHERE hide IS NULL OR hide != 1
     ORDER BY order_number
 ")->fetchAll(PDO::FETCH_ASSOC);
+
+    $cardsByOrder = [];
+    foreach ($rows as $r) {
+        $ord = (string)($r['order_number'] ?? '');
+        if ($ord === '') continue;
+
+        // Ключ карточки: статусы этапов, которые реально отображаются на странице
+        $comboKey = implode('|', [
+            (int)($r['cut_ready'] ?? 0),
+            (int)($r['plan_ready'] ?? 0),
+            (int)($r['corr_ready'] ?? 0),
+            (int)($r['build_ready'] ?? 0),
+        ]);
+
+        if (!isset($cardsByOrder[$ord]['combos'][$comboKey])) {
+            $cardsByOrder[$ord]['combos'][$comboKey] = [
+                'order_number' => $ord,
+                'cut_ready' => (int)($r['cut_ready'] ?? 0),
+                'plan_ready' => (int)($r['plan_ready'] ?? 0),
+                'corr_ready' => (int)($r['corr_ready'] ?? 0),
+                'build_ready' => (int)($r['build_ready'] ?? 0),
+                'filter_counts' => [],
+            ];
+        }
+
+        $filter = trim((string)($r['filter'] ?? ''));
+        $cnt = (int)($r['count'] ?? 0);
+        if ($filter !== '' && $cnt > 0) {
+            if (!isset($cardsByOrder[$ord]['combos'][$comboKey]['filter_counts'][$filter])) {
+                $cardsByOrder[$ord]['combos'][$comboKey]['filter_counts'][$filter] = 0;
+            }
+            $cardsByOrder[$ord]['combos'][$comboKey]['filter_counts'][$filter] += $cnt;
+        }
+    }
+
+    $orders = [];
+    $stageLabel = function(array $s): string {
+        if (empty($s['cut_ready'])) return 'раскрой';
+        if (empty($s['plan_ready'])) return 'план раскроя рулона';
+        if (empty($s['corr_ready'])) return 'план гофрирования';
+        if (empty($s['build_ready'])) return 'план сборки';
+        return 'этап';
+    };
+
+    foreach ($cardsByOrder as $ord => $data) {
+        $comboList = array_values($data['combos']);
+        $comboCount = count($comboList);
+
+        // Порядок карточек: сначала "хуже" (больше неготовности)
+        usort($comboList, function($a, $b) {
+            $scoreA = ((int)$a['cut_ready'] << 3) | ((int)$a['plan_ready'] << 2) | ((int)$a['corr_ready'] << 1) | ((int)$a['build_ready']);
+            $scoreB = ((int)$b['cut_ready'] << 3) | ((int)$b['plan_ready'] << 2) | ((int)$b['corr_ready'] << 1) | ((int)$b['build_ready']);
+            return $scoreA <=> $scoreB;
+        });
+
+        foreach ($comboList as $card) {
+            $card['duplicate_reason'] = '';
+            $isIncomplete = empty($card['cut_ready'])
+                || empty($card['plan_ready'])
+                || empty($card['corr_ready'])
+                || empty($card['build_ready']);
+
+            // Памятка только на «недопланированной» карточке-дубликате
+            if ($comboCount > 1 && $isIncomplete) {
+                $stage = $stageLabel($card);
+                $filterCounts = $card['filter_counts'] ?? [];
+                arsort($filterCounts);
+                $top = array_slice($filterCounts, 0, 3, true);
+
+                $parts = [];
+                foreach ($top as $fname => $fcount) {
+                    $fcount = (int)$fcount;
+                    if ($fcount > 0) $parts[] = $fname . ' (' . $fcount . ' шт)';
+                }
+
+                $more = (count($filterCounts) > 3) ? (' и ещё ' . (count($filterCounts) - 3) . ' фильтров') : '';
+                $filtersPart = $parts ? implode(', ', $parts) . $more : '—';
+
+                $card['duplicate_reason'] = 'Добавлены и ещё не распланированы: ' . $filtersPart
+                    . ' — этап «' . $stage . '».';
+            }
+
+            unset($card['filter_counts']);
+            $orders[] = $card;
+        }
+    }
 
 // Заявки, по которым уже есть гофроплан
 $stmt = $pdo->query("SELECT DISTINCT order_number FROM corrugation_plan");
@@ -294,6 +387,22 @@ $corr_done = array_flip($stmt->fetchAll(PDO::FETCH_COLUMN));
 
         .application-card:hover {
             box-shadow: 0 4px 6px -1px hsla(220, 15%, 15%, 0.1);
+        }
+
+        .application-card.is-duplicate {
+            border-color: hsl(38, 92%, 75%);
+        }
+
+        .duplicate-caption {
+            width: 100%;
+            margin: 0 0 0.75rem;
+            padding: 0.5rem 0.75rem;
+            background: hsl(38, 92%, 95%);
+            border: 1px solid hsl(38, 92%, 80%);
+            border-radius: calc(var(--radius) - 2px);
+            color: hsl(32, 80%, 28%);
+            font-size: 0.8125rem;
+            line-height: 1.4;
         }
 
         .card-grid {
@@ -504,7 +613,7 @@ $corr_done = array_flip($stmt->fetchAll(PDO::FETCH_COLUMN));
             border: 1px solid var(--border);
             border-radius: var(--radius);
             box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-            max-width: 900px;
+            max-width: 1100px;
             width: 100%;
             max-height: 90vh;
             overflow-y: auto;
@@ -638,6 +747,244 @@ $corr_done = array_flip($stmt->fetchAll(PDO::FETCH_COLUMN));
             box-shadow: 0 2px 4px 0 hsla(220, 15%, 15%, 0.08);
             border-color: var(--primary);
         }
+
+        /* --- Фильтры с каркасами (подсказка по сменам) --- */
+        .wf-section { margin-top: 0.75rem; }
+        .wf-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+        .wf-toolbar label {
+            font-size: 0.75rem;
+            color: var(--muted-foreground);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+        .wf-toolbar input[type="number"] {
+            width: 4.5rem;
+            padding: 0.25rem 0.4rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-size: 0.8125rem;
+        }
+        .wf-btn {
+            padding: 0.3rem 0.6rem;
+            font-size: 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--card);
+            cursor: pointer;
+            color: var(--foreground);
+        }
+        .wf-btn:hover { background: var(--secondary); }
+        .wf-btn-primary {
+            background: var(--primary);
+            color: #fff;
+            border-color: var(--primary);
+        }
+        .wf-btn-primary:hover { filter: brightness(0.95); }
+        .wf-summary-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+        @media (max-width: 720px) {
+            .wf-summary-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        .wf-layout {
+            display: grid;
+            grid-template-columns: minmax(200px, 240px) 1fr;
+            gap: 0.75rem;
+        }
+        @media (max-width: 800px) {
+            .wf-layout { grid-template-columns: 1fr; }
+        }
+        .wf-pool {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.5rem;
+            min-height: 280px;
+            max-height: min(70vh, 720px);
+            overflow-y: auto;
+        }
+        .wf-pool.wf-drop-hover { border-color: var(--primary); background: #f0f7ff; }
+        .wf-pool-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin: 0 0 0.4rem;
+        }
+        .wf-card {
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            padding: 0.4rem 0.45rem;
+            margin-bottom: 0.4rem;
+            background: #fff;
+            cursor: grab;
+            font-size: 0.75rem;
+            user-select: none;
+        }
+        .wf-card:active { cursor: grabbing; }
+        .wf-card.wf-dragging { opacity: 0.45; }
+        .wf-card-name { font-weight: 600; color: var(--foreground); }
+        .wf-card-sub { color: var(--muted-foreground); font-size: 0.65rem; margin-top: 0.15rem; }
+        .wf-card-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.35rem;
+            margin-top: 0.3rem;
+        }
+        .wf-card input[type="number"] {
+            width: 3rem;
+            padding: 0.15rem 0.25rem;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            font-size: 0.7rem;
+        }
+        .wf-done { opacity: 0.55; cursor: default; }
+        .wf-stats {
+            margin: 0.5rem 0 0.75rem;
+            padding: 0.5rem 0.65rem;
+            background: var(--muted);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 0.78rem;
+            color: var(--foreground);
+            line-height: 1.45;
+        }
+        .wf-stats strong { font-weight: 600; }
+        .wf-stats-empty { color: var(--muted-foreground); }
+        .wf-grid-wrap {
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: #fff;
+            padding: 0.4rem;
+        }
+        .wf-band {
+            margin-bottom: 0.65rem;
+        }
+        .wf-band:last-child { margin-bottom: 0; }
+        .wf-band-table {
+            border-collapse: collapse;
+            width: 100%;
+            table-layout: fixed;
+            font-size: 0.7rem;
+        }
+        .wf-band-table th,
+        .wf-band-table td {
+            border: 1px solid #d1d5db;
+            padding: 0;
+            height: 18px;
+            text-align: center;
+            vertical-align: middle;
+            position: relative;
+        }
+        .wf-band-table td[rowspan] {
+            height: auto;
+        }
+        .wf-band-table th {
+            background: #f3f4f6;
+            font-weight: 600;
+            color: #374151;
+            height: 16px;
+            font-size: 0.6rem;
+        }
+        .wf-cell {
+            min-height: 18px;
+        }
+        .wf-cell.wf-drop-hover {
+            outline: 2px solid var(--primary);
+            outline-offset: -2px;
+            background: #eff6ff !important;
+        }
+        .wf-cell.wf-drop-deny {
+            outline: 2px solid #dc2626;
+            outline-offset: -2px;
+            background: #fef2f2 !important;
+        }
+        .wf-seg {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+            min-height: 18px;
+            box-sizing: border-box;
+            font-weight: 600;
+            font-size: 0.62rem;
+            cursor: grab;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            padding: 0 2px;
+            border: none;
+        }
+        .wf-seg:active { cursor: grabbing; }
+        .wf-seg.wf-dragging { opacity: 0.4; }
+        .wf-seg-start { border-left: 2px solid rgba(0,0,0,0.25); }
+        .wf-seg-end { border-right: 2px solid rgba(0,0,0,0.25); }
+        .wf-seg-tall {
+            writing-mode: horizontal-tb;
+        }
+
+        @media print {
+            @page { margin: 10mm; size: A4 portrait; }
+            body.wf-print-grid * { visibility: hidden !important; }
+            body.wf-print-grid #wfPrintRoot,
+            body.wf-print-grid #wfPrintRoot * { visibility: visible !important; }
+            body.wf-print-grid #wfPrintRoot {
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                background: #fff !important;
+            }
+            body.wf-print-grid #analysisModal {
+                position: static !important;
+                display: block !important;
+                background: transparent !important;
+                inset: auto !important;
+            }
+            body.wf-print-grid .modal-content {
+                box-shadow: none !important;
+                border: none !important;
+                max-width: none !important;
+                max-height: none !important;
+                overflow: visible !important;
+                background: transparent !important;
+            }
+            body.wf-print-grid .wf-grid-wrap {
+                border: none !important;
+                padding: 0 !important;
+                overflow: visible !important;
+            }
+            body.wf-print-grid .wf-print-title {
+                display: block !important;
+                font-size: 14pt;
+                font-weight: 700;
+                margin: 0 0 8px;
+                color: #000;
+            }
+            body.wf-print-grid .wf-print-meta {
+                display: block !important;
+                font-size: 9pt;
+                margin: 0 0 10px;
+                color: #333;
+            }
+            body.wf-print-grid .wf-seg { cursor: default !important; }
+            body.wf-print-grid .wf-band { break-inside: avoid; page-break-inside: avoid; }
+        }
+        .wf-print-title,
+        .wf-print-meta { display: none; }
     </style>
 </head>
 <body>
@@ -667,7 +1014,10 @@ $corr_done = array_flip($stmt->fetchAll(PDO::FETCH_COLUMN));
         <div class="container">
             <div class="applications-list">
         <?php foreach ($orders as $o): $ord = $o['order_number']; ?>
-                <div class="application-card">
+                <div class="application-card<?= !empty($o['duplicate_reason']) ? ' is-duplicate' : '' ?>">
+                    <?php if (!empty($o['duplicate_reason'])): ?>
+                        <div class="duplicate-caption"><?= htmlspecialchars($o['duplicate_reason'], ENT_QUOTES) ?></div>
+                    <?php endif; ?>
                     <div class="card-grid">
                         <div class="app-info">
                             <div class="app-header">
@@ -845,16 +1195,13 @@ $corr_done = array_flip($stmt->fetchAll(PDO::FETCH_COLUMN));
         }
     }
     
-    // Редактирование раскроя с предупреждением
+    // Редактирование раскроя — открытие без автопересчёта; пересчёт только по кнопке на странице
     function editCutPlan(order){
         if (confirm(
-            '⚠️ ВНИМАНИЕ!\n\n' +
-            'При редактировании раскроя нарушится синхронизация с остальными частями плана:\n\n' +
-            '• План раскроя рулона\n' +
-            '• План гофрирования\n' +
-            '• План сборки\n\n' +
-            'Вероятно, их придется переделывать заново.\n\n' +
-            'Продолжить редактирование?'
+            'Открыть сохранённый раскрой?\n\n' +
+            'Страница покажет текущий раскрой из базы без автоматического пересчёта.\n' +
+            'Для пересоздания используйте кнопку «Пересчитать раскрой» на открывшейся странице.\n\n' +
+            'Продолжить?'
         )) {
             window.open('NP_cut_plan.php?order_number=' + encodeURIComponent(order), '_blank');
         }
@@ -1027,8 +1374,19 @@ $corr_done = array_flip($stmt->fetchAll(PDO::FETCH_COLUMN));
             }
             
             html += '</div>';
+
+            // --- Фильтры с каркасами ---
+            html += '<div id="wfPlannerRoot" class="section-block wf-section"></div>';
             
             body.innerHTML = html;
+
+            if (window.WireframePlanner) {
+                window.WireframePlanner.mount(
+                    document.getElementById('wfPlannerRoot'),
+                    order,
+                    data.wireframes || { filters_count: 0, positions_count: 0, positions: [] }
+                );
+            }
             
         } catch (error) {
             console.error('Ошибка загрузки анализа:', error);
@@ -1044,6 +1402,646 @@ $corr_done = array_flip($stmt->fetchAll(PDO::FETCH_COLUMN));
     document.getElementById('analysisModal').addEventListener('click', function(e){
         if (e.target === this) closeAnalysis();
     });
+
+    // =====================================================================
+    // Подсказка: фильтры с каркасами — пул + сетка смен «змейкой» (7 колонок)
+    // =====================================================================
+    window.WireframePlanner = (function () {
+        const PLACES = 17;
+        const DEFAULT_POURS = 50;
+        const COLS = 7;
+        const ROW_H = 18; // высота строки сетки (≈28/1.5)
+        const LS_PREFIX = 'np_wireframe_hint:';
+
+        let state = null;
+        let rootEl = null;
+        let dragPayload = null;
+
+        function esc(s) {
+            return String(s ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function lsKey(order) {
+            return LS_PREFIX + order;
+        }
+
+        /** Уникальный цвет на позицию: равномерно по кругу hue, без повторов */
+        function colorFor(filter) {
+            let idx = state.positions.findIndex(p => p.filter === filter);
+            if (idx < 0) idx = 0;
+            // золотое сечение — соседние позиции визуально дальше друг от друга
+            const hue = Math.round((idx * 137.508) % 360);
+            const sat = 62 + (idx % 3) * 6;
+            const light = 72 - (idx % 4) * 3;
+            return `hsl(${hue} ${sat}% ${light}%)`;
+        }
+
+        function getForms(filter) {
+            const n = parseInt(state.forms[filter], 10);
+            return n > 0 ? n : 1;
+        }
+
+        function shiftsNeeded(filter) {
+            const pos = state.positions.find(p => p.filter === filter);
+            if (!pos) return 0;
+            const rate = getForms(filter) * state.pours;
+            return rate > 0 ? Math.ceil(pos.count / rate) : 0;
+        }
+
+        function getPlacement(filter) {
+            return state.placements.find(p => p.filter === filter) || null;
+        }
+
+        function isPlaced(filter) {
+            return !!getPlacement(filter);
+        }
+
+        function orderEstimateShifts() {
+            const total = state.positions.reduce((a, p) => a + p.count, 0);
+            const den = state.pours * PLACES;
+            return den > 0 ? Math.ceil(total / den) : 0;
+        }
+
+        function sumPositionShifts() {
+            return state.positions.reduce((a, p) => a + shiftsNeeded(p.filter), 0);
+        }
+
+        function pluralRu(n, one, few, many) {
+            const n10 = n % 10;
+            const n100 = n % 100;
+            if (n10 === 1 && n100 !== 11) return one;
+            if (n10 >= 2 && n10 <= 4 && (n100 < 10 || n100 >= 20)) return few;
+            return many;
+        }
+
+        /** Статистика: сколько смен с какой суммарной загрузкой форм */
+        function formsLoadStats() {
+            let maxEnd = 0;
+            state.placements.forEach(pl => {
+                maxEnd = Math.max(maxEnd, pl.start + shiftsNeeded(pl.filter));
+            });
+            if (maxEnd <= 0) return [];
+
+            const byForms = {};
+            for (let t = 0; t < maxEnd; t++) {
+                const f = loadAtShift(t, null);
+                if (f <= 0) continue;
+                byForms[f] = (byForms[f] || 0) + 1;
+            }
+            return Object.keys(byForms)
+                .map(k => ({ forms: parseInt(k, 10), shifts: byForms[k] }))
+                .sort((a, b) => b.forms - a.forms || b.shifts - a.shifts);
+        }
+
+        function renderStatsHtml() {
+            const rows = formsLoadStats();
+            if (!rows.length) {
+                return '<div class="wf-stats wf-stats-empty">Статистика: разместите позиции в сетке</div>';
+            }
+            const parts = rows.map(r => {
+                const dayWord = pluralRu(r.shifts, 'день', 'дня', 'дней');
+                const fWord = pluralRu(r.forms, 'форма', 'формы', 'форм');
+                return `<strong>${r.shifts}</strong> ${dayWord} по <strong>${r.forms}</strong> ${fWord}`;
+            });
+            return `<div class="wf-stats"><strong>Статистика:</strong> ${parts.join(' · ')}</div>`;
+        }
+
+        function timelineLen() {
+            let maxEnd = state.extraShifts || COLS;
+            state.placements.forEach(pl => {
+                const len = shiftsNeeded(pl.filter);
+                maxEnd = Math.max(maxEnd, pl.start + len);
+            });
+            // round up to full bands of 7
+            return Math.max(COLS, Math.ceil(maxEnd / COLS) * COLS);
+        }
+
+        function loadAtShift(t, exceptFilter) {
+            let used = 0;
+            state.placements.forEach(pl => {
+                if (exceptFilter && pl.filter === exceptFilter) return;
+                const len = shiftsNeeded(pl.filter);
+                if (t >= pl.start && t < pl.start + len) {
+                    used += getForms(pl.filter);
+                }
+            });
+            return used;
+        }
+
+        function canPlace(filter, start, exceptSelf) {
+            const len = shiftsNeeded(filter);
+            if (len <= 0 || start < 0) return false;
+            const forms = getForms(filter);
+            if (forms > PLACES) return false;
+            for (let t = start; t < start + len; t++) {
+                if (loadAtShift(t, exceptSelf ? filter : null) + forms > PLACES) return false;
+            }
+            return true;
+        }
+
+        function placeAt(filter, start) {
+            const len = shiftsNeeded(filter);
+            if (!canPlace(filter, start, true)) return false;
+            const existing = getPlacement(filter);
+            if (existing) {
+                existing.start = start;
+            } else {
+                state.placements.push({ filter, start });
+            }
+            // ensure timeline covers end
+            state.extraShifts = Math.max(state.extraShifts || COLS, start + len);
+            return true;
+        }
+
+        function unplace(filter) {
+            state.placements = state.placements.filter(p => p.filter !== filter);
+        }
+
+        function findEarliestStart(filter) {
+            const len = shiftsNeeded(filter);
+            if (len <= 0) return -1;
+            const limit = timelineLen() + len + COLS * 4;
+            for (let s = 0; s <= limit; s++) {
+                if (canPlace(filter, s, true)) return s;
+            }
+            return -1;
+        }
+
+        function autoLayout() {
+            state.placements = [];
+            const ordered = state.positions
+                .slice()
+                .sort((a, b) => shiftsNeeded(b.filter) - shiftsNeeded(a.filter) || b.count - a.count);
+            ordered.forEach(p => {
+                const start = findEarliestStart(p.filter);
+                if (start >= 0) placeAt(p.filter, start);
+            });
+            state.extraShifts = timelineLen();
+        }
+
+        function resetLayout() {
+            state.placements = [];
+            state.extraShifts = Math.max(COLS, orderEstimateShifts());
+            state.extraShifts = Math.ceil(state.extraShifts / COLS) * COLS;
+        }
+
+        function saveLocal() {
+            try {
+                localStorage.setItem(lsKey(state.order), JSON.stringify({
+                    v: 2,
+                    pours: state.pours,
+                    forms: state.forms,
+                    placements: state.placements,
+                    extraShifts: state.extraShifts,
+                }));
+                return true;
+            } catch (e) {
+                console.warn(e);
+                return false;
+            }
+        }
+
+        function loadLocal() {
+            try {
+                const raw = localStorage.getItem(lsKey(state.order));
+                if (!raw) return false;
+                const data = JSON.parse(raw);
+                if (data.pours > 0) state.pours = parseInt(data.pours, 10) || DEFAULT_POURS;
+                if (data.forms && typeof data.forms === 'object') {
+                    state.forms = { ...state.forms, ...data.forms };
+                }
+                if (data.v === 2 && Array.isArray(data.placements)) {
+                    const candidates = data.placements
+                        .filter(p => p && p.filter && state.positions.some(x => x.filter === p.filter))
+                        .map(p => ({
+                            filter: p.filter,
+                            start: Math.max(0, parseInt(p.start, 10) || 0),
+                        }));
+                    state.placements = [];
+                    candidates.forEach(pl => {
+                        if (canPlace(pl.filter, pl.start, false)) {
+                            state.placements.push(pl);
+                        }
+                    });
+                    if (data.extraShifts > 0) state.extraShifts = parseInt(data.extraShifts, 10);
+                    state.extraShifts = timelineLen();
+                    return true;
+                }
+                // old kanban format — ignore layout
+                return !!(data.pours || data.forms);
+            } catch (e) {
+                console.warn(e);
+                return false;
+            }
+        }
+
+        function onPoursChange(val) {
+            const next = Math.max(1, parseInt(val, 10) || DEFAULT_POURS);
+            if (next === state.pours) return;
+            if (state.placements.length &&
+                !confirm('Изменение заливок сбросит раскладку по сменам. Продолжить?')) {
+                render();
+                return;
+            }
+            state.pours = next;
+            resetLayout();
+            render();
+        }
+
+        function onFormsChange(filter, val) {
+            const next = Math.max(1, Math.min(PLACES, parseInt(val, 10) || 1));
+            if (next === getForms(filter)) return;
+            if (isPlaced(filter) &&
+                !confirm('Изменение оснастки для ' + filter + ' уберёт её из сетки. Продолжить?')) {
+                render();
+                return;
+            }
+            unplace(filter);
+            state.forms[filter] = next;
+            render();
+        }
+
+        function clearDragClasses() {
+            if (!rootEl) return;
+            rootEl.querySelectorAll('.wf-drop-hover, .wf-drop-deny, .wf-dragging').forEach(el => {
+                el.classList.remove('wf-drop-hover', 'wf-drop-deny', 'wf-dragging');
+            });
+        }
+
+        /** Build lane matrix for a band: null | {filter,rowspan} | {skip:true}
+         *  Высота блока = числу форм (оснастки). */
+        function buildBandLanes(bandStart) {
+            const covering = state.placements
+                .map(pl => {
+                    const len = shiftsNeeded(pl.filter);
+                    return {
+                        filter: pl.filter,
+                        start: pl.start,
+                        end: pl.start + len,
+                        forms: Math.max(1, getForms(pl.filter)),
+                    };
+                })
+                .filter(pl => pl.end > bandStart && pl.start < bandStart + COLS)
+                .sort((a, b) => b.forms - a.forms || a.start - b.start || b.end - a.end);
+
+            const lanes = [];
+
+            function ensureHeight(h) {
+                while (lanes.length < h) lanes.push(Array(COLS).fill(null));
+            }
+
+            function blockFree(laneStart, forms, pl) {
+                ensureHeight(laneStart + forms);
+                for (let r = 0; r < forms; r++) {
+                    for (let c = 0; c < COLS; c++) {
+                        const t = bandStart + c;
+                        if (t < pl.start || t >= pl.end) continue;
+                        if (lanes[laneStart + r][c] !== null) return false;
+                    }
+                }
+                return true;
+            }
+
+            covering.forEach(pl => {
+                const F = pl.forms;
+                let laneIdx = -1;
+                for (let li = 0; li < 500; li++) {
+                    if (blockFree(li, F, pl)) {
+                        laneIdx = li;
+                        break;
+                    }
+                }
+                if (laneIdx < 0) return;
+                ensureHeight(laneIdx + F);
+                for (let c = 0; c < COLS; c++) {
+                    const t = bandStart + c;
+                    if (t < pl.start || t >= pl.end) continue;
+                    lanes[laneIdx][c] = { filter: pl.filter, rowspan: F };
+                    for (let r = 1; r < F; r++) {
+                        lanes[laneIdx + r][c] = { skip: true };
+                    }
+                }
+            });
+
+            if (!lanes.length) lanes.push(Array(COLS).fill(null));
+            return lanes;
+        }
+
+        function bindDnD() {
+            rootEl.querySelectorAll('[draggable="true"]').forEach(el => {
+                el.addEventListener('dragstart', e => {
+                    if (e.target && e.target.closest && e.target.closest('input,button,label')) {
+                        e.preventDefault();
+                        return;
+                    }
+                    const type = el.dataset.dragType;
+                    dragPayload = {
+                        type,
+                        filter: el.dataset.filter,
+                        grabOffset: type === 'seg' ? (parseInt(el.dataset.offset, 10) || 0) : 0,
+                    };
+                    el.classList.add('wf-dragging');
+                    rootEl.querySelectorAll('.wf-seg').forEach(s => {
+                        if (s.dataset.filter === el.dataset.filter) s.classList.add('wf-dragging');
+                    });
+                    e.dataTransfer.effectAllowed = 'move';
+                    try { e.dataTransfer.setData('text/plain', el.dataset.filter || ''); } catch (_) {}
+                });
+                el.addEventListener('dragend', () => {
+                    dragPayload = null;
+                    clearDragClasses();
+                });
+            });
+
+            rootEl.querySelectorAll('[data-drop]').forEach(zone => {
+                zone.addEventListener('dragover', e => {
+                    e.preventDefault();
+                    if (!dragPayload) return;
+                    let ok = false;
+                    if (zone.dataset.drop === 'pool') {
+                        ok = dragPayload.type === 'seg';
+                    } else if (zone.dataset.drop === 'cell') {
+                        const t = parseInt(zone.dataset.shift, 10);
+                        const start = dragPayload.type === 'pool'
+                            ? t
+                            : t - dragPayload.grabOffset;
+                        ok = canPlace(dragPayload.filter, start, dragPayload.type === 'seg');
+                    }
+                    zone.classList.toggle('wf-drop-hover', ok);
+                    zone.classList.toggle('wf-drop-deny', !ok);
+                    e.dataTransfer.dropEffect = ok ? 'move' : 'none';
+                });
+                zone.addEventListener('dragleave', () => {
+                    zone.classList.remove('wf-drop-hover', 'wf-drop-deny');
+                });
+                zone.addEventListener('drop', e => {
+                    e.preventDefault();
+                    clearDragClasses();
+                    if (!dragPayload) return;
+                    let ok = false;
+                    if (zone.dataset.drop === 'pool' && dragPayload.type === 'seg') {
+                        unplace(dragPayload.filter);
+                        ok = true;
+                    } else if (zone.dataset.drop === 'cell') {
+                        const t = parseInt(zone.dataset.shift, 10);
+                        const start = dragPayload.type === 'pool'
+                            ? t
+                            : t - dragPayload.grabOffset;
+                        ok = placeAt(dragPayload.filter, start);
+                        if (!ok) {
+                            alert('Нельзя поставить сюда: не хватает мест (лимит ' + PLACES + ' на смену) или старт < 0.');
+                        }
+                    }
+                    dragPayload = null;
+                    if (ok) render();
+                });
+            });
+        }
+
+        function renderGridHtml() {
+            const len = timelineLen();
+            const bands = Math.ceil(len / COLS);
+            let html = '<div id="wfPrintRoot">';
+            html += `<div class="wf-print-title">Предварительный план заливки фильтров с каркасами</div>`;
+            html += `<div class="wf-print-meta">Заявка ${esc(state.order)} · заливок в смену: ${state.pours} · мест: ${PLACES}</div>`;
+            html += '<div class="wf-grid-wrap">';
+            for (let b = 0; b < bands; b++) {
+                const bandStart = b * COLS;
+                const lanes = buildBandLanes(bandStart);
+                html += '<div class="wf-band"><table class="wf-band-table"><thead><tr>';
+                for (let c = 0; c < COLS; c++) {
+                    html += `<th>С${bandStart + c + 1}</th>`;
+                }
+                html += '</tr></thead><tbody>';
+                lanes.forEach(lane => {
+                    html += '<tr>';
+                    for (let c = 0; c < COLS; c++) {
+                        const t = bandStart + c;
+                        const cell = lane[c];
+                        if (cell && cell.skip) continue;
+
+                        if (cell && cell.filter) {
+                            const filter = cell.filter;
+                            const rowspan = cell.rowspan || 1;
+                            const pl = getPlacement(filter);
+                            const offset = t - pl.start;
+                            const lenPl = shiftsNeeded(filter);
+                            const forms = getForms(filter);
+                            const cls = [
+                                'wf-seg',
+                                rowspan > 1 ? 'wf-seg-tall' : '',
+                                offset === 0 ? 'wf-seg-start' : '',
+                                offset === lenPl - 1 ? 'wf-seg-end' : '',
+                            ].filter(Boolean).join(' ');
+                            const minH = rowspan * ROW_H;
+                            html += `<td class="wf-cell" rowspan="${rowspan}" data-drop="cell" data-shift="${t}">`;
+                            html += `<div class="${cls}" draggable="true" data-drag-type="seg"
+                                data-filter="${esc(filter)}" data-offset="${offset}"
+                                style="background:${colorFor(filter)};min-height:${minH}px"
+                                title="${esc(filter)} · форм ${forms} · смены ${pl.start + 1}–${pl.start + lenPl}">${esc(filter)}</div>`;
+                            html += '</td>';
+                        } else {
+                            html += `<td class="wf-cell" data-drop="cell" data-shift="${t}"></td>`;
+                        }
+                    }
+                    html += '</tr>';
+                });
+                html += '</tbody></table></div>';
+            }
+            html += '</div></div>';
+            return html;
+        }
+
+        function render() {
+            if (!rootEl || !state) return;
+
+            const poolEl = rootEl.querySelector('.wf-pool');
+            const poolScroll = poolEl ? poolEl.scrollTop : 0;
+            const modalBody = document.getElementById('modalBody');
+            const modalScroll = modalBody ? modalBody.scrollTop : 0;
+
+            const total = state.positions.reduce((a, p) => a + p.count, 0);
+            const est = orderEstimateShifts();
+            const sumSh = sumPositionShifts();
+
+            let html = '<div class="section-title">Предварительный план заливки фильтров с каркасами</div>';
+
+            if (!state.positions.length) {
+                html += '<p class="wf-hint">В заявке нет позиций с каркасом (panel_filter_structure.wireframe).</p>';
+                rootEl.innerHTML = html;
+                return;
+            }
+
+            html += `<div class="wf-summary-grid">
+                <div class="info-card">
+                    <h4>С каркасами</h4>
+                    <div class="info-value">${total}</div>
+                    <div class="info-label">фильтров</div>
+                </div>
+                <div class="info-card">
+                    <h4>Позиций</h4>
+                    <div class="info-value">${state.positions.length}</div>
+                    <div class="info-label">с каркасом</div>
+                </div>
+                <div class="info-card">
+                    <h4>Смен (оценка)</h4>
+                    <div class="info-value">${est}</div>
+                    <div class="info-label">кол-во / (заливки × 17)</div>
+                </div>
+                <div class="info-card">
+                    <h4>Сумма смен позиций</h4>
+                    <div class="info-value">${sumSh}</div>
+                    <div class="info-label">по оснастке</div>
+                </div>
+            </div>`;
+
+            html += renderStatsHtml();
+
+            html += `<div class="wf-toolbar">
+                <label>Заливок в смену
+                    <input type="number" id="wfPours" min="1" value="${state.pours}">
+                </label>
+                <span class="wf-hint" style="margin:0">Мест: ${PLACES} · ряд: ${COLS} смен</span>
+                <button type="button" class="wf-btn" data-act="add-band">+7 смен</button>
+                <button type="button" class="wf-btn wf-btn-primary" data-act="auto">Авторазложить</button>
+                <button type="button" class="wf-btn" data-act="save">Сохранить</button>
+                <button type="button" class="wf-btn" data-act="load">Загрузить</button>
+                <button type="button" class="wf-btn" data-act="reset">Сбросить</button>
+                <button type="button" class="wf-btn" data-act="print">Печать</button>
+            </div>`;
+
+            html += '<div class="wf-layout">';
+
+            // Pool
+            html += `<div class="wf-pool" data-drop="pool">
+                <div class="wf-pool-title">Пул позиций</div>
+                <div class="wf-hint" style="margin:0 0 0.4rem">Перетащите на ячейку сетки. Двигайте цветной блок змейкой по сменам.</div>`;
+
+            state.positions.forEach(p => {
+                const forms = getForms(p.filter);
+                const need = shiftsNeeded(p.filter);
+                const placed = isPlaced(p.filter);
+                html += `<div class="wf-card${placed ? ' wf-done' : ''}"
+                    draggable="${placed ? 'false' : 'true'}"
+                    data-drag-type="pool"
+                    data-filter="${esc(p.filter)}"
+                    style="${placed ? '' : 'border-left:4px solid ' + colorFor(p.filter)}">
+                    <div class="wf-card-name">${esc(p.filter)}</div>
+                    <div class="wf-card-sub">${esc(p.wireframe || '')}</div>
+                    <div class="wf-card-row">
+                        <span>${p.count} шт · ${need} смен</span>
+                        <label title="Комплекты оснастки">форм
+                            <input type="number" min="1" max="${PLACES}" value="${forms}"
+                                data-forms-for="${esc(p.filter)}">
+                        </label>
+                    </div>
+                    <div class="wf-card-sub">${placed ? 'в сетке' : 'не размещена'} · норма ${forms * state.pours}/смену</div>
+                </div>`;
+            });
+            html += '</div>';
+
+            html += '<div>' + renderGridHtml() + '</div>';
+            html += '</div>';
+
+            html += '<p class="wf-hint">Сетка без дат: столбцы — смены (по 7 в ряд, дальше — следующий блок). Позиция занимает подряд ceil(qty/(форм×заливки)) смен. Перетаскивание двигает весь отрезок; сброс в пул — бросить на пул слева.</p>';
+
+            rootEl.innerHTML = html;
+
+            const poolAfter = rootEl.querySelector('.wf-pool');
+            if (poolAfter) poolAfter.scrollTop = poolScroll;
+            if (modalBody) modalBody.scrollTop = modalScroll;
+
+            const poursInput = rootEl.querySelector('#wfPours');
+            if (poursInput) {
+                poursInput.addEventListener('change', () => onPoursChange(poursInput.value));
+            }
+
+            rootEl.querySelectorAll('[data-forms-for]').forEach(inp => {
+                inp.addEventListener('click', e => e.stopPropagation());
+                inp.addEventListener('mousedown', e => e.stopPropagation());
+                inp.addEventListener('change', () => onFormsChange(inp.dataset.formsFor, inp.value));
+            });
+
+            rootEl.querySelectorAll('[data-act]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const act = btn.dataset.act;
+                    if (act === 'add-band') {
+                        state.extraShifts = timelineLen() + COLS;
+                        render();
+                    } else if (act === 'auto') {
+                        autoLayout();
+                        render();
+                    } else if (act === 'save') {
+                        alert(saveLocal() ? 'Сохранено в браузере.' : 'Не удалось сохранить.');
+                    } else if (act === 'load') {
+                        if (loadLocal()) {
+                            render();
+                            alert('Загружено из браузера.');
+                        } else {
+                            alert('Нет сохранённой раскладки для этой заявки.');
+                        }
+                    } else if (act === 'reset') {
+                        if (confirm('Сбросить раскладку и параметры?')) {
+                            state.pours = DEFAULT_POURS;
+                            state.forms = {};
+                            state.positions.forEach(p => { state.forms[p.filter] = 1; });
+                            resetLayout();
+                            try { localStorage.removeItem(lsKey(state.order)); } catch (_) {}
+                            render();
+                        }
+                    } else if (act === 'print') {
+                        saveLocal();
+                        document.body.classList.add('wf-print-grid');
+                        const cleanup = () => {
+                            document.body.classList.remove('wf-print-grid');
+                            window.removeEventListener('afterprint', cleanup);
+                        };
+                        window.addEventListener('afterprint', cleanup);
+                        setTimeout(() => window.print(), 50);
+                    }
+                });
+            });
+
+            // double-click seg to unplace
+            rootEl.querySelectorAll('.wf-seg').forEach(seg => {
+                seg.addEventListener('dblclick', () => {
+                    unplace(seg.dataset.filter);
+                    render();
+                });
+            });
+
+            bindDnD();
+        }
+
+        function mount(el, order, wireframes) {
+            rootEl = el;
+            const positions = (wireframes.positions || []).map(p => ({
+                filter: String(p.filter || ''),
+                count: parseInt(p.count, 10) || 0,
+                wireframe: String(p.wireframe || ''),
+            })).filter(p => p.filter && p.count > 0);
+
+            state = {
+                order: String(order || ''),
+                pours: DEFAULT_POURS,
+                forms: {},
+                positions,
+                placements: [],
+                extraShifts: COLS,
+            };
+            positions.forEach(p => { state.forms[p.filter] = 1; });
+
+            const loaded = loadLocal();
+            if (!loaded) resetLayout();
+            render();
+        }
+
+        return { mount };
+    })();
 </script>
 </body>
 </html>

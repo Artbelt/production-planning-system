@@ -12,11 +12,13 @@ if (!isset($order) || !is_array($auto_bales) || !is_array($manual_bales)) {
     exit("Некорректные данные");
 }
 
-// Удалим старые раскрои по заявке
-$pdo->prepare("DELETE FROM cut_plans WHERE order_number = ?")->execute([$order]);
+$pdo->beginTransaction();
+try {
+    // Удалим старые раскрои по заявке
+    $pdo->prepare("DELETE FROM cut_plans WHERE order_number = ?")->execute([$order]);
 
-// Получим текущий максимум bale_id
-$max_id = intval($pdo->query("SELECT MAX(bale_id) FROM cut_plans")->fetchColumn());
+    // Получим текущий максимум bale_id
+    $max_id = intval($pdo->query("SELECT MAX(bale_id) FROM cut_plans")->fetchColumn());
 
 // Сохраняем авто-бухты
 foreach ($auto_bales as $bale) {
@@ -88,4 +90,12 @@ foreach ($manual_bales as $bale) {
     }
 }
 
-echo "OK";
+    $pdo->commit();
+    echo "OK";
+} catch (Throwable $e) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    http_response_code(500);
+    exit('Ошибка сохранения: ' . $e->getMessage());
+}

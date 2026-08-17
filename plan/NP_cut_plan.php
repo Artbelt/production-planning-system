@@ -1,5 +1,7 @@
 <?php
-session_start(); // Запускаем сессию в начале файла
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 require_once('NP/cut.php');
 
@@ -8,6 +10,258 @@ require_once __DIR__ . '/../auth/includes/db.php';
 $pdo1 = getPdo('plan');
 $pdo2 = getPdo('plan');
 
+/** Текущий пользователь (для промпта и лога пересчёта) */
+$currentUserId = null;
+$currentUserName = 'Неизвестный пользователь';
+try {
+    require_once __DIR__ . '/../auth/includes/config.php';
+    require_once __DIR__ . '/../auth/includes/auth-functions.php';
+    if (function_exists('initAuthSystem')) {
+        initAuthSystem();
+    }
+    $auth = new AuthManager();
+    $authSession = $auth->checkSession();
+    if ($authSession) {
+        $currentUserId = isset($authSession['user_id']) ? (int)$authSession['user_id'] : null;
+        $name = trim((string)($authSession['full_name'] ?? ''));
+        if ($name !== '') {
+            $currentUserName = $name;
+        }
+    }
+} catch (Throwable $e) {
+    // страница раскроя остаётся доступной даже без auth
+}
+
+/** Сессия раскроя, привязанная к номеру заявки */
+function cutPlanSessionBucket(string $order): string
+{
+    return 'cut_plan_' . md5($order);
+}
+
+function cutPlanSessionGet(string $order, string $key, $default = null)
+{
+    $bucket = cutPlanSessionBucket($order);
+    return $_SESSION[$bucket][$key] ?? $default;
+}
+
+function cutPlanSessionSet(string $order, string $key, $value): void
+{
+    $bucket = cutPlanSessionBucket($order);
+    if (!isset($_SESSION[$bucket]) || !is_array($_SESSION[$bucket])) {
+        $_SESSION[$bucket] = [];
+    }
+    $_SESSION[$bucket][$key] = $value;
+}
+
+function cutPlanSessionUnset(string $order, string $key): void
+{
+    $bucket = cutPlanSessionBucket($order);
+    unset($_SESSION[$bucket][$key]);
+}
+
+function cutPlanSessionUnsetAll(string $order, array $keys): void
+{
+    foreach ($keys as $key) {
+        cutPlanSessionUnset($order, $key);
+    }
+}
+
+function cutPlanExistsInDb(PDO $pdo, string $order): bool
+{
+    $stmt = $pdo->prepare('SELECT COUNT(*) FROM cut_plans WHERE order_number = ?');
+    $stmt->execute([$order]);
+    return (int)$stmt->fetchColumn() > 0;
+}
+
+/**
+ * @return array{all_bales: array, bales_format199: array, manual_bales_loaded: array, rows: array}
+ */
+function loadCutPlanFromDb(PDO $pdo, string $order): array
+{
+    $stmt = $pdo->prepare("
+        SELECT bale_id, manual, filter, paper, width, height, length, format, waste
+        FROM cut_plans
+        WHERE order_number = ?
+        ORDER BY bale_id
+    ");
+    $stmt->execute([$order]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $all_bales = [];
+    $bales_format199 = [];
+    $manual_bales_loaded = [];
+    $byBale = [];
+
+    foreach ($rows as $r) {
+        $bid = (int)$r['bale_id'];
+        if (!isset($byBale[$bid])) {
+            $byBale[$bid] = ['meta' => $r, 'rolls' => []];
+        }
+        $byBale[$bid]['rolls'][] = [
+            'filter' => $r['filter'],
+            'paper' => $r['paper'],
+            'width' => (float)$r['width'],
+            'height' => (float)$r['height'],
+            'length' => (float)$r['length'],
+            'waste' => $r['waste'],
+        ];
+    }
+
+    foreach ($byBale as $bale) {
+        $rolls = $bale['rolls'];
+        $fmt = (string)($bale['meta']['format'] ?? '1200');
+        $manual = (int)($bale['meta']['manual'] ?? 0);
+
+        if ($manual === 1) {
+            $manual_bales_loaded[] = $rolls;
+        } elseif ($fmt === '199') {
+            $bales_format199[] = $rolls;
+        } else {
+            $all_bales[] = $rolls;
+        }
+    }
+
+    return [
+        'all_bales' => $all_bales,
+        'bales_format199' => $bales_format199,
+        'manual_bales_loaded' => $manual_bales_loaded,
+        'rows' => $rows,
+    ];
+}
+
+function saveAutoCutPlansToDb(PDO $pdo, string $order, array $all_bales, array $bales_format199): void
+{
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare('DELETE FROM cut_plans WHERE order_number = ? AND manual = 0')->execute([$order]);
+
+        $maxStmt = $pdo->prepare('SELECT COALESCE(MAX(bale_id), 0) FROM cut_plans WHERE order_number = ?');
+        $maxStmt->execute([$order]);
+        $bale_id_counter = max(1, (int)$maxStmt->fetchColumn() + 1);
+
+        $ins = $pdo->prepare("INSERT INTO cut_plans (order_number, manual, filter, paper, width, height, length, format, waste, bale_id)
+            VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?, ?)");
+
+        foreach ($all_bales as $bale) {
+            foreach ($bale as $roll) {
+                $ins->execute([
+                    $order,
+                    $roll['filter'],
+                    $roll['paper'],
+                    $roll['width'],
+                    $roll['height'],
+                    $roll['length'],
+                    '1200',
+                    $roll['waste'] ?? null,
+                    $bale_id_counter,
+                ]);
+            }
+            $bale_id_counter++;
+        }
+
+        foreach ($bales_format199 as $bale) {
+            foreach ($bale as $roll) {
+                $ins->execute([
+                    $order,
+                    $roll['filter'],
+                    $roll['paper'],
+                    $roll['width'],
+                    $roll['height'],
+                    $roll['length'],
+                    '199',
+                    $roll['waste'] ?? null,
+                    $bale_id_counter,
+                ]);
+            }
+            $bale_id_counter++;
+        }
+
+        $pdo->prepare('UPDATE orders SET cut_ready = 1 WHERE order_number = ?')->execute([$order]);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
+/**
+ * При пересчёте раскроя очищаем всё планирование по заявке
+ * (порезка / гофрирование / сборка) и сбрасываем статусы этапов.
+ */
+function clearPlansAfterCutRecalculate(PDO $pdo, string $order): void
+{
+    $pdo->beginTransaction();
+    try {
+        foreach ([
+            'DELETE FROM roll_plan WHERE order_number = ?',
+            'DELETE FROM corrugation_plan WHERE order_number = ?',
+            'DELETE FROM build_plan WHERE order_number = ?',
+        ] as $sql) {
+            try {
+                $pdo->prepare($sql)->execute([$order]);
+            } catch (Throwable $e) {
+                // таблица может отсутствовать
+            }
+        }
+
+        $cols = $pdo->query("SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                             WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='orders'")->fetchAll(PDO::FETCH_COLUMN);
+        $want = ['cut_confirmed', 'plan_ready', 'corr_ready', 'build_ready'];
+        $set = [];
+        foreach ($want as $c) {
+            if (in_array($c, $cols, true)) {
+                $set[] = "$c=0";
+            }
+        }
+        if ($set) {
+            $pdo->prepare('UPDATE orders SET ' . implode(',', $set) . ' WHERE order_number=?')->execute([$order]);
+        }
+
+        $pdo->commit();
+        error_log("clearPlansAfterCutRecalculate: cleared downstream plans for order $order");
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
+function ensureCutRecalculateLogTable(PDO $pdo): void
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS cut_recalculate_log (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            order_number VARCHAR(64) NOT NULL,
+            user_id INT NULL,
+            user_name VARCHAR(255) NOT NULL,
+            message TEXT NOT NULL,
+            ip_address VARCHAR(64) NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_cut_recalc_order (order_number),
+            KEY idx_cut_recalc_created (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
+function logCutRecalculate(
+    PDO $pdo,
+    string $order,
+    ?int $userId,
+    string $userName,
+    string $message
+): void {
+    ensureCutRecalculateLogTable($pdo);
+    $ip = $_SERVER['REMOTE_ADDR'] ?? null;
+    $stmt = $pdo->prepare("
+        INSERT INTO cut_recalculate_log (order_number, user_id, user_name, message, ip_address)
+        VALUES (?, ?, ?, ?, ?)
+    ");
+    $stmt->execute([$order, $userId, $userName, $message, $ip]);
+}
 
 // Получаем номер заявки из GET параметров (может быть 'order' или 'order_number')
 $order = $_GET['order'] ?? $_GET['order_number'] ?? '';
@@ -19,6 +273,28 @@ $debug_info = [];
 $debug_info[] = "=== НАЧАЛО ОТЛАДКИ ===";
 $debug_info[] = "GET параметры: " . json_encode($_GET);
 $debug_info[] = "Номер заявки (order): '$order'";
+
+$forceRecalculate = isset($_GET['recalculate']) && $_GET['recalculate'] === '1';
+if ($forceRecalculate && $order !== '') {
+    cutPlanSessionUnsetAll($order, ['format_199_assigned', 'format_199_stock', 'format_199_processed', 'manual_bales']);
+    $recalcLogMessage = $currentUserName
+        . ' подтвердил(а) пересчёт раскроя по заявке '
+        . $order
+        . ' — очищены планы порезки, гофрирования и сборки';
+    try {
+        logCutRecalculate($pdo1, $order, $currentUserId, $currentUserName, $recalcLogMessage);
+    } catch (Throwable $e) {
+        error_log('logCutRecalculate failed: ' . $e->getMessage());
+    }
+    try {
+        clearPlansAfterCutRecalculate($pdo1, $order);
+    } catch (Throwable $e) {
+        error_log('clearPlansAfterCutRecalculate failed: ' . $e->getMessage());
+    }
+}
+$cutExistsInDb = ($order !== '') ? cutPlanExistsInDb($pdo1, $order) : false;
+$viewExistingOnly = $cutExistsInDb && !$forceRecalculate;
+$debug_info[] = 'Режим: ' . ($viewExistingOnly ? 'просмотр сохранённого' : ($forceRecalculate ? 'принудительный пересчёт' : 'расчёт'));
 
 // Базовые материалы, для которых работает текущий автраскрой
 $base_materials_allowed = array_map(
@@ -113,27 +389,23 @@ if (empty($missing_filters)) {
 }
 
 // Обработка сброса форматов 199
-if (isset($_GET['reset_format_199'])) {
-    unset($_SESSION['format_199_assigned']);
-    unset($_SESSION['format_199_stock']);
-    unset($_SESSION['format_199_processed']); // сбрасываем признак обработанного модального окна
-    header("Location: ?order=" . urlencode($order));
+if (isset($_GET['reset_format_199']) && $order !== '') {
+    cutPlanSessionUnsetAll($order, ['format_199_assigned', 'format_199_stock', 'format_199_processed']);
+    header('Location: ?order=' . urlencode($order));
     exit;
 }
 
 // Повторно включить модальное окно формата 199 (после "Пропустить")
-if (isset($_GET['enable_format_199'])) {
-    unset($_SESSION['format_199_assigned']);
-    unset($_SESSION['format_199_stock']);
-    unset($_SESSION['format_199_processed']);
-    header("Location: ?order=" . urlencode($order));
+if (isset($_GET['enable_format_199']) && $order !== '') {
+    cutPlanSessionUnsetAll($order, ['format_199_assigned', 'format_199_stock', 'format_199_processed']);
+    header('Location: ?order=' . urlencode($order));
     exit;
 }
 
 // Обработка сброса ручных бухт
-if (isset($_GET['reset_manual'])) {
-    unset($_SESSION['manual_bales']);
-    header("Location: ?order=" . urlencode($order));
+if (isset($_GET['reset_manual']) && $order !== '') {
+    cutPlanSessionUnset($order, 'manual_bales');
+    header('Location: ?order=' . urlencode($order));
     exit;
 }
 
@@ -144,15 +416,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     if (isset($data['action']) && $data['action'] === 'save_manual_bales') {
         $manual_bales = $data['bales'] ?? [];
+        $ajaxOrder = trim((string)($data['order'] ?? $order ?? ''));
         
-        if (empty($manual_bales)) {
+        if ($ajaxOrder === '' || empty($manual_bales)) {
             header('Content-Type: application/json');
-            echo json_encode(['success' => false, 'error' => 'Нет бухт для сохранения']);
+            echo json_encode(['success' => false, 'error' => 'Нет данных для сохранения']);
             exit;
         }
         
         // Сохраняем в сессию
-        $_SESSION['manual_bales'] = $manual_bales;
+        cutPlanSessionSet($ajaxOrder, 'manual_bales', $manual_bales);
         
         header('Content-Type: application/json');
         echo json_encode(['success' => true, 'count' => count($manual_bales)]);
@@ -196,10 +469,9 @@ if (isset($_POST['format_199_submit'])) {
     }
     
     // Сохраняем назначенные фильтры в сессии
-    $_SESSION['format_199_assigned'] = $assigned_filters;
-    $_SESSION['format_199_stock'] = $format_199_stock;
-    // Отмечаем, что модальное окно уже обработано (даже если назначений нет)
-    $_SESSION['format_199_processed'] = true;
+    cutPlanSessionSet($order, 'format_199_assigned', $assigned_filters);
+    cutPlanSessionSet($order, 'format_199_stock', $format_199_stock);
+    cutPlanSessionSet($order, 'format_199_processed', true);
     
     error_log("Format 199 POST: Saved to session: " . json_encode($assigned_filters));
     error_log("Format 199 POST: Stock: $format_199_stock");
@@ -212,12 +484,11 @@ if (isset($_POST['format_199_submit'])) {
 }
 
 // Загружаем назначенные фильтры из сессии, если они есть
-$format_199_assigned = [];
-if (isset($_SESSION['format_199_assigned'])) {
-    $format_199_assigned = $_SESSION['format_199_assigned'];
-    error_log("Format 199: Loaded from session: " . json_encode($format_199_assigned));
+$format_199_assigned = ($order !== '') ? cutPlanSessionGet($order, 'format_199_assigned', []) : [];
+if ($format_199_assigned !== []) {
+    error_log('Format 199: Loaded from session: ' . json_encode($format_199_assigned));
 } else {
-    error_log("Format 199: No data in session");
+    error_log('Format 199: No data in session');
 }
 
 $rolls_1000 = [];
@@ -227,7 +498,7 @@ $separate_rolls_500 = [];
 $separate_bales = [];
 
 // Загружаем ручные бухты из сессии
-$manual_bales = $_SESSION['manual_bales'] ?? [];
+$manual_bales = ($order !== '') ? cutPlanSessionGet($order, 'manual_bales', []) : [];
 
 // Подсчитываем использованные рулоны вручную
 $manual_rolls_used = [];
@@ -390,6 +661,104 @@ function getCombinations($elements, $length) {
 
 <h2>Раскрой для заявки: <b><?= htmlspecialchars($order) ?></b></h2>
 
+<?php if ($viewExistingOnly): ?>
+    <!-- Модальное уведомление: сохранённый раскрой (нельзя пропустить) -->
+    <div id="savedCutModal"
+         style="display:flex; position:fixed; inset:0; z-index:10000; align-items:center; justify-content:center; background:rgba(0,0,0,0.55); padding:16px; box-sizing:border-box;">
+        <div role="dialog" aria-modal="true" aria-labelledby="savedCutModalTitle"
+             style="background:#fff; width:100%; max-width:520px; border-radius:12px; box-shadow:0 16px 48px rgba(0,0,0,0.28); overflow:hidden;">
+            <div style="padding:18px 22px; background:#e3f2fd; border-bottom:1px solid #90caf9;">
+                <h2 id="savedCutModalTitle" style="margin:0; font-size:17px; color:#0d47a1; text-align:center;">
+                    Сохранённый раскрой
+                </h2>
+            </div>
+            <div style="padding:22px 24px; text-align:center;">
+                <p style="margin:0 0 10px 0; color:#1565c0; font-size:15px; line-height:1.45;">
+                    <strong>Сохранённый раскрой загружен из базы.</strong>
+                </p>
+                <p style="margin:0 0 12px 0; color:#546e7a; font-size:13px; line-height:1.45;">
+                    Страница <strong>не пересчитывает</strong> его автоматически.<br>
+                    Чтобы создать новый раскрой, нажмите «Пересчитать раскрой».
+                </p>
+                <div style="margin:0 0 18px 0; padding:12px 14px; background:#fff3e0; border:1px solid #ffcc80; border-radius:8px; text-align:left;">
+                    <p style="margin:0; color:#e65100; font-size:13px; line-height:1.45;">
+                        <strong>Внимание!</strong> При пересчёте раскроя будет <strong>очищено всё планирование</strong> по этой заявке:
+                        план порезки, план гофрирования и план сборки. Статусы этих этапов будут сброшены.
+                    </p>
+                </div>
+                <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:center;">
+                    <button type="button"
+                            onclick="closeSavedCutModal()"
+                            style="padding:10px 18px; background:#1565c0; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600; font-size:13px;">
+                        Оставить сохранённый
+                    </button>
+                    <a href="NP_view_cut.php?order=<?= urlencode($order) ?>"
+                       target="_blank"
+                       style="padding:10px 18px; background:#fff; color:#1565c0; border:1px solid #90caf9; border-radius:6px; text-decoration:none; font-weight:600; font-size:13px; display:inline-flex; align-items:center;">
+                        Печать / просмотр
+                    </a>
+                    <button type="button"
+                            onclick="confirmRecalculateCut()"
+                            style="padding:10px 18px; background:#d84315; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600; font-size:13px;">
+                        Пересчитать раскрой
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Компактная панель после закрытия модалки -->
+    <div id="savedCutBar"
+         style="display:none; margin:15px auto; max-width:900px; padding:12px 18px; background:#e8f4fd; border:1px solid #90caf9; border-radius:8px; text-align:center;">
+        <p style="margin:0 0 10px 0; color:#1565c0; font-size:13px;">
+            <strong>Режим просмотра:</strong> сохранённый раскрой из базы (без автопересчёта).
+        </p>
+        <button type="button"
+                onclick="confirmRecalculateCut()"
+                style="padding:8px 16px; background:#d84315; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600; margin-right:8px;">
+            Пересчитать раскрой
+        </button>
+        <a href="NP_view_cut.php?order=<?= urlencode($order) ?>"
+           target="_blank"
+           style="padding:8px 16px; background:#fff; color:#1565c0; border:1px solid #90caf9; border-radius:6px; text-decoration:none; font-weight:600;">
+            Печать / просмотр
+        </a>
+    </div>
+    <script>
+    function closeSavedCutModal() {
+        var modal = document.getElementById('savedCutModal');
+        var bar = document.getElementById('savedCutBar');
+        if (modal) modal.style.display = 'none';
+        if (bar) bar.style.display = 'block';
+        document.body.style.overflow = '';
+    }
+    function confirmRecalculateCut() {
+        var userName = <?= json_encode($currentUserName, JSON_UNESCAPED_UNICODE) ?>;
+        if (!confirm(
+            userName + ', вы уверены, что хотите пересчитать раскрой, тем самым удалить всё планирование по текущей заявке?\n\n' +
+            'Будут очищены:\n' +
+            '• план порезки\n' +
+            '• план гофрирования\n' +
+            '• план сборки\n\n' +
+            'Автоматические бухты будут удалены и создан новый раскрой.\n' +
+            'Ручные бухты сохранятся.'
+        )) {
+            return;
+        }
+        window.location.href = 'NP_cut_plan.php?order_number=' + encodeURIComponent(<?= json_encode($order) ?>) + '&recalculate=1';
+    }
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            var modal = document.getElementById('savedCutModal');
+            if (modal && modal.style.display !== 'none') {
+                closeSavedCutModal();
+            }
+        }
+    });
+    </script>
+<?php endif; ?>
+
 <?php if (!empty($missing_filters)): ?>
     <div style="margin: 10px auto; padding: 15px; border: 1px solid #ddd; background-color: #f9f9f9; border-radius: 8px; max-width: 800px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
         <h3 style="margin: 0 0 15px 0; font-size: 16px; color: #333;">Проверка фильтров в базе данных:</h3>
@@ -520,7 +889,8 @@ function getCombinations($elements, $length) {
 // 1. Нет missing_filters
 // 2. Есть фильтры для формата 199
 // 3. Еще не назначены фильтры и окно не было обработано (пропущено)
-if (empty($missing_filters) && !empty($format_199_filters) && empty($format_199_assigned) && empty($_SESSION['format_199_processed'])):
+// 4. Не режим просмотра сохранённого раскроя
+if (!$viewExistingOnly && empty($missing_filters) && !empty($format_199_filters) && empty($format_199_assigned) && !cutPlanSessionGet($order, 'format_199_processed')):
 ?>
 <div id="format199Modal" style="display: block; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5);">
     <div style="background-color: #fff; margin: 5% auto; padding: 0; border: 1px solid #999; width: 95%; max-width: 1000px;">
@@ -715,7 +1085,7 @@ endif; // Конец модального окна формата 199
 
 <?php 
 // Кнопка включения формата 199, если модалка была пропущена
-if (empty($missing_filters) && !empty($format_199_filters) && empty($format_199_assigned) && !empty($_SESSION['format_199_processed'])): ?>
+if (!$viewExistingOnly && empty($missing_filters) && !empty($format_199_filters) && empty($format_199_assigned) && cutPlanSessionGet($order, 'format_199_processed')): ?>
     <div style="margin: 10px auto 0; text-align: center;">
         <a href="?order=<?= urlencode($order) ?>&enable_format_199=1"
            style="display: inline-block; padding: 8px 14px; background: #0066cc; color: #fff; border-radius: 6px; text-decoration: none; font-weight: 600;">
@@ -736,7 +1106,37 @@ if (!empty($missing_filters)):
 <?php 
 else:
     // Основной код расчета выполняем только если все фильтры есть в БД
+    if ($viewExistingOnly) {
+        $loaded = loadCutPlanFromDb($pdo1, $order);
+        $all_bales = $loaded['all_bales'];
+        $bales_format199 = $loaded['bales_format199'];
+        $separate_bales = $loaded['manual_bales_loaded'];
+        $rolls_1000 = [];
+        $rolls_500 = [];
+        $rolls_1000_format199 = [];
+        $rolls_500_format199 = [];
+        $left_1000 = [];
+        $left_500 = [];
+        $remaining_rolls = [];
+        $bales_1000 = [];
+        $bales_500 = [];
+        $bales = $all_bales;
+        $total_initial = 0;
+        $total_separate_initial = count($separate_bales);
+        $total_format199_initial = count($bales_format199);
+        $total_used = 0;
+        $total_used_separate = $total_separate_initial;
+        $total_used_all = count($all_bales) + $total_separate_initial;
+        $total_format199_used = $total_format199_initial;
+        $total_left = 0;
+        $check = true;
+        $check_all = true;
+        $check_format199 = true;
+        $debug_info[] = 'Загружено из БД полос: ' . count($loaded['rows']);
+    }
 ?>
+
+<?php if (!$viewExistingOnly): ?>
 
 <?php if (!empty($format_199_assigned)): ?>
     <div style="margin: 20px auto; padding: 15px; background-color: #f9f9f9; border: 1px solid #999; max-width: 800px;">
@@ -790,8 +1190,8 @@ else:
         </div>
         <div style="margin-top: 10px; padding: 8px; background: #fff3cd; border: 1px solid #ffeaa7; font-size: 11px; color: #856404;">
             <strong>Примечание:</strong> Эти позиции вычтены из общего расчета раскроя ниже.
-            <?php if (isset($_SESSION['format_199_stock']) && $_SESSION['format_199_stock'] > 0): ?>
-                Использовано форматов 199: <?= $_SESSION['format_199_stock'] ?> шт.
+            <?php if (cutPlanSessionGet($order, 'format_199_stock', 0) > 0): ?>
+                Использовано форматов 199: <?= (int)cutPlanSessionGet($order, 'format_199_stock', 0) ?> шт.
             <?php endif; ?>
             <a href="?order=<?= urlencode($order) ?>&reset_format_199=1" 
                style="margin-left: 10px; color: #d84315; text-decoration: underline; font-weight: bold;"
@@ -808,9 +1208,9 @@ else:
             style="padding: 12px 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: all 0.3s;">
         📦 Упаковать бухты вручную
     </button>
-    <?php if (isset($_SESSION['manual_bales']) && !empty($_SESSION['manual_bales'])): ?>
+    <?php if (!empty($manual_bales)): ?>
         <span style="margin-left: 10px; padding: 6px 12px; background: #4caf50; color: white; border-radius: 4px; font-size: 12px;">
-            ✓ Упаковано вручную: <?= count($_SESSION['manual_bales']) ?> бухт
+            ✓ Упаковано вручную: <?= count($manual_bales) ?> бухт
         </span>
         <a href="?order=<?= urlencode($order) ?>&reset_manual=1" 
            onclick="return confirm('Удалить все ручные бухты?')"
@@ -1100,65 +1500,16 @@ else:
         }
     }
 
-    // Удаляем старые данные перед сохранением новых
-    $pdo1->prepare("DELETE FROM cut_plans WHERE order_number = ? AND manual = 0")->execute([$order]);
-    error_log("Format 199: Deleted old cut_plans for order: $order");
-
-    // Сохраняем раскроенные рулоны в базу данных -
-    $bale_id_counter = 1;
-
-    // Сохраняем основные бухты (включая отдельные по материалу)
-    foreach ($all_bales as $bale) {
-        foreach ($bale as $roll) {
-            $stmt = $pdo1->prepare("INSERT INTO cut_plans (order_number, manual, filter, paper, width, height, length, format, waste, bale_id)
-            VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([
-                $order,
-                $roll['filter'],
-                $roll['paper'],
-                $roll['width'],
-                $roll['height'],
-                $roll['length'],
-                '1200', // У2: формат бухты 1200 мм (в У5 — 1000 мм)
-                $roll['waste'] ?? null,
-                $bale_id_counter
-            ]);
-        }
-        $bale_id_counter++;
+    // Сохраняем раскроенные рулоны в базу данных
+    try {
+        saveAutoCutPlansToDb($pdo1, $order, $all_bales, $bales_format199);
+        error_log("Saved cut_plans for order: $order");
+    } catch (Throwable $e) {
+        error_log('saveAutoCutPlansToDb failed: ' . $e->getMessage());
+        echo '<div style="margin:20px auto;max-width:700px;padding:15px;background:#ffebee;border:1px solid #ef9a9a;border-radius:8px;color:#c62828;">'
+            . '<strong>Ошибка сохранения раскроя:</strong> ' . htmlspecialchars($e->getMessage())
+            . '</div>';
     }
-
-    // Сохраняем бухты формата 199 отдельно
-    if (!empty($bales_format199)) {
-        error_log("Format 199: Saving " . count($bales_format199) . " bales to database, starting from bale_id: $bale_id_counter");
-        
-        foreach ($bales_format199 as $bale) {
-            foreach ($bale as $roll) {
-                error_log("Format 199: Saving roll - filter: " . $roll['filter'] . ", bale_id: $bale_id_counter");
-                
-                $stmt = $pdo1->prepare("INSERT INTO cut_plans (order_number, manual, filter, paper, width, height, length, format, waste, bale_id)
-                VALUES (?, 0, ?, ?, ?, ?, ?, ?, ?, ?)");
-                $stmt->execute([
-                    $order,
-                    $roll['filter'],
-                    $roll['paper'],
-                    $roll['width'],
-                    $roll['height'],
-                    $roll['length'],
-                    '199', // Формат 199
-                    $roll['waste'] ?? null,
-                    $bale_id_counter
-                ]);
-            }
-            $bale_id_counter++;
-        }
-        
-        error_log("Format 199: Finished saving, final bale_id: $bale_id_counter");
-    } else {
-        error_log("Format 199: No bales to save (bales_format199 is empty)");
-    }
-
-    // 🆕 Обновляем orders
-    $pdo1->prepare("UPDATE orders SET cut_ready = 1 WHERE order_number = ?")->execute([$order]);
 
     // Оставшиеся рулоны, которые не вошли в раскрой
     $remaining_rolls = array_merge($left_1000, $left_500);
@@ -1185,6 +1536,9 @@ else:
 ?>
 </table>
 
+<?php endif; // !$viewExistingOnly — конец блока расчёта ?>
+
+<?php if (!$viewExistingOnly): ?>
 <!-- Блок проверки количества полос -->
     <div style="margin: 30px auto; max-width: 700px; background: #f9f9f9; border: 2px solid #ddd; border-radius: 12px; padding: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
         <h3 style="text-align: center; margin: 0 0 20px 0; color: #333; font-size: 18px; border-bottom: 2px solid #667eea; padding-bottom: 10px;">
@@ -1242,6 +1596,10 @@ else:
         <?php endif; ?>
     </div>
 
+<?php endif; // конец блока проверки количества полос ?>
+
+<?php if (!$viewExistingOnly): ?>
+
 <h3>Рулоны 1000 м</h3>
 <table>
     <tr><th>Фильтр</th><th>Бумага</th><th>Ширина</th><th>Высота</th><th>Длина</th></tr>
@@ -1270,7 +1628,9 @@ else:
     <?php endforeach; ?>
 </table>
 
-<?php if (!empty($rolls_1000_format199) || !empty($rolls_500_format199)): ?>
+<?php endif; ?>
+
+<?php if (!$viewExistingOnly && (!empty($rolls_1000_format199) || !empty($rolls_500_format199))): ?>
 <h3 style="color: #0066cc; border-left: 4px solid #0066cc; padding-left: 10px;">📦 Рулоны формата 199 (1000 м)</h3>
 <table style="border: 2px solid #0066cc;">
     <tr style="background-color: #e6f3ff;"><th>Фильтр</th><th>Бумага</th><th>Ширина</th><th>Высота</th><th>Длина</th></tr>
@@ -1299,6 +1659,9 @@ else:
     <?php endforeach; ?>
 </table>
 
+<?php endif; ?>
+
+<?php if (!empty($bales_format199)): ?>
 <h3 style="color: #0066cc; border-left: 4px solid #0066cc; padding-left: 10px;">📦 Бухты формата 199 (1 рулон = 1 бухта)</h3>
 <table style="border: 2px solid #0066cc;">
     <tr style="background-color: #e6f3ff;">
@@ -1325,7 +1688,7 @@ else:
 <?php endif; ?>
 
 <?php if (!empty($separate_bales)): ?>
-<h3 style="color: #d84315; border-left: 4px solid #d84315; padding-left: 10px;">📦 Бухты по другим материалам (каждая позиция отдельно)</h3>
+<h3 style="color: #d84315; border-left: 4px solid #d84315; padding-left: 10px;"><?= $viewExistingOnly ? '📦 Ручные бухты' : '📦 Бухты по другим материалам (каждая позиция отдельно)' ?></h3>
 <table style="border: 2px solid #d84315;">
     <tr style="background-color: #ffece4;">
         <th>Бухта №</th>
@@ -1373,6 +1736,7 @@ else:
         <?php endforeach; ?>
     <?php endforeach; ?>
 </table>
+<?php if (!$viewExistingOnly): ?>
 <h3>Не вошедшие в раскрой рулоны</h3>
 <?php if (count($remaining_rolls) === 0): ?>
     <p style="text-align:center; color: red;">Нет рулонов, не вошедших в раскрой</p>
@@ -1396,7 +1760,9 @@ else:
         <?php endforeach; ?>
     </table>
 <?php endif; ?>
+<?php endif; ?>
 
+<?php if (!$viewExistingOnly): ?>
 <!-- МОДАЛЬНОЕ ОКНО -->
 
 <div style="text-align: center;">
@@ -1450,6 +1816,8 @@ else:
 </div>
 
 <input type="hidden" name="order_number" value="<?= htmlspecialchars($order) ?>">
+
+<?php endif; // !$viewExistingOnly — модальные окна ручной упаковки ?>
 
 <?php endif; // Конец условия проверки отсутствующих фильтров ?>
 

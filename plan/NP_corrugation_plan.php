@@ -6,6 +6,33 @@ $order = $_GET['order'] ?? '';
 $days = intval($_GET['days'] ?? 9);
 $start = $_GET['start'] ?? date('Y-m-d');
 
+/* ============================ API: загрузка плана гофрирования ============================ */
+if (($_GET['action'] ?? '') === 'load_corrugation_plan') {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        if ($order === '') {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'no order']);
+            exit;
+        }
+        $stmt = $pdo->prepare("SELECT plan_date, filter_label, count FROM corrugation_plan WHERE order_number = ? ORDER BY plan_date, filter_label");
+        $stmt->execute([$order]);
+        $plan = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $plan[] = [
+                'plan_date' => $row['plan_date'],
+                'filter_label' => $row['filter_label'],
+                'count' => (int)$row['count']
+            ];
+        }
+        echo json_encode(['ok' => true, 'plan' => $plan], JSON_UNESCAPED_UNICODE);
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
 $start_date = new DateTime($start);
 $dates = [];
 for ($i = 0; $i < $days; $i++) {
@@ -567,7 +594,7 @@ try {
 </form>
 
         <div style="display: flex; gap: 10px;">
-            <button type="button" onclick="loadExistingPlan()">Загрузить план</button>
+            <button type="button" onclick="reloadCorrugationPlan()">Загрузить план</button>
             <button type="button" onclick="savePlan(false)">Сохранить</button>
             <button type="button" onclick="preparePlan()">Завершить</button>
         </div>
@@ -777,8 +804,36 @@ try {
 
     document.getElementById('btnClearFilter').addEventListener('click', clearHeightFilter);
 
-    // Данные существующего плана
-    const existingPlanData = <?= json_encode($existing_plan) ?>;
+    // Данные существующего плана (снимок на момент открытия страницы — для автозагрузки)
+    const existingPlanData = <?= json_encode($existing_plan, JSON_UNESCAPED_UNICODE) ?>;
+
+    /** Подгрузить актуальный план из БД (кнопка «Загрузить план»). */
+    async function reloadCorrugationPlan() {
+        const order = <?= json_encode($order, JSON_UNESCAPED_UNICODE) ?>;
+        if (!order) {
+            alert('Не указан номер заявки');
+            return;
+        }
+        try {
+            const res = await fetch(
+                'NP_corrugation_plan.php?action=load_corrugation_plan&order=' + encodeURIComponent(order),
+                { credentials: 'same-origin', cache: 'no-store' }
+            );
+            const data = await res.json();
+            if (!data || !data.ok) {
+                throw new Error((data && data.error) ? data.error : ('HTTP ' + res.status));
+            }
+            const plan = Array.isArray(data.plan) ? data.plan : [];
+            if (plan.length === 0) {
+                alert('Нет сохранённого плана для загрузки');
+                return;
+            }
+            loadExistingPlan(true, plan);
+        } catch (e) {
+            alert('Не удалось загрузить план: ' + (e && e.message ? e.message : e));
+        }
+    }
+    window.reloadCorrugationPlan = reloadCorrugationPlan;
 
     function closeModal() {
         document.getElementById("modal").style.display = "none";
@@ -1366,152 +1421,84 @@ try {
         planningDaysList.appendChild(newPlanningDay);
     }
 
-    function loadExistingPlan(showAlert = true) {
-        if (existingPlanData.length === 0) {
+    function loadExistingPlan(showAlert = true, planDataOverride = null) {
+        const planRows = Array.isArray(planDataOverride) ? planDataOverride : existingPlanData;
+        if (!planRows || planRows.length === 0) {
             if (showAlert) {
                 alert('Нет сохраненного плана для загрузки');
             }
             return;
         }
-        
-        // Кэшируем селекторы для производительности
-        const dropTargets = document.querySelectorAll('.drop-target');
+
+        const planningList = document.getElementById('planning-days-list');
+        const dropTargets = planningList
+            ? planningList.querySelectorAll('.drop-target')
+            : document.querySelectorAll('.drop-target');
         const positionCells = Array.from(document.querySelectorAll('.position-cell'));
-        
-        // Создаем Map для быстрого поиска позиций по фильтру
-        const positionMap = new Map();
-        positionCells.forEach(cell => {
-            const filter = cell.dataset.filter || '';
-            if (!positionMap.has(filter)) {
-                positionMap.set(filter, []);
-            }
-            positionMap.get(filter).push(cell);
-        });
-        
-        // Очищаем текущий план
-        dropTargets.forEach(td => {
-            td.innerHTML = '';
-        });
-        
-        // Сбрасываем все использованные позиции
-        positionCells.forEach(cell => {
-            cell.classList.remove('used');
-        });
-        
-        // Загружаем существующий план
+
+        dropTargets.forEach(td => { td.innerHTML = ''; });
+        positionCells.forEach(cell => { cell.classList.remove('used'); });
+
         let loadedCount = 0;
-        existingPlanData.forEach(item => {
+        let skippedNoDate = 0;
+        let skippedNoMatch = 0;
 
+        planRows.forEach(item => {
             const targetTd = Array.from(dropTargets).find(td => td.getAttribute('data-date') === item.plan_date);
-            if (targetTd) {
-                // Находим соответствующую позицию в верхней таблице
-                const positionCell = positionCells.find(cell => {
-                    // Проверяем точное совпадение
-                    const cellFilter = cell.dataset.filter || '';
-                    const savedFilter = item.filter_label || '';
-                    
-                    // Сначала проверяем точное совпадение
-                    if (cellFilter === savedFilter) {
-                        return !cell.classList.contains('used');
-                    }
-                    
-                    // Затем проверяем частичное совпадение только если это не точное совпадение
-                    const cellBaseName = cellFilter.replace(/ \[.*?\].*/, '');
-                    const savedBaseName = savedFilter.replace(/ \[.*?\].*/, '');
-                    
-                    // Проверяем, что базовые имена совпадают точно (не частично)
-                    if (cellBaseName.trim().toLowerCase() === savedBaseName.trim().toLowerCase()) {
-                        return !cell.classList.contains('used');
-                    }
-                    
-                    return false;
-                });
-                
-
-                
-                // Отладка для AF1601s
-                if (item.filter_label && item.filter_label.includes('AF1601s')) {
-
-
-                    
-                    // Подсчитаем точное количество ячеек
-                    const allCells = document.querySelectorAll('.position-cell');
-                    const af1601Cells = Array.from(allCells).filter(cell => cell.dataset.filter === 'AF1601 [48] 199');
-                    const af1601sCells = Array.from(allCells).filter(cell => cell.dataset.filter === 'AF1601s [48] 199');
-                    
-
-
-
-
-                    
-                    // Подсчитаем used/unused
-                    const af1601Used = af1601Cells.filter(cell => cell.classList.contains('used')).length;
-                    const af1601Unused = af1601Cells.filter(cell => !cell.classList.contains('used')).length;
-                    const af1601sUsed = af1601sCells.filter(cell => cell.classList.contains('used')).length;
-                    const af1601sUnused = af1601sCells.filter(cell => !cell.classList.contains('used')).length;
-                    
-
-
-                    
-                    // Проверим логику сопоставления
-                    const testCell = Array.from(document.querySelectorAll('.position-cell')).find(cell => {
-                        const cellFilter = cell.dataset.filter || '';
-                        const savedFilter = item.filter_label || '';
-                        
-                        return (cellFilter === savedFilter || 
-                                cellFilter.includes(savedFilter) || 
-                                savedFilter.includes(cellFilter.replace(/ \[.*?\].*/, ''))) 
-                               && !cell.classList.contains('used');
-                    });
-                    
-
-                }
-                
-                if (positionCell) {
-                    // Проверяем корректность количества
-                    const count = parseInt(item.count) || 0;
-                    if (count <= 0 || !isFinite(count)) {
-
-                        return; // Пропускаем эту позицию
-                    }
-                    
-                    // Создаем элемент в нижней таблице
-                    const div = document.createElement('div');
-                    div.innerText = item.filter_label + " (" + count + " шт)";
-                    div.classList.add('assigned-item');
-                    div.setAttribute("data-qty", count);
-                    div.setAttribute("data-label", item.filter_label);
-                    div.setAttribute("data-id", positionCell.dataset.id);
-                    div.setAttribute("data-bale-id", positionCell.dataset.baleId);
-                    targetTd.appendChild(div);
-                    
-                    // Отмечаем позицию как использованную
-                    positionCell.classList.add('used');
-                    
-                    // Обновляем счетчик
-                    updateSummary(item.plan_date);
-                    attachRemoveHandlers();
-                    
-                    applyHeightFilter(); // Применяем фильтр после загрузки
-                    
-                    // Устанавливаем активный день
-                    activeDay = item.plan_date;
-                    loadedCount++;
-                } else {
-                    const availableBases = Array.from(document.querySelectorAll('.position-cell')).map(c => c.dataset.filter.replace(/ \[.*?\].*/, '').trim().toLowerCase());
-
-                }
-            } else {
-
+            if (!targetTd) {
+                skippedNoDate++;
+                return;
             }
-        });
-        
 
-        
+            const positionCell = positionCells.find(cell => {
+                const cellFilter = cell.dataset.filter || '';
+                const savedFilter = item.filter_label || '';
+                if (cellFilter === savedFilter) {
+                    return !cell.classList.contains('used');
+                }
+                const cellBaseName = cellFilter.replace(/ \[.*?\].*/, '');
+                const savedBaseName = savedFilter.replace(/ \[.*?\].*/, '');
+                if (cellBaseName.trim().toLowerCase() === savedBaseName.trim().toLowerCase()) {
+                    return !cell.classList.contains('used');
+                }
+                return false;
+            });
+
+            if (!positionCell) {
+                skippedNoMatch++;
+                return;
+            }
+
+            const count = parseInt(item.count, 10) || 0;
+            if (count <= 0 || !isFinite(count)) return;
+
+            const div = document.createElement('div');
+            div.innerText = item.filter_label + ' (' + count + ' шт)';
+            div.classList.add('assigned-item');
+            div.setAttribute('data-qty', count);
+            div.setAttribute('data-label', item.filter_label);
+            div.setAttribute('data-id', positionCell.dataset.id);
+            div.setAttribute('data-bale-id', positionCell.dataset.baleId);
+            targetTd.appendChild(div);
+
+            positionCell.classList.add('used');
+            updateSummary(item.plan_date);
+            attachRemoveHandlers();
+            applyHeightFilter();
+            activeDay = item.plan_date;
+            loadedCount++;
+        });
+
         updateActiveDayVisual();
-        
-        if (showAlert && existingPlanData.length > 0) {
-            alert('План загружен! Загружено ' + existingPlanData.length + ' позиций.');
+
+        if (showAlert) {
+            let msg = 'План загружен! Размещено ' + loadedCount + ' из ' + planRows.length + ' позиций.';
+            if (skippedNoDate > 0 || skippedNoMatch > 0) {
+                msg += '\nНе размещено: ' + (skippedNoDate + skippedNoMatch) +
+                    (skippedNoDate ? (' (нет колонки даты: ' + skippedNoDate + ')') : '') +
+                    (skippedNoMatch ? (' (нет свободной позиции сверху: ' + skippedNoMatch + ')') : '');
+            }
+            alert(msg);
         }
     }
 
@@ -1553,7 +1540,6 @@ try {
         .then(result => {
             if (result && result.success) {
                 alert(result.message || 'План сохранён.');
-                location.reload();
             } else {
                 alert('Ошибка: ' + (result && result.message ? result.message : 'неизвестная ошибка'));
             }

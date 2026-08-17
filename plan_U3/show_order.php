@@ -372,6 +372,7 @@ echo "<div class='table-wrap' id='order_table_container'><table id='order_table'
             <th> Изготовлено, шт</th>  
             <th> Остаток, шт</th>
             <th> Изготовленные крышки, шт</th>                                                       
+            <th> Изготовленные каркасы, шт</th>                                                       
             <th> Изготовленные гофропакеты, шт</th>                                                       
         </tr>
         </thead>
@@ -393,6 +394,14 @@ function renderTooltipCell($dateList, $totalQty) {
     return "<td><div class='tooltip'>" . (int)$totalQty . "<span class='tooltiptext'>" . htmlspecialchars(trim($tooltip)) . "</span></div></td>";
 }
 
+function renderWireframeTooltipCell($tooltipLines, $totalQty) {
+    if (empty($tooltipLines)) {
+        return "<td>" . (int)$totalQty . "</td>";
+    }
+    $tooltip = implode("\n", $tooltipLines);
+    return "<td><div class='tooltip'>" . (int)$totalQty . "<span class='tooltiptext'>" . htmlspecialchars(trim($tooltip)) . "</span></div></td>";
+}
+
 /** Загружаем из БД заявку */
 $result = show_order($order_number);
 
@@ -407,8 +416,8 @@ $filter_count_produced = 0;
 /** Переменная для подсчета количества изготовленных гофропакетов */
 $gofro_packages_produced = 0;
 
-/** Переменная для подсчета количества изготовленных крышек по заявке */
-$caps_produced = 0;
+/** Переменная для подсчета количества изготовленных каркасов (комплектов) по заявке */
+$wireframes_produced = 0;
 
 /** strings counter */
 $count =0;
@@ -460,11 +469,18 @@ while ($row = $result->fetch(PDO::FETCH_ASSOC)){
     // Изготовлено фильтров — с тултипом по датам
     echo renderTooltipCell($date_list_filters, $total_qty_filters);
     echo "<td>".$difference."</td>";
-    // Изготовленные крышки — с тултипом по датам
+    // Изготовленные крышки (приём на склад по заявке) — с тултипом по датам
     $caps_info = get_caps_fact_dates_by_filter($order_number, $row['filter']);
-    $caps_produced += $caps_info[1];
     if ($caps_info[1] > 0) {
         echo renderTooltipCell($caps_info[0], $caps_info[1]);
+    } else {
+        echo "<td>-</td>";
+    }
+    // Изготовленные каркасы — с тултипом по датам
+    $wf_info = get_wireframe_fact_by_filter($order_number, $row['filter']);
+    $wireframes_produced += $wf_info[1];
+    if ($wf_info[1] > 0) {
+        echo renderWireframeTooltipCell($wf_info[0], $wf_info[1]);
     } else {
         echo "<td>-</td>";
     }
@@ -479,7 +495,7 @@ while ($row = $result->fetch(PDO::FETCH_ASSOC)){
 
 /** Если по заявке не найдено ни одной позиции — выводим подсказку */
 if ($count === 0) {
-    echo "<tr><td colspan='14' style='padding:10px; color:#666;'>По заявке «".htmlspecialchars($order_number)."» в базе не найдено ни одной позиции. Проверьте номер заявки или создайте заявку.</td></tr>";
+    echo "<tr><td colspan='15' style='padding:10px; color:#666;'>По заявке «".htmlspecialchars($order_number)."» в базе не найдено ни одной позиции. Проверьте номер заявки или создайте заявку.</td></tr>";
 }
 
 /** @var расчет оставшегося количества продукции для производства $summ_difference */
@@ -497,7 +513,8 @@ echo "<tr style='hov'>"
     ."<td></td>"
     ."<td>".$filter_count_produced."</td>"
     ."<td>".$summ_difference.'*'."</td>"
-    ."<td>".$caps_produced."</td>"
+    ."<td>".get_caps_income_total_for_order($order_number)."</td>"
+    ."<td>".$wireframes_produced."</td>"
     ."<td>".$gofro_packages_produced."</td>"
     ."</tr>";
 
@@ -657,17 +674,17 @@ echo "<p style='margin-top:10px;'>* - без учета перевыполнен
         const rows = table.querySelectorAll('tr');
         const zeroPositions = [];
 
-        // В plan_U3 таблица: cells[10] = Изготовлено (выпуск фильтров), cells[13] = Изготовленные гофропакеты
+        // В plan_U3 таблица: cells[10] = Изготовлено (выпуск фильтров), cells[14] = Изготовленные гофропакеты
         for (let i = 1; i < rows.length - 1; i++) {
             const cells = rows[i].querySelectorAll('td');
-            if (cells.length >= 14) {
+            if (cells.length >= 15) {
                 const filter = cells[1].textContent.trim();
                 const plannedCount = parseInt(cells[2].textContent) || 0;
                 const producedCount = parseInt(cells[10].textContent) || 0;
                 const remark = cells[9].textContent.trim();
 
-                const gofraElement = cells[13].querySelector('.tooltip') || cells[13];
-                const gofraText = gofraElement.firstChild ? gofraElement.firstChild.textContent.trim() : cells[13].textContent.trim();
+                const gofraElement = cells[14].querySelector('.tooltip') || cells[14];
+                const gofraText = gofraElement.firstChild ? gofraElement.firstChild.textContent.trim() : cells[14].textContent.trim();
                 const gofraCount = parseInt(gofraText) || 0;
 
                 if (producedCount === 0 && plannedCount > 0) {
@@ -706,10 +723,10 @@ echo "<p style='margin-top:10px;'>* - без учета перевыполнен
         const rows = table.querySelectorAll('tr');
         const laggingPositions = [];
 
-        // В plan_U3 таблица: cells[10] = Изготовлено (выпуск фильтров), cells[13] = Изготовленные гофропакеты
+        // В plan_U3 таблица: cells[10] = Изготовлено (выпуск фильтров), cells[14] = Изготовленные гофропакеты
         for (let i = 1; i < rows.length - 1; i++) {
             const cells = rows[i].querySelectorAll('td');
-            if (cells.length >= 14) {
+            if (cells.length >= 15) {
                 const filter = cells[1].textContent.trim();
                 const plannedCount = parseInt(cells[2].textContent) || 0;
 
@@ -717,8 +734,8 @@ echo "<p style='margin-top:10px;'>* - без учета перевыполнен
                 const producedText = producedEl.firstChild ? producedEl.firstChild.textContent.trim() : cells[10].textContent.trim();
                 const producedCount = parseInt(producedText) || 0;
 
-                const gofraEl = cells[13].querySelector('.tooltip') || cells[13];
-                const gofraText = gofraEl.firstChild ? gofraEl.firstChild.textContent.trim() : cells[13].textContent.trim();
+                const gofraEl = cells[14].querySelector('.tooltip') || cells[14];
+                const gofraText = gofraEl.firstChild ? gofraEl.firstChild.textContent.trim() : cells[14].textContent.trim();
                 const gofraCount = parseInt(gofraText) || 0;
 
                 const remark = cells[9].textContent.trim();
@@ -780,10 +797,10 @@ echo "<p style='margin-top:10px;'>* - без учета перевыполнен
         const rows = table.querySelectorAll('tr');
         const problemPositions = [];
 
-        // В plan_U3 таблица: cells[10] = Изготовлено (выпуск фильтров), cells[13] = Изготовленные гофропакеты
+        // В plan_U3 таблица: cells[10] = Изготовлено (выпуск фильтров), cells[14] = Изготовленные гофропакеты
         for (let i = 1; i < rows.length - 1; i++) {
             const cells = rows[i].querySelectorAll('td');
-            if (cells.length >= 14) {
+            if (cells.length >= 15) {
                 const filter = cells[1].textContent.trim();
                 const plan = cells[2].textContent.trim();
                 const planCount = parseInt(plan) || 0;
@@ -792,8 +809,8 @@ echo "<p style='margin-top:10px;'>* - без учета перевыполнен
                 const producedText = producedEl.firstChild ? producedEl.firstChild.textContent.trim() : cells[10].textContent.trim();
                 const produced = parseInt(producedText) || 0;
 
-                const gofraEl = cells[13].querySelector('.tooltip') || cells[13];
-                const gofraText = gofraEl.firstChild ? gofraEl.firstChild.textContent.trim() : cells[13].textContent.trim();
+                const gofraEl = cells[14].querySelector('.tooltip') || cells[14];
+                const gofraText = gofraEl.firstChild ? gofraEl.firstChild.textContent.trim() : cells[14].textContent.trim();
                 const gofra = parseInt(gofraText) || 0;
 
                 const shortage = Math.max(0, planCount - gofra);

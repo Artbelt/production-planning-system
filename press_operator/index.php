@@ -184,7 +184,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $action = $_POST['action'];
         $shift_date = $_POST['shift_date'] ?? '';
         $brand_name = $_POST['brand_name'] ?? null;
-        $box_name = $_POST['box_name'] ?? '';
+        $box_name = trim((string)($_POST['box_name'] ?? ''));
         $quantity = (int)($_POST['quantity'] ?? 0);
         $operator_name = $_POST['operator_name'] ?? ($user['username'] ?? 'unknown');
         $notes = $_POST['notes'] ?? '';
@@ -346,289 +346,349 @@ function getShiftData($pressDbConfig, $date) {
 
 $shiftData = getShiftData($pressDbConfig, $currentDate);
 
+$dieCutTotal = array_sum(array_column($shiftData['die_cut'], 'quantity'));
+$gluedTotal = array_sum(array_column($shiftData['glued'], 'quantity'));
+
+$canManageBoxes = false;
+foreach ($userDepartments as $dept) {
+    if (in_array($dept['role_name'], ['admin', 'director'], true)) {
+        $canManageBoxes = true;
+        break;
+    }
+}
+
+function renderBrandSelect(array $brandCatalog, string $defaultBrand = 'AF'): void
+{
+    foreach ($brandCatalog as $brand) {
+        $name = (string)($brand['brand_name'] ?? '');
+        if ($name === '') {
+            continue;
+        }
+        $selected = $name === $defaultBrand ? ' selected' : '';
+        echo '<option value="' . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . '"' . $selected . '>'
+            . htmlspecialchars($name) . '</option>';
+    }
+}
+
+function renderBoxDatalist(array $boxCatalog, string $listId): void
+{
+    echo '<datalist id="' . htmlspecialchars($listId, ENT_QUOTES, 'UTF-8') . '">';
+    foreach ($boxCatalog as $box) {
+        $name = (string)($box['box_name'] ?? '');
+        if ($name === '') {
+            continue;
+        }
+        echo '<option value="' . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . '"></option>';
+    }
+    echo '</datalist>';
+}
+
+function renderShiftEntries(array $items, string $deleteHandler): void
+{
+    if (empty($items)) {
+        echo '<div class="entry-empty">За смену пока нет записей</div>';
+        return;
+    }
+
+    foreach ($items as $item) {
+        $brand = trim((string)($item['brand_name'] ?? ''));
+        $box = (string)($item['box_name'] ?? '');
+        $qty = (int)($item['quantity'] ?? 0);
+        $id = (int)($item['id'] ?? 0);
+        $meta = trim($brand !== '' ? $brand . ' · ' . $box : $box);
+
+        echo '<div class="entry-item">';
+        echo '<span class="entry-item__name" title="' . htmlspecialchars($meta, ENT_QUOTES, 'UTF-8') . '">'
+            . htmlspecialchars($meta) . '</span>';
+        echo '<span class="entry-item__qty">' . $qty . ' шт</span>';
+        echo '<button type="button" class="btn-delete" onclick="' . htmlspecialchars($deleteHandler, ENT_QUOTES, 'UTF-8')
+            . '(' . $id . ')" title="Удалить">×</button>';
+        echo '</div>';
+    }
+}
+
 ?>
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Модуль оператора тигельного пресса</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-            background: #f5f5f5;
+            background: #f3f4f6;
             min-height: 100vh;
-            padding: 40px 20px;
+            padding: 10px 8px 20px;
+            color: #1f2937;
         }
-        
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        
-        .header {
-            text-align: center;
-            margin-bottom: 40px;
-        }
-        
-        .header h1 {
-            font-size: 32px;
-            font-weight: 700;
-            color: #2c3e50;
-            margin-bottom: 8px;
-        }
-        
-        .header p {
-            font-size: 16px;
-            color: #7f8c8d;
-        }
-        
+
+        .container { max-width: 1100px; margin: 0 auto; }
+
+        .header { text-align: center; margin-bottom: 10px; }
+        .header h1 { font-size: 20px; font-weight: 700; color: #111827; margin-bottom: 2px; }
+        .header p { font-size: 12px; color: #6b7280; }
+
         .controls {
             display: flex;
-            gap: 16px;
-            justify-content: center;
-            margin-bottom: 40px;
-            flex-wrap: wrap;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 10px;
         }
-        
+
         .controls input[type="date"] {
-            padding: 10px 16px;
-            border: 1px solid #ddd;
+            width: 100%;
+            display: block;
+            padding: 10px 12px;
             border-radius: 8px;
-            background: white;
-            font-size: 14px;
-            color: #2c3e50;
+            font-size: 16px;
+            font-weight: 600;
+            border: 1px solid #d1d5db;
+            background: #fff;
+            color: #1f2937;
             cursor: pointer;
         }
-        
-        .controls input[type="date"]:focus {
-            outline: none;
-            border-color: #3498db;
+
+        .controls__actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
         }
-        
-        .grid {
+
+        .controls__actions a {
+            flex: 1 1 0;
+            min-width: 0;
+            white-space: nowrap;
+            text-align: center;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid #d1d5db;
+            background: #fff;
+            color: #1f2937;
+            text-decoration: none;
+        }
+
+        .controls input[type="date"]:focus { outline: none; border-color: #3b82f6; }
+        .controls .btn-stats { background: #3498db; border-color: #2980b9; color: #fff; }
+        .controls .btn-demand { background: #e67e22; border-color: #d35400; color: #fff; }
+
+        .main-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            margin-bottom: 24px;
+            gap: 10px;
         }
-        
-        .card {
-            background: white;
+
+        .work-card {
+            background: #fff;
+            border: 1px solid #e5e7eb;
             border-radius: 12px;
-            padding: 32px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        
-        .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
-        }
-        
-        .card-header {
+            padding: 10px;
+            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
             display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            margin-bottom: 24px;
+            flex-direction: column;
+            gap: 8px;
+            min-width: 0;
         }
-        
-        .card-info {
-            flex: 1;
-        }
-        
-        .card-icon {
-            width: 48px;
-            height: 48px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 28px;
-        }
-        
-        .card-icon.blue {
-            color: #3498db;
-        }
-        
-        .card-icon.orange {
-            color: #e67e22;
-        }
-        
-        .card-title {
-            font-size: 18px;
-            font-weight: 700;
-            color: #2c3e50;
-            margin-bottom: 4px;
-        }
-        
-        .card-subtitle {
-            font-size: 14px;
-            color: #7f8c8d;
-        }
-        
-        .card-value {
-            font-size: 48px;
-            font-weight: 700;
-            text-align: right;
-        }
-        
-        .card-value.blue {
-            color: #3498db;
-        }
-        
-        .card-value.orange {
-            color: #e67e22;
-        }
-        
-        .card-details {
-            margin-top: 16px;
-            padding-top: 16px;
-            border-top: 1px solid #ecf0f1;
-        }
-        
-        .detail-item {
+
+        .work-card--die { border-top: 3px solid #3498db; }
+        .work-card--glue { border-top: 3px solid #e67e22; }
+
+        .work-card__head {
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            padding: 8px 0;
-            font-size: 14px;
-            color: #555;
-        }
-        
-        .detail-item:not(:last-child) {
-            border-bottom: 1px dashed #e0e0e0;
-        }
-        
-        .detail-name {
-            font-weight: 500;
-        }
-        
-        .detail-quantity {
-            font-weight: 600;
-            color: #2c3e50;
-            display: flex;
             align-items: center;
             gap: 8px;
         }
-        
+
+        .work-card__title { font-size: 16px; font-weight: 700; color: #111827; line-height: 1.2; }
+        .work-card__subtitle { font-size: 11px; color: #9ca3af; margin-top: 1px; display: none; }
+
+        .work-card__total {
+            font-size: 26px;
+            font-weight: 800;
+            line-height: 1;
+            white-space: nowrap;
+        }
+
+        .work-card--die .work-card__total { color: #3498db; }
+        .work-card--glue .work-card__total { color: #e67e22; }
+
+        .entry-form {
+            display: flex;
+            flex-direction: row;
+            flex-wrap: nowrap;
+            gap: 6px;
+            align-items: stretch;
+        }
+
+        .field {
+            display: block;
+            min-width: 0;
+        }
+
+        .field-brand { flex: 0 0 96px; }
+        .field-box { flex: 0 0 56px; }
+        .field-qty { flex: 0 0 80px; }
+
+        .field-label {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        .field select,
+        .field input {
+            display: block;
+            width: 100%;
+            height: 42px;
+            padding: 0 8px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            background: #fff;
+            color: #111827;
+            font-size: 16px;
+            line-height: 42px;
+        }
+
+        .field input[type="number"] {
+            text-align: center;
+            padding: 0 4px;
+        }
+
+        .field select {
+            padding-right: 4px;
+        }
+
+        .field-brand select {
+            text-align: left;
+            text-align-last: left;
+            padding-left: 6px;
+        }
+
+        .field-box input {
+            text-align: center;
+            padding: 0 4px;
+        }
+
+        .field select:focus,
+        .field input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+        }
+
+        .btn-add {
+            flex: 0 0 42px;
+            width: 42px;
+            height: 42px;
+            padding: 0;
+            border: none;
+            border-radius: 8px;
+            background: #111827;
+            color: #fff;
+            font-size: 26px;
+            font-weight: 500;
+            line-height: 1;
+            cursor: pointer;
+        }
+
+        .work-card--die .btn-add { background: #2563eb; }
+        .work-card--glue .btn-add { background: #ea580c; }
+
+        .btn-add:active { transform: scale(0.97); }
+
+        .entry-list {
+            border-top: 1px solid #eef2f7;
+            padding-top: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            max-height: 240px;
+            overflow-y: auto;
+        }
+
+        .entry-empty {
+            padding: 6px 2px;
+            font-size: 12px;
+            color: #9ca3af;
+        }
+
+        .entry-item {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            gap: 6px;
+            align-items: center;
+            padding: 6px 8px;
+            border-radius: 8px;
+            background: #f9fafb;
+            font-size: 13px;
+        }
+
+        .entry-item__name {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-weight: 500;
+        }
+
+        .entry-item__qty {
+            font-weight: 700;
+            color: #111827;
+            white-space: nowrap;
+        }
+
         .btn-delete {
             background: transparent;
             border: none;
             cursor: pointer;
-            font-size: 20px;
-            font-weight: 300;
+            font-size: 22px;
             line-height: 1;
-            padding: 2px 6px;
-            border-radius: 4px;
-            transition: background 0.2s, transform 0.1s, color 0.2s;
-            opacity: 0.6;
-            color: #7f8c8d;
-            width: 20px;
-            height: 20px;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            color: #9ca3af;
             display: inline-flex;
             align-items: center;
             justify-content: center;
         }
-        
-        .btn-delete:hover {
-            background: rgba(231, 76, 60, 0.15);
-            opacity: 1;
-            color: #e74c3c;
-            transform: scale(1.15);
-        }
-        
+
+        .btn-delete:hover,
         .btn-delete:active {
-            transform: scale(0.9);
+            background: rgba(239, 68, 68, 0.12);
+            color: #dc2626;
         }
-        
-        .form-group {
-            margin-bottom: 20px;
+
+        @media (max-width: 900px) {
+            .main-grid { grid-template-columns: 1fr; }
         }
-        
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            margin-bottom: 20px;
-        }
-        
-        .form-group label {
-            display: block;
-            font-size: 14px;
-            font-weight: 600;
-            color: #2c3e50;
-            margin-bottom: 8px;
-        }
-        
-        .form-group input,
-        .form-group select {
-            width: 100%;
-            padding: 12px 16px;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            font-size: 14px;
-            background: white;
-            color: #2c3e50;
-        }
-        
-        .form-group input:focus,
-        .form-group select:focus {
-            outline: none;
-            border-color: #3498db;
-            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
-        }
-        
-        .btn-submit {
-            width: 100%;
-            padding: 14px 24px;
-            background: #2c3e50;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s, transform 0.1s;
-        }
-        
-        .btn-submit:hover {
-            background: #34495e;
-        }
-        
-        .btn-submit:active {
-            transform: scale(0.98);
-        }
-        
-        .grid.summary {
-            /* Сводные карточки всегда в 2 колонки */
-        }
-        
-        @media (max-width: 768px) {
-            .grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .grid.summary {
-                grid-template-columns: 1fr 1fr; /* Сводки остаются в одну строку */
-            }
-            
-            body {
-                padding: 20px 12px;
-            }
-            
-            .card {
-                padding: 24px;
-            }
-            
-            .header h1 {
-                font-size: 24px;
-            }
+
+        @media (min-width: 768px) {
+            body { padding: 16px 12px 24px; }
+            .header { margin-bottom: 14px; }
+            .header h1 { font-size: 24px; }
+            .header p { font-size: 14px; }
+            .controls { margin-bottom: 14px; }
+            .controls__actions { max-width: 640px; margin: 0 auto; width: 100%; }
+            .work-card { padding: 14px; gap: 10px; }
+            .work-card__total { font-size: 32px; }
+            .work-card__subtitle { display: block; }
+            .field-brand { flex-basis: 112px; }
+            .field-box { flex-basis: 64px; }
+            .field-qty { flex-basis: 92px; }
+            .btn-add { flex-basis: 46px; width: 46px; height: 46px; }
+            .field select,
+            .field input { height: 46px; line-height: 46px; }
         }
     </style>
 </head>
@@ -636,217 +696,92 @@ $shiftData = getShiftData($pressDbConfig, $currentDate);
     <div class="container">
         <div class="header">
             <h1>Модуль оператора</h1>
-            <p>Тигельный пресс - Учёт производства за смену</p>
+            <p>Тигельный пресс — учёт за смену</p>
         </div>
-        
+
         <div class="controls">
             <input type="date" id="shift-date" value="<?= htmlspecialchars($currentDate) ?>" onchange="updatePage()">
-            
-            <a href="statistics.php" style="padding: 10px 16px; background: #3498db; color: white; text-decoration: none; border-radius: 8px; border: 1px solid #2980b9; font-weight: 600; font-size: 14px;">
-                📊 Статистика
-            </a>
-            
-            <?php 
-            // Проверяем, является ли пользователь admin или director
-            $canManageBoxes = false;
-            foreach ($userDepartments as $dept) {
-                if (in_array($dept['role_name'], ['admin', 'director'])) {
-                    $canManageBoxes = true;
-                    break;
-                }
-            }
-            if ($canManageBoxes): 
-            ?>
-                <a href="manage_boxes.php" style="padding: 10px 16px; background: white; color: #2c3e50; text-decoration: none; border-radius: 8px; border: 1px solid #ddd; font-weight: 600; font-size: 14px;">
-                    ⚙️ Управление справочниками
-                </a>
-            <?php endif; ?>
-        </div>
-        
-        <!-- Верхний ряд: сводные карточки -->
-        <div class="grid summary">
-            <!-- Сводка: Высеченные заготовки -->
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-info">
-                        <div class="card-title">Всего высечено</div>
-                        <div class="card-subtitle">Заготовок за смену</div>
-                    </div>
-                    <div class="card-icon blue">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                        </svg>
-                    </div>
-                </div>
-                <div class="card-value blue"><?= array_sum(array_column($shiftData['die_cut'], 'quantity')) ?></div>
-                
-                <?php if (!empty($shiftData['die_cut'])): ?>
-                    <div class="card-details">
-                        <?php foreach ($shiftData['die_cut'] as $item): ?>
-                            <div class="detail-item">
-                                <span class="detail-name">
-                                    <?= htmlspecialchars($item['box_name']) ?> <?= htmlspecialchars($item['brand_name'] ?? '') ?>
-                                </span>
-                                <span class="detail-quantity">
-                                    <?= $item['quantity'] ?> шт
-                                    <button class="btn-delete" onclick="deleteDieCut(<?= $item['id'] ?>)" title="Удалить позицию">
-                                        ×
-                                    </button>
-                                </span>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
-            </div>
-            
-            <!-- Сводка: Склеенные коробки -->
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-info">
-                        <div class="card-title">Всего склеено</div>
-                        <div class="card-subtitle">Коробок за смену</div>
-                    </div>
-                    <div class="card-icon orange">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                            <polyline points="7.5 4.21 12 6.81 16.5 4.21"/>
-                            <polyline points="7.5 19.79 7.5 14.6 3 12"/>
-                            <polyline points="21 12 16.5 14.6 16.5 19.79"/>
-                            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-                            <line x1="12" y1="22.08" x2="12" y2="12"/>
-                        </svg>
-                    </div>
-                </div>
-                <div class="card-value orange"><?= array_sum(array_column($shiftData['glued'], 'quantity')) ?></div>
-                
-                <?php if (!empty($shiftData['glued'])): ?>
-                    <div class="card-details">
-                        <?php foreach ($shiftData['glued'] as $item): ?>
-                            <div class="detail-item">
-                                <span class="detail-name">
-                                    <?= htmlspecialchars($item['box_name']) ?> <?= htmlspecialchars($item['brand_name'] ?? '') ?>
-                                </span>
-                                <span class="detail-quantity">
-                                    <?= $item['quantity'] ?> шт
-                                    <button class="btn-delete" onclick="deleteGlued(<?= $item['id'] ?>)" title="Удалить позицию">
-                                        ×
-                                    </button>
-                                </span>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
+            <div class="controls__actions">
+                <a href="statistics.php" class="btn-stats">Статистика</a>
+                <a href="box_demand.php" class="btn-demand">Потребность</a>
+                <?php if ($canManageBoxes): ?>
+                    <a href="manage_boxes.php">Справочники</a>
                 <?php endif; ?>
             </div>
         </div>
-        
-        <!-- Нижний ряд: формы ввода -->
-        <div class="grid">
-            <!-- Форма: Высеченные заготовки -->
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-info">
-                        <div class="card-title">Высеченные заготовки</div>
-                        <div class="card-subtitle">Внесите количество высеченных заготовок</div>
+
+        <div class="main-grid">
+            <section class="work-card work-card--die">
+                <div class="work-card__head">
+                    <div>
+                        <div class="work-card__title">Высечка</div>
+                        <div class="work-card__subtitle">Заготовки за смену</div>
                     </div>
-                    <div class="card-icon blue">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                        </svg>
-                    </div>
+                    <div class="work-card__total"><?= (int)$dieCutTotal ?></div>
                 </div>
-                
-                <form id="dieCutForm" onsubmit="return submitDieCut(event)">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Бренд</label>
-                            <select name="brand_name" required>
-                                <?php foreach ($brandCatalog as $brand): ?>
-                                    <option value="<?= htmlspecialchars($brand['brand_name']) ?>" <?= $brand['brand_name'] === 'AF' ? 'selected' : '' ?>>
-                                        <?= htmlspecialchars($brand['brand_name']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>Номер коробки</label>
-                            <select name="box_name" required>
-                                <option value="">— Выберите коробку —</option>
-                                <?php foreach ($boxCatalog as $box): ?>
-                                    <option value="<?= htmlspecialchars($box['box_name']) ?>">
-                                        <?= htmlspecialchars($box['box_name']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>Количество заготовок</label>
-                        <input type="number" name="quantity" required min="1" placeholder="Введите количество">
-                    </div>
-                    
+
+                <form id="dieCutForm" class="entry-form" onsubmit="return submitDieCut(event)">
+                    <label class="field field-brand">
+                        <span class="field-label">Бренд</span>
+                        <select name="brand_name" required aria-label="Бренд">
+                            <?php renderBrandSelect($brandCatalog); ?>
+                        </select>
+                    </label>
+                    <label class="field field-box">
+                        <span class="field-label">Коробка</span>
+                        <input type="text" name="box_name" list="box-list-die" required
+                               aria-label="Номер коробки" placeholder="№" autocomplete="off" autocapitalize="off" spellcheck="false">
+                    </label>
+                    <label class="field field-qty">
+                        <span class="field-label">Количество</span>
+                        <input type="number" name="quantity" required min="1" inputmode="numeric"
+                               aria-label="Количество" placeholder="шт">
+                    </label>
+                    <button type="submit" class="btn-add" aria-label="Добавить заготовки">+</button>
                     <input type="hidden" name="operator_name" value="<?= htmlspecialchars($user['username'] ?? '') ?>">
-                    
-                    <button type="submit" class="btn-submit">Добавить заготовки</button>
                 </form>
-            </div>
-            
-            <!-- Форма: Склеенные коробки -->
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-info">
-                        <div class="card-title">Склеенные коробки</div>
-                        <div class="card-subtitle">Внесите количество склеенных коробок</div>
-                    </div>
-                    <div class="card-icon orange">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                            <polyline points="7.5 4.21 12 6.81 16.5 4.21"/>
-                            <polyline points="7.5 19.79 7.5 14.6 3 12"/>
-                            <polyline points="21 12 16.5 14.6 16.5 19.79"/>
-                            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-                            <line x1="12" y1="22.08" x2="12" y2="12"/>
-                        </svg>
-                    </div>
+                <?php renderBoxDatalist($boxCatalog, 'box-list-die'); ?>
+
+                <div class="entry-list">
+                    <?php renderShiftEntries($shiftData['die_cut'], 'deleteDieCut'); ?>
                 </div>
-                
-                <form id="gluedForm" onsubmit="return submitGlued(event)">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Бренд</label>
-                            <select name="brand_name" required>
-                                <?php foreach ($brandCatalog as $brand): ?>
-                                    <option value="<?= htmlspecialchars($brand['brand_name']) ?>" <?= $brand['brand_name'] === 'AF' ? 'selected' : '' ?>>
-                                        <?= htmlspecialchars($brand['brand_name']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>Номер коробки</label>
-                            <select name="box_name" required>
-                                <option value="">— Выберите коробку —</option>
-                                <?php foreach ($boxCatalog as $box): ?>
-                                    <option value="<?= htmlspecialchars($box['box_name']) ?>">
-                                        <?= htmlspecialchars($box['box_name']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
+            </section>
+
+            <section class="work-card work-card--glue">
+                <div class="work-card__head">
+                    <div>
+                        <div class="work-card__title">Поклейка</div>
+                        <div class="work-card__subtitle">Коробки за смену</div>
                     </div>
-                    
-                    <div class="form-group">
-                        <label>Количество коробок</label>
-                        <input type="number" name="quantity" required min="1" placeholder="Введите количество">
-                    </div>
-                    
+                    <div class="work-card__total"><?= (int)$gluedTotal ?></div>
+                </div>
+
+                <form id="gluedForm" class="entry-form" onsubmit="return submitGlued(event)">
+                    <label class="field field-brand">
+                        <span class="field-label">Бренд</span>
+                        <select name="brand_name" required aria-label="Бренд">
+                            <?php renderBrandSelect($brandCatalog); ?>
+                        </select>
+                    </label>
+                    <label class="field field-box">
+                        <span class="field-label">Коробка</span>
+                        <input type="text" name="box_name" list="box-list-glue" required
+                               aria-label="Номер коробки" placeholder="№" autocomplete="off" autocapitalize="off" spellcheck="false">
+                    </label>
+                    <label class="field field-qty">
+                        <span class="field-label">Количество</span>
+                        <input type="number" name="quantity" required min="1" inputmode="numeric"
+                               aria-label="Количество" placeholder="шт">
+                    </label>
+                    <button type="submit" class="btn-add" aria-label="Добавить коробки">+</button>
                     <input type="hidden" name="operator_name" value="<?= htmlspecialchars($user['username'] ?? '') ?>">
-                    
-                    <button type="submit" class="btn-submit">Добавить коробки</button>
                 </form>
-            </div>
+                <?php renderBoxDatalist($boxCatalog, 'box-list-glue'); ?>
+
+                <div class="entry-list">
+                    <?php renderShiftEntries($shiftData['glued'], 'deleteGlued'); ?>
+                </div>
+            </section>
         </div>
     </div>
     
@@ -873,7 +808,7 @@ $shiftData = getShiftData($pressDbConfig, $currentDate);
                 const data = await response.json();
                 
                 if (data.success) {
-                    // Обновляем только значение без перезагрузки
+                    form.reset();
                     window.location.reload();
                 } else {
                     alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
@@ -903,7 +838,7 @@ $shiftData = getShiftData($pressDbConfig, $currentDate);
                 const data = await response.json();
                 
                 if (data.success) {
-                    // Обновляем только значение без перезагрузки
+                    form.reset();
                     window.location.reload();
                 } else {
                     alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));

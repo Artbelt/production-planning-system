@@ -273,6 +273,41 @@ try {
         'white' => ['meters' => 0, 'bales' => 0, 'bales_equiv' => 0],
     ];
 
+    // Фильтры с каркасами (подсказка для планирования оснастки / смен)
+    $wireframe_positions = [];
+    $wireframe_filters_count = 0;
+    try {
+        $stmt = $pdo->prepare("
+            SELECT
+                TRIM(o.filter) AS filter,
+                SUM(o.count) AS count,
+                TRIM(pfs.wireframe) AS wireframe
+            FROM orders o
+            INNER JOIN panel_filter_structure pfs
+                ON TRIM(o.filter) = TRIM(pfs.filter)
+            WHERE TRIM(o.order_number) = TRIM(?)
+                AND (o.hide IS NULL OR o.hide != 1)
+                AND pfs.wireframe IS NOT NULL
+                AND TRIM(pfs.wireframe) <> ''
+            GROUP BY TRIM(o.filter), TRIM(pfs.wireframe)
+            ORDER BY SUM(o.count) DESC, TRIM(o.filter)
+        ");
+        $stmt->execute([$order]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $row) {
+            $cnt = (int)($row['count'] ?? 0);
+            $wireframe_filters_count += $cnt;
+            $wireframe_positions[] = [
+                'filter' => (string)($row['filter'] ?? ''),
+                'count' => $cnt,
+                'wireframe' => (string)($row['wireframe'] ?? ''),
+            ];
+        }
+    } catch (Throwable $e) {
+        $wireframe_positions = [];
+        $wireframe_filters_count = 0;
+    }
+
     echo json_encode([
         'ok' => true,
         'total_filters' => $totalFilters,
@@ -293,6 +328,11 @@ try {
         ],
         'complex_positions' => $complex_positions,
         'top_positions' => $top_positions,
+        'wireframes' => [
+            'filters_count' => $wireframe_filters_count,
+            'positions_count' => count($wireframe_positions),
+            'positions' => $wireframe_positions,
+        ],
     ]);
 } catch (Throwable $e) {
     http_response_code(500);

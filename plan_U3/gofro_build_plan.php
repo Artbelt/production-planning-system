@@ -15,6 +15,25 @@ if (session_status() === PHP_SESSION_NONE) {
 $auth = new AuthManager();
 $session = $auth->checkSession();
 if (!$session) {
+    $isJsonPost = $_SERVER['REQUEST_METHOD'] === 'POST'
+        || (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && $_SERVER['HTTP_X_REQUESTED_WITH'] !== '')
+        || (isset($_SERVER['HTTP_ACCEPT']) && stripos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false)
+        || (isset($_SERVER['CONTENT_TYPE']) && stripos($_SERVER['CONTENT_TYPE'], 'application/json') !== false)
+        || (isset($_SERVER['HTTP_CONTENT_TYPE']) && stripos($_SERVER['HTTP_CONTENT_TYPE'], 'application/json') !== false)
+        || (isset($_GET['api']) && $_GET['api'] !== '');
+    if ($isJsonPost) {
+        header('Content-Type: application/json; charset=utf-8');
+        http_response_code(401);
+        echo json_encode(
+            [
+                'ok' => false,
+                'error' => 'Сессия истекла. Войдите снова, чтобы сохранить изменения.',
+                'login_url' => '../auth/login.php',
+            ],
+            JSON_UNESCAPED_UNICODE
+        );
+        exit;
+    }
     header('Location: ../auth/login.php');
     exit;
 }
@@ -2063,6 +2082,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
     const FOLD_HEIGHT_NONE_KEY = '__none__';
     const MAX_PCT_STORAGE_KEY = `gofroBuildPlanMaxListPct:${window.location.pathname}`;
     const HIDDEN_ORDERS_STORAGE_KEY = `gofroBuildPlanHiddenOrders:${window.location.pathname}`;
+    const PENDING_MOVES_STORAGE_KEY = `gofroBuildPlanPendingMoves:${window.location.pathname}`;
     const FROZEN_COL_COUNT = 8;
     const DEBT_COMPACT_VISIBLE = 3;
     const initialGofroDebtShiftMap = <?= json_encode($gofroDebtShiftMap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?> || {};
@@ -3332,6 +3352,139 @@ $pageTitle = 'Планирование сборки гофропакетов';
         return false;
     }
 
+    function serializePendingMove(move) {
+        return {
+            label: move.label || '',
+            payload: move.payload,
+            beforeQty: move.beforeQty,
+            fromBeforeQty: move.fromBeforeQty,
+            toBeforeQty: move.toBeforeQty,
+            debtChange: move.debtChange ? {
+                rowKey: move.debtChange.rowKey,
+                shift: move.debtChange.shift,
+                movedQty: move.debtChange.movedQty,
+            } : undefined,
+        };
+    }
+
+    function persistPendingMovesBackup() {
+        try {
+            if (pendingMoves.length === 0) {
+                localStorage.removeItem(PENDING_MOVES_STORAGE_KEY);
+                return;
+            }
+            localStorage.setItem(PENDING_MOVES_STORAGE_KEY, JSON.stringify({
+                savedAt: Date.now(),
+                pageUrl: window.location.pathname + window.location.search,
+                moves: pendingMoves.map(serializePendingMove),
+            }));
+        } catch (_) { /* ignore */ }
+    }
+
+    function clearPendingMovesBackup() {
+        try {
+            localStorage.removeItem(PENDING_MOVES_STORAGE_KEY);
+        } catch (_) { /* ignore */ }
+    }
+
+    function restorePendingMoveFromSnapshot(stored) {
+        if (!stored || !stored.payload) {
+            return false;
+        }
+        const move = {
+            label: stored.label || '',
+            payload: stored.payload,
+            beforeQty: stored.beforeQty,
+            fromBeforeQty: stored.fromBeforeQty,
+            toBeforeQty: stored.toBeforeQty,
+        };
+        if (stored.debtChange) {
+            move.debtChange = stored.debtChange;
+        }
+        pendingMoves.push(move);
+        applyMoveLocally(move);
+        if (move.payload.mode === 'set_qty' || move.payload.mode === 'clear_cell') {
+            const state = rowStateMap.get(move.payload.source_row_key);
+            const beforeQty = move.beforeQty || 0;
+            const nextQty = Math.max(0, parseInt(move.payload.qty, 10) || 0);
+            const delta = nextQty - beforeQty;
+            if (state && delta !== 0) {
+                adjustDebtForPlanDelta(state, delta, move.payload.plan_date);
+            }
+        }
+        return true;
+    }
+
+    function restorePendingMovesFromBackup() {
+        if (pendingMoves.length > 0) {
+            return;
+        }
+        let backup = null;
+        try {
+            const raw = localStorage.getItem(PENDING_MOVES_STORAGE_KEY);
+            if (!raw) {
+                return;
+            }
+            backup = JSON.parse(raw);
+        } catch (_) {
+            return;
+        }
+        if (!backup || !Array.isArray(backup.moves) || backup.moves.length === 0) {
+            return;
+        }
+        const currentUrl = window.location.pathname + window.location.search;
+        const savedUrl = String(backup.pageUrl || '');
+        if (savedUrl !== '' && savedUrl !== currentUrl) {
+            return;
+        }
+        const count = backup.moves.length;
+        if (!window.confirm(`Найдены несохранённые изменения (${count} операций). Восстановить в очередь?`)) {
+            return;
+        }
+        let restored = 0;
+        let failed = 0;
+        backup.moves.forEach((stored) => {
+            if (restorePendingMoveFromSnapshot(stored)) {
+                restored += 1;
+            } else {
+                failed += 1;
+            }
+        });
+        if (restored > 0) {
+            if (moveQueuePanel) {
+                moveQueuePanel.hidden = false;
+            }
+            if (toggleQueuePanelBtn) {
+                toggleQueuePanelBtn.setAttribute('aria-pressed', 'true');
+            }
+            alert(
+                `Восстановлено изменений: ${restored}`
+                + (failed > 0 ? `. Не удалось восстановить: ${failed}` : '')
+                + '. Нажмите «Применить», чтобы записать в базу.'
+            );
+        } else if (failed > 0) {
+            alert('Не удалось восстановить сохранённую очередь изменений.');
+            clearPendingMovesBackup();
+        }
+    }
+
+    function promptRelogin(message, loginUrl) {
+        const text = message || 'Сессия истекла. Войдите снова, чтобы сохранить изменения.';
+        const url = loginUrl || '../auth/login.php';
+        persistPendingMovesBackup();
+        const count = pendingMoves.length;
+        const queueHint = count > 0
+            ? `\n\nВ очереди ${count} изменений — они останутся на этой странице.`
+            : '';
+        if (window.confirm(
+            text
+            + queueHint
+            + '\n\nОткрыть вход в новой вкладке? Эту страницу не закрываем.'
+        )) {
+            window.open(url, '_blank', 'noopener');
+        }
+    }
+
     function queuePlanMove(state, fromDate, toDate, qty) {
         const movedQty = Math.max(0, parseInt(qty, 10) || 0);
         if (movedQty <= 0 || !state) {
@@ -3357,6 +3510,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
         pendingMoves.push(move);
         applyMoveLocally(move);
         refreshPendingUi();
+        persistPendingMovesBackup();
     }
 
     function queueDebtMove(state, fromDate, toDate, qty) {
@@ -3388,6 +3542,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
         pendingMoves.push(move);
         applyMoveLocally(move);
         refreshPendingUi();
+        persistPendingMovesBackup();
     }
 
     function setApplyStatus(text, isError) {
@@ -3745,6 +3900,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
             adjustDebtForPlanDelta(state, delta, date);
         }
         refreshPendingUi();
+        persistPendingMovesBackup();
     }
 
     function refreshPendingUi() {
@@ -3787,21 +3943,53 @@ $pageTitle = 'Планирование сборки гофропакетов';
         try {
             const res = await fetch(window.location.pathname + window.location.search, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'fetch',
+                },
                 body: JSON.stringify({
                     action: 'apply_moves',
                     moves: pendingMoves.map((m) => m.payload),
                 }),
             });
-            const data = await res.json();
+            const contentType = res.headers.get('content-type') || '';
+            const looksLikeLoginPage = res.status === 401
+                || res.redirected
+                || /login\.php/i.test(res.url || '')
+                || contentType.indexOf('text/html') !== -1;
+            let data = null;
+            if (contentType.indexOf('application/json') !== -1) {
+                try {
+                    data = await res.json();
+                } catch (_) {
+                    data = null;
+                }
+            }
+            if (looksLikeLoginPage || (data && data.ok === false && res.status === 401)) {
+                promptRelogin(
+                    (data && data.error) ? data.error : 'Сессия истекла. Войдите снова, чтобы сохранить изменения.',
+                    (data && data.login_url) ? data.login_url : '../auth/login.php'
+                );
+                setApplyStatus('Сессия истекла — войдите и повторите «Применить».', true);
+                return;
+            }
             if (!res.ok || !data || !data.ok) {
                 throw new Error((data && data.error) ? data.error : 'Ошибка сохранения');
             }
             pendingMoves.length = 0;
+            clearPendingMovesBackup();
             refreshPendingUi();
             setApplyStatus(`Сохранено: ${data.applied || 0} операций`, false);
         } catch (err) {
-            setApplyStatus(String(err.message || err), true);
+            const msg = String(err.message || err);
+            if (/Unexpected token|JSON|Failed to fetch|NetworkError/i.test(msg)) {
+                promptRelogin('Не удалось сохранить: возможно, сессия истекла.');
+                setApplyStatus('Сессия истекла — войдите и повторите «Применить».', true);
+            } else {
+                setApplyStatus(msg, true);
+            }
         } finally {
             isApplyingPendingMoves = false;
             refreshPendingUi();
@@ -4178,6 +4366,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
             if (last) {
                 revertMoveLocally(last);
                 refreshPendingUi();
+                persistPendingMovesBackup();
             }
         });
     }
@@ -4187,6 +4376,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 revertMoveLocally(pendingMoves.pop());
             }
             refreshPendingUi();
+            persistPendingMovesBackup();
         });
     }
     if (toggleQueuePanelBtn && moveQueuePanel) {
@@ -4388,6 +4578,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
         renderDebtCellByKey(rowKey);
     });
     updateCoverage();
+    restorePendingMovesFromBackup();
     refreshPendingUi();
 })();
 

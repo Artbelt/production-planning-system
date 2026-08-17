@@ -1062,25 +1062,253 @@ function get_parts_fact_dates($part_name, $order_number) {
     return [$dateList, $total];
 }
 
-/** Возвращает количество изготовленных (списанных по производству) крышек по заявке и фильтру из cap_movements */
+/** Уникальные названия крышек (верх/низ) для фильтра из справочника */
+function get_filter_cap_names($filter_name) {
+    $pdo = _planPdo();
+    $filterNorm = mb_strtoupper(trim((string) $filter_name), 'UTF-8');
+    if ($filterNorm === '') {
+        return [];
+    }
+
+    $st = $pdo->prepare("
+        SELECT TRIM(COALESCE(up_cap, '')) AS up_cap, TRIM(COALESCE(down_cap, '')) AS down_cap
+        FROM round_filter_structure
+        WHERE UPPER(TRIM(`filter`)) = ?
+        LIMIT 1
+    ");
+    $st->execute([$filterNorm]);
+    $rfs = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$rfs) {
+        return [];
+    }
+
+    $names = [];
+    foreach (['up_cap', 'down_cap'] as $key) {
+        $name = trim((string) ($rfs[$key] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $names[mb_strtoupper($name, 'UTF-8')] = $name;
+    }
+
+    return array_values($names);
+}
+
+/** Возвращает количество изготовленных (принятых на склад) крышек по заявке и фильтру */
 function manufactured_caps_count_by_order_filter($order_number, $filter_name) {
     $tmp = get_caps_fact_dates_by_filter($order_number, $filter_name);
     return $tmp[1];
 }
 
-/** Возвращает [массив дат/количеств для тултипа, итого] по крышкам из cap_movements (PRODUCTION_OUT) */
+/** Возвращает [массив дат/количеств для тултипа, итого] по крышкам из cap_movements (INCOME) */
 function get_caps_fact_dates_by_filter($order_number, $filter_name) {
+    $capNames = get_filter_cap_names($filter_name);
+    if (empty($capNames)) {
+        return [[], 0];
+    }
+
     $pdo = _planPdo();
-    $st = $pdo->prepare("SELECT date, SUM(quantity) AS qty FROM cap_movements WHERE order_number = ? AND filter_name = ? AND operation_type = 'PRODUCTION_OUT' GROUP BY date ORDER BY date");
-    $st->execute([$order_number, $filter_name]);
+    $capConditions = [];
+    $params = [$order_number];
+    foreach ($capNames as $capName) {
+        $capConditions[] = 'UPPER(TRIM(cap_name)) = ?';
+        $params[] = mb_strtoupper(trim($capName), 'UTF-8');
+    }
+
+    $st = $pdo->prepare("
+        SELECT date, SUM(quantity) AS qty
+        FROM cap_movements
+        WHERE order_number = ?
+          AND operation_type = 'INCOME'
+          AND (" . implode(' OR ', $capConditions) . ")
+        GROUP BY date
+        ORDER BY date
+    ");
+    $st->execute($params);
+
     $dateList = [];
     $total = 0;
     while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
         $dateList[] = $row['date'];
-        $dateList[] = (int)$row['qty'];
-        $total += (int)$row['qty'];
+        $dateList[] = (int) $row['qty'];
+        $total += (int) $row['qty'];
     }
+
     return [$dateList, $total];
+}
+
+/** Итого принятых крышек по заявке (без двойного учёта одной крышки) */
+function get_caps_income_total_for_order($order_number) {
+    $pdo = _planPdo();
+    $st = $pdo->prepare("
+        SELECT COALESCE(SUM(cm.quantity), 0) AS total
+        FROM cap_movements cm
+        WHERE cm.order_number = ?
+          AND cm.operation_type = 'INCOME'
+          AND UPPER(TRIM(cm.cap_name)) IN (
+              SELECT cap_key FROM (
+                  SELECT UPPER(TRIM(rfs.up_cap)) AS cap_key
+                  FROM orders o
+                  JOIN round_filter_structure rfs ON UPPER(TRIM(rfs.`filter`)) = UPPER(TRIM(o.`filter`))
+                  WHERE o.order_number = ?
+                    AND TRIM(COALESCE(rfs.up_cap, '')) <> ''
+                  UNION
+                  SELECT UPPER(TRIM(rfs.down_cap))
+                  FROM orders o
+                  JOIN round_filter_structure rfs ON UPPER(TRIM(rfs.`filter`)) = UPPER(TRIM(o.`filter`))
+                  WHERE o.order_number = ?
+                    AND TRIM(COALESCE(rfs.down_cap, '')) <> ''
+              ) caps
+          )
+    ");
+    $st->execute([$order_number, $order_number, $order_number]);
+    return (int) $st->fetchColumn();
+}
+
+/** Коды наружного/внутреннего каркаса по фильтру (из справочника гофропакета) */
+function get_filter_wireframe_codes($filter_name) {
+    $pdo = _planPdo();
+    $filterNorm = mb_strtoupper(trim((string) $filter_name), 'UTF-8');
+    $result = ['ext' => '', 'int' => ''];
+    if ($filterNorm === '') {
+        return $result;
+    }
+
+    $st = $pdo->prepare("
+        SELECT
+            TRIM(COALESCE(rfs.analog, '')) AS analog,
+            TRIM(COALESCE(rfs.filter_package, '')) AS filter_package
+        FROM round_filter_structure rfs
+        WHERE UPPER(TRIM(rfs.`filter`)) = ?
+        LIMIT 1
+    ");
+    $st->execute([$filterNorm]);
+    $rfs = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$rfs) {
+        return $result;
+    }
+
+    $packageName = '';
+    $analog = trim((string) ($rfs['analog'] ?? ''));
+    if ($analog === '') {
+        $packageName = trim((string) ($rfs['filter_package'] ?? ''));
+    } else {
+        $stNative = $pdo->prepare("
+            SELECT TRIM(COALESCE(rfs_native.filter_package, '')) AS filter_package
+            FROM round_filter_structure rfs_native
+            WHERE UPPER(TRIM(rfs_native.`filter`)) = UPPER(TRIM(?))
+              AND (rfs_native.analog IS NULL OR TRIM(COALESCE(rfs_native.analog, '')) = '')
+            LIMIT 1
+        ");
+        $stNative->execute([$analog]);
+        $native = $stNative->fetch(PDO::FETCH_ASSOC);
+        if ($native) {
+            $packageName = trim((string) ($native['filter_package'] ?? ''));
+        }
+    }
+
+    if ($packageName === '') {
+        return $result;
+    }
+
+    $stPkg = $pdo->prepare("
+        SELECT
+            TRIM(COALESCE(p_p_ext_wireframe, '')) AS ext_wf,
+            TRIM(COALESCE(p_p_int_wireframe, '')) AS int_wf
+        FROM paper_package_round
+        WHERE UPPER(TRIM(p_p_name)) = UPPER(TRIM(?))
+        LIMIT 1
+    ");
+    $stPkg->execute([$packageName]);
+    $pkg = $stPkg->fetch(PDO::FETCH_ASSOC);
+    if (!$pkg) {
+        return $result;
+    }
+
+    $result['ext'] = trim((string) ($pkg['ext_wf'] ?? ''));
+    $result['int'] = trim((string) ($pkg['int_wf'] ?? ''));
+    return $result;
+}
+
+/**
+ * Возвращает [строки тултипа, итого комплектов] по каркасам из manufactured_wireframes.
+ * Комплект = min(наружный, внутренний), если оба заданы в справочнике.
+ */
+function get_wireframe_fact_by_filter($order_number, $filter_name) {
+    $codes = get_filter_wireframe_codes($filter_name);
+    $extCode = $codes['ext'];
+    $intCode = $codes['int'];
+    if ($extCode === '' && $intCode === '') {
+        return [[], 0];
+    }
+
+    $pdo = _planPdo();
+    $extByDate = [];
+    $intByDate = [];
+    $extTotal = 0;
+    $intTotal = 0;
+
+    try {
+        if ($extCode !== '') {
+            $st = $pdo->prepare("
+                SELECT date_of_production, SUM(COALESCE(count_of_parts, 0)) AS qty
+                FROM manufactured_wireframes
+                WHERE order_number = ?
+                  AND UPPER(TRIM(wireframe_name)) = ?
+                  AND part_type = 'ext'
+                GROUP BY date_of_production
+                ORDER BY date_of_production
+            ");
+            $st->execute([$order_number, mb_strtoupper($extCode, 'UTF-8')]);
+            while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
+                $extByDate[$row['date_of_production']] = (int) $row['qty'];
+                $extTotal += (int) $row['qty'];
+            }
+        }
+        if ($intCode !== '') {
+            $st = $pdo->prepare("
+                SELECT date_of_production, SUM(COALESCE(count_of_parts, 0)) AS qty
+                FROM manufactured_wireframes
+                WHERE order_number = ?
+                  AND UPPER(TRIM(wireframe_name)) = ?
+                  AND part_type = 'int'
+                GROUP BY date_of_production
+                ORDER BY date_of_production
+            ");
+            $st->execute([$order_number, mb_strtoupper($intCode, 'UTF-8')]);
+            while ($row = $st->fetch(PDO::FETCH_ASSOC)) {
+                $intByDate[$row['date_of_production']] = (int) $row['qty'];
+                $intTotal += (int) $row['qty'];
+            }
+        }
+    } catch (Throwable $e) {
+        return [[], 0];
+    }
+
+    if ($extCode !== '' && $intCode !== '') {
+        $total = min($extTotal, $intTotal);
+    } elseif ($extCode !== '') {
+        $total = $extTotal;
+    } else {
+        $total = $intTotal;
+    }
+
+    $allDates = array_unique(array_merge(array_keys($extByDate), array_keys($intByDate)));
+    sort($allDates);
+    $tooltipLines = [];
+    foreach ($allDates as $date) {
+        $extQty = $extByDate[$date] ?? 0;
+        $intQty = $intByDate[$date] ?? 0;
+        if ($extCode !== '' && $intCode !== '') {
+            $tooltipLines[] = $date . ' — нар: ' . $extQty . ', вн: ' . $intQty . ' шт';
+        } elseif ($extCode !== '') {
+            $tooltipLines[] = $date . ' — ' . $extQty . ' шт';
+        } else {
+            $tooltipLines[] = $date . ' — ' . $intQty . ' шт';
+        }
+    }
+
+    return [$tooltipLines, $total];
 }
 
 /** Функция выполняет запрос к БД и возвращает количество комплектующих определенного изделия на складе */
