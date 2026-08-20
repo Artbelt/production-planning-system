@@ -127,8 +127,18 @@ if (isset($_GET['action']) && in_array($_GET['action'], ['save','load','busy','m
                        NULLIF(COALESCE(sfs.build_complexity,0),0) AS rate_per_shift,
                        pps.p_p_height AS paper_height
                 FROM build_plan bp
-                LEFT JOIN salon_filter_structure sfs ON TRIM(sfs.filter) = TRIM(bp.filter)
-                LEFT JOIN paper_package_salon pps ON pps.p_p_name = sfs.paper_package
+                LEFT JOIN (
+                    SELECT TRIM(filter) AS filter,
+                           MAX(build_complexity) AS build_complexity,
+                           MAX(paper_package) AS paper_package
+                    FROM salon_filter_structure
+                    GROUP BY TRIM(filter)
+                ) sfs ON sfs.filter = TRIM(bp.filter)
+                LEFT JOIN (
+                    SELECT p_p_name, MAX(p_p_height) AS p_p_height
+                    FROM paper_package_salon
+                    GROUP BY p_p_name
+                ) pps ON pps.p_p_name = sfs.paper_package
                 WHERE bp.order_number <> ?
                   AND bp.plan_date IN ($ph)
             ");
@@ -183,8 +193,20 @@ if (isset($_GET['action']) && in_array($_GET['action'], ['save','load','busy','m
                     sfs.paper_package,
                     pps.p_p_height as raw_height,
                     cp.height as cut_height
-                FROM salon_filter_structure sfs
-                LEFT JOIN paper_package_salon pps ON pps.p_p_name = sfs.paper_package
+                FROM (
+                    SELECT
+                        TRIM(filter) AS filter,
+                        MAX(build_complexity) AS build_complexity,
+                        MAX(paper_package) AS paper_package
+                    FROM salon_filter_structure
+                    WHERE TRIM(filter) IN ($ph)
+                    GROUP BY TRIM(filter)
+                ) sfs
+                LEFT JOIN (
+                    SELECT p_p_name, MAX(p_p_height) AS p_p_height
+                    FROM paper_package_salon
+                    GROUP BY p_p_name
+                ) pps ON pps.p_p_name = sfs.paper_package
                 LEFT JOIN (
                     SELECT TRIM(filter) as filter, height 
                     FROM cut_plans 
@@ -192,7 +214,6 @@ if (isset($_GET['action']) && in_array($_GET['action'], ['save','load','busy','m
                     GROUP BY TRIM(filter)
                     HAVING COUNT(*) > 0
                 ) cp ON TRIM(cp.filter) = TRIM(sfs.filter)
-                WHERE TRIM(sfs.filter) IN ($ph)
             ");
             $st->execute($filters);
             $items = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -258,6 +279,7 @@ try{
     $pdo = getPdo('plan_u5');
 
     // источник: corrugation_plan + норма смены + высота бумаги + факт выполнения
+    // sfs/pps через GROUP BY — иначе дубликаты в справочниках утраивают SUM(cp.count)
     $src = $pdo->prepare("
         SELECT
           cp.plan_date     AS source_date,
@@ -267,8 +289,19 @@ try{
           NULLIF(COALESCE(sfs.build_complexity, 0), 0) AS rate_per_shift,
           pps.p_p_height   AS paper_height
         FROM corrugation_plan cp
-        LEFT JOIN salon_filter_structure sfs ON TRIM(sfs.filter) = TRIM(cp.filter_label)
-        LEFT JOIN paper_package_salon pps ON pps.p_p_name = sfs.paper_package
+        LEFT JOIN (
+            SELECT
+                TRIM(filter) AS filter,
+                MAX(build_complexity) AS build_complexity,
+                MAX(paper_package) AS paper_package
+            FROM salon_filter_structure
+            GROUP BY TRIM(filter)
+        ) sfs ON sfs.filter = TRIM(cp.filter_label)
+        LEFT JOIN (
+            SELECT p_p_name, MAX(p_p_height) AS p_p_height
+            FROM paper_package_salon
+            GROUP BY p_p_name
+        ) pps ON pps.p_p_name = sfs.paper_package
         WHERE cp.order_number = ?
         GROUP BY cp.plan_date, cp.filter_label, pps.p_p_height
         ORDER BY cp.plan_date, cp.filter_label
@@ -302,6 +335,8 @@ try{
             'key'         => md5($d.'|'.$flt),
             'source_date' => $d,
             'filter'      => $flt,
+            'planned'     => $planned,
+            'assigned'    => $used,
             'available'   => $avail,
             'rate'        => $r['rate_per_shift'] ? (int)$r['rate_per_shift'] : 0,
             'height'      => isset($r['paper_height']) && $r['paper_height']!==null ? (float)$r['paper_height'] : null,
@@ -373,8 +408,18 @@ try{
                    NULLIF(COALESCE(sfs.build_complexity,0),0) AS rate_per_shift,
                    pps.p_p_height AS paper_height
             FROM build_plan bp
-            LEFT JOIN salon_filter_structure sfs ON TRIM(sfs.filter) = TRIM(bp.filter)
-            LEFT JOIN paper_package_salon pps ON pps.p_p_name = sfs.paper_package
+            LEFT JOIN (
+                SELECT TRIM(filter) AS filter,
+                       MAX(build_complexity) AS build_complexity,
+                       MAX(paper_package) AS paper_package
+                FROM salon_filter_structure
+                GROUP BY TRIM(filter)
+            ) sfs ON sfs.filter = TRIM(bp.filter)
+            LEFT JOIN (
+                SELECT p_p_name, MAX(p_p_height) AS p_p_height
+                FROM paper_package_salon
+                GROUP BY p_p_name
+            ) pps ON pps.p_p_name = sfs.paper_package
             WHERE bp.order_number <> ?
               AND bp.plan_date IN ($ph)
         ");
@@ -456,7 +501,15 @@ try{
 
     /* верхние плашки */
     .pill{border:1px solid #93c5fd;background:#dbeafe;border-radius:10px;padding:8px;margin:4px 0;display:flex;flex-direction:column;gap:6px;position:relative}
-    .pill.used{background:#e5e7eb !important;border-color:#cbd5e1 !important;filter:none !important;opacity:0.85}
+    /* used: доля забранного (--used-pct) серым, остаток — исходный цвет плашки */
+    .pill.used{
+        background-image:linear-gradient(to right, #e5e7eb var(--used-pct, 0%), transparent var(--used-pct, 0%)) !important;
+        filter:none !important;
+        opacity:0.92;
+    }
+    .pill.used.disabled{
+        border-color:#cbd5e1 !important;
+    }
     .pillTop{display:flex;align-items:center;gap:10px;justify-content:space-between}
     .pillName{font-weight:400;display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden}
     .pillNameContainer{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden}
@@ -579,7 +632,7 @@ try{
     .height-btn.active{background:#f59e0b;color:#fff;border-color:#d97706}
     #topGrid .pill.highlighted,
     #daysGrid .rowItem.highlighted{
-        background:#fecaca !important;border-color:#dc2626 !important;
+        background-color:#fecaca !important;border-color:#dc2626 !important;
         box-shadow:0 0 0 2px rgba(220,38,38,.45);
     }
 
@@ -1079,11 +1132,14 @@ try{
                         <?php else: foreach ($pool[$d] as $p):
                             $htStr = $p['height'] !== null ? fmt_mm($p['height']) : null;
                             $ht = $htStr !== null ? ('  <span class="muted">['.$htStr.']</span>') : '';
+                            $usedPct = ($p['planned'] > 0) ? min(100, $p['assigned'] / $p['planned'] * 100) : 0;
                             ?>
-                            <div class="pill<?= ($p['available']<=0 ? ' disabled' : '') ?><?= ($p['is_corrugated'] ? ' corrugated' : '') ?>"
+                            <div class="pill<?= ($p['available']<=0 ? ' disabled' : '') ?><?= ($p['is_corrugated'] ? ' corrugated' : '') ?><?= ($p['assigned']>0 ? ' used' : '') ?>"
+                                 style="--used-pct: <?=h(number_format($usedPct, 2, '.', ''))?>%"
                                  data-key="<?=h($p['key'])?>"
                                  data-source-date="<?=h($p['source_date'])?>"
                                  data-filter="<?=h($p['filter'])?>"
+                                 data-avail0="<?=$p['planned']?>"
                                  data-avail="<?=$p['available']?>"
                                  data-rate="<?=$p['rate']?>"
                                  data-complexity="<?=$p['rate']?>"
@@ -1922,11 +1978,35 @@ try{
         });
     }
 
+    function pillUsedCount(pill){
+        const src = pill.dataset.sourceDate || '';
+        const flt = pill.dataset.filter || '';
+        let n = 0;
+        plan.forEach(byTeam=>{
+            ['1','2'].forEach(t=>{
+                (byTeam[t]||[]).forEach(r=>{
+                    if (r.source_date === src && r.filter === flt) n += (+r.count||0);
+                });
+            });
+        });
+        return n;
+    }
+
+    function updatePillUsedFill(pill){
+        if (!pill) return;
+        const base = Math.max(0, +pill.dataset.avail0 || 0);
+        const taken = pillUsedCount(pill);
+        const pct = base > 0 ? Math.min(100, (taken / base) * 100) : 0;
+        pill.style.setProperty('--used-pct', pct.toFixed(2) + '%');
+        pill.classList.toggle('used', taken > 0);
+    }
+
     function updateAvailForPill(pill, newAvail){
         const avEl = pill.querySelector('.av');
         if (avEl) avEl.textContent = String(newAvail);
         pill.dataset.avail = String(newAvail);
         pill.classList.toggle('disabled', newAvail<=0);
+        updatePillUsedFill(pill);
         updatePillTime(pill);
         setPillTooltip(pill);
     }
@@ -1992,9 +2072,9 @@ try{
 
         plan.get(day)[team].push({source_date:src, filter:flt, count:count, rate:r, height:height ?? ''});
 
-        // Отметим верхнюю плашку как "уже запланировано"
+        // Отметим верхнюю плашку как "уже запланировано" (доля серого = забрано / исходный объём)
         const pillForKey = document.querySelector(`.pill[data-source-date="${cssEscape(src)}"][data-filter="${cssEscape(flt)}"]`);
-        if (pillForKey) pillForKey.classList.add('used');
+        if (pillForKey) updatePillUsedFill(pillForKey);
 
         const row = document.createElement('div');
         row.className = 'rowItem';

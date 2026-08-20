@@ -58,8 +58,21 @@ try {
             COALESCE(sfs.build_complexity, 0) AS complexity,
             pps.p_p_height AS height
         FROM build_plan bp
-        LEFT JOIN salon_filter_structure sfs ON TRIM(sfs.filter) = TRIM(bp.filter)
-        LEFT JOIN paper_package_salon pps ON pps.p_p_name = sfs.paper_package
+        LEFT JOIN (
+            SELECT
+                TRIM(filter) AS filter,
+                MAX(build_complexity) AS build_complexity,
+                MAX(paper_package) AS paper_package
+            FROM salon_filter_structure
+            GROUP BY TRIM(filter)
+        ) sfs ON sfs.filter = TRIM(bp.filter)
+        LEFT JOIN (
+            SELECT
+                p_p_name,
+                MAX(p_p_height) AS p_p_height
+            FROM paper_package_salon
+            GROUP BY p_p_name
+        ) pps ON pps.p_p_name = sfs.paper_package
         WHERE bp.order_number = ?
         ORDER BY bp.plan_date, bp.brigade, bp.filter
     ");

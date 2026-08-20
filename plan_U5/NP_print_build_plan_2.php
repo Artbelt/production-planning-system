@@ -56,7 +56,9 @@ try {
     ");
     $activeOrders = $activeOrdersStmt->fetchAll(PDO::FETCH_COLUMN);
     
-    // Получаем план сборки для выбранной заявки
+    // Получаем план сборки для выбранной заявки.
+    // sfs/pps через подзапросы с GROUP BY — иначе дубликаты в справочниках
+    // (несколько paper_package_salon с одним p_p_name и т.п.) утраивают позиции.
     $stmt = $pdo->prepare("
         SELECT 
             bp.plan_date,
@@ -66,8 +68,21 @@ try {
             COALESCE(sfs.build_complexity, 0) AS complexity,
             pps.p_p_height AS height
         FROM build_plan bp
-        LEFT JOIN salon_filter_structure sfs ON TRIM(sfs.filter) = TRIM(bp.filter)
-        LEFT JOIN paper_package_salon pps ON pps.p_p_name = sfs.paper_package
+        LEFT JOIN (
+            SELECT
+                TRIM(filter) AS filter,
+                MAX(build_complexity) AS build_complexity,
+                MAX(paper_package) AS paper_package
+            FROM salon_filter_structure
+            GROUP BY TRIM(filter)
+        ) sfs ON sfs.filter = TRIM(bp.filter)
+        LEFT JOIN (
+            SELECT
+                p_p_name,
+                MAX(p_p_height) AS p_p_height
+            FROM paper_package_salon
+            GROUP BY p_p_name
+        ) pps ON pps.p_p_name = sfs.paper_package
         WHERE bp.order_number = ?
         ORDER BY bp.plan_date, bp.brigade, bp.filter
     ");
@@ -95,17 +110,31 @@ try {
     $slotFills = [];
     $corrugFactByFilter = [];
     if ($showFact && !empty($order)) {
-        // План: сумма по фильтру в build_plan
+        // План «Собрано»: количество из заявки (orders), не сумма слотов build_plan —
+        // иначе при ошибочном перепланировании (×3 из‑за JOIN) подсказка завышает знаменатель.
+        $orderQtyByFilter = [];
         $plannedStmt = $pdo->prepare("
-            SELECT filter, SUM(COALESCE(count, 0)) AS total
-            FROM build_plan
+            SELECT TRIM(filter) AS filter, SUM(COALESCE(`count`, 0)) AS total
+            FROM orders
             WHERE order_number = ?
-            GROUP BY filter
+              AND TRIM(COALESCE(filter, '')) != ''
+            GROUP BY TRIM(filter)
         ");
         $plannedStmt->execute([$order]);
         while ($r = $plannedStmt->fetch(PDO::FETCH_ASSOC)) {
-            $f = trim($r['filter']);
-            $factByFilter[$f] = ['planned' => (int)$r['total'], 'manufactured' => 0];
+            $orderQtyByFilter[trim($r['filter'])] = (int)$r['total'];
+        }
+        // Запасной вариант: сумма по build_plan (если позиции нет в orders)
+        $buildQtyByFilter = [];
+        $bpQtyStmt = $pdo->prepare("
+            SELECT TRIM(filter) AS filter, SUM(COALESCE(`count`, 0)) AS total
+            FROM build_plan
+            WHERE order_number = ?
+            GROUP BY TRIM(filter)
+        ");
+        $bpQtyStmt->execute([$order]);
+        while ($r = $bpQtyStmt->fetch(PDO::FETCH_ASSOC)) {
+            $buildQtyByFilter[trim($r['filter'])] = (int)$r['total'];
         }
         // Факт: собрано из manufactured_production (по базовому имени фильтра)
         $manufacturedByBase = [];
@@ -121,10 +150,26 @@ try {
         while ($r = $factStmt->fetch(PDO::FETCH_ASSOC)) {
             $manufacturedByBase[trim($r['base_filter'])] = (int)$r['total'];
         }
-        // Связываем план с фактом: для каждого фильтра берём manufactured по базовому имени
-        foreach (array_keys($factByFilter) as $f) {
+        // Собираем ключи по всем фильтрам из плана отображения
+        $filtersInPlan = [];
+        foreach ($planByDate as $brigades) {
+            foreach ([1, 2] as $br) {
+                foreach ($brigades[$br] ?? [] as $it) {
+                    $filtersInPlan[trim($it['filter'])] = true;
+                }
+            }
+        }
+        foreach (array_keys($filtersInPlan) as $f) {
             $base = (strpos($f, ' [') !== false) ? trim(explode(' [', $f)[0]) : $f;
-            $factByFilter[$f]['manufactured'] = $manufacturedByBase[$base] ?? $manufacturedByBase[$f] ?? 0;
+            $planned = $orderQtyByFilter[$f]
+                ?? $orderQtyByFilter[$base]
+                ?? $buildQtyByFilter[$f]
+                ?? $buildQtyByFilter[$base]
+                ?? 0;
+            $factByFilter[$f] = [
+                'planned' => $planned,
+                'manufactured' => $manufacturedByBase[$base] ?? $manufacturedByBase[$f] ?? 0,
+            ];
         }
         // Гофрирование: план corrugation_plan и факт manufactured_corrugated_packages
         $corrPlannedByFilter = [];
@@ -528,11 +573,12 @@ try {
                                     $slotKey = $date . '|1|' . trim($item['filter']);
                                     $slot = $slotFills[$slotKey] ?? null;
                                     $pct = ($showFact && $slot && $slot['total'] > 0) ? $slot['pct'] : 0;
-                                    $fact = $factByFilter[$item['filter']] ?? null;
-                                    $corrug = $corrugFactByFilter[$item['filter']] ?? ['planned' => 0, 'done' => 0];
+                                    $filterKey = trim($item['filter']);
+                                    $fact = $factByFilter[$filterKey] ?? null;
+                                    $corrug = $corrugFactByFilter[$filterKey] ?? ['planned' => 0, 'done' => 0];
                                 ?>
                                 <div class="item" 
-                                     data-filter="<?= h(trim($item['filter'])) ?>"
+                                     data-filter="<?= h($filterKey) ?>"
                                      data-complexity="<?= $item['complexity'] ?>" 
                                      data-count="<?= $item['count'] ?>"
                                      <?php if ($showFact && $fact): ?>title="<?= h('Собрано: ' . $fact['manufactured'] . ' из ' . $fact['planned'] . "\n" . 'Сгофрировано: ' . $corrug['done'] . ' из ' . $corrug['planned']) ?>"<?php endif; ?>>
@@ -571,8 +617,9 @@ try {
                                     $slotKey = $date . '|2|' . trim($item['filter']);
                                     $slot = $slotFills[$slotKey] ?? null;
                                     $pct = ($showFact && $slot && $slot['total'] > 0) ? $slot['pct'] : 0;
-                                    $fact = $factByFilter[$item['filter']] ?? null;
-                                    $corrug = $corrugFactByFilter[$item['filter']] ?? ['planned' => 0, 'done' => 0];
+                                    $filterKey = trim($item['filter']);
+                                    $fact = $factByFilter[$filterKey] ?? null;
+                                    $corrug = $corrugFactByFilter[$filterKey] ?? ['planned' => 0, 'done' => 0];
                                 ?>
                                 <div class="item" 
                                      data-filter="<?= h(trim($item['filter'])) ?>"
