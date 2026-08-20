@@ -119,11 +119,27 @@ $advertisement = 'Информация';
         a:hover{text-decoration:underline}
 
         /* контейнер и сетка */
-        .container{ max-width:1280px; margin:0 auto; padding:16px; }
+        .container{ max-width:1280px; margin:0 auto; padding:96px 16px 16px; }
         .layout{ width:100%; border-spacing:16px; border:0; background:transparent; }
         .header-row .header-cell{ padding:0; border:0; background:transparent; }
         .headerbar{ display:flex; align-items:center; gap:12px; padding:10px 4px; color:#374151; }
         .headerbar .spacer{ flex:1; }
+        .auth-panel{
+            position:fixed;
+            top:10px;
+            right:10px;
+            background:#fff;
+            padding:12px;
+            border-radius:8px;
+            box-shadow:0 4px 12px rgba(0,0,0,0.15);
+            z-index:1000;
+            border:1px solid #e5e7eb;
+        }
+        .auth-panel-inner{
+            display:flex;
+            align-items:center;
+            gap:12px;
+        }
 
         /* панели-колонки */
         .content-row > td{ vertical-align:top; }
@@ -221,6 +237,30 @@ $advertisement = 'Информация';
         @media (max-width:1100px){
             .layout{ border-spacing:10px; }
             .content-row > td{ display:block; width:auto!important; }
+        }
+        @media (max-width:768px){
+            .container{ padding-top:16px; }
+            .auth-panel{
+                position:static;
+                top:auto;
+                right:auto;
+                width:100%;
+                box-sizing:border-box;
+                margin-bottom:12px;
+            }
+            .auth-panel-inner{
+                flex-wrap:wrap;
+                align-items:flex-start;
+            }
+            .topbar{
+                padding:10px 12px;
+                margin-bottom:12px;
+            }
+            .topbar-left,
+            .topbar-right,
+            .topbar-center{
+                flex-wrap:wrap;
+            }
         }
         .topbar{
             display:flex;
@@ -325,8 +365,8 @@ $advertisement = 'Информация';
         <tr class="header-row">
             <td class="header-cell" colspan="3">
                 <!-- Аккуратная панель авторизации -->
-                <div style="position: fixed; top: 10px; right: 10px; background: white; padding: 12px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; border: 1px solid #e5e7eb;">
-                    <div style="display: flex; align-items: center; gap: 12px;">
+                <div class="auth-panel">
+                    <div class="auth-panel-inner">
                         <div style="width: 32px; height: 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 14px;">
                             <?= mb_substr($user['full_name'] ?? 'П', 0, 1, 'UTF-8') ?>
                         </div>

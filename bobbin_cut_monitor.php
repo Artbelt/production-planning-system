@@ -477,6 +477,7 @@ if ($buf !== []) {
 }
 
 $dowShort = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+$cutOperatorMinutesPerBale = 40;
 
 /** @var array<string, array<string, list<array{order:string,bale:string,done:bool}>>> $grid[$shop][$ymd] */
 $grid = ['У2' => [], 'У3' => [], 'У5' => []];
@@ -540,6 +541,17 @@ foreach (['У2', 'У3', 'У5'] as $shopLabel) {
     unset($list);
 }
 
+$plannedOperatorLoadByDay = [];
+foreach ($days as $d) {
+    $ymd = $d->format('Y-m-d');
+    $baleCount = 0;
+    foreach (['У2', 'У3', 'У5'] as $shopLabel) {
+        $baleCount += count($grid[$shopLabel][$ymd] ?? []);
+    }
+    $hours = ($baleCount * $cutOperatorMinutesPerBale) / 60;
+    $plannedOperatorLoadByDay[$ymd] = $hours > 0 ? rtrim(rtrim(number_format($hours, 2, '.', ''), '0'), '.') : '';
+}
+
 $pageTitle = 'Мониторинг бобинорезки';
 $navPrevW = $weekOffset - 1;
 $navNextW = $weekOffset + 1;
@@ -593,6 +605,10 @@ $navQuery = static function (int $w): string {
             font-weight: 600;
             text-align: center;
             white-space: nowrap;
+        }
+        .date-load {
+            color: #0369a1;
+            font-weight: 700;
         }
         th.shop, td.shop {
             position: sticky;
@@ -1095,7 +1111,14 @@ $navQuery = static function (int $w): string {
                         $cls = $isMon && $di > 0 ? ' week-sep' : '';
                         $dn = (int) $d->format('N') - 1;
                         $head = $dowShort[$dn] . ' ' . $d->format('d.m');
-                        echo '<th class="' . trim($cls) . '">' . htmlspecialchars($head) . '</th>';
+                        $ymd = $d->format('Y-m-d');
+                        $loadHours = $plannedOperatorLoadByDay[$ymd] ?? '';
+                        $loadHtml = '';
+                        if ($loadHours !== '') {
+                            $loadTitle = 'Плановое время загрузки оператора бумагорезки на эту дату, ч.';
+                            $loadHtml = ' <span class="date-load" title="' . htmlspecialchars($loadTitle, ENT_QUOTES, 'UTF-8') . '">(' . htmlspecialchars($loadHours) . ')</span>';
+                        }
+                        echo '<th class="' . trim($cls) . '">' . htmlspecialchars($head) . $loadHtml . '</th>';
                     }
                     ?>
                 </tr>

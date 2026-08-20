@@ -41,31 +41,68 @@ $user_name = $session['full_name'] ?? 'Пользователь';
 
 require_once('cap_db_init.php');
 
+// === AJAX: заявки, содержащие указанную крышку ===
+if (isset($_GET['orders'])) {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        $cap = trim((string)($_GET['cap'] ?? ''));
+        $archive = isset($_GET['archive']) && $_GET['archive'] == '1';
+
+        if ($cap === '') {
+            echo json_encode(['orders' => [], 'has_archive' => false], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        $hideCondition = $archive ? 'o.hide = 1' : '(o.hide IS NULL OR o.hide = 0)';
+        $capNorm = mb_strtoupper($cap, 'UTF-8');
+
+        $stmt = $pdo->prepare("
+            SELECT DISTINCT o.order_number
+            FROM orders o
+            INNER JOIN round_filter_structure rfs ON rfs.filter = o.`filter`
+            WHERE $hideCondition
+              AND (
+                    UPPER(TRIM(COALESCE(rfs.up_cap, ''))) = ?
+                 OR UPPER(TRIM(COALESCE(rfs.down_cap, ''))) = ?
+              )
+            ORDER BY o.order_number DESC
+        ");
+        $stmt->execute([$capNorm, $capNorm]);
+        $orders = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+        $hasArchive = false;
+        if (!$archive) {
+            $stmtArch = $pdo->prepare("
+                SELECT 1
+                FROM orders o
+                INNER JOIN round_filter_structure rfs ON rfs.filter = o.`filter`
+                WHERE o.hide = 1
+                  AND (
+                        UPPER(TRIM(COALESCE(rfs.up_cap, ''))) = ?
+                     OR UPPER(TRIM(COALESCE(rfs.down_cap, ''))) = ?
+                  )
+                LIMIT 1
+            ");
+            $stmtArch->execute([$capNorm, $capNorm]);
+            $hasArchive = (bool)$stmtArch->fetchColumn();
+        }
+
+        echo json_encode([
+            'orders' => $orders,
+            'has_archive' => $hasArchive,
+        ], JSON_UNESCAPED_UNICODE);
+    } catch (Exception $e) {
+        echo json_encode(['orders' => [], 'has_archive' => false], JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
+
 $caps_list = [];
 $stmt = $pdo->query("SELECT DISTINCT cap_name FROM cap_stock ORDER BY cap_name");
 if ($stmt) {
     while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
         $caps_list[] = $row['cap_name'];
     }
-}
-
-$orders_list = [];
-$result_orders = $pdo->query("SELECT DISTINCT order_number, workshop, hide FROM orders");
-if ($result_orders) {
-    $orders_temp = [];
-    while ($orders_data = $result_orders->fetch(PDO::FETCH_ASSOC)) {
-        if ($orders_data['hide'] != 1) {
-            $order_num = $orders_data['order_number'];
-            if (!isset($orders_temp[$order_num])) {
-                $orders_temp[$order_num] = $orders_data;
-            }
-        }
-    }
-    // Преобразуем в простой массив и сортируем по убыванию
-    foreach ($orders_temp as $order_num => $order_data) {
-        $orders_list[] = $order_num;
-    }
-    rsort($orders_list);
 }
 
 ?>
@@ -117,6 +154,10 @@ if ($result_orders) {
             font-size: 13px;
             box-sizing: border-box;
         }
+        select.archive-mode {
+            border-color: #d97706;
+            background: #fffbeb;
+        }
         button {
             background: #6495ed;
             color: white;
@@ -151,28 +192,150 @@ if ($result_orders) {
         #cap_name {
             font-size: 14px;
         }
+        #archiveHint {
+            display: none;
+            margin-top: 4px;
+            font-size: 12px;
+            color: #b45309;
+        }
+        #archiveHint.visible {
+            display: block;
+        }
     </style>
     <script>
-        // Данные для автодополнения
         const capsList = <?php echo json_encode($caps_list, JSON_UNESCAPED_UNICODE); ?>;
-        
+        let archiveMode = false;
+        let ordersUpdateTimeout = null;
+
         function setupAutocomplete() {
             const input = document.getElementById('cap_name');
             const datalist = document.getElementById('caps_datalist');
-            
-            // Заполняем datalist
+
             capsList.forEach(cap => {
                 const option = document.createElement('option');
                 option.value = cap;
                 datalist.appendChild(option);
             });
         }
-        
+
+        function resetOrdersSelect(placeholderText) {
+            const select = document.getElementById('order_number');
+            select.innerHTML = '';
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = placeholderText;
+            select.appendChild(placeholder);
+            select.classList.remove('archive-mode');
+            document.getElementById('archiveHint').classList.remove('visible');
+        }
+
+        async function updateOrdersList(capName, useArchive) {
+            const select = document.getElementById('order_number');
+            const hint = document.getElementById('archiveHint');
+            const cap = (capName || '').trim();
+            archiveMode = !!useArchive;
+
+            if (cap === '') {
+                archiveMode = false;
+                resetOrdersSelect('-- Сначала укажите крышку --');
+                return;
+            }
+
+            try {
+                const url = '?orders=1&cap=' + encodeURIComponent(cap)
+                    + (archiveMode ? '&archive=1' : '');
+                const res = await fetch(url);
+                const data = await res.json();
+                const orders = Array.isArray(data.orders) ? data.orders : [];
+                const hasArchive = !!data.has_archive;
+
+                select.innerHTML = '';
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = archiveMode
+                    ? '-- Выберите архивную заявку --'
+                    : '-- Выберите заявку --';
+                select.appendChild(placeholder);
+
+                if (orders.length === 0) {
+                    const empty = document.createElement('option');
+                    empty.value = '';
+                    empty.disabled = true;
+                    empty.textContent = archiveMode
+                        ? '-- Нет архивных заявок с этой крышкой --'
+                        : '-- Нет актуальных заявок с этой крышкой --';
+                    select.appendChild(empty);
+
+                    if (!archiveMode && hasArchive) {
+                        const expand = document.createElement('option');
+                        expand.value = '__archive__';
+                        expand.textContent = '▾ Показать архивные заявки с этой крышкой';
+                        select.appendChild(expand);
+                    } else if (archiveMode) {
+                        const back = document.createElement('option');
+                        back.value = '__active__';
+                        back.textContent = '↩ Вернуться к актуальным заявкам';
+                        select.appendChild(back);
+                    }
+                } else {
+                    orders.forEach(order => {
+                        const option = document.createElement('option');
+                        option.value = order;
+                        option.textContent = archiveMode ? order + ' (архив)' : order;
+                        select.appendChild(option);
+                    });
+
+                    if (archiveMode) {
+                        const back = document.createElement('option');
+                        back.value = '__active__';
+                        back.textContent = '↩ Вернуться к актуальным заявкам';
+                        select.appendChild(back);
+                    }
+                }
+
+                select.classList.toggle('archive-mode', archiveMode);
+                hint.classList.toggle('visible', archiveMode);
+            } catch (err) {
+                console.error('Ошибка загрузки заявок:', err);
+                resetOrdersSelect('-- Ошибка загрузки заявок --');
+            }
+        }
+
+        function handleCapInput() {
+            clearTimeout(ordersUpdateTimeout);
+            ordersUpdateTimeout = setTimeout(() => {
+                updateOrdersList(document.getElementById('cap_name').value, false);
+            }, 400);
+        }
+
+        function handleOrderSelectChange() {
+            const select = document.getElementById('order_number');
+            const cap = document.getElementById('cap_name').value;
+
+            if (select.value === '__archive__') {
+                updateOrdersList(cap, true);
+            } else if (select.value === '__active__') {
+                updateOrdersList(cap, false);
+            }
+        }
+
         window.onload = function() {
             setupAutocomplete();
-            // Устанавливаем сегодняшнюю дату по умолчанию
             const today = new Date().toISOString().split('T')[0];
             document.getElementById('date').value = today;
+            resetOrdersSelect('-- Сначала укажите крышку --');
+
+            const capInput = document.getElementById('cap_name');
+            capInput.addEventListener('input', handleCapInput);
+            capInput.addEventListener('change', handleCapInput);
+            document.getElementById('order_number').addEventListener('change', handleOrderSelectChange);
+            document.getElementById('incomeForm').addEventListener('submit', function(e) {
+                const order = document.getElementById('order_number').value;
+                if (!order || order === '__archive__' || order === '__active__') {
+                    e.preventDefault();
+                    alert('Выберите заявку из списка');
+                }
+            });
         };
     </script>
 </head>
@@ -215,13 +378,9 @@ if ($result_orders) {
             <div class="form-group">
                 <label for="order_number">Заявка *</label>
                 <select id="order_number" name="order_number" required>
-                    <option value="">-- Выберите заявку --</option>
-                    <?php
-                    foreach ($orders_list as $order_num) {
-                        echo "<option value='" . htmlspecialchars($order_num) . "'>" . htmlspecialchars($order_num) . "</option>";
-                    }
-                    ?>
+                    <option value="">-- Сначала укажите крышку --</option>
                 </select>
+                <div id="archiveHint">Показаны архивные (скрытые) заявки с этой крышкой</div>
             </div>
             
             <button type="submit">Принять на склад</button>
@@ -229,4 +388,3 @@ if ($result_orders) {
     </div>
 </body>
 </html>
-

@@ -742,8 +742,8 @@ echo "<!-- Аккуратная панель авторизации -->
 
                 <div class="section-title" style="margin-top:14px">Дополнения</div>
                 <div class="stack">
-                    <form action="BOX_CREATOR.html" method="post" class="stack" target="_blank"><input type="submit" value="Расчет коробок"></form>
-                    <form action="BOX_CREATOR_2.html" method="post" class="stack" target="_blank"><input type="submit" value="Максимальное количество"></form>
+                    <form action="BOX_CREATOR.html" method="get" class="stack" target="_blank"><input type="submit" value="Расчет коробок"></form>
+                    <form action="BOX_CREATOR_2.html" method="get" class="stack" target="_blank"><input type="submit" value="Максимальное количество"></form>
                     <button type="button" onclick="openSearchByDimensionsModal()" class="stack" style="width:100%;">Поиск по размерам</button>
                     <button type="button" onclick="openFilterRatingModal()" class="stack" style="width:100%;">Рейтинг фильтров</button>
                 </div>

@@ -182,17 +182,19 @@ foreach ($userDepartments as $dept) {
 			box-sizing: border-box;
 		}
 
-		html, body {
-			height: 100%;
+		html {
+			min-height: 100%;
+		}
+
+		body {
+			min-height: 100vh;
 			font-family: Arial, sans-serif;
 			display: flex;
+			flex-direction: column;
 			justify-content: center;
 			align-items: center;
-		}
-		
-		/* Отступ для баннера напоминания о пароле */
-		body {
-			padding-top: 0;
+			padding: 88px 16px 24px;
+			overflow-y: auto;
 		}
 		
 		#password-reminder-banner {
@@ -201,6 +203,49 @@ foreach ($userDepartments as $dept) {
 			left: 0;
 			right: 0;
 			z-index: 10000;
+		}
+
+		.auth-panel{
+			position: fixed;
+			top: 10px;
+			right: 10px;
+			background: #fff;
+			padding: 12px;
+			border-radius: 8px;
+			box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+			z-index: 1000;
+			border: 1px solid #e5e7eb;
+		}
+		.auth-panel-inner{
+			display: flex;
+			align-items: center;
+			gap: 12px;
+		}
+
+		@media (max-width: 768px) {
+			body {
+				justify-content: flex-start;
+				align-items: stretch;
+				padding: 16px;
+			}
+			.auth-panel{
+				position: static;
+				width: 100%;
+				margin-bottom: 16px;
+			}
+			.auth-panel-inner{
+				flex-wrap: wrap;
+			}
+			.button-container {
+				width: 100%;
+			}
+			.row {
+				flex-wrap: wrap;
+			}
+			.btn {
+				min-width: 0;
+				width: 100%;
+			}
 		}
 
 		.button-container {
@@ -283,8 +328,8 @@ foreach ($userDepartments as $dept) {
 <body>
 
 <!-- Аккуратная панель авторизации -->
-<div style="position: fixed; top: 10px; right: 10px; background: white; padding: 12px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; border: 1px solid #e5e7eb;">
-	<div style="display: flex; align-items: center; gap: 12px;">
+<div class="auth-panel">
+	<div class="auth-panel-inner">
 		<div style="width: 32px; height: 32px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 14px;">
 			<?= mb_substr($user['full_name'] ?? 'П', 0, 1, 'UTF-8') ?>
 		</div>
