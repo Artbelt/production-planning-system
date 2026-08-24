@@ -4,22 +4,37 @@ error_reporting(E_ALL & ~E_DEPRECATED & ~E_STRICT);
 
 require_once('tools/tools.php');
 
-if(isset($_FILES['userfile'])) {
-    $uploaddir = 'uploads/';
-    $uploadfile = $uploaddir . basename($_FILES['userfile']['name']);
+// Скрипт ожидает файл, отправленный формой POST (name="userfile").
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_FILES['userfile'])) {
+    http_response_code(400);
+    exit('Нет загруженного файла (ожидается POST multipart/form-data с input name="userfile").');
+}
 
-    $copied = copy($_FILES['userfile']['tmp_name'], $uploadfile);
+if (!is_array($_FILES['userfile']) || !isset($_FILES['userfile']['tmp_name'], $_FILES['userfile']['name'], $_FILES['userfile']['error'])) {
+    http_response_code(400);
+    exit('Некорректные данные загрузки файла.');
+}
 
-    if ($copied)
-    {
-        echo "Файл корректен и был успешно загружен.\n";
-    } else {
-        echo "Неудача";
-        die();
+if ($_FILES['userfile']['error'] !== UPLOAD_ERR_OK) {
+    http_response_code(400);
+    exit('Ошибка загрузки файла. Код: ' . (int)$_FILES['userfile']['error']);
+}
+
+$uploaddir = __DIR__ . '/uploads/';
+if (!is_dir($uploaddir)) {
+    http_response_code(500);
+    exit('На сервере отсутствует папка для загрузок: ' . htmlspecialchars($uploaddir, ENT_QUOTES, 'UTF-8'));
+}
+
+$uploadfile = $uploaddir . basename($_FILES['userfile']['name']);
+if (!move_uploaded_file($_FILES['userfile']['tmp_name'], $uploadfile)) {
+    // fallback: иногда tmp уже скопирован вручную / copy работает там, где move нет
+    if (!@copy($_FILES['userfile']['tmp_name'], $uploadfile)) {
+        http_response_code(500);
+        exit('Не удалось сохранить загруженный файл на сервере.');
     }
 }
-$info = new SplFileInfo($uploadfile);
-@rename ($uploadfile, "/upload/1.$info->getExtension();");
+
 set_time_limit(0);
 date_default_timezone_set('Europe/London');
 ?>
@@ -188,26 +203,37 @@ date_default_timezone_set('Europe/London');
 <?php
 
 /** Include path **/
-set_include_path(get_include_path() . PATH_SEPARATOR . '../../../Classes/');
+set_include_path(get_include_path() . PATH_SEPARATOR . __DIR__);
 
 /** PHPExcel_IOFactory */
-@include 'PHPExcel/IOFactory.php';
+require_once __DIR__ . '/PHPExcel/IOFactory.php';
 
-//$inputFileName = './upload/'.$_FILES['userfile']['name'];
-@$inputFileName = $uploadfile;
+$inputFileName = $uploadfile;
 
 echo '<div class="panel">';
 echo '<div class="section-title">Заявка загружена</div>';
-echo '<p>Загружен файл ' . pathinfo($inputFileName,PATHINFO_BASENAME) . '</p>';
-@$objPHPExcel = PHPExcel_IOFactory::load($inputFileName);
+echo '<p>Загружен файл ' . htmlspecialchars(pathinfo($inputFileName, PATHINFO_BASENAME), ENT_QUOTES, 'UTF-8') . '</p>';
+try {
+    $objPHPExcel = PHPExcel_IOFactory::load($inputFileName);
+} catch (Throwable $e) {
+    http_response_code(500);
+    exit('Ошибка при чтении Excel-файла: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
+}
 
-@$sheetData = $objPHPExcel->getActiveSheet()->toArray(null,true,true,true);
+$sheetData = $objPHPExcel->getActiveSheet()->toArray(null, true, true, true);
+if (!is_array($sheetData) || $sheetData === []) {
+    http_response_code(500);
+    exit('Excel-файл прочитан, но лист пустой.');
+}
 
 /**Вывод заявки на экран */
 $propusk = true;/** маркер пропуска начальной части файла и заголовков*/
 $order = [];/**массив - заявка без лишних элементов, заголовков etc.*/
-$workshop = 'U'.$sheetData['1']['C'];
-echo '<p>для участка №'.$sheetData['1']['C'] . '<br>на период ' . $sheetData['1']['E'] . ' = ' . $sheetData['1']['F'] . '</p>';
+$headerFound = false;
+$workshop = 'U' . ($sheetData['1']['C'] ?? '');
+echo '<p>для участка №' . htmlspecialchars((string)($sheetData['1']['C'] ?? ''), ENT_QUOTES, 'UTF-8')
+    . '<br>на период ' . htmlspecialchars((string)($sheetData['1']['E'] ?? ''), ENT_QUOTES, 'UTF-8')
+    . ' = ' . htmlspecialchars((string)($sheetData['1']['F'] ?? ''), ENT_QUOTES, 'UTF-8') . '</p>';
 echo '<p style="color:#856404; background:#fff3cd; padding:10px; border-radius:8px; margin:10px 0;"><strong>💡 Подсказка:</strong> Строки с желтой подсветкой могут быть комментариями. Проверьте их и удалите кнопкой "X", если это не позиции заявки.</p>';
 echo '<table id="orderTable">';
 echo '<tr><td><b>Фильтр</b></td><td><b>Кол-во</b></td><td><b>Маркировка</b></td><td><b>Инд.упак.</b>'
@@ -216,8 +242,9 @@ echo '<tr><td><b>Фильтр</b></td><td><b>Кол-во</b></td><td><b>Марк
 
 $rowIndex = 0;
 foreach ($sheetData as $arr){
-    if($arr['B']=='Марка фильтра') {$propusk = false; continue;}
-    if(($propusk == false) && ($arr['B']!='')){/**Убираем пустые ячейки*/
+    $cellB = trim((string)($arr['B'] ?? ''));
+    if ($cellB === 'Марка фильтра') {$propusk = false; $headerFound = true; continue;}
+    if(($propusk == false) && ($cellB !== '')){/**Убираем пустые ячейки*/
 
         $arr = array_map(function($item) {
             if ($item !== null) {
@@ -291,6 +318,11 @@ foreach ($sheetData as $arr){
 }
 $propusk = true;
 echo '</table>';
+if (!$headerFound) {
+    echo '<p style="color:#991b1b; background:#fee2e2; padding:12px; border-radius:8px;">Не найден заголовок «Марка фильтра» в колонке B. Проверьте формат файла заявки.</p>';
+} elseif ($rowIndex === 0) {
+    echo '<p style="color:#991b1b; background:#fee2e2; padding:12px; border-radius:8px;">Заголовок найден, но позиции заявки пустые.</p>';
+}
 echo '</div>'; // закрываем panel
 
 /** Переменная для сериализации и передачи массива в следующий скрипт */
@@ -301,10 +333,10 @@ echo '<div class="form-group">';
 echo '<form action="save_order_into_DB.php" method="post" id="saveOrderForm">';
 echo '<label for="order_name">Присвоить номер заявке:</label><br><br>';
 echo '<input name="order_name" type="text" placeholder="№X-X" id="order_name" style="width:200px; margin-right:10px;"/>';
-echo "<input type='hidden' name='order_str' id='order_str' value='$order_str'/>";
-echo "<input type='hidden' name='workshop' value='$workshop'/>";
-echo "<input type='submit' value=' и сохранить в БД'/>";
-echo "</form>";
+echo '<input type="hidden" name="order_str" id="order_str" value="' . htmlspecialchars($order_str, ENT_QUOTES, 'UTF-8') . '"/>';
+echo '<input type="hidden" name="workshop" value="' . htmlspecialchars($workshop, ENT_QUOTES, 'UTF-8') . '"/>';
+echo '<input type="submit" value=" и сохранить в БД"/>';
+echo '</form>';
 echo '</div>';
 
 // Сохраняем исходные данные в JavaScript
