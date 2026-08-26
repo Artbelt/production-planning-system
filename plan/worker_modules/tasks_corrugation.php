@@ -214,6 +214,42 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
             background: var(--primary-dark);
         }
 
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.45);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal-box {
+            background: #fff;
+            border-radius: var(--border-radius);
+            width: 100%;
+            max-width: 380px;
+            padding: 16px;
+            box-shadow: var(--shadow-xl);
+            border: 1px solid var(--gray-200);
+        }
+        .modal-box h3 { font-size: 1.05rem; margin-bottom: 12px; }
+        .modal-row { margin-bottom: 10px; font-size: 14px; }
+        .modal-row label { display: block; font-size: 12px; color: var(--gray-600); margin-bottom: 4px; }
+        .modal-row .val { font-weight: 600; color: var(--gray-800); word-break: break-word; }
+        .modal-row input[type="number"] {
+            width: 100%; padding: 8px 10px; border: 1px solid var(--gray-300);
+            border-radius: var(--border-radius-sm); font-size: 16px;
+        }
+        .modal-actions { display: flex; gap: 8px; margin-top: 14px; }
+        .modal-actions button {
+            flex: 1; border: none; padding: 10px 12px; border-radius: var(--border-radius-sm);
+            font-size: 14px; font-weight: 500; cursor: pointer;
+        }
+        .modal-actions .btn-primary { background: var(--primary-color); color: #fff; }
+        .modal-actions .btn-secondary { background: var(--gray-200); color: var(--gray-800); }
+
         .nav input[type="date"] {
             padding: 10px 12px;
             border: 1px solid var(--gray-300);
@@ -379,6 +415,7 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
     <input id="date-input" type="date" value="<?= htmlspecialchars($date) ?>" />
     <a href="?date=<?= htmlspecialchars($nextDate) ?>" title="День вперёд">➡️</a>
     <a href="?date=<?= htmlspecialchars($today) ?>" title="Сегодня">Сегодня</a>
+    <a href="label_print_queue.php" title="Очередь печати этикеток">Очередь этикеток</a>
 </div>
 
 <div class="section">
@@ -425,14 +462,23 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
                         $total_count += (int)$item['count'];
                         $time = $item['timestamp'] ? date('H:i', strtotime($item['timestamp'])) : '-';
                     ?>
-                        <tr style="border-bottom: 1px solid var(--gray-200);">
+                        <tr style="border-bottom: 1px solid var(--gray-200);"
+                            data-id="<?= (int)$item['id'] ?>"
+                            data-order="<?= htmlspecialchars($item['order_number'], ENT_QUOTES) ?>"
+                            data-filter="<?= htmlspecialchars($item['filter_label'], ENT_QUOTES) ?>"
+                            data-count="<?= (int)$item['count'] ?>">
                             <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center;"><strong><?= htmlspecialchars($item['order_number'] ?: '-') ?></strong></td>
-                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: left; padding-left: 12px;"><?= htmlspecialchars($item['filter_label']) ?></td>
+                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: left; padding-left: 12px;">
+                                <span style="display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                    <button type="button" class="print-label-btn" onclick="openPrintModal(this)" title="Печать этикеток" style="background: var(--info-color); color: white; border: none; padding: 0; border-radius: var(--border-radius-sm); cursor: pointer; font-size: 13px; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">🖨</button>
+                                    <span><?= htmlspecialchars($item['filter_label']) ?></span>
+                                </span>
+                            </td>
                             <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; font-weight: 600; color: var(--primary-color);"><?= (int)$item['count'] ?></td>
                             <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; color: var(--gray-600); font-size: 12px;"><?= htmlspecialchars($time) ?></td>
                             <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; width: 1%; white-space: nowrap;">
                                 <?php if ($is_first): ?>
-                                    <button class="delete-last-btn" onclick="deleteLastPackage('<?= htmlspecialchars($date) ?>')" style="background: var(--accent-color); color: white; border: none; padding: 6px 10px; border-radius: var(--border-radius-sm); cursor: pointer; font-size: 14px; font-weight: 500; transition: var(--transition); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;" title="Удалить последнюю внесенную позицию">✕</button>
+                                    <button class="delete-last-btn" onclick="deleteLastPackage('<?= htmlspecialchars($date) ?>')" style="background: var(--accent-color); color: white; border: none; padding: 6px 10px; border-radius: var(--border-radius-sm); cursor: pointer; font-size: 14px; font-weight: 500; transition: var(--transition); width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;" title="Удалить последнюю внесенную позицию">✕</button>
                                 <?php else: ?>
                                     <span style="color: var(--gray-400); font-size: 11px;">—</span>
                                 <?php endif; ?>
@@ -474,8 +520,94 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 </div>
 
+<div id="printModal" class="modal-overlay" onclick="if(event.target===this)closePrintModal()">
+    <div class="modal-box" role="dialog" aria-modal="true">
+        <h3>Печать этикеток</h3>
+        <div class="modal-row">
+            <label>Заявка</label>
+            <div class="val" id="printModalOrder">—</div>
+        </div>
+        <div class="modal-row">
+            <label>Фильтр</label>
+            <div class="val" id="printModalFilter">—</div>
+        </div>
+        <div class="modal-row">
+            <label>Партия (шт.)</label>
+            <div class="val" id="printModalBatch">—</div>
+        </div>
+        <div class="modal-row">
+            <label for="printCopies">Количество копий этикетки</label>
+            <input type="number" id="printCopies" min="1" max="500" value="1" inputmode="numeric">
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn-secondary" onclick="closePrintModal()">Отмена</button>
+            <button type="button" class="btn-primary" id="printSubmitBtn" onclick="submitPrintJob()">В очередь</button>
+        </div>
+    </div>
+</div>
+
     <script>
         const allFilters = <?= json_encode($all_filters, JSON_UNESCAPED_UNICODE) ?>;
+        let printJobContext = null;
+
+        function openPrintModal(btn) {
+            const tr = btn.closest('tr');
+            if (!tr) return;
+            printJobContext = {
+                manufactured_id: tr.getAttribute('data-id'),
+                order_number: tr.getAttribute('data-order') || '',
+                filter_label: tr.getAttribute('data-filter') || '',
+                batch_count: tr.getAttribute('data-count') || '0'
+            };
+            document.getElementById('printModalOrder').textContent = printJobContext.order_number || '—';
+            document.getElementById('printModalFilter').textContent = printJobContext.filter_label || '—';
+            document.getElementById('printModalBatch').textContent = printJobContext.batch_count || '—';
+            document.getElementById('printCopies').value = '1';
+            document.getElementById('printModal').classList.add('open');
+            document.getElementById('printCopies').focus();
+            document.getElementById('printCopies').select();
+        }
+        function closePrintModal() {
+            document.getElementById('printModal').classList.remove('open');
+            printJobContext = null;
+        }
+        async function submitPrintJob() {
+            if (!printJobContext) return;
+            const copies = parseInt(document.getElementById('printCopies').value, 10);
+            if (!copies || copies < 1) { alert('Укажите количество копий'); return; }
+            const btn = document.getElementById('printSubmitBtn');
+            btn.disabled = true;
+            try {
+                const body = new URLSearchParams({
+                    manufactured_id: printJobContext.manufactured_id,
+                    order_number: printJobContext.order_number,
+                    filter_label: printJobContext.filter_label,
+                    batch_count: printJobContext.batch_count,
+                    copies: String(copies)
+                });
+                const res = await fetch('create_label_print_job.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body
+                });
+                const data = await res.json();
+                if (data.success) {
+                    closePrintModal();
+                } else {
+                    alert('Ошибка: ' + (data.message || 'неизвестно'));
+                }
+            } catch (e) {
+                console.error(e);
+                alert('Ошибка сети при постановке в очередь');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && document.getElementById('printModal').classList.contains('open')) {
+                closePrintModal();
+            }
+        });
         let currentFilterOrders = [];
         let filterSuggestionsTimeout = null;
         let currentHighlightIndex = -1;

@@ -1390,9 +1390,15 @@ $pageTitle = 'Активные позиции';
         }
         td.date-cell.drag-source-single,
         td.date-cell.drag-source-row {
-            outline: 2px solid #93c5fd;
+            outline: 2px solid #22c55e;
             outline-offset: -2px;
-            background: #eff6ff !important;
+            background: #dcfce7 !important;
+        }
+        td.date-cell.drag-drop-ok {
+            background: #dcfce7 !important;
+        }
+        td.date-cell.drag-drop-conflict {
+            background: #fef3c7 !important;
         }
         td.date-cell.drag-drop-target {
             outline: 2px dashed #60a5fa;
@@ -2782,6 +2788,7 @@ $pageTitle = 'Активные позиции';
         };
         let isGofroCoverageVisible = false;
         let dateCells = [];
+        let dateCellsByDate = new Map();
         let dateCellContextMenuTarget = null;
         let debtCellContextMenuTarget = null;
         let activeDateFilter = '';
@@ -2930,6 +2937,22 @@ $pageTitle = 'Активные позиции';
 
         function refreshDateCellsCache() {
             dateCells = Array.from(document.querySelectorAll('td.date-cell'));
+            dateCellsByDate = new Map();
+            dateCells.forEach(function (cell) {
+                const date = String(cell.dataset.date || '').trim();
+                if (!date) {
+                    return;
+                }
+                if (!dateCellsByDate.has(date)) {
+                    dateCellsByDate.set(date, []);
+                }
+                dateCellsByDate.get(date).push(cell);
+            });
+        }
+
+        function getDateCellsForDate(date) {
+            const key = String(date || '').trim();
+            return key && dateCellsByDate.has(key) ? dateCellsByDate.get(key) : [];
         }
 
         function rowHasPressFlag(row) {
@@ -3733,6 +3756,7 @@ $pageTitle = 'Активные позиции';
         let isApplyingPendingMoves = false;
         let isQueuePanelOpen = false;
         let previewedTargetCell = null;
+        let activeDragTargetCell = null;
         const pendingMoves = [];
         let debtPopoverAnchorCell = null;
         let activeAnalogKey = '';
@@ -3997,9 +4021,9 @@ $pageTitle = 'Активные позиции';
                 if (!state || !row) {
                     return;
                 }
-                const rowHas600 = (row.dataset.has600 || '') === '1' || !!row.querySelector('.pos-indicator.w600');
-                const rowHasD = (row.dataset.hasD || '') === '1' || !!row.querySelector('.pos-indicator.d');
-                const rowHasPress = (row.dataset.hasPress || '') === '1' || !!row.querySelector('.pos-indicator.p');
+                const rowHas600 = (row.dataset.has600 || '') === '1';
+                const rowHasD = (row.dataset.hasD || '') === '1';
+                const rowHasPress = (row.dataset.hasPress || '') === '1';
                 state.totalQty += qty;
                 if (rowHas600) {
                     state.w600Qty += qty;
@@ -4124,9 +4148,26 @@ $pageTitle = 'Активные позиции';
 
         function hideDragPreview() {
             previewedTargetCell = null;
+            if (activeDragTargetCell) {
+                activeDragTargetCell.classList.remove('drag-drop-target');
+                activeDragTargetCell = null;
+            }
             dragPreview.hidden = true;
             dragPreview.classList.remove('is-conflict');
             dragPreview.innerHTML = '';
+        }
+
+        function setActiveDragTargetCell(cell) {
+            if (activeDragTargetCell === cell) {
+                return;
+            }
+            if (activeDragTargetCell) {
+                activeDragTargetCell.classList.remove('drag-drop-target');
+            }
+            activeDragTargetCell = cell || null;
+            if (activeDragTargetCell) {
+                activeDragTargetCell.classList.add('drag-drop-target');
+            }
         }
 
         function positionDragPreview(targetCell) {
@@ -4162,10 +4203,7 @@ $pageTitle = 'Активные позиции';
                 dQty: 0,
                 pressQty: 0,
             };
-            dateCells.forEach(function (cell) {
-                if ((cell.dataset.date || '') !== date) {
-                    return;
-                }
+            getDateCellsForDate(date).forEach(function (cell) {
                 const nextQty = changeMap.has(cell)
                     ? Math.max(0, parseInt(changeMap.get(cell), 10) || 0)
                     : (parseInt(cell.dataset.qty || '0', 10) || 0);
@@ -4177,10 +4215,10 @@ $pageTitle = 'Активные позиции';
                     return;
                 }
                 state.totalQty += nextQty;
-                if ((row.dataset.hasD || '') === '1' || !!row.querySelector('.pos-indicator.d')) {
+                if ((row.dataset.hasD || '') === '1') {
                     state.dQty += nextQty;
                 }
-                if ((row.dataset.hasPress || '') === '1' || !!row.querySelector('.pos-indicator.p')) {
+                if ((row.dataset.hasPress || '') === '1') {
                     state.pressQty += nextQty;
                 }
             });
@@ -4204,53 +4242,64 @@ $pageTitle = 'Активные позиции';
             positionDragPreview(targetCell);
         }
 
-        function updateDragPreview(targetCell) {
-            if (!dragContext || !targetCell || !canDropOn(targetCell)) {
-                hideDragPreview();
-                return;
+        let pendingDragPreviewCell = null;
+        let pendingDragTargetCell = null;
+        let dragPreviewRafId = 0;
+        let dragPreviewDelayTimer = 0;
+        const DRAG_PREVIEW_DELAY_MS = 120;
+
+        function cancelScheduledDragPreview() {
+            if (dragPreviewDelayTimer) {
+                window.clearTimeout(dragPreviewDelayTimer);
+                dragPreviewDelayTimer = 0;
             }
-            if (previewedTargetCell === targetCell) {
-                positionDragPreview(targetCell);
-                return;
+            if (dragPreviewRafId) {
+                cancelAnimationFrame(dragPreviewRafId);
+                dragPreviewRafId = 0;
+            }
+        }
+
+        function getDropConflictPreview(targetCell) {
+            const settings = getSettings();
+            const empty = {
+                hasConflict: true,
+                totalQty: 0,
+                normTotal: Math.max(1, parseInt(settings.normTotal, 10) || 1),
+                totalOver: 0,
+                dQty: 0,
+                normD: Math.max(1, parseInt(settings.normD, 10) || 1),
+                dConflict: false,
+                pressCount: 0,
+                maxPress: Math.max(1, parseInt(settings.maxPress, 10) || 1),
+                pressConflict: true,
+                message: '',
+            };
+            if (!dragContext || !targetCell || !canDropOn(targetCell)) {
+                return empty;
             }
             const queuedMove = buildQueuedMove(targetCell);
             if (!queuedMove) {
-                hideDragPreview();
-                return;
+                return empty;
             }
-            const settings = getSettings();
             if (queuedMove.error) {
-                previewedTargetCell = targetCell;
-                renderDragPreview(targetCell, {
-                    hasConflict: true,
+                return Object.assign({}, empty, {
                     totalQty: getDateTotalQty(targetCell.dataset.date || ''),
-                    normTotal: Math.max(1, parseInt(settings.normTotal, 10) || 1),
-                    totalOver: 0,
                     dQty: getDateDQty(targetCell.dataset.date || ''),
-                    normD: Math.max(1, parseInt(settings.normD, 10) || 1),
-                    dConflict: false,
-                    pressCount: 0,
-                    maxPress: Math.max(1, parseInt(settings.maxPress, 10) || 1),
-                    pressConflict: true,
                     message: queuedMove.error,
                 });
-                return;
             }
             const changeMap = new Map();
             queuedMove.changes.forEach(function (change) {
                 changeMap.set(change.cell, change.next);
             });
-            const targetDate = targetCell.dataset.date || '';
-            const nextState = getDateStateWithOverrides(targetDate, changeMap);
+            const nextState = getDateStateWithOverrides(targetCell.dataset.date || '', changeMap);
             const normTotal = Math.max(1, parseInt(settings.normTotal, 10) || 1);
             const normD = Math.max(1, parseInt(settings.normD, 10) || 1);
             const maxPress = Math.max(1, parseInt(settings.maxPress, 10) || 1);
             const totalOver = Math.max(0, nextState.totalQty - normTotal);
             const dConflict = nextState.dQty > normD;
-            const pressCount = nextState.pressQty;
-            const pressConflict = pressCount > maxPress;
-            previewedTargetCell = targetCell;
-            renderDragPreview(targetCell, {
+            const pressConflict = nextState.pressQty > maxPress;
+            return {
                 hasConflict: totalOver > 0 || dConflict || pressConflict,
                 totalQty: nextState.totalQty,
                 normTotal: normTotal,
@@ -4258,17 +4307,69 @@ $pageTitle = 'Активные позиции';
                 dQty: nextState.dQty,
                 normD: normD,
                 dConflict: dConflict,
-                pressCount: pressCount,
+                pressCount: nextState.pressQty,
                 maxPress: maxPress,
                 pressConflict: pressConflict,
+            };
+        }
+
+        function paintRowDropHints(row) {
+            if (!row || !dragContext) {
+                return;
+            }
+            row.classList.add('drag-source-active');
+            const sourceDate = dragContext.sourceType === 'debt' ? '' : String(dragContext.fromDate || '');
+            Array.from(row.querySelectorAll('td.date-cell')).forEach(function (cell) {
+                if (sourceDate && String(cell.dataset.date || '') === sourceDate) {
+                    return;
+                }
+                const preview = getDropConflictPreview(cell);
+                cell.classList.toggle('drag-drop-conflict', !!preview.hasConflict);
+                cell.classList.toggle('drag-drop-ok', !preview.hasConflict);
             });
+        }
+
+        function updateDragPreviewNow(targetCell) {
+            if (!dragContext || !targetCell || !canDropOn(targetCell)) {
+                hideDragPreview();
+                return;
+            }
+            if (previewedTargetCell === targetCell) {
+                return;
+            }
+            const preview = getDropConflictPreview(targetCell);
+            previewedTargetCell = targetCell;
+            renderDragPreview(targetCell, preview);
+        }
+
+        function updateDragPreview(targetCell) {
+            pendingDragPreviewCell = targetCell || null;
+            pendingDragTargetCell = targetCell || null;
+            cancelScheduledDragPreview();
+            dragPreviewDelayTimer = window.setTimeout(function () {
+                dragPreviewDelayTimer = 0;
+                setActiveDragTargetCell(pendingDragTargetCell);
+                dragPreviewRafId = requestAnimationFrame(function () {
+                    dragPreviewRafId = 0;
+                    const nextCell = pendingDragPreviewCell;
+                    pendingDragPreviewCell = null;
+                    pendingDragTargetCell = null;
+                    updateDragPreviewNow(nextCell);
+                });
+            }, DRAG_PREVIEW_DELAY_MS);
         }
 
         function clearDragState() {
             clearHoverPreview();
             hideDragPreview();
+            cancelScheduledDragPreview();
+            pendingDragPreviewCell = null;
+            pendingDragTargetCell = null;
+            document.querySelectorAll('tr.plan-row.drag-source-active').forEach(function (row) {
+                row.classList.remove('drag-source-active');
+            });
             dateCells.forEach(function (cell) {
-                cell.classList.remove('drag-source-single', 'drag-source-row', 'drag-drop-target', 'drag-busy');
+                cell.classList.remove('drag-source-single', 'drag-source-row', 'drag-drop-target', 'drag-busy', 'drag-drop-ok', 'drag-drop-conflict');
             });
             dragContext = null;
         }
@@ -4356,6 +4457,12 @@ $pageTitle = 'Активные позиции';
 
             row.dataset.priority = isLagging ? 'A' : 'C';
 
+            const stateKey = (isLagging ? 'L' : '') + (hasPlanOver ? 'O' + planOverQty : '') + (hasDebt ? 'D' + debtQty : '') + 'P' + planSum;
+            if (row.dataset._stateKey === stateKey) {
+                return;
+            }
+            row.dataset._stateKey = stateKey;
+
             const stateCell = row.querySelector('td.state-cell');
             if (!stateCell) {
                 return;
@@ -4406,6 +4513,20 @@ $pageTitle = 'Активные позиции';
 
         function refreshAllPlanRowStates() {
             document.querySelectorAll('tr.plan-row').forEach(refreshPlanRowState);
+        }
+
+        let _rafRecalcPending = false;
+        function scheduleRecalc() {
+            if (_rafRecalcPending) {
+                return;
+            }
+            _rafRecalcPending = true;
+            requestAnimationFrame(function () {
+                _rafRecalcPending = false;
+                recalcHeaderIndicatorsFromTable();
+                applyGofroCoverageHighlight();
+                refreshAllPlanRowStates();
+            });
         }
 
         function adjustDebtShiftsForPlanDelta(planKey, deltaPlan, fallbackDate) {
@@ -4464,6 +4585,7 @@ $pageTitle = 'Активные позиции';
                     e.preventDefault();
                     return;
                 }
+                const sourceRow = item.closest('tr.plan-row');
                 const order = item.dataset.order || '';
                 const filter = item.dataset.filter || '';
                 const fromDate = item.dataset.date || '';
@@ -4482,6 +4604,7 @@ $pageTitle = 'Активные позиции';
                     debtKey: getPlanKey(order, filter),
                 };
                 item.classList.add('drag-source-single');
+                paintRowDropHints(sourceRow);
                 if (e.dataTransfer) {
                     e.dataTransfer.effectAllowed = 'move';
                     e.dataTransfer.setData('text/plain', `${order}|${filter}|${fromDate}|debt`);
@@ -5208,7 +5331,55 @@ $pageTitle = 'Активные позиции';
         /**
          * Очередь переноса из долга в пустую ячейку (без drag): эквивалент buildQueuedSingleMove с sourceType debt.
          */
-        function buildQueuedDebtMove(targetCell, order, filter, debtKey, fromDebtDate, qty) {
+        function normalizeDebtTakes(takes, fallbackDate, fallbackQty) {
+            const list = [];
+            if (Array.isArray(takes)) {
+                takes.forEach(function (t) {
+                    const date = String((t && t.date) || '').trim();
+                    const qty = Math.max(0, parseInt((t && t.qty) || 0, 10) || 0);
+                    if (date !== '' && qty > 0) {
+                        list.push({ date: date, qty: qty });
+                    }
+                });
+            }
+            if (list.length === 0) {
+                const date = String(fallbackDate || '').trim();
+                const qty = Math.max(0, parseInt(fallbackQty, 10) || 0);
+                if (date !== '' && qty > 0) {
+                    list.push({ date: date, qty: qty });
+                }
+            }
+            return list;
+        }
+
+        function consumeDebtShiftsFifo(shifts, qtyWanted) {
+            const virtual = sortDebtShiftsChrono(shifts);
+            let need = Math.max(0, parseInt(qtyWanted, 10) || 0);
+            const takes = [];
+            virtual.forEach(function (item) {
+                if (need <= 0 || item.qty <= 0) {
+                    return;
+                }
+                const chunk = Math.min(need, item.qty);
+                if (chunk <= 0) {
+                    return;
+                }
+                takes.push({ date: item.date, qty: chunk });
+                item.qty -= chunk;
+                need -= chunk;
+            });
+            return {
+                shifts: virtual.filter(function (s) {
+                    return s.qty > 0;
+                }),
+                takes: takes,
+                taken: takes.reduce(function (acc, t) {
+                    return acc + t.qty;
+                }, 0),
+            };
+        }
+
+        function buildQueuedDebtMove(targetCell, order, filter, debtKey, fromDebtDate, qty, debtTakes) {
             const targetQty = Math.max(0, parseInt(targetCell.dataset.qty || '0', 10) || 0);
             const toDate = String(targetCell.dataset.date || '').trim();
             const o = String(order || '').trim();
@@ -5230,6 +5401,7 @@ $pageTitle = 'Активные позиции';
             if (targetQty > 0) {
                 return { error: 'Нельзя складывать смены: дата ' + toShortDate(toDate) + ' уже занята.' };
             }
+            const takes = normalizeDebtTakes(debtTakes, fromD, q);
             return {
                 payload: {
                     mode: 'debt',
@@ -5247,6 +5419,7 @@ $pageTitle = 'Активные позиции';
                     key: debtKey || getPlanKey(o, f),
                     shift: { date: fromD, qty: q },
                     movedQty: q,
+                    takes: takes,
                 },
             };
         }
@@ -5327,25 +5500,20 @@ $pageTitle = 'Активные позиции';
                     skippedLocked += 1;
                     continue;
                 }
-                virtual = sortDebtShiftsChrono(virtual);
-                const head = virtual.find(function (s) {
-                    return s.qty > 0;
-                });
-                if (!head) {
+                const need = Math.min(batch, remaining);
+                const consumed = consumeDebtShiftsFifo(virtual, need);
+                if (consumed.taken <= 0) {
                     break;
                 }
-                const chunk = Math.min(batch, remaining, head.qty);
-                if (chunk <= 0) {
-                    break;
-                }
-                const qm = buildQueuedDebtMove(cell, order, filter, planKey, head.date, chunk);
+                const fromDebtDate = consumed.takes[0].date;
+                const qm = buildQueuedDebtMove(cell, order, filter, planKey, fromDebtDate, consumed.taken, consumed.takes);
                 if (qm.error) {
                     return qm;
                 }
                 moves.push(qm);
                 claimedDates.add(d);
-                head.qty -= chunk;
-                remaining -= chunk;
+                virtual = consumed.shifts;
+                remaining -= consumed.taken;
             }
             if (moves.length === 0) {
                 let extra = 'Проверьте пустые даты в строке или расширьте период («+ день»).';
@@ -5453,10 +5621,7 @@ $pageTitle = 'Активные позиции';
 
         function getDateTotalQty(date) {
             let total = 0;
-            dateCells.forEach(function (cell) {
-                if ((cell.dataset.date || '') !== date) {
-                    return;
-                }
+            getDateCellsForDate(date).forEach(function (cell) {
                 total += parseInt(cell.dataset.qty || '0', 10) || 0;
             });
             return total;
@@ -5464,10 +5629,7 @@ $pageTitle = 'Активные позиции';
 
         function getDateDQty(date) {
             let total = 0;
-            dateCells.forEach(function (cell) {
-                if ((cell.dataset.date || '') !== date) {
-                    return;
-                }
+            getDateCellsForDate(date).forEach(function (cell) {
                 const qty = parseInt(cell.dataset.qty || '0', 10) || 0;
                 if (qty <= 0) {
                     return;
@@ -5502,10 +5664,7 @@ $pageTitle = 'Активные позиции';
 
         function getDateTotalQtyVirtual(date, overrides) {
             let total = 0;
-            dateCells.forEach(function (cell) {
-                if ((cell.dataset.date || '') !== date) {
-                    return;
-                }
+            getDateCellsForDate(date).forEach(function (cell) {
                 total += getCellQtyVirtual(cell, overrides);
             });
             return total;
@@ -5513,10 +5672,7 @@ $pageTitle = 'Активные позиции';
 
         function getDateDQtyVirtual(date, overrides) {
             let total = 0;
-            dateCells.forEach(function (cell) {
-                if ((cell.dataset.date || '') !== date) {
-                    return;
-                }
+            getDateCellsForDate(date).forEach(function (cell) {
                 const qty = getCellQtyVirtual(cell, overrides);
                 if (qty <= 0) {
                     return;
@@ -5806,38 +5962,53 @@ $pageTitle = 'Активные позиции';
                 const debtKey = queuedMove.debtChange.key || '';
                 const shift = queuedMove.debtChange.shift || null;
                 const debtMoved = Math.max(0, parseInt(queuedMove.debtChange.movedQty || queuedMove.movedQty || 0, 10) || 0);
-                if (debtKey && shift && shift.date && debtMoved > 0) {
+                const takes = normalizeDebtTakes(
+                    queuedMove.debtChange.takes,
+                    shift ? shift.date : '',
+                    debtMoved
+                );
+                if (debtKey && takes.length > 0) {
                     const shifts = getDebtShiftsForKey(debtKey);
-                    const dateRef = shift.date;
                     if (direction === 'forward') {
-                        let remaining = debtMoved;
+                        const pendingTakes = takes.map(function (t) {
+                            return { date: t.date, qty: t.qty };
+                        });
                         const next = [];
                         shifts.forEach(function (item) {
-                            if (remaining > 0 && item.date === dateRef) {
-                                const q = Math.max(0, parseInt(item.qty || 0, 10) || 0);
-                                const take = Math.min(q, remaining);
-                                remaining -= take;
-                                const left = q - take;
-                                if (left > 0) {
-                                    next.push({ date: item.date, qty: left });
+                            let q = Math.max(0, parseInt(item.qty || 0, 10) || 0);
+                            pendingTakes.forEach(function (t) {
+                                if (t.qty <= 0 || t.date !== item.date || q <= 0) {
+                                    return;
                                 }
-                            } else {
-                                next.push({ date: item.date, qty: item.qty });
+                                const take = Math.min(q, t.qty);
+                                q -= take;
+                                t.qty -= take;
+                            });
+                            if (q > 0) {
+                                next.push({ date: item.date, qty: q });
                             }
                         });
                         setDebtShiftsForKey(debtKey, next);
                     } else {
-                        let merged = false;
                         const next = shifts.map(function (item) {
-                            if (item.date === dateRef) {
-                                merged = true;
-                                return { date: item.date, qty: (Math.max(0, parseInt(item.qty || 0, 10) || 0)) + debtMoved };
-                            }
-                            return { date: item.date, qty: item.qty };
+                            return {
+                                date: item.date,
+                                qty: Math.max(0, parseInt(item.qty || 0, 10) || 0),
+                            };
                         });
-                        if (!merged) {
-                            next.push({ date: dateRef, qty: debtMoved });
-                        }
+                        takes.forEach(function (t) {
+                            let merged = false;
+                            for (let i = 0; i < next.length; i += 1) {
+                                if (next[i].date === t.date) {
+                                    next[i].qty += t.qty;
+                                    merged = true;
+                                    break;
+                                }
+                            }
+                            if (!merged) {
+                                next.push({ date: t.date, qty: t.qty });
+                            }
+                        });
                         setDebtShiftsForKey(debtKey, next);
                     }
                     renderDebtCellByKey(debtKey);
@@ -5850,9 +6021,7 @@ $pageTitle = 'Активные позиции';
                     adjustDebtShiftsForPlanDelta(planKey, delta, fallbackDates.get(planKey) || todayIso);
                 });
             }
-            recalcHeaderIndicatorsFromTable();
-            applyGofroCoverageHighlight();
-            refreshAllPlanRowStates();
+            scheduleRecalc();
         }
 
         function pushPendingMove(queuedMove) {
@@ -6357,11 +6526,9 @@ $pageTitle = 'Активные позиции';
             });
 
             refreshDateCellsCache();
-            recalcHeaderIndicatorsFromTable();
             applyFrozenColumns();
-            applyGofroCoverageHighlight();
-            refreshAllPlanRowStates();
             updateRangeActiveHeaderClasses();
+            scheduleRecalc();
         }
 
         function bindDateCellInteractions(cell) {
@@ -6398,6 +6565,7 @@ $pageTitle = 'Активные позиции';
                     return;
                 }
                 clearHoverPreview();
+                const sourceRow = cell.closest('tr.plan-row');
                 const qty = parseInt(cell.dataset.qty || '0', 10) || 0;
                 if (qty <= 0 || isCellLocked(cell)) {
                     e.preventDefault();
@@ -6425,6 +6593,7 @@ $pageTitle = 'Активные позиции';
                 } else {
                     cell.classList.add('drag-source-single');
                 }
+                paintRowDropHints(sourceRow);
                 if (e.dataTransfer) {
                     e.dataTransfer.effectAllowed = 'move';
                     e.dataTransfer.setData('text/plain', `${dragContext.order}|${dragContext.filter}|${dragContext.fromDate}`);
@@ -6443,8 +6612,9 @@ $pageTitle = 'Активные позиции';
                 if (e.dataTransfer) {
                     e.dataTransfer.dropEffect = 'move';
                 }
-                cell.classList.add('drag-drop-target');
-                updateDragPreview(cell);
+                if (pendingDragPreviewCell !== cell && previewedTargetCell !== cell) {
+                    updateDragPreview(cell);
+                }
             });
 
             cell.addEventListener('dragenter', function (e) {
@@ -6456,12 +6626,20 @@ $pageTitle = 'Активные позиции';
                     return;
                 }
                 e.preventDefault();
-                cell.classList.add('drag-drop-target');
-                updateDragPreview(cell);
+                if (pendingDragPreviewCell !== cell && previewedTargetCell !== cell) {
+                    updateDragPreview(cell);
+                }
             });
 
             cell.addEventListener('dragleave', function () {
-                cell.classList.remove('drag-drop-target');
+                if (activeDragTargetCell === cell) {
+                    setActiveDragTargetCell(null);
+                }
+                if (pendingDragPreviewCell === cell) {
+                    cancelScheduledDragPreview();
+                    pendingDragPreviewCell = null;
+                    pendingDragTargetCell = null;
+                }
                 if (previewedTargetCell === cell) {
                     hideDragPreview();
                 }

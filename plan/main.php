@@ -445,6 +445,9 @@ $advertisement = 'Информация';
                         <input type="hidden" name="workshop" value="<?php echo htmlspecialchars($currentDepartment); ?>">
                         <input type="submit" value="Модуль оператора ГМ">
                     </form>
+                    <a href="worker_modules/label_print_queue.php" target="_blank" rel="noopener" class="stack">
+                        <button type="button">Очередь печати этикеток</button>
+                    </a>
                     <form action="worker_modules/tasks_cut.php" method="post" target="_blank" class="stack">
                         <input type="hidden" name="workshop" value="<?php echo htmlspecialchars($currentDepartment); ?>">
                         <input type="submit" value="Модуль оператора бумагорезки">
