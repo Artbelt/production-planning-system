@@ -63,6 +63,12 @@ if ($packagingDateFrom > $packagingDateTo) {
     $packagingDateTo = $tmp;
 }
 
+$allowedTabs = ['departments-tab', 'packaging-tab', 'papercutter-tab'];
+$activeTab = isset($_GET['tab']) ? trim($_GET['tab']) : 'departments-tab';
+if (!in_array($activeTab, $allowedTabs, true)) {
+    $activeTab = 'departments-tab';
+}
+
 // Подключения к БД участков: код участка => путь к settings.php
 $planSettingsPaths = [
     'U2' => __DIR__ . '/../plan/settings.php',
@@ -896,16 +902,17 @@ $departments = [
                 <input type="date" id="analyticsDate" name="date" value="<?= htmlspecialchars($reportDate) ?>" class="analytics-date-input" max="<?= date('Y-m-d') ?>" onchange="document.getElementById('analyticsDateForm').submit()">
                 <input type="hidden" name="packaging_date_from" value="<?= htmlspecialchars($packagingDateFrom) ?>">
                 <input type="hidden" name="packaging_date_to" value="<?= htmlspecialchars($packagingDateTo) ?>">
+                <input type="hidden" name="tab" id="analyticsActiveTab" value="<?= htmlspecialchars($activeTab) ?>">
             </form>
         </div>
 
         <div class="analytics-tabs">
-            <button type="button" class="analytics-tab-btn is-active" data-tab-target="departments-tab">Аналитика по участкам</button>
-            <button type="button" class="analytics-tab-btn" data-tab-target="packaging-tab">Аналитика по упаковке</button>
-            <button type="button" class="analytics-tab-btn" data-tab-target="papercutter-tab">Бумагорезка</button>
+            <button type="button" class="analytics-tab-btn<?= $activeTab === 'departments-tab' ? ' is-active' : '' ?>" data-tab-target="departments-tab">Аналитика по участкам</button>
+            <button type="button" class="analytics-tab-btn<?= $activeTab === 'packaging-tab' ? ' is-active' : '' ?>" data-tab-target="packaging-tab">Аналитика по упаковке</button>
+            <button type="button" class="analytics-tab-btn<?= $activeTab === 'papercutter-tab' ? ' is-active' : '' ?>" data-tab-target="papercutter-tab">Бумагорезка</button>
         </div>
 
-        <div class="analytics-tab-panel is-active" id="departments-tab">
+        <div class="analytics-tab-panel<?= $activeTab === 'departments-tab' ? ' is-active' : '' ?>" id="departments-tab">
             <div class="analytics-grid">
                 <?php foreach ($departments as $code => $dept): ?>
                     <div class="dept-card">
@@ -1093,7 +1100,7 @@ $departments = [
             </div>
         </div>
 
-        <div class="analytics-tab-panel" id="packaging-tab">
+        <div class="analytics-tab-panel<?= $activeTab === 'packaging-tab' ? ' is-active' : '' ?>" id="packaging-tab">
             <div class="packaging-card">
                 <div style="font-weight: 600; font-size: 16px; margin-bottom: 6px;">Аналитика по упаковке</div>
                 <form method="get" action="" class="analytics-date-form" id="packagingDateForm" style="margin-bottom: 14px;">
@@ -1102,6 +1109,7 @@ $departments = [
                     <span class="analytics-date-label">—</span>
                     <input type="date" id="packagingDateTo" name="packaging_date_to" value="<?= htmlspecialchars($packagingDateTo) ?>" class="analytics-date-input" max="<?= date('Y-m-d') ?>" onchange="document.getElementById('packagingDateForm').submit()">
                     <input type="hidden" name="date" value="<?= htmlspecialchars($reportDate) ?>">
+                    <input type="hidden" name="tab" value="packaging-tab">
                 </form>
                 <?php if (!empty($packagingStats['error'])): ?>
                     <div class="packaging-empty"><?= htmlspecialchars($packagingStats['error']) ?></div>
@@ -1164,7 +1172,7 @@ $departments = [
             </div>
         </div>
 
-        <div class="analytics-tab-panel" id="papercutter-tab">
+        <div class="analytics-tab-panel<?= $activeTab === 'papercutter-tab' ? ' is-active' : '' ?>" id="papercutter-tab">
             <div class="packaging-card">
                 <div class="papercutter-title">Бумагорезка</div>
                 <div class="papercutter-total">
@@ -1350,14 +1358,33 @@ $departments = [
     (function() {
         var buttons = document.querySelectorAll('.analytics-tab-btn');
         var panels = document.querySelectorAll('.analytics-tab-panel');
+        var activeTabInput = document.getElementById('analyticsActiveTab');
+
+        function setActiveTab(targetId, updateUrl) {
+            buttons.forEach(function(b) { b.classList.remove('is-active'); });
+            panels.forEach(function(p) { p.classList.remove('is-active'); });
+            var activeBtn = document.querySelector('.analytics-tab-btn[data-tab-target="' + targetId + '"]');
+            if (activeBtn) activeBtn.classList.add('is-active');
+            var target = document.getElementById(targetId);
+            if (target) target.classList.add('is-active');
+            if (activeTabInput) activeTabInput.value = targetId;
+            if (updateUrl && window.history && window.history.replaceState) {
+                var params = new URLSearchParams(window.location.search);
+                if (targetId === 'departments-tab') {
+                    params.delete('tab');
+                } else {
+                    params.set('tab', targetId);
+                }
+                var query = params.toString();
+                var newUrl = window.location.pathname + (query ? '?' + query : '');
+                window.history.replaceState(null, '', newUrl);
+            }
+        }
+
         buttons.forEach(function(btn) {
             btn.addEventListener('click', function() {
                 var targetId = this.getAttribute('data-tab-target');
-                buttons.forEach(function(b) { b.classList.remove('is-active'); });
-                panels.forEach(function(p) { p.classList.remove('is-active'); });
-                this.classList.add('is-active');
-                var target = document.getElementById(targetId);
-                if (target) target.classList.add('is-active');
+                setActiveTab(targetId, true);
             });
         });
     })();

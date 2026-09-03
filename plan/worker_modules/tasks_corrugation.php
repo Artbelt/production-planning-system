@@ -447,10 +447,10 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
             <table style="border-collapse: collapse; width: 100%; font-size: 13px; background: white; border: 1px solid var(--gray-200);">
                 <thead>
                     <tr>
+                        <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px; width: 1%; white-space: nowrap;"></th>
                         <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px;">Заявка</th>
                         <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px;">Фильтр</th>
                         <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px;">Количество</th>
-                        <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px;">Время</th>
                         <th style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; background: var(--gray-100); font-weight: 600; color: var(--gray-700); font-size: 12px; width: 1%; white-space: nowrap;"></th>
                     </tr>
                 </thead>
@@ -460,22 +460,18 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
                     $is_first = true;
                     foreach ($manufactured_packages as $item):
                         $total_count += (int)$item['count'];
-                        $time = $item['timestamp'] ? date('H:i', strtotime($item['timestamp'])) : '-';
                     ?>
                         <tr style="border-bottom: 1px solid var(--gray-200);"
                             data-id="<?= (int)$item['id'] ?>"
                             data-order="<?= htmlspecialchars($item['order_number'], ENT_QUOTES) ?>"
                             data-filter="<?= htmlspecialchars($item['filter_label'], ENT_QUOTES) ?>"
                             data-count="<?= (int)$item['count'] ?>">
-                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center;"><strong><?= htmlspecialchars($item['order_number'] ?: '-') ?></strong></td>
-                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: left; padding-left: 12px;">
-                                <span style="display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                                    <button type="button" class="print-label-btn" onclick="openPrintModal(this)" title="Печать этикеток" style="background: var(--info-color); color: white; border: none; padding: 0; border-radius: var(--border-radius-sm); cursor: pointer; font-size: 13px; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">🖨</button>
-                                    <span><?= htmlspecialchars($item['filter_label']) ?></span>
-                                </span>
+                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; width: 1%; white-space: nowrap;">
+                                <button type="button" class="print-label-btn" onclick="openPrintModal(this)" title="Печать этикеток" style="background: var(--info-color); color: white; border: none; padding: 0; border-radius: var(--border-radius-sm); cursor: pointer; font-size: 13px; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;">🖨</button>
                             </td>
+                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center;"><strong><?= htmlspecialchars($item['order_number'] ?: '-') ?></strong></td>
+                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: left; padding-left: 12px;"><?= htmlspecialchars($item['filter_label']) ?></td>
                             <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; font-weight: 600; color: var(--primary-color);"><?= (int)$item['count'] ?></td>
-                            <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; color: var(--gray-600); font-size: 12px;"><?= htmlspecialchars($time) ?></td>
                             <td style="border: 1px solid var(--gray-200); padding: 6px 8px; text-align: center; width: 1%; white-space: nowrap;">
                                 <?php if ($is_first): ?>
                                     <button class="delete-last-btn" onclick="deleteLastPackage('<?= htmlspecialchars($date) ?>')" style="background: var(--accent-color); color: white; border: none; padding: 6px 10px; border-radius: var(--border-radius-sm); cursor: pointer; font-size: 14px; font-weight: 500; transition: var(--transition); width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;" title="Удалить последнюю внесенную позицию">✕</button>
@@ -486,9 +482,9 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
                         </tr>
                     <?php $is_first = false; endforeach; ?>
                     <tr style="background: var(--gray-50); font-weight: 600;">
+                        <td style="border: 1px solid var(--gray-200); padding: 8px 12px;"></td>
                         <td colspan="2" style="border: 1px solid var(--gray-200); padding: 8px 12px; text-align: right;">Итого:</td>
                         <td style="border: 1px solid var(--gray-200); padding: 8px 12px; text-align: center; color: var(--primary-color);"><?= $total_count ?></td>
-                        <td style="border: 1px solid var(--gray-200); padding: 8px 12px;"></td>
                         <td style="border: 1px solid var(--gray-200); padding: 8px 12px; width: 1%;"></td>
                     </tr>
                 </tbody>
@@ -537,7 +533,7 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
         </div>
         <div class="modal-row">
             <label for="printCopies">Количество копий этикетки</label>
-            <input type="number" id="printCopies" min="1" max="500" value="1" inputmode="numeric">
+            <input type="number" id="printCopies" min="1" max="500" value="2" inputmode="numeric">
         </div>
         <div class="modal-actions">
             <button type="button" class="btn-secondary" onclick="closePrintModal()">Отмена</button>
@@ -562,7 +558,7 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
             document.getElementById('printModalOrder').textContent = printJobContext.order_number || '—';
             document.getElementById('printModalFilter').textContent = printJobContext.filter_label || '—';
             document.getElementById('printModalBatch').textContent = printJobContext.batch_count || '—';
-            document.getElementById('printCopies').value = '1';
+            document.getElementById('printCopies').value = '2';
             document.getElementById('printModal').classList.add('open');
             document.getElementById('printCopies').focus();
             document.getElementById('printCopies').select();

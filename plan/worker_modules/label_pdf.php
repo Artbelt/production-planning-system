@@ -64,15 +64,6 @@ $operator = (string)($payload['operator'] ?? '');
 $qty = (int)($payload['batch_count'] ?? 0);
 $dateRu = $producedAt !== '' ? date('d.m.Y', strtotime($producedAt)) : date('d.m.Y');
 
-$flags = [];
-if ($hasPrefilter) {
-    $flags[] = 'Предфильтр';
-}
-if ($hasGlueing) {
-    $flags[] = 'Проливка';
-}
-$flagsStr = implode('  ', $flags);
-
 $size = [38, 65];
 $pdf = new FPDF('L', 'mm', $size);
 $pdf->AddPage();
@@ -96,9 +87,13 @@ if ($analog !== '') {
     $y += 5;
 }
 
-if ($flagsStr !== '') {
-    $pdf->SetFont('Ariall', '', 8);
-    $pdf->Text(2.5, $y + 3, $flagsStr);
+$pdf->SetFont('Ariall', '', 8);
+if ($hasPrefilter) {
+    $pdf->Text(2.5, $y + 3, 'Предфильтр');
+    $y += 4;
+}
+if ($hasGlueing) {
+    $pdf->Text(2.5, $y + 3, 'Проливка');
 }
 
 $pdf->SetDrawColor(180, 180, 180);
@@ -113,13 +108,14 @@ $pdf->Text(2.5, 33.5, 'Дата');
 $pdf->Text(33, 33.5, 'Оператор');
 
 $pdf->SetTextColor(0, 0, 0);
-$pdf->SetFont('Ariall', '', 9);
+$pdf->SetFont('Ariall', '', 8);
 $pdf->Text(2.5, 31.5, $order);
 $pdf->Text(24, 31.5, $box);
-$pdf->SetFont('Ariall', '', 12);
+$pdf->SetFont('Ariall', '', 10);
 $pdf->Text(46, 31.8, $qty > 0 ? (string)$qty : '');
-$pdf->SetFont('Ariall', '', 9);
+$pdf->SetFont('Ariall', '', 8);
 $pdf->Text(2.5, 36.5, $dateRu);
+$pdf->SetFont('Ariall', '', 9);
 $pdf->Text(33, 36.5, $operator);
 
 $pdf->Output('I', 'label_' . $jobId . '.pdf');

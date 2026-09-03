@@ -5,6 +5,7 @@ error_reporting(E_ALL);
 
 try {
     require_once __DIR__ . '/../../auth/includes/db.php';
+    require_once __DIR__ . '/laser_request_lib.php';
 $pdo = getPdo('plan');
 
     // Получаем данные из POST
@@ -94,10 +95,18 @@ $pdo = getPdo('plan');
         $count
     ]);
 
-    echo json_encode([
+    $laserRequestId = laser_request_create_for_prefilter($pdo, $filter_label, $count);
+
+    $response = [
         'success' => true,
-        'message' => 'Данные сохранены успешно'
-    ]);
+        'message' => 'Данные сохранены успешно',
+    ];
+    if ($laserRequestId) {
+        $response['laser_request_id'] = $laserRequestId;
+        $response['message'] = 'Данные сохранены. Заявка на лазер для предфильтра создана.';
+    }
+
+    echo json_encode($response);
 
 } catch (PDOException $e) {
     echo json_encode([
