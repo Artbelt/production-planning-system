@@ -6,7 +6,9 @@ error_reporting(E_ALL);
 try {
     require_once __DIR__ . '/../../auth/includes/db.php';
     require_once __DIR__ . '/label_print_lib.php';
+    require_once __DIR__ . '/worker_auth_lib.php';
 
+    $operatorUser = worker_auth_require_user();
     $pdo = getPdo('plan');
     label_print_ensure_table($pdo);
 
@@ -49,9 +51,14 @@ try {
         }
     }
 
+    $operatorName = trim((string)($operatorUser['full_name'] ?? ''));
+    if ($operatorName === '') {
+        $operatorName = label_print_current_operator();
+    }
+
     $payload = label_print_build_payload($orderNumber, $filterLabel, $batchCount, $pdo, [
         'produced_at' => $producedAt,
-        'operator' => label_print_current_operator(),
+        'operator' => $operatorName,
     ]);
 
     $ins = $pdo->prepare("

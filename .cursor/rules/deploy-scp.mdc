@@ -1,0 +1,32 @@
+---
+description: Формат строк деплоя через scp на production-сервер
+alwaysApply: true
+---
+
+# Деплой на production
+
+Когда пользователь просит «строку для деплоя» / «deploy» — выдавать готовые команды `scp` (не git push), по изменённым файлам.
+
+## Шаблон
+
+```bat
+cd c:\xampp\htdocs\
+scp c:\xampp\htdocs\<относительный\путь\к\файлу> root@49.13.143.76:/var/www/html/<относительный/путь/к/директории>/
+```
+
+## Правила
+
+- Локальный корень: `c:\xampp\htdocs\`
+- Сервер: `root@49.13.143.76`
+- Удалённый корень: `/var/www/html/`
+- В `scp` путь назначения — **директория** (со слэшем в конце), не полный путь к файлу
+- Один файл = одна строка `scp`; сначала `cd c:\xampp\htdocs\`
+- Пути Windows с обратными слэшами слева; на сервере — прямые
+
+## Пример
+
+```bat
+cd c:\xampp\htdocs\
+scp c:\xampp\htdocs\plan_U3\active_positions.php root@49.13.143.76:/var/www/html/plan_U3/
+scp c:\xampp\htdocs\plan\worker_modules\tasks_corrugation.php root@49.13.143.76:/var/www/html/plan/worker_modules/
+```

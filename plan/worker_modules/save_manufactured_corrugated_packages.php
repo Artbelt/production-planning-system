@@ -6,13 +6,17 @@ error_reporting(E_ALL);
 try {
     require_once __DIR__ . '/../../auth/includes/db.php';
     require_once __DIR__ . '/laser_request_lib.php';
-$pdo = getPdo('plan');
+    require_once __DIR__ . '/worker_auth_lib.php';
+
+    $operatorUser = worker_auth_require_user();
+    $pdo = getPdo('plan');
 
     // Получаем данные из POST
     $date_of_production = $_POST['date_of_production'] ?? '';
     $order_number = $_POST['order_number'] ?? '';
     $filter_label = $_POST['filter_label'] ?? '';
     $count = isset($_POST['count']) ? (int)$_POST['count'] : 0;
+    $operatorName = trim((string)($operatorUser['full_name'] ?? ''));
 
     // Валидация
     if (empty($date_of_production) || empty($filter_label) || $count <= 0) {
@@ -84,15 +88,16 @@ $pdo = getPdo('plan');
 
     $stmt = $pdo->prepare("
         INSERT INTO manufactured_corrugated_packages 
-        (date_of_production, order_number, filter_label, count) 
-        VALUES (?, ?, ?, ?)
+        (date_of_production, order_number, filter_label, count, team) 
+        VALUES (?, ?, ?, ?, ?)
     ");
 
     $stmt->execute([
         $date_of_production,
         $order_number,
         $filter_label,
-        $count
+        $count,
+        $operatorName !== '' ? $operatorName : null,
     ]);
 
     $laserRequestId = laser_request_create_for_prefilter($pdo, $filter_label, $count);

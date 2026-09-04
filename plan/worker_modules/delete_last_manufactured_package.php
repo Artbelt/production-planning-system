@@ -5,6 +5,8 @@ error_reporting(E_ALL);
 
 try {
     require_once __DIR__ . '/../../auth/includes/db.php';
+    require_once __DIR__ . '/worker_auth_lib.php';
+    worker_auth_require_user();
     $pdo = getPdo('plan');
 
     $date_of_production = $_POST['date_of_production'] ?? '';

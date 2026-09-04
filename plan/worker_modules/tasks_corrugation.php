@@ -1,5 +1,11 @@
 <?php
 require_once __DIR__ . '/../../auth/includes/db.php';
+require_once __DIR__ . '/worker_auth_lib.php';
+
+$authInfo = worker_auth_current_user();
+$currentUser = $authInfo['user'];
+$isAuthenticated = $authInfo['authenticated'];
+
 $pdo = getPdo('plan');
 $date = $_GET['date'] ?? date('Y-m-d');
 
@@ -249,6 +255,53 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
         }
         .modal-actions .btn-primary { background: var(--primary-color); color: #fff; }
         .modal-actions .btn-secondary { background: var(--gray-200); color: var(--gray-800); }
+        .modal-actions .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+        .modal-error {
+            display: none;
+            margin-bottom: 10px;
+            padding: 8px 10px;
+            border-radius: var(--border-radius-sm);
+            background: #fef2f2;
+            color: #b91c1c;
+            font-size: 13px;
+            border: 1px solid #fecaca;
+        }
+        .modal-error.visible { display: block; }
+        .modal-hint { font-size: 12px; color: var(--gray-500); margin-bottom: 12px; }
+        .user-bar {
+            max-width: 900px;
+            margin: 0 auto 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+            background: white;
+            padding: 10px 14px;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            border: 1px solid var(--gray-200);
+            font-size: 14px;
+        }
+        .user-bar .user-status { color: var(--gray-700); }
+        .user-bar .user-status strong { color: var(--gray-900); }
+        .user-bar .user-actions { display: flex; gap: 8px; align-items: center; }
+        .user-bar button {
+            border: none;
+            padding: 7px 12px;
+            border-radius: var(--border-radius-sm);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .user-bar .btn-login { background: var(--primary-color); color: #fff; }
+        .user-bar .btn-logout { background: var(--gray-200); color: var(--gray-800); }
+        #loginModal .modal-row input[type="tel"],
+        #loginModal .modal-row input[type="password"],
+        #loginModal .modal-row input[type="text"] {
+            width: 100%; padding: 8px 10px; border: 1px solid var(--gray-300);
+            border-radius: var(--border-radius-sm); font-size: 16px;
+        }
 
         .nav input[type="date"] {
             padding: 10px 12px;
@@ -408,6 +461,20 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
 </head>
 <body>
     <div class="container">
+<div class="user-bar" id="userBar">
+    <div class="user-status" id="userStatus">
+        <?php if ($isAuthenticated): ?>
+            Оператор: <strong id="userNameDisplay"><?= htmlspecialchars($currentUser['full_name'] ?: $currentUser['phone']) ?></strong>
+        <?php else: ?>
+            <span id="userNameDisplay">Вы не авторизованы</span>
+        <?php endif; ?>
+    </div>
+    <div class="user-actions">
+        <button type="button" class="btn-login" id="loginBtn" style="<?= $isAuthenticated ? 'display:none' : '' ?>" onclick="openLoginModal()">Войти</button>
+        <button type="button" class="btn-logout" id="logoutBtn" style="<?= $isAuthenticated ? '' : 'display:none' ?>" onclick="logoutUser()">Сменить пользователя</button>
+    </div>
+</div>
+
 <h2>Задания гофромашины на <?= htmlspecialchars($date) ?></h2>
 
 <div class="nav">
@@ -542,11 +609,121 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 </div>
 
+<div id="loginModal" class="modal-overlay<?= $isAuthenticated ? '' : ' open' ?>">
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle">
+        <h3 id="loginModalTitle">Вход оператора</h3>
+        <p class="modal-hint">Войдите, чтобы вносить выпуск и печатать этикетки со своим именем.</p>
+        <div class="modal-error" id="loginError"></div>
+        <form id="loginForm" autocomplete="on">
+            <div class="modal-row">
+                <label for="loginPhone">Номер телефона</label>
+                <input type="tel" id="loginPhone" name="phone" placeholder="+380..." required autofocus>
+            </div>
+            <div class="modal-row">
+                <label for="loginPassword">Пароль</label>
+                <input type="password" id="loginPassword" name="password" required>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn-secondary" id="loginLaterBtn" onclick="closeLoginModal(true)">Позже</button>
+                <button type="submit" class="btn-primary" id="loginSubmitBtn">Войти</button>
+            </div>
+        </form>
+    </div>
+</div>
+
     <script>
+        const AUTH_LOGIN_URL = '../../auth/api/login.php';
+        const AUTH_LOGOUT_URL = '../../auth/api/logout.php';
+        let currentUser = <?= json_encode($isAuthenticated ? $currentUser : null, JSON_UNESCAPED_UNICODE) ?>;
         const allFilters = <?= json_encode($all_filters, JSON_UNESCAPED_UNICODE) ?>;
         let printJobContext = null;
 
+        function isLoggedIn() {
+            return !!(currentUser && currentUser.id);
+        }
+        function updateUserBar() {
+            const nameEl = document.getElementById('userNameDisplay');
+            const loginBtn = document.getElementById('loginBtn');
+            const logoutBtn = document.getElementById('logoutBtn');
+            if (isLoggedIn()) {
+                nameEl.innerHTML = 'Оператор: <strong>' + escapeHtml(currentUser.full_name || currentUser.phone || '') + '</strong>';
+                loginBtn.style.display = 'none';
+                logoutBtn.style.display = '';
+            } else {
+                nameEl.textContent = 'Вы не авторизованы';
+                loginBtn.style.display = '';
+                logoutBtn.style.display = 'none';
+            }
+        }
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+        function openLoginModal() {
+            document.getElementById('loginError').classList.remove('visible');
+            document.getElementById('loginError').textContent = '';
+            document.getElementById('loginModal').classList.add('open');
+            const phone = document.getElementById('loginPhone');
+            if (phone) { phone.focus(); }
+        }
+        function closeLoginModal(allowWithoutAuth) {
+            if (!isLoggedIn() && !allowWithoutAuth) return;
+            document.getElementById('loginModal').classList.remove('open');
+        }
+        function requireAuth() {
+            if (isLoggedIn()) return true;
+            openLoginModal();
+            return false;
+        }
+        async function logoutUser() {
+            try {
+                await fetch(AUTH_LOGOUT_URL, { method: 'POST', credentials: 'same-origin' });
+            } catch (e) { /* ignore */ }
+            currentUser = null;
+            updateUserBar();
+            openLoginModal();
+        }
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const phone = document.getElementById('loginPhone').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            const errEl = document.getElementById('loginError');
+            const btn = document.getElementById('loginSubmitBtn');
+            errEl.classList.remove('visible');
+            errEl.textContent = '';
+            if (!phone || !password) {
+                errEl.textContent = 'Заполните все поля';
+                errEl.classList.add('visible');
+                return;
+            }
+            btn.disabled = true;
+            try {
+                const res = await fetch(AUTH_LOGIN_URL, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, password, department: 'U2' })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    errEl.textContent = data.error || 'Ошибка входа';
+                    errEl.classList.add('visible');
+                    return;
+                }
+                currentUser = data.user;
+                document.getElementById('loginPassword').value = '';
+                updateUserBar();
+                document.getElementById('loginModal').classList.remove('open');
+            } catch (err) {
+                console.error(err);
+                errEl.textContent = 'Ошибка сети при входе';
+                errEl.classList.add('visible');
+            } finally {
+                btn.disabled = false;
+            }
+        });
+
         function openPrintModal(btn) {
+            if (!requireAuth()) return;
             const tr = btn.closest('tr');
             if (!tr) return;
             printJobContext = {
@@ -568,6 +745,7 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
             printJobContext = null;
         }
         async function submitPrintJob() {
+            if (!requireAuth()) return;
             if (!printJobContext) return;
             const copies = parseInt(document.getElementById('printCopies').value, 10);
             if (!copies || copies < 1) { alert('Укажите количество копий'); return; }
@@ -583,10 +761,12 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
                 });
                 const res = await fetch('create_label_print_job.php', {
                     method: 'POST',
+                    credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body
                 });
                 const data = await res.json();
+                if (data.auth_required) { openLoginModal(); return; }
                 if (data.success) {
                     closePrintModal();
                 } else {
@@ -683,16 +863,19 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
         });
 
         async function deleteLastPackage(date) {
+            if (!requireAuth()) return;
             if (!confirm('Вы уверены, что хотите удалить последнюю внесенную позицию?')) return;
             try {
-                const response = await fetch('delete_last_manufactured_package.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ date_of_production: date }) });
+                const response = await fetch('delete_last_manufactured_package.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ date_of_production: date }) });
                 const data = await response.json();
+                if (data.auth_required) { openLoginModal(); return; }
                 if (data.success) { alert('Последняя позиция успешно удалена'); window.location.reload(); } else alert('Ошибка: ' + (data.message || 'Неизвестная ошибка'));
             } catch (err) { console.error(err); alert('Ошибка при удалении записи'); }
         }
 
         document.getElementById('addProductionForm').addEventListener('submit', async function(e) {
             e.preventDefault();
+            if (!requireAuth()) return;
             const order = orderSelect.value.trim();
             const filter = filterInput.value.trim();
             const count = parseInt(document.getElementById('countInput').value, 10);
@@ -700,8 +883,9 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
             if (!order || !filter || !count || count <= 0) { alert('Заполните все поля корректно'); return; }
             if (currentFilterOrders.length > 0 && !currentFilterOrders.some(o => o === order)) { alert('Эта заявка не найдена для выбранного фильтра. Выберите заявку из списка.'); orderSelect.focus(); return; }
             try {
-                const response = await fetch('save_manufactured_corrugated_packages.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ date_of_production: date, order_number: order, filter_label: filter, count: count }) });
+                const response = await fetch('save_manufactured_corrugated_packages.php', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ date_of_production: date, order_number: order, filter_label: filter, count: count }) });
                 const data = await response.json();
+                if (data.auth_required) { openLoginModal(); return; }
                 if (data.success) {
                     alert('Продукция внесена успешно');
                     filterInput.value = '';
