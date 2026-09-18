@@ -546,6 +546,21 @@ foreach ($userDepartments as $dept) {
 		<button class="btn laser" onclick="window.open('/plan_U5/laser_request.php', '_blank')">Заявка на лазер У5</button>
 		<?php endif; ?>
 	<?php endif; ?>
+
+	<!-- Заявка на порезку бумаги (сборщицы У4) -->
+	<?php if (in_array('U4', $availableDepartments) && canAccessLaserRequests($userDepartments, 'U4')): ?>
+	<button class="btn cut" onclick="window.open('/plan_U4/paper_cut_request.php', '_blank')">Заявка на порезку бумаги У4</button>
+	<?php endif; ?>
+
+	<!-- Заявка на бобинорезку (сборщицы У5) -->
+	<?php if (in_array('U5', $availableDepartments) && canAccessLaserRequests($userDepartments, 'U5')): ?>
+	<button class="btn cut" onclick="window.open('/plan_U5/bobbin_cut_request.php', '_blank')">Заявка на бобинорезку У5</button>
+	<?php endif; ?>
+
+	<!-- Заявка на бобинорезку (сборщицы У3) -->
+	<?php if (in_array('U3', $availableDepartments) && canAccessLaserRequests($userDepartments, 'U3')): ?>
+	<button class="btn cut" onclick="window.open('/plan_U3/bobbin_cut_request.php', '_blank')">Заявка на бобинорезку У3</button>
+	<?php endif; ?>
 	
 	<!-- Заявки на лазер (для гофропакетчиков) -->
 	<?php if ($canAccessLaserCorr): ?>

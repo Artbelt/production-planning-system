@@ -64,6 +64,255 @@ $databases = [
 // Получаем дату
 $date = $_GET['date'] ?? date('Y-m-d');
 
+/**
+ * SQL-выражение даты плана: U2 — plan_date; остальные — COALESCE(work_date, plan_date).
+ */
+function cutOperatorDateExpr(mysqli $mysqli, string $table, string $department): string
+{
+    $hasPlanDate = false;
+    $hasWorkDate = false;
+    $col = $mysqli->query("SHOW COLUMNS FROM `{$table}` LIKE 'plan_date'");
+    if ($col && $col->num_rows > 0) {
+        $hasPlanDate = true;
+    }
+    $col = $mysqli->query("SHOW COLUMNS FROM `{$table}` LIKE 'work_date'");
+    if ($col && $col->num_rows > 0) {
+        $hasWorkDate = true;
+    }
+    if ($department === 'U2') {
+        return $hasPlanDate ? 'plan_date' : ($hasWorkDate ? 'work_date' : 'plan_date');
+    }
+    if ($hasWorkDate && $hasPlanDate) {
+        return 'COALESCE(work_date, plan_date)';
+    }
+    if ($hasWorkDate) {
+        return 'work_date';
+    }
+    return 'plan_date';
+}
+
+/**
+ * Все доступные таблицы плана порезки (roll_plan / roll_plans), с приоритетом resolveRollPlanTable.
+ * @return list<string>
+ */
+function cutOperatorRollTables(mysqli $mysqli, string $department): array
+{
+    $resolved = resolveRollPlanTable($mysqli, $department);
+    $tables = [];
+    if ($resolved) {
+        $tables[] = $resolved;
+    }
+    foreach (['roll_plan', 'roll_plans'] as $t) {
+        $chk = $mysqli->query("SHOW TABLES LIKE '{$t}'");
+        if ($chk && $chk->num_rows > 0 && !in_array($t, $tables, true)) {
+            $tables[] = $t;
+        }
+    }
+    return $tables;
+}
+
+function cutOperatorHasColumn(mysqli $mysqli, string $table, string $column): bool
+{
+    $tableEsc = $mysqli->real_escape_string($table);
+    $columnEsc = $mysqli->real_escape_string($column);
+    $res = $mysqli->query(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE()
+           AND TABLE_NAME = '{$tableEsc}'
+           AND COLUMN_NAME = '{$columnEsc}'"
+    );
+    return $res && (int)$res->fetch_row()[0] > 0;
+}
+
+function cutOperatorWritableRollTables(mysqli $mysqli): array
+{
+    $tables = [];
+    foreach (['roll_plan', 'roll_plans'] as $t) {
+        $chk = $mysqli->query("SHOW TABLES LIKE '{$t}'");
+        if (!$chk || $chk->num_rows === 0) {
+            continue;
+        }
+        $typeRes = $mysqli->query(
+            "SELECT TABLE_TYPE FROM information_schema.TABLES
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$t}'"
+        );
+        $type = $typeRes ? (string)($typeRes->fetch_row()[0] ?? '') : '';
+        if (strcasecmp($type, 'VIEW') === 0) {
+            continue;
+        }
+        $tables[] = $t;
+    }
+    return $tables;
+}
+
+/**
+ * Подтягивает заявки paper_cut_requests У4 в roll_plan/roll_plans на выбранную дату.
+ */
+function cutOperatorHealU4PaperRequests(mysqli $mysqli, string $date): void
+{
+    $chk = $mysqli->query("SHOW TABLES LIKE 'paper_cut_requests'");
+    if (!$chk || $chk->num_rows === 0) {
+        return;
+    }
+
+    $writable = cutOperatorWritableRollTables($mysqli);
+    if ($writable === []) {
+        // создадим минимальную roll_plan
+        $mysqli->query("
+            CREATE TABLE IF NOT EXISTS roll_plan (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                order_number VARCHAR(50) NOT NULL,
+                bale_id VARCHAR(50) NOT NULL,
+                plan_date DATE NULL,
+                work_date DATE NULL,
+                done TINYINT(1) NOT NULL DEFAULT 0,
+                UNIQUE KEY uq_order_bale (order_number, bale_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $writable = ['roll_plan'];
+    }
+
+    $stmt = $mysqli->prepare(
+        "SELECT id, order_number, quantity, component_name
+         FROM paper_cut_requests
+         WHERE (is_cancelled IS NULL OR is_cancelled = 0)
+           AND order_number IS NOT NULL AND order_number != ''
+           AND COALESCE(DATE(desired_delivery_time), DATE(created_at)) = ?"
+    );
+    if (!$stmt) {
+        error_log('cutOperatorHealU4PaperRequests prepare: ' . $mysqli->error);
+        return;
+    }
+    $stmt->bind_param('s', $date);
+    $stmt->execute();
+    $requests = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    foreach ($requests as $req) {
+        $orderNumber = (string)$req['order_number'];
+        $qty = max(1, (int)$req['quantity']);
+        $component = (string)($req['component_name'] ?? 'Бухта 0101');
+
+        for ($i = 1; $i <= $qty; $i++) {
+            $baleId = (string)$i;
+            foreach ($writable as $table) {
+                $hasPlan = cutOperatorHasColumn($mysqli, $table, 'plan_date');
+                $hasWork = cutOperatorHasColumn($mysqli, $table, 'work_date');
+                if ($hasPlan && $hasWork) {
+                    $ins = $mysqli->prepare(
+                        "INSERT INTO `{$table}` (order_number, bale_id, plan_date, work_date, done)
+                         VALUES (?, ?, ?, ?, 0)
+                         ON DUPLICATE KEY UPDATE
+                           plan_date = IFNULL(plan_date, VALUES(plan_date)),
+                           work_date = IFNULL(work_date, VALUES(work_date))"
+                    );
+                    if ($ins) {
+                        $ins->bind_param('ssss', $orderNumber, $baleId, $date, $date);
+                        $ins->execute();
+                        $ins->close();
+                    }
+                } elseif ($hasWork) {
+                    $ins = $mysqli->prepare(
+                        "INSERT INTO `{$table}` (order_number, bale_id, work_date, done)
+                         VALUES (?, ?, ?, 0)
+                         ON DUPLICATE KEY UPDATE work_date = IFNULL(work_date, VALUES(work_date))"
+                    );
+                    if ($ins) {
+                        $ins->bind_param('sss', $orderNumber, $baleId, $date);
+                        $ins->execute();
+                        $ins->close();
+                    }
+                } else {
+                    $ins = $mysqli->prepare(
+                        "INSERT INTO `{$table}` (order_number, bale_id, plan_date, done)
+                         VALUES (?, ?, ?, 0)
+                         ON DUPLICATE KEY UPDATE plan_date = IFNULL(plan_date, VALUES(plan_date))"
+                    );
+                    if ($ins) {
+                        $ins->bind_param('sss', $orderNumber, $baleId, $date);
+                        $ins->execute();
+                        $ins->close();
+                    }
+                }
+            }
+
+            // cut_plans — если полос ещё нет
+            $exists = $mysqli->prepare(
+                "SELECT COUNT(*) FROM cut_plans WHERE order_number = ? AND bale_id = ?"
+            );
+            if ($exists) {
+                $exists->bind_param('ss', $orderNumber, $baleId);
+                $exists->execute();
+                $cnt = (int)$exists->get_result()->fetch_row()[0];
+                $exists->close();
+                if ($cnt === 0) {
+                    $cols = ['order_number', 'bale_id'];
+                    $vals = [$orderNumber, $baleId];
+                    $types = 'ss';
+                    if (cutOperatorHasColumn($mysqli, 'cut_plans', 'strip_no')) {
+                        $cols[] = 'strip_no';
+                        $vals[] = 1;
+                        $types .= 'i';
+                    }
+                    if (cutOperatorHasColumn($mysqli, 'cut_plans', 'filter')) {
+                        $cols[] = 'filter';
+                        $vals[] = $component;
+                        $types .= 's';
+                    }
+                    if (cutOperatorHasColumn($mysqli, 'cut_plans', 'material')) {
+                        $cols[] = 'material';
+                        $vals[] = 'plane';
+                        $types .= 's';
+                    }
+                    if (cutOperatorHasColumn($mysqli, 'cut_plans', 'source')) {
+                        $cols[] = 'source';
+                        $vals[] = 'manual';
+                        $types .= 's';
+                    }
+                    if (cutOperatorHasColumn($mysqli, 'cut_plans', 'format')) {
+                        $cols[] = 'format';
+                        $vals[] = 222;
+                        $types .= 'i';
+                    }
+                    $ph = implode(',', array_fill(0, count($cols), '?'));
+                    $cut = $mysqli->prepare('INSERT INTO cut_plans (' . implode(',', $cols) . ") VALUES ({$ph})");
+                    if ($cut) {
+                        $cut->bind_param($types, ...$vals);
+                        @$cut->execute();
+                        $cut->close();
+                    }
+                }
+            }
+        }
+    }
+}
+
+function cutOperatorLoadFilters(mysqli $mysqli, string $orderNumber, string $baleId): array
+{
+    $filters = [];
+    $totalWidth = 0.0;
+    $cutSql = "SELECT filter, length, width, height
+               FROM cut_plans
+               WHERE bale_id = ? AND order_number = ?";
+    $cutStmt = $mysqli->prepare($cutSql);
+    if ($cutStmt) {
+        $cutStmt->bind_param('ss', $baleId, $orderNumber);
+        $cutStmt->execute();
+        $cutResult = $cutStmt->get_result();
+        while ($cutRow = $cutResult->fetch_assoc()) {
+            $filters[] = [
+                'name' => $cutRow['filter'],
+                'length' => $cutRow['length'],
+                'width' => $cutRow['width'],
+                'height' => $cutRow['height']
+            ];
+            $totalWidth += (float)$cutRow['width'];
+        }
+        $cutStmt->close();
+    }
+    return ['filters' => $filters, 'total_width' => $totalWidth];
+}
+
 // Функция для получения всех заданий из всех баз данных
 function getAllCutTasks($databases, $date) {
     $allTasks = [];
@@ -77,77 +326,69 @@ function getAllCutTasks($databases, $date) {
                 error_log("Ошибка подключения к БД {$department}: " . $mysqli->connect_error);
                 continue;
             }
-            
-            // Определяем название поля даты в зависимости от участка
-            $dateField = ($department === 'U2') ? 'plan_date' : 'work_date';
-            
-            // Сначала получаем основные записи из roll_plans
-            $mainSql = "SELECT id, order_number, bale_id, {$dateField} as plan_date, done
-                        FROM {$dbConfig['table']}
-                        WHERE {$dateField} = ?
-                        ORDER BY order_number, bale_id";
-            
-            $stmt = $mysqli->prepare($mainSql);
-            if (!$stmt) {
-                error_log("Ошибка подготовки запроса для {$department}: " . $mysqli->error);
+
+            if ($department === 'U4') {
+                cutOperatorHealU4PaperRequests($mysqli, $date);
+            }
+
+            $tables = cutOperatorRollTables($mysqli, $department);
+            if ($tables === []) {
                 $mysqli->close();
+                $allTasks[$department] = [];
                 continue;
             }
-            
-            $stmt->bind_param('s', $date);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            
+
             $bales = [];
-            $processedIds = []; // Дополнительная защита от дублирования по ID
+            $seenLogical = []; // order+bale — защита от дублей roll_plan/roll_plans
             
-            while ($row = $result->fetch_assoc()) {
-                if (!$row['id']) continue;
+            foreach ($tables as $table) {
+                $dateField = cutOperatorDateExpr($mysqli, $table, $department);
+                $doneSelect = cutOperatorHasColumn($mysqli, $table, 'done') ? 'done' : '0 AS done';
+                $mainSql = "SELECT id, order_number, bale_id, {$dateField} as plan_date, {$doneSelect}
+                            FROM `{$table}`
+                            WHERE DATE({$dateField}) = ?
+                            ORDER BY order_number, bale_id";
                 
-                // Проверяем, не обработали ли мы уже эту запись
-                if (isset($processedIds[$row['id']])) {
+                $stmt = $mysqli->prepare($mainSql);
+                if (!$stmt) {
+                    error_log("Ошибка подготовки запроса для {$department}/{$table}: " . $mysqli->error);
                     continue;
                 }
-                $processedIds[$row['id']] = true;
                 
-                $key = $row['id'];
-                $bales[$key] = [
-                    'id' => $row['id'],
-                    'order_number' => $row['order_number'],
-                    'bale_id' => $row['bale_id'],
-                    'plan_date' => $row['plan_date'],
-                    'done' => $row['done'],
-                    'department' => $department,
-                    'filters' => [],
-                    'total_width' => 0
-                ];
+                $stmt->bind_param('s', $date);
+                $stmt->execute();
+                $result = $stmt->get_result();
                 
-                // Теперь получаем детали фильтров для каждой бухты отдельно
-                $cutSql = "SELECT filter, length, width, height 
-                           FROM cut_plans 
-                           WHERE bale_id = ? AND order_number = ?";
-                $cutStmt = $mysqli->prepare($cutSql);
-                if ($cutStmt) {
-                    $cutStmt->bind_param('ss', $row['bale_id'], $row['order_number']);
-                    $cutStmt->execute();
-                    $cutResult = $cutStmt->get_result();
-                    
-                    while ($cutRow = $cutResult->fetch_assoc()) {
-                        $bales[$key]['filters'][] = [
-                            'name' => $cutRow['filter'],
-                            'length' => $cutRow['length'],
-                            'width' => $cutRow['width'],
-                            'height' => $cutRow['height']
-                        ];
-                        $bales[$key]['total_width'] += (float)$cutRow['width'];
+                while ($row = $result->fetch_assoc()) {
+                    if (!$row['id']) {
+                        continue;
                     }
-                    $cutStmt->close();
+                    $logicalKey = (string)$row['order_number'] . "\0" . (string)$row['bale_id'];
+                    if (isset($seenLogical[$logicalKey])) {
+                        // если в другой таблице уже есть — подтянем done=1
+                        if (!empty($row['done']) && isset($bales[$seenLogical[$logicalKey]])) {
+                            $bales[$seenLogical[$logicalKey]]['done'] = 1;
+                        }
+                        continue;
+                    }
+                    $seenLogical[$logicalKey] = $row['id'];
+                    
+                    $details = cutOperatorLoadFilters($mysqli, (string)$row['order_number'], (string)$row['bale_id']);
+                    $bales[$row['id']] = [
+                        'id' => $row['id'],
+                        'order_number' => $row['order_number'],
+                        'bale_id' => $row['bale_id'],
+                        'plan_date' => $row['plan_date'],
+                        'done' => $row['done'],
+                        'department' => $department,
+                        'filters' => $details['filters'],
+                        'total_width' => $details['total_width']
+                    ];
                 }
+                $stmt->close();
             }
             
-            $stmt->close();
             $mysqli->close();
-            
             $allTasks[$department] = array_values($bales);
             
         } catch (Exception $e) {
@@ -170,94 +411,84 @@ function getOverdueTasks($databases, $today) {
             if ($mysqli->connect_errno) {
                 continue;
             }
-            
-            $dateField = ($department === 'U2') ? 'plan_date' : 'work_date';
-            
+
+            $tables = cutOperatorRollTables($mysqli, $department);
+            if ($tables === []) {
+                $mysqli->close();
+                continue;
+            }
+
             // Проверяем наличие поля status в таблице orders
             $hasStatusField = false;
             $checkResult = $mysqli->query("SHOW COLUMNS FROM orders LIKE 'status'");
             if ($checkResult && $checkResult->num_rows > 0) {
                 $hasStatusField = true;
             }
+
+            $processedBales = [];
             
-            // Формируем запрос в зависимости от наличия поля status
-            if ($hasStatusField) {
-                $sql = "SELECT r.id, r.order_number, r.bale_id, r.{$dateField} as plan_date, r.done
-                        FROM {$dbConfig['table']} r
-                        LEFT JOIN orders o ON r.order_number = o.order_number
-                        WHERE r.{$dateField} < ? 
-                          AND (r.done IS NULL OR r.done = 0)
-                          AND (o.hide IS NULL OR o.hide != 1)
-                          AND (o.status IS NULL OR o.status NOT IN ('completed', 'closed', 'finished'))
-                        ORDER BY r.{$dateField} ASC, r.order_number, r.bale_id";
-            } else {
-                $sql = "SELECT r.id, r.order_number, r.bale_id, r.{$dateField} as plan_date, r.done
-                        FROM {$dbConfig['table']} r
-                        LEFT JOIN orders o ON r.order_number = o.order_number
-                        WHERE r.{$dateField} < ? 
-                          AND (r.done IS NULL OR r.done = 0)
-                          AND (o.hide IS NULL OR o.hide != 1)
-                        ORDER BY r.{$dateField} ASC, r.order_number, r.bale_id";
-            }
-            
-            $stmt = $mysqli->prepare($sql);
-            if (!$stmt) {
-                error_log("Ошибка подготовки запроса для просроченных задач {$department}: " . $mysqli->error);
-                $mysqli->close();
-                continue;
-            }
-            
-            $stmt->bind_param('s', $today);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            
-            $processedBales = []; // Для отслеживания уже обработанных бухт
-            
-            while ($row = $result->fetch_assoc()) {
-                if (!$row['id']) continue;
+            foreach ($tables as $table) {
+                $dateField = cutOperatorDateExpr($mysqli, $table, $department);
                 
-                // Создаем уникальный ключ для бухты
-                $baleKey = $department . '_' . $row['order_number'] . '_' . $row['bale_id'];
-                if (isset($processedBales[$baleKey])) {
-                    continue; // Пропускаем дубликаты
+                if ($hasStatusField) {
+                    $sql = "SELECT r.id, r.order_number, r.bale_id, {$dateField} as plan_date, r.done
+                            FROM `{$table}` r
+                            LEFT JOIN orders o ON r.order_number = o.order_number
+                            WHERE {$dateField} < ? 
+                              AND (r.done IS NULL OR r.done = 0)
+                              AND (o.hide IS NULL OR o.hide != 1)
+                              AND (o.status IS NULL OR o.status NOT IN ('completed', 'closed', 'finished'))
+                            ORDER BY plan_date ASC, r.order_number, r.bale_id";
+                } else {
+                    $sql = "SELECT r.id, r.order_number, r.bale_id, {$dateField} as plan_date, r.done
+                            FROM `{$table}` r
+                            LEFT JOIN orders o ON r.order_number = o.order_number
+                            WHERE {$dateField} < ? 
+                              AND (r.done IS NULL OR r.done = 0)
+                              AND (o.hide IS NULL OR o.hide != 1)
+                            ORDER BY plan_date ASC, r.order_number, r.bale_id";
                 }
-                $processedBales[$baleKey] = true;
                 
-                $daysOverdue = (strtotime($today) - strtotime($row['plan_date'])) / (60 * 60 * 24);
+                $stmt = $mysqli->prepare($sql);
+                if (!$stmt) {
+                    error_log("Ошибка подготовки запроса для просроченных задач {$department}/{$table}: " . $mysqli->error);
+                    continue;
+                }
                 
-                // Получаем детали фильтров для этой бухты
-                $cutStmt = $mysqli->prepare("SELECT filter, length, width, height FROM cut_plans WHERE order_number = ? AND bale_id = ?");
-                $cutStmt->bind_param('ss', $row['order_number'], $row['bale_id']);
-                $cutStmt->execute();
-                $cutResult = $cutStmt->get_result();
+                $stmt->bind_param('s', $today);
+                $stmt->execute();
+                $result = $stmt->get_result();
                 
-                $filters = [];
-                $total_width = 0;
-                while ($cutRow = $cutResult->fetch_assoc()) {
-                    $filters[] = [
-                        'name' => $cutRow['filter'],
-                        'length' => $cutRow['length'],
-                        'width' => $cutRow['width'],
-                        'height' => $cutRow['height']
+                while ($row = $result->fetch_assoc()) {
+                    if (!$row['id']) {
+                        continue;
+                    }
+                    
+                    $baleKey = $department . '_' . $row['order_number'] . '_' . $row['bale_id'];
+                    if (isset($processedBales[$baleKey])) {
+                        continue;
+                    }
+                    $processedBales[$baleKey] = true;
+                    
+                    $daysOverdue = (strtotime($today) - strtotime($row['plan_date'])) / (60 * 60 * 24);
+                    $details = cutOperatorLoadFilters($mysqli, (string)$row['order_number'], (string)$row['bale_id']);
+                    
+                    $overdueTasks[] = [
+                        'id' => $row['id'],
+                        'order_number' => $row['order_number'],
+                        'bale_id' => $row['bale_id'],
+                        'plan_date' => $row['plan_date'],
+                        'done' => $row['done'],
+                        'department' => $department,
+                        'days_overdue' => (int)$daysOverdue,
+                        'filters' => $details['filters'],
+                        'total_width' => $details['total_width']
                     ];
-                    $total_width += (float)$cutRow['width'];
                 }
-                $cutStmt->close();
                 
-                $overdueTasks[] = [
-                    'id' => $row['id'],
-                    'order_number' => $row['order_number'],
-                    'bale_id' => $row['bale_id'],
-                    'plan_date' => $row['plan_date'],
-                    'done' => $row['done'],
-                    'department' => $department,
-                    'days_overdue' => (int)$daysOverdue,
-                    'filters' => $filters,
-                    'total_width' => $total_width
-                ];
+                $stmt->close();
             }
             
-            $stmt->close();
             $mysqli->close();
             
         } catch (Exception $e) {
@@ -292,6 +523,8 @@ if (isset($_POST['action'])) {
                 throw new Exception('Ошибка подключения к БД');
             }
 
+            $table = resolveRollPlanTable($mysqli, $department) ?? $dbConfig['table'];
+
             $hasStatusField = false;
             $checkResult = $mysqli->query("SHOW COLUMNS FROM orders LIKE 'status'");
             if ($checkResult && $checkResult->num_rows > 0) {
@@ -300,14 +533,14 @@ if (isset($_POST['action'])) {
 
             if ($hasStatusField) {
                 $sql = "SELECT DISTINCT r.order_number
-                        FROM {$dbConfig['table']} r
+                        FROM `{$table}` r
                         INNER JOIN orders o ON r.order_number = o.order_number
                         WHERE (o.hide IS NULL OR o.hide != 1)
                           AND (o.status IS NULL OR o.status NOT IN ('completed', 'closed', 'finished', 'cancelled'))
                         ORDER BY r.order_number DESC";
             } else {
                 $sql = "SELECT DISTINCT r.order_number
-                        FROM {$dbConfig['table']} r
+                        FROM `{$table}` r
                         INNER JOIN orders o ON r.order_number = o.order_number
                         WHERE (o.hide IS NULL OR o.hide != 1)
                         ORDER BY r.order_number DESC";
@@ -337,15 +570,20 @@ if (isset($_POST['action'])) {
             exit;
         }
         $dbConfig = $databases[$department];
-        $dateField = ($department === 'U2') ? 'plan_date' : 'work_date';
         try {
             $mysqli = new mysqli($dbConfig['host'], $dbConfig['user'], $dbConfig['pass'], $dbConfig['name']);
             $mysqli->set_charset('utf8mb4');
             if ($mysqli->connect_errno) {
                 throw new Exception('Ошибка подключения к БД');
             }
+            $table = resolveRollPlanTable($mysqli, $department) ?? $dbConfig['table'];
+            $tableChk = $mysqli->query("SHOW TABLES LIKE '{$table}'");
+            if (!$tableChk || $tableChk->num_rows === 0) {
+                throw new Exception('Таблица плана порезки не найдена');
+            }
+            $dateField = cutOperatorDateExpr($mysqli, $table, $department);
             $sql = "SELECT id, bale_id, {$dateField} AS plan_date, done
-                    FROM {$dbConfig['table']}
+                    FROM `{$table}`
                     WHERE order_number = ?
                     ORDER BY CAST(bale_id AS UNSIGNED), bale_id";
             $stmt = $mysqli->prepare($sql);
@@ -510,14 +748,87 @@ if (isset($_POST['action'])) {
         tr.main-row {
             cursor: pointer;
             background: #fafafa;
+            border-left: 4px solid transparent;
+            transition: background 0.15s ease, opacity 0.15s ease;
         }
         
         tr.main-row:hover {
             background: #f1f1f1;
         }
+
+        tr.main-row.expanded {
+            background: #e8f1fc;
+            border-left-color: #4a90e2;
+            font-weight: 600;
+        }
+
+        tr.main-row.expanded.done {
+            background: #cfe8d6;
+            border-left-color: #28a745;
+        }
+
+        .bale-label {
+            font-weight: inherit;
+        }
+
+        tr.main-row.expanded .bale-label {
+            color: #1a5fad;
+        }
+
+        .chevron {
+            display: inline-block;
+            width: 1em;
+            margin-right: 6px;
+            color: #4a90e2;
+            font-size: 11px;
+            line-height: 1;
+            vertical-align: middle;
+        }
+
+        .chevron::before {
+            content: '▶';
+        }
+
+        tr.main-row.expanded .chevron::before {
+            content: '▼';
+        }
         
         .details-row {
             display: none;
+        }
+
+        .details-row.is-open {
+            display: table-row;
+        }
+
+        .details-row > td {
+            text-align: left;
+            padding: 12px 16px 16px 20px;
+            background: #f3f8fd;
+            border-left: 4px solid #4a90e2;
+            border-top: 0;
+            box-shadow: inset 0 1px 0 #d0e4f7;
+        }
+
+        tr.main-row.expanded.done + .details-row > td {
+            background: #eef8f0;
+            border-left-color: #28a745;
+            box-shadow: inset 0 1px 0 #c5e6cf;
+        }
+
+        .details-panel-title {
+            display: block;
+            margin-bottom: 10px;
+            color: #1a5fad;
+            font-size: 13px;
+        }
+
+        .table-wrapper.has-expanded .main-row:not(.expanded) {
+            opacity: 0.55;
+        }
+
+        .table-wrapper.has-expanded .main-row:not(.expanded):hover {
+            opacity: 0.9;
         }
         
         .positions {
@@ -578,6 +889,36 @@ if (isset($_POST['action'])) {
         .main-row.overdue.critical {
             background-color: #fee2e2 !important;
             border-left: 4px solid #dc2626;
+        }
+
+        .main-row.overdue.warning.expanded {
+            background-color: #fde68a !important;
+        }
+
+        .main-row.overdue.critical.expanded {
+            background-color: #fecaca !important;
+        }
+
+        .main-row.overdue.warning + .details-row > td {
+            background: #fffbeb;
+            border-left-color: #f59e0b;
+            box-shadow: inset 0 1px 0 #fde68a;
+        }
+
+        .main-row.overdue.critical + .details-row > td {
+            background: #fef2f2;
+            border-left-color: #dc2626;
+            box-shadow: inset 0 1px 0 #fecaca;
+        }
+
+        .main-row.overdue.warning.expanded .chevron,
+        .main-row.overdue.warning.expanded .bale-label {
+            color: #b45309;
+        }
+
+        .main-row.overdue.critical.expanded .chevron,
+        .main-row.overdue.critical.expanded .bale-label {
+            color: #b91c1c;
         }
         
         .table-wrapper {
@@ -806,7 +1147,10 @@ if (isset($_POST['action'])) {
                     <tr class="main-row overdue <?= $overdueClass ?>" data-id="overdue-<?= $task['id'] ?>" data-department="<?= htmlspecialchars($task['department'], ENT_QUOTES) ?>" data-status="pending" onclick="toggleDetails('overdue-<?= $task['id'] ?>')">
                         <td><?= htmlspecialchars(str_replace('U', '', $task['department'])) ?></td>
                         <td><?= htmlspecialchars($task['order_number']) ?></td>
-                        <td><?= htmlspecialchars($task['bale_id']) ?></td>
+                        <td>
+                            <span class="chevron" aria-hidden="true"></span>
+                            <span class="bale-label"><?= htmlspecialchars($task['bale_id']) ?></span>
+                        </td>
                         <td><?= htmlspecialchars($task['plan_date']) ?></td>
                         <td style="font-weight: bold; color: red;"><?= $task['days_overdue'] ?></td>
                         <td>
@@ -816,8 +1160,8 @@ if (isset($_POST['action'])) {
                         </td>
                     </tr>
                     <tr class="details-row" id="details-overdue-<?= $task['id'] ?>">
-                        <td colspan="6" style="text-align: left; padding: 15px; background: #f9f9f9;">
-                            <strong>Детали:</strong><br><br>
+                        <td colspan="6">
+                            <strong class="details-panel-title">Детали бухты <?= htmlspecialchars($task['bale_id']) ?></strong>
                             <?php if (!empty($task['filters'])): ?>
                             <table class="positions">
                                 <thead>
@@ -874,10 +1218,13 @@ if (isset($_POST['action'])) {
                         <tr class="main-row <?= $bale['done'] ? 'done' : '' ?>" data-id="<?= $bale['id'] ?>" data-status="<?= $bale['done'] ? 'done' : 'pending' ?>" onclick="toggleDetails(<?= $bale['id'] ?>)">
                             <td><?= htmlspecialchars($bale['order_number']) ?></td>
                             <td>
-                                <?= htmlspecialchars($bale['bale_id']) ?>
-                                <?php if (!empty($bale['filters'])): ?>
-                                    [<?= number_format($bale['filters'][0]['length'], 0, '.', '') ?> м]
-                                <?php endif; ?>
+                                <span class="chevron" aria-hidden="true"></span>
+                                <span class="bale-label">
+                                    <?= htmlspecialchars($bale['bale_id']) ?>
+                                    <?php if (!empty($bale['filters'])): ?>
+                                        [<?= number_format($bale['filters'][0]['length'], 0, '.', '') ?> м]
+                                    <?php endif; ?>
+                                </span>
                             </td>
                             <td><?= htmlspecialchars($bale['plan_date']) ?></td>
                             <td>
@@ -894,8 +1241,8 @@ if (isset($_POST['action'])) {
                             </td>
                         </tr>
                         <tr class="details-row" id="details-<?= $bale['id'] ?>">
-                            <td colspan="5" style="text-align: left; padding: 15px; background: #f9f9f9;">
-                                <strong>Детали бухты:</strong><br><br>
+                            <td colspan="5">
+                                <strong class="details-panel-title">Детали бухты <?= htmlspecialchars($bale['bale_id']) ?></strong>
                                 <?php if (!empty($bale['filters'])): ?>
                                 <table class="positions">
                                     <thead>
@@ -980,11 +1327,63 @@ if (isset($_POST['action'])) {
     </div>
 
     <script>
+        function closeAllBaleDetails() {
+            document.querySelectorAll('.details-row.is-open').forEach(function(row) {
+                row.classList.remove('is-open');
+                row.style.display = '';
+            });
+            document.querySelectorAll('.main-row.expanded').forEach(function(row) {
+                row.classList.remove('expanded');
+            });
+            document.querySelectorAll('.table-wrapper.has-expanded').forEach(function(wrap) {
+                wrap.classList.remove('has-expanded');
+            });
+        }
+
         function toggleDetails(id) {
-            const detailsRow = document.getElementById("details-" + id);
-            if (detailsRow) {
-                detailsRow.style.display = detailsRow.style.display === "table-row" ? "none" : "table-row";
+            var detailsRow = document.getElementById('details-' + id);
+            if (!detailsRow) {
+                return;
             }
+            var mainRow = detailsRow.previousElementSibling;
+            var tableWrapper = detailsRow.closest('.table-wrapper');
+            var isOpen = detailsRow.classList.contains('is-open');
+
+            closeAllBaleDetails();
+
+            if (!isOpen) {
+                detailsRow.classList.add('is-open');
+                if (mainRow && mainRow.classList.contains('main-row')) {
+                    mainRow.classList.add('expanded');
+                }
+                if (tableWrapper) {
+                    tableWrapper.classList.add('has-expanded');
+                }
+            }
+        }
+
+        function syncDetailsVisibility(mainRow) {
+            var next = mainRow.nextElementSibling;
+            if (!next || !next.classList.contains('details-row')) {
+                return;
+            }
+            var parentHidden = mainRow.style.display === 'none';
+            if (parentHidden) {
+                next.classList.remove('is-open');
+                next.style.display = 'none';
+                mainRow.classList.remove('expanded');
+            } else if (next.classList.contains('is-open')) {
+                next.style.display = '';
+            } else {
+                next.style.display = '';
+            }
+        }
+
+        function refreshExpandedWrappers() {
+            document.querySelectorAll('.table-wrapper').forEach(function(wrap) {
+                var hasOpen = wrap.querySelector('.details-row.is-open');
+                wrap.classList.toggle('has-expanded', !!hasOpen);
+            });
         }
 
         function markAsDone(id, department) {
@@ -1061,10 +1460,7 @@ if (isset($_POST['action'])) {
                             }
                             const show = showByDept && showByStatus;
                             row.style.display = show ? '' : 'none';
-                            var next = row.nextElementSibling;
-                            if (next && next.classList.contains('details-row')) {
-                                next.style.display = show ? '' : 'none';
-                            }
+                            syncDetailsVisibility(row);
                         });
                         var hasVisibleOverdue = false;
                         section.querySelectorAll('tr.main-row.overdue').forEach(row => {
@@ -1073,6 +1469,7 @@ if (isset($_POST['action'])) {
                             }
                         });
                         section.style.display = hasVisibleOverdue ? 'block' : 'none';
+                        refreshExpandedWrappers();
                         return;
                     }
 
@@ -1087,12 +1484,15 @@ if (isset($_POST['action'])) {
                             } else {
                                 row.style.display = '';
                             }
+                            syncDetailsVisibility(row);
                         });
                     } else {
                         section.querySelectorAll('.main-row').forEach(row => {
                             row.style.display = '';
+                            syncDetailsVisibility(row);
                         });
                     }
+                    refreshExpandedWrappers();
                 });
             }
 

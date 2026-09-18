@@ -1,9 +1,10 @@
 <?php
 /**
- * Мониторинг бобинорезки: У2 / У3 / У5, окно 5 календарных недель.
+ * Мониторинг бобинорезки: У2 / У3 / У4 / У5, окно 5 календарных недель.
  * Смещение: GET w (целое) — сдвиг окна на w недель от «базы» (текущая неделя −2 … +2).
  * Отдельно: GET action=cut_by_day&day=Y-m-d — JSON «что порезано в выбранный день» (fact_cut_date).
  * Отдельно: GET action=cut_log&w=… — JSON лог отметок (fact_cut_at / fact_cut_date) за видимый период.
+ * Отдельно: action=move_bale — перенос бухты U3-BC-* на другой день (work_date/plan_date).
  */
 
 define('AUTH_SYSTEM', true);
@@ -29,6 +30,7 @@ $dbPass = defined('DB_PASS') ? DB_PASS : '';
 $databases = [
     'У2' => ['name' => 'plan', 'table' => 'roll_plan', 'dateField' => 'plan_date'],
     'У3' => ['name' => 'plan_u3', 'table' => 'roll_plans', 'dateField' => 'work_date'],
+    'У4' => ['name' => 'plan_u4', 'table' => 'roll_plans', 'dateField' => 'work_date'],
     'У5' => ['name' => 'plan_u5', 'table' => 'roll_plans', 'dateField' => 'work_date'],
 ];
 
@@ -243,13 +245,15 @@ if (($_GET['action'] ?? '') === 'bale_details') {
     $dbByShop = [
         'U2' => 'plan',
         'U3' => 'plan_u3',
+        'U4' => 'plan_u4',
         'U5' => 'plan_u5',
         'У2' => 'plan',
         'У3' => 'plan_u3',
+        'У4' => 'plan_u4',
         'У5' => 'plan_u5',
     ];
     if (!isset($dbByShop[$shopKey]) || $order === '' || $bale === '') {
-        echo json_encode(['ok' => false, 'error' => 'Нужны параметры shop (U2/U3/U5), order и bale'], JSON_UNESCAPED_UNICODE);
+        echo json_encode(['ok' => false, 'error' => 'Нужны параметры shop (U2/U3/U4/U5), order и bale'], JSON_UNESCAPED_UNICODE);
         exit;
     }
     $dbname = $dbByShop[$shopKey];
@@ -316,8 +320,8 @@ if (($_GET['action'] ?? '') === 'bale_details') {
         }
         $norm[] = $line;
     }
-    $shopNorm = in_array($shopKey, ['У2', 'У3', 'У5'], true)
-        ? ['У2' => 'U2', 'У3' => 'U3', 'У5' => 'U5'][$shopKey]
+    $shopNorm = in_array($shopKey, ['У2', 'У3', 'У4', 'У5'], true)
+        ? ['У2' => 'U2', 'У3' => 'U3', 'У4' => 'U4', 'У5' => 'U5'][$shopKey]
         : $shopKey;
     echo json_encode(
         [
@@ -327,6 +331,139 @@ if (($_GET['action'] ?? '') === 'bale_details') {
             'bale' => $bale,
             'headers' => $headers,
             'rows' => $norm,
+            'movable' => ($shopNorm === 'U3' && strncmp($order, 'U3-BC-', 6) === 0),
+        ],
+        JSON_UNESCAPED_UNICODE
+    );
+    exit;
+}
+
+/**
+ * Перенос бухты заявки бобинорезки У3 (U3-BC-*) на другой день.
+ * POST/JSON: shop, order, bale, new_date (Y-m-d).
+ */
+if (($_GET['action'] ?? '') === 'move_bale') {
+    header('Content-Type: application/json; charset=utf-8');
+    $raw = file_get_contents('php://input');
+    $body = [];
+    if (is_string($raw) && $raw !== '') {
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            $body = $decoded;
+        }
+    }
+    if ($body === []) {
+        $body = $_POST;
+    }
+
+    $shopKey = (string) ($body['shop'] ?? $_GET['shop'] ?? '');
+    $order = trim((string) ($body['order'] ?? $_GET['order'] ?? ''));
+    $bale = trim((string) ($body['bale'] ?? $_GET['bale'] ?? ''));
+    $newDateRaw = trim((string) ($body['new_date'] ?? $_GET['new_date'] ?? ''));
+
+    $shopNorm = [
+        'U2' => 'U2', 'U3' => 'U3', 'U4' => 'U4', 'U5' => 'U5',
+        'У2' => 'U2', 'У3' => 'U3', 'У4' => 'U4', 'У5' => 'U5',
+    ][$shopKey] ?? '';
+
+    if ($shopNorm !== 'U3') {
+        echo json_encode(['ok' => false, 'error' => 'Перенос доступен только для У3'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    if ($order === '' || $bale === '') {
+        echo json_encode(['ok' => false, 'error' => 'Не указаны заявка или бухта'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    if (strncmp($order, 'U3-BC-', 6) !== 0) {
+        echo json_encode(
+            ['ok' => false, 'error' => 'Перенос только для бухт из заявки бобинорезки У3 (не привязанных к производственным заявкам)'],
+            JSON_UNESCAPED_UNICODE
+        );
+        exit;
+    }
+    $dd = DateTimeImmutable::createFromFormat('Y-m-d', $newDateRaw);
+    if (!$dd || $dd->format('Y-m-d') !== $newDateRaw) {
+        echo json_encode(['ok' => false, 'error' => 'Укажите день в формате YYYY-MM-DD'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    $newDate = $dd->format('Y-m-d');
+
+    $pdo = connectShop($dbHost, $dbUser, $dbPass, 'plan_u3');
+    if (!$pdo) {
+        echo json_encode(['ok' => false, 'error' => 'Нет подключения к plan_u3'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $updated = 0;
+    $found = false;
+    $blockedDone = false;
+    foreach (['roll_plans', 'roll_plan'] as $table) {
+        if (!tableExists($pdo, $table)) {
+            continue;
+        }
+        $hasWork = columnExists($pdo, $table, 'work_date');
+        $hasPlan = columnExists($pdo, $table, 'plan_date');
+        if (!$hasWork && !$hasPlan) {
+            continue;
+        }
+        $hasDone = columnExists($pdo, $table, 'done');
+
+        $chkSql = "SELECT " . ($hasDone ? 'COALESCE(done, 0)' : '0') . " AS done
+                   FROM `{$table}`
+                   WHERE order_number = :o AND CAST(bale_id AS CHAR) = :b
+                   LIMIT 1";
+        $chk = $pdo->prepare($chkSql);
+        $chk->execute([':o' => $order, ':b' => $bale]);
+        $row = $chk->fetch();
+        if (!$row) {
+            continue;
+        }
+        $found = true;
+        if ($hasDone && !empty($row['done'])) {
+            $blockedDone = true;
+            continue;
+        }
+
+        $sets = [];
+        $params = [':o' => $order, ':b' => $bale];
+        if ($hasWork) {
+            $sets[] = 'work_date = :d';
+            $params[':d'] = $newDate;
+        }
+        if ($hasPlan) {
+            $sets[] = 'plan_date = :d2';
+            $params[':d2'] = $newDate;
+        }
+        $sql = "UPDATE `{$table}` SET " . implode(', ', $sets)
+            . " WHERE order_number = :o AND CAST(bale_id AS CHAR) = :b";
+        $st = $pdo->prepare($sql);
+        $st->execute($params);
+        $updated += max(1, $st->rowCount());
+    }
+
+    if ($blockedDone && $updated === 0) {
+        echo json_encode(
+            ['ok' => false, 'error' => 'Бухта уже отмечена как порезанная — перенос недоступен'],
+            JSON_UNESCAPED_UNICODE
+        );
+        exit;
+    }
+    if (!$found) {
+        echo json_encode(['ok' => false, 'error' => 'Бухта не найдена в плане порезки'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    if ($updated === 0) {
+        echo json_encode(['ok' => false, 'error' => 'Не удалось обновить дату'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    echo json_encode(
+        [
+            'ok' => true,
+            'message' => 'Бухта перенесена на ' . $dd->format('d.m.Y'),
+            'order' => $order,
+            'bale' => $bale,
+            'new_date' => $newDate,
         ],
         JSON_UNESCAPED_UNICODE
     );
@@ -357,6 +494,12 @@ if (($_GET['action'] ?? '') === 'cut_by_day') {
     $r3 = fetchRowsCutOnDay($u3, $tblU3, $dayYmd, 'U3');
     $shopsOut['U3'] = $r3;
     $total += count($r3['items']);
+
+    $u4 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u4');
+    $tblU4 = resolveRollPlanTablePdo($u4, 'U4') ?? 'roll_plans';
+    $r4 = fetchRowsCutOnDay($u4, $tblU4, $dayYmd, 'U4');
+    $shopsOut['U4'] = $r4;
+    $total += count($r4['items']);
 
     $u5 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u5');
     $tblU5 = resolveRollPlanTablePdo($u5, 'U5') ?? 'roll_plans';
@@ -404,6 +547,10 @@ if (($_GET['action'] ?? '') === 'cut_log') {
     $u3 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u3');
     $tblU3 = resolveRollPlanTablePdo($u3, 'U3') ?? 'roll_plans';
     $entries = array_merge($entries, fetchCutLogForTable($u3, $tblU3, 'U3', $from, $to, 'U3'));
+
+    $u4 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u4');
+    $tblU4 = resolveRollPlanTablePdo($u4, 'U4') ?? 'roll_plans';
+    $entries = array_merge($entries, fetchCutLogForTable($u4, $tblU4, 'U4', $from, $to, 'U4'));
 
     $u5 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u5');
     $tblU5 = resolveRollPlanTablePdo($u5, 'U5') ?? 'roll_plans';
@@ -480,16 +627,16 @@ $dowShort = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 $cutOperatorMinutesPerBale = 40;
 
 /** @var array<string, array<string, list<array{order:string,bale:string,done:bool}>>> $grid[$shop][$ymd] */
-$grid = ['У2' => [], 'У3' => [], 'У5' => []];
+$grid = ['У2' => [], 'У3' => [], 'У4' => [], 'У5' => []];
 
-foreach (['У2', 'У3', 'У5'] as $shopLabel) {
+foreach (['У2', 'У3', 'У4', 'У5'] as $shopLabel) {
     $cfg = $databases[$shopLabel];
     $pdo = connectShop($dbHost, $dbUser, $dbPass, $cfg['name']);
     if (!$pdo) {
         continue;
     }
     $rows = [];
-    if ($shopLabel === 'У3') {
+    if ($shopLabel === 'У3' || $shopLabel === 'У4') {
         $rows = array_merge(
             fetchAssignmentsWithDate($pdo, 'roll_plans', 'work_date', $dateFrom, $dateTo),
             fetchAssignmentsWithDate($pdo, 'roll_plan', 'plan_date', $dateFrom, $dateTo)
@@ -531,7 +678,7 @@ foreach (['У2', 'У3', 'У5'] as $shopLabel) {
     unset($list);
 }
 
-foreach (['У2', 'У3', 'У5'] as $shopLabel) {
+foreach (['У2', 'У3', 'У4', 'У5'] as $shopLabel) {
     foreach ($grid[$shopLabel] as $ymd => &$list) {
         usort($list, static function ($a, $b) {
             $c = strcmp($a['order'], $b['order']);
@@ -545,7 +692,7 @@ $plannedOperatorLoadByDay = [];
 foreach ($days as $d) {
     $ymd = $d->format('Y-m-d');
     $baleCount = 0;
-    foreach (['У2', 'У3', 'У5'] as $shopLabel) {
+    foreach (['У2', 'У3', 'У4', 'У5'] as $shopLabel) {
         $baleCount += count($grid[$shopLabel][$ymd] ?? []);
     }
     $hours = ($baleCount * $cutOperatorMinutesPerBale) / 60;
@@ -741,6 +888,119 @@ $navQuery = static function (int $w): string {
         }
         #bale-panel-close:hover {
             background: #e5e7eb;
+        }
+        #bale-panel-actions {
+            display: none;
+            padding: 10px 16px;
+            border-bottom: 1px solid #e5e7eb;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        #bale-panel-actions.is-visible {
+            display: flex;
+        }
+        #bale-panel-actions .btn-move {
+            padding: 7px 14px;
+            font-size: 13px;
+            border-radius: 8px;
+            border: 1px solid #2563eb;
+            background: #eff6ff;
+            color: #1d4ed8;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        #bale-panel-actions .btn-move:hover {
+            background: #dbeafe;
+        }
+        #bale-panel-actions .btn-move:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        #bale-move-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.5);
+            z-index: 10200;
+        }
+        #bale-move-backdrop.is-open {
+            display: block;
+        }
+        #bale-move-modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: min(92vw, 360px);
+            z-index: 10201;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3);
+            border: 1px solid #e5e7eb;
+            padding: 16px;
+        }
+        #bale-move-modal.is-open {
+            display: block;
+        }
+        #bale-move-modal h3 {
+            margin: 0 0 8px;
+            font-size: 16px;
+            color: #111827;
+        }
+        #bale-move-modal p {
+            margin: 0 0 12px;
+            font-size: 13px;
+            color: #6b7280;
+        }
+        #bale-move-modal label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 6px;
+        }
+        #bale-move-modal input[type="date"] {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 15px;
+            box-sizing: border-box;
+        }
+        #bale-move-modal .bale-move-err {
+            display: none;
+            margin-top: 8px;
+            font-size: 13px;
+            color: #dc2626;
+        }
+        #bale-move-modal .bale-move-err.is-visible {
+            display: block;
+        }
+        #bale-move-modal .bale-move-btns {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            margin-top: 14px;
+        }
+        #bale-move-modal .bale-move-btns button {
+            padding: 8px 14px;
+            font-size: 13px;
+            border-radius: 8px;
+            cursor: pointer;
+            border: 1px solid #d1d5db;
+            background: #fff;
+        }
+        #bale-move-modal .bale-move-btns button.primary {
+            border-color: #2563eb;
+            background: #2563eb;
+            color: #fff;
+            font-weight: 600;
+        }
+        #bale-move-modal .bale-move-btns button.primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
         }
         #bale-panel-body {
             padding: 12px 16px 16px;
@@ -1124,9 +1384,9 @@ $navQuery = static function (int $w): string {
                 </tr>
             </thead>
             <tbody>
-                <?php foreach (['У2', 'У3', 'У5'] as $shopLabel): ?>
+                <?php foreach (['У2', 'У3', 'У4', 'У5'] as $shopLabel): ?>
                 <?php
-                $shopCode = ['У2' => 'U2', 'У3' => 'U3', 'У5' => 'U5'][$shopLabel] ?? $shopLabel;
+                $shopCode = ['У2' => 'U2', 'У3' => 'U3', 'У4' => 'U4', 'У5' => 'U5'][$shopLabel] ?? $shopLabel;
                 ?>
                 <tr>
                     <td class="shop"><?= htmlspecialchars($shopLabel) ?></td>
@@ -1143,6 +1403,9 @@ $navQuery = static function (int $w): string {
                                     <?php
                                     $cls = 'tag bale-tag' . ($it['done'] ? ' done' : '');
                                     $text = '[[' . $it['order'] . '][' . $it['bale'] . ']]';
+                                    $movable = ($shopCode === 'U3'
+                                        && strncmp((string) $it['order'], 'U3-BC-', 6) === 0
+                                        && empty($it['done']));
                                     ?>
                                     <span
                                         class="<?= htmlspecialchars($cls) ?>"
@@ -1152,6 +1415,8 @@ $navQuery = static function (int $w): string {
                                         data-shop="<?= htmlspecialchars($shopCode, ENT_QUOTES, 'UTF-8') ?>"
                                         data-order="<?= htmlspecialchars($it['order'], ENT_QUOTES, 'UTF-8') ?>"
                                         data-bale="<?= htmlspecialchars($it['bale'], ENT_QUOTES, 'UTF-8') ?>"
+                                        data-date="<?= htmlspecialchars($ymd, ENT_QUOTES, 'UTF-8') ?>"
+                                        data-movable="<?= $movable ? '1' : '0' ?>"
                                     ><?= htmlspecialchars($text) ?></span>
                                 <?php endforeach; ?>
                             </div>
@@ -1206,8 +1471,24 @@ $navQuery = static function (int $w): string {
             <div id="bale-panel-title">Содержимое бухты</div>
             <button type="button" id="bale-panel-close" aria-label="Закрыть">Закрыть</button>
         </div>
+        <div id="bale-panel-actions">
+            <button type="button" class="btn-move" id="bale-move-open">Перенести на другой день</button>
+        </div>
         <div id="bale-panel-body">
             <div class="bale-panel-loading">Загрузка…</div>
+        </div>
+    </div>
+
+    <div id="bale-move-backdrop" aria-hidden="true"></div>
+    <div id="bale-move-modal" role="dialog" aria-modal="true" aria-labelledby="bale-move-title">
+        <h3 id="bale-move-title">Перенести бухту</h3>
+        <p id="bale-move-hint">Выберите новый день порезки.</p>
+        <label for="bale-move-date">Новая дата</label>
+        <input type="date" id="bale-move-date">
+        <div class="bale-move-err" id="bale-move-err"></div>
+        <div class="bale-move-btns">
+            <button type="button" id="bale-move-cancel">Отмена</button>
+            <button type="button" class="primary" id="bale-move-confirm">Перенести</button>
         </div>
     </div>
 
@@ -1267,9 +1548,21 @@ $navQuery = static function (int $w): string {
         var bodyEl = document.getElementById('bale-panel-body');
         var titleEl = document.getElementById('bale-panel-title');
         var closeBtn = document.getElementById('bale-panel-close');
-        var shopNames = { U2: 'У2', U3: 'У3', U5: 'У5' };
+        var actionsEl = document.getElementById('bale-panel-actions');
+        var moveOpenBtn = document.getElementById('bale-move-open');
+        var moveBackdrop = document.getElementById('bale-move-backdrop');
+        var moveModal = document.getElementById('bale-move-modal');
+        var moveDate = document.getElementById('bale-move-date');
+        var moveHint = document.getElementById('bale-move-hint');
+        var moveErr = document.getElementById('bale-move-err');
+        var moveCancel = document.getElementById('bale-move-cancel');
+        var moveConfirm = document.getElementById('bale-move-confirm');
+        var shopNames = { U2: 'У2', U3: 'У3', U4: 'У4', U5: 'У5' };
+        var current = { shop: '', order: '', bale: '', date: '', movable: false };
 
         function closePanel() {
+            closeMoveModal();
+            if (actionsEl) actionsEl.classList.remove('is-visible');
             backdrop.classList.remove('is-open');
             panel.classList.remove('is-open');
             backdrop.setAttribute('aria-hidden', 'true');
@@ -1281,12 +1574,55 @@ $navQuery = static function (int $w): string {
             backdrop.setAttribute('aria-hidden', 'false');
         }
 
+        function closeMoveModal() {
+            if (!moveBackdrop || !moveModal) return;
+            moveBackdrop.classList.remove('is-open');
+            moveModal.classList.remove('is-open');
+            moveBackdrop.setAttribute('aria-hidden', 'true');
+            if (moveErr) {
+                moveErr.textContent = '';
+                moveErr.classList.remove('is-visible');
+            }
+            if (moveConfirm) moveConfirm.disabled = false;
+        }
+
+        function openMoveModal() {
+            if (!current.movable || !moveModal) return;
+            if (moveErr) {
+                moveErr.textContent = '';
+                moveErr.classList.remove('is-visible');
+            }
+            if (moveDate) {
+                moveDate.value = current.date || '';
+            }
+            if (moveHint) {
+                moveHint.textContent = current.order + ' · ' + current.bale
+                    + (current.date ? (' · сейчас: ' + formatRuDate(current.date)) : '');
+            }
+            moveBackdrop.classList.add('is-open');
+            moveModal.classList.add('is-open');
+            moveBackdrop.setAttribute('aria-hidden', 'false');
+            if (moveDate) moveDate.focus();
+        }
+
+        function formatRuDate(ymd) {
+            var p = String(ymd || '').split('-');
+            if (p.length !== 3) return ymd || '';
+            return p[2] + '.' + p[1] + '.' + p[0];
+        }
+
         function buildDetailUrl(shop, order, bale) {
             var u = new URL(window.location.href);
             u.searchParams.set('action', 'bale_details');
             u.searchParams.set('shop', shop);
             u.searchParams.set('order', order);
             u.searchParams.set('bale', bale);
+            return u.toString();
+        }
+
+        function buildMoveUrl() {
+            var u = new URL(window.location.href);
+            u.searchParams.set('action', 'move_bale');
             return u.toString();
         }
 
@@ -1319,7 +1655,21 @@ $navQuery = static function (int $w): string {
             return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
-        function loadBale(shop, order, bale) {
+        function setMoveVisible(on) {
+            if (!actionsEl) return;
+            if (on) actionsEl.classList.add('is-visible');
+            else actionsEl.classList.remove('is-visible');
+        }
+
+        function loadBale(shop, order, bale, opts) {
+            opts = opts || {};
+            current.shop = shop;
+            current.order = order;
+            current.bale = bale;
+            current.date = opts.date || '';
+            current.movable = !!opts.movable;
+            setMoveVisible(false);
+
             var ru = shopNames[shop] || shop;
             titleEl.textContent = ru + ' · заявка ' + order + ' · бухта ' + bale;
             bodyEl.innerHTML = '<div class="bale-panel-loading">Загрузка…</div>';
@@ -1332,9 +1682,53 @@ $navQuery = static function (int $w): string {
                         return;
                     }
                     bodyEl.innerHTML = renderTable(data.headers || {}, data.rows || []);
+                    setMoveVisible(!!current.movable);
                 })
                 .catch(function () {
                     bodyEl.innerHTML = '<p class="bale-panel-err">Не удалось загрузить данные.</p>';
+                });
+        }
+
+        function submitMove() {
+            if (!current.movable) return;
+            var newDate = moveDate ? moveDate.value : '';
+            if (!newDate) {
+                moveErr.textContent = 'Выберите дату';
+                moveErr.classList.add('is-visible');
+                return;
+            }
+            if (current.date && newDate === current.date) {
+                moveErr.textContent = 'Бухта уже на этом дне';
+                moveErr.classList.add('is-visible');
+                return;
+            }
+            moveErr.classList.remove('is-visible');
+            moveConfirm.disabled = true;
+            fetch(buildMoveUrl(), {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    shop: current.shop,
+                    order: current.order,
+                    bale: current.bale,
+                    new_date: newDate
+                })
+            })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (!data.ok) {
+                        moveErr.textContent = data.error || 'Ошибка переноса';
+                        moveErr.classList.add('is-visible');
+                        moveConfirm.disabled = false;
+                        return;
+                    }
+                    window.location.reload();
+                })
+                .catch(function () {
+                    moveErr.textContent = 'Не удалось выполнить перенос';
+                    moveErr.classList.add('is-visible');
+                    moveConfirm.disabled = false;
                 });
         }
 
@@ -1343,7 +1737,10 @@ $navQuery = static function (int $w): string {
             var order = el.getAttribute('data-order');
             var bale = el.getAttribute('data-bale');
             if (!shop || !order || !bale) return;
-            loadBale(shop, order, bale);
+            loadBale(shop, order, bale, {
+                date: el.getAttribute('data-date') || '',
+                movable: el.getAttribute('data-movable') === '1'
+            });
         }
 
         document.body.addEventListener('click', function (e) {
@@ -1357,12 +1754,19 @@ $navQuery = static function (int $w): string {
                 return;
             }
             if (e.target === backdrop) closePanel();
+            if (e.target === moveBackdrop) closeMoveModal();
         });
 
         document.body.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape' && panel.classList.contains('is-open')) {
-                closePanel();
-                return;
+            if (e.key === 'Escape') {
+                if (moveModal && moveModal.classList.contains('is-open')) {
+                    closeMoveModal();
+                    return;
+                }
+                if (panel.classList.contains('is-open')) {
+                    closePanel();
+                    return;
+                }
             }
             if (e.key !== 'Enter' && e.key !== ' ') return;
             var tag = e.target.closest && e.target.closest('.bale-tag');
@@ -1378,6 +1782,22 @@ $navQuery = static function (int $w): string {
         panel.addEventListener('click', function (e) {
             e.stopPropagation();
         });
+
+        if (moveOpenBtn) {
+            moveOpenBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                openMoveModal();
+            });
+        }
+        if (moveCancel) {
+            moveCancel.addEventListener('click', function () { closeMoveModal(); });
+        }
+        if (moveConfirm) {
+            moveConfirm.addEventListener('click', function () { submitMove(); });
+        }
+        if (moveModal) {
+            moveModal.addEventListener('click', function (e) { e.stopPropagation(); });
+        }
     })();
     </script>
     <script>
@@ -1421,8 +1841,8 @@ $navQuery = static function (int $w): string {
 
         function renderCutDayResult(data) {
             var shops = data.shops || {};
-            var order = ['U2', 'U3', 'U5'];
-            var labels = { U2: 'У2', U3: 'У3', U5: 'У5' };
+            var order = ['U2', 'U3', 'U4', 'U5'];
+            var labels = { U2: 'У2', U3: 'У3', U4: 'У4', U5: 'У5' };
             var html = '<p class="cut-day-muted">Дата: <strong>' + escapeHtml(data.day) + '</strong> · всего бухт: <strong>' + (data.total | 0) + '</strong></p>';
             order.forEach(function (code) {
                 var block = shops[code] || { items: [], note: null };
@@ -1512,7 +1932,7 @@ $navQuery = static function (int $w): string {
         var closeBtn = document.getElementById('cut-log-panel-close');
         var balePanel = document.getElementById('bale-panel');
         var cutDayBackdrop = document.getElementById('cut-day-backdrop');
-        var shopLabels = { U2: 'У2', U3: 'У3', U5: 'У5' };
+        var shopLabels = { U2: 'У2', U3: 'У3', U4: 'У4', U5: 'У5' };
         var monitorFrom = <?= json_encode($dateFrom, JSON_UNESCAPED_UNICODE) ?>;
         var monitorTo = <?= json_encode($dateTo, JSON_UNESCAPED_UNICODE) ?>;
         var todayYmd = <?= json_encode((new DateTimeImmutable('today'))->format('Y-m-d'), JSON_UNESCAPED_UNICODE) ?>;

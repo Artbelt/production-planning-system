@@ -171,6 +171,11 @@ echo "<tr align='center'><td>"
         echo '<button type="button" style="height: 25px; width: 220px; background: #6495ed; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer;">Заявка на лазер</button>';
         echo '</a>';
         echo '</div>';
+        echo '<div style="text-align: center; margin-top: 10px;">';
+        echo '<a href="paper_cut_request.php" target="_blank" rel="noopener" style="display: inline-block;">';
+        echo '<button type="button" style="height: 25px; width: 220px; background: #6495ed; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer;">Заявка на порезку бумаги</button>';
+        echo '</a>';
+        echo '</div>';
     }
     echo '</div>';
     

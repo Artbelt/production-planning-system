@@ -428,6 +428,152 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
             .production-section table { font-size: 12px; }
             .production-section th, .production-section td { padding: 5px 4px; }
         }
+
+        .nav .btn-scan {
+            background: var(--info-color);
+            padding: 10px 12px;
+            min-width: 44px;
+            justify-content: center;
+            font-size: 18px;
+            line-height: 1;
+        }
+        .nav .btn-scan:hover { background: var(--info-dark); }
+
+        #scanModal.modal-overlay { z-index: 2100; padding: 0; align-items: stretch; justify-content: stretch; }
+        #scanModal .scan-box {
+            background: #0f172a;
+            color: #f8fafc;
+            width: 100%;
+            height: 100%;
+            border-radius: 0;
+            border: none;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #scanModal .scan-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 12px 14px;
+            background: #1e293b;
+            flex-shrink: 0;
+        }
+        #scanModal .scan-header h3 { margin: 0; font-size: 1.05rem; color: #f8fafc; }
+        #scanModal .scan-close {
+            border: none; background: #334155; color: #fff;
+            width: 36px; height: 36px; border-radius: 8px;
+            font-size: 18px; cursor: pointer; line-height: 1;
+        }
+        #scanModal .scan-body {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        #scanModal .scan-stage { display: none; flex: 1; min-height: 0; flex-direction: column; }
+        #scanModal .scan-stage.active { display: flex; }
+        #scanModal .scan-query {
+            margin: 12px 14px 8px;
+            padding: 14px 16px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-align: center;
+            min-height: 56px;
+            font-family: ui-monospace, Consolas, monospace;
+            color: #fde68a;
+        }
+        #scanModal .scan-query.empty { color: #64748b; letter-spacing: normal; font-size: 16px; font-weight: 500; }
+        #scanModal .scan-hint {
+            text-align: center; font-size: 13px; color: #94a3b8; margin: 0 14px 8px;
+        }
+        #scanModal .scan-filter-list {
+            flex: 1;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            padding: 0 14px 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        #scanModal .scan-result-item {
+            background: #1e293b; border: 1px solid #334155; border-radius: 10px;
+            padding: 12px 14px; cursor: pointer; text-align: left;
+        }
+        #scanModal .scan-result-item:active { background: #334155; }
+        #scanModal .scan-result-item .ord { font-weight: 700; color: #93c5fd; font-size: 15px; }
+        #scanModal .scan-result-item .flt { color: #f8fafc; font-size: 15px; word-break: break-word; }
+        #scanModal .scan-result-item .meta { color: #94a3b8; font-size: 12px; margin-top: 6px; }
+        #scanModal .scan-empty { text-align: center; color: #94a3b8; padding: 20px 8px; font-size: 14px; }
+        #scanModal .scan-keypad {
+            flex-shrink: 0;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            padding: 10px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+            background: #1e293b;
+            border-top: 1px solid #334155;
+        }
+        #scanModal .scan-key {
+            border: none;
+            background: #334155;
+            color: #fff;
+            border-radius: 12px;
+            font-size: 26px;
+            font-weight: 700;
+            min-height: 56px;
+            cursor: pointer;
+            touch-action: manipulation;
+        }
+        #scanModal .scan-key:active { background: #475569; }
+        #scanModal .scan-key.scan-key-action {
+            background: #0f172a;
+            font-size: 18px;
+            font-weight: 600;
+            color: #cbd5e1;
+        }
+        #scanModal .scan-key.scan-key-clear { color: #fca5a5; }
+        #scanModal .scan-actions {
+            display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+            padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+        }
+        #scanModal .scan-actions button {
+            flex: 1 1 140px; max-width: 240px; border: none; padding: 14px 16px;
+            border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer;
+        }
+        #scanModal .scan-btn-primary { background: #2563eb; color: #fff; }
+        #scanModal .scan-btn-secondary { background: #334155; color: #fff; }
+        #scanModal .scan-card-wrap {
+            flex: 1; overflow-y: auto; padding: 12px 14px; -webkit-overflow-scrolling: touch;
+        }
+        #scanModal .scan-card {
+            background: #1e293b; border-radius: 12px; padding: 14px; border: 1px solid #334155;
+        }
+        #scanModal .scan-card .card-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 4px; word-break: break-word; }
+        #scanModal .scan-card .card-order { color: #93c5fd; font-size: 15px; margin-bottom: 12px; }
+        #scanModal .scan-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;
+        }
+        #scanModal .scan-stat {
+            background: #0f172a; border-radius: 8px; padding: 10px;
+        }
+        #scanModal .scan-stat .lbl { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
+        #scanModal .scan-stat .val { font-size: 18px; font-weight: 700; color: #f8fafc; margin-top: 2px; }
+        #scanModal .scan-geom {
+            font-size: 14px; color: #e2e8f0; line-height: 1.45; margin-bottom: 10px;
+        }
+        #scanModal .scan-geom div { margin-bottom: 2px; }
+        #scanModal .scan-remarks {
+            font-size: 13px; color: #fde68a; background: #422006; border-radius: 8px;
+            padding: 10px; margin-top: 4px; white-space: pre-wrap;
+        }
     </style>
     <script>
         function setDateAndReload(dStr){
@@ -482,6 +628,7 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
     <input id="date-input" type="date" value="<?= htmlspecialchars($date) ?>" />
     <a href="?date=<?= htmlspecialchars($nextDate) ?>" title="День вперёд">➡️</a>
     <a href="?date=<?= htmlspecialchars($today) ?>" title="Сегодня">Сегодня</a>
+    <button type="button" class="btn-scan" id="openScanBtn" title="Поиск бухты" aria-label="Поиск бухты" onclick="openScanModal()">📷</button>
     <a href="label_print_queue.php" title="Очередь печати этикеток">Очередь этикеток</a>
 </div>
 
@@ -580,6 +727,55 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
             </div>
             <button type="submit" style="background: var(--primary-color); color: white; border: none; padding: 10px 20px; border-radius: var(--border-radius-sm); cursor: pointer; font-size: 14px; font-weight: 500; transition: var(--transition); margin-top: 4px;">Внести</button>
         </form>
+    </div>
+</div>
+
+<div id="scanModal" class="modal-overlay" aria-hidden="true">
+    <div class="scan-box" role="dialog" aria-modal="true" aria-labelledby="scanModalTitle">
+        <div class="scan-header">
+            <h3 id="scanModalTitle">Поиск бухты</h3>
+            <button type="button" class="scan-close" onclick="closeScanModal()" title="Закрыть">✕</button>
+        </div>
+        <div class="scan-body">
+            <div class="scan-stage active" id="scanStageKeypad">
+                <div class="scan-query empty" id="scanQueryDisplay">Наберите номер с бухты</div>
+                <p class="scan-hint" id="scanFilterHint">Позиции появятся по мере ввода</p>
+                <div class="scan-filter-list" id="scanFilterList"></div>
+                <div class="scan-keypad" id="scanKeypad">
+                    <button type="button" class="scan-key" data-key="1">1</button>
+                    <button type="button" class="scan-key" data-key="2">2</button>
+                    <button type="button" class="scan-key" data-key="3">3</button>
+                    <button type="button" class="scan-key" data-key="4">4</button>
+                    <button type="button" class="scan-key" data-key="5">5</button>
+                    <button type="button" class="scan-key" data-key="6">6</button>
+                    <button type="button" class="scan-key" data-key="7">7</button>
+                    <button type="button" class="scan-key" data-key="8">8</button>
+                    <button type="button" class="scan-key" data-key="9">9</button>
+                    <button type="button" class="scan-key scan-key-action scan-key-clear" data-key="clear">Сброс</button>
+                    <button type="button" class="scan-key" data-key="0">0</button>
+                    <button type="button" class="scan-key scan-key-action" data-key="back">⌫</button>
+                </div>
+            </div>
+
+            <div class="scan-stage" id="scanStageResults">
+                <p class="scan-hint" id="scanResultsHint">Выберите заявку</p>
+                <div class="scan-filter-list" id="scanResultsList"></div>
+                <div class="scan-actions">
+                    <button type="button" class="scan-btn-secondary" onclick="scanShowStage('keypad')">Назад</button>
+                </div>
+            </div>
+
+            <div class="scan-stage" id="scanStageCard">
+                <div class="scan-card-wrap">
+                    <div class="scan-card" id="scanCardBody"></div>
+                </div>
+                <div class="scan-actions">
+                    <button type="button" class="scan-btn-secondary" onclick="scanBackFromCard()">Назад</button>
+                    <button type="button" class="scan-btn-primary" onclick="scanUseInForm()">Внести выпуск</button>
+                    <button type="button" class="scan-btn-secondary" onclick="closeScanModal()">Закрыть</button>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -783,6 +979,9 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
             if (e.key === 'Escape' && document.getElementById('printModal').classList.contains('open')) {
                 closePrintModal();
             }
+            if (e.key === 'Escape' && document.getElementById('scanModal').classList.contains('open')) {
+                closeScanModal();
+            }
         });
         let currentFilterOrders = [];
         let filterSuggestionsTimeout = null;
@@ -898,6 +1097,262 @@ $manufactured_packages = $manufacturedStmt->fetchAll(PDO::FETCH_ASSOC);
                 } else alert('Ошибка: ' + (data.message || 'Неизвестная ошибка'));
             } catch (err) { console.error(err); alert('Ошибка при сохранении данных'); }
         });
+
+        /* ---- Поиск бухты по цифрам ---- */
+        let scanQuery = '';
+        let scanSelected = null;
+        let scanResultsCache = [];
+        let scanPickedFilter = '';
+
+        function scanShowStage(name) {
+            const map = {
+                keypad: 'scanStageKeypad',
+                results: 'scanStageResults',
+                card: 'scanStageCard'
+            };
+            Object.keys(map).forEach(k => {
+                const el = document.getElementById(map[k]);
+                if (el) el.classList.toggle('active', k === name);
+            });
+        }
+
+        function openScanModal() {
+            scanQuery = '';
+            scanSelected = null;
+            scanResultsCache = [];
+            scanPickedFilter = '';
+            document.getElementById('scanModal').classList.add('open');
+            document.getElementById('scanModal').setAttribute('aria-hidden', 'false');
+            scanUpdateQueryUi();
+            scanRenderFilterMatches();
+            scanShowStage('keypad');
+        }
+
+        function closeScanModal() {
+            document.getElementById('scanModal').classList.remove('open');
+            document.getElementById('scanModal').setAttribute('aria-hidden', 'true');
+        }
+
+        function scanUpdateQueryUi() {
+            const el = document.getElementById('scanQueryDisplay');
+            if (!scanQuery) {
+                el.textContent = 'Наберите номер с бухты';
+                el.classList.add('empty');
+            } else {
+                el.textContent = scanQuery;
+                el.classList.remove('empty');
+            }
+        }
+
+        function scanNormDigits(s) {
+            return String(s || '').replace(/\D+/g, '');
+        }
+
+        function scanNormCompact(s) {
+            return String(s || '').toUpperCase().replace(/\s+/g, '');
+        }
+
+        function scanGetMatchedFilters() {
+            const q = scanQuery;
+            if (!q) return [];
+            const matched = allFilters.filter(function(f) {
+                const digits = scanNormDigits(f);
+                const compact = scanNormCompact(f);
+                return digits.indexOf(q) !== -1 || compact.indexOf(q) !== -1;
+            });
+            // Более точные совпадения выше
+            matched.sort(function(a, b) {
+                const da = scanNormDigits(a);
+                const db = scanNormDigits(b);
+                const score = function(d, label) {
+                    if (d === q) return 0;
+                    if (d.indexOf(q) === 0) return 1;
+                    if (scanNormCompact(label).indexOf(q) !== -1) return 2;
+                    return 3;
+                };
+                const sa = score(da, a);
+                const sb = score(db, b);
+                if (sa !== sb) return sa - sb;
+                return a.localeCompare(b, 'ru');
+            });
+            return matched.slice(0, 40);
+        }
+
+        function scanRenderFilterMatches() {
+            const list = document.getElementById('scanFilterList');
+            const hint = document.getElementById('scanFilterHint');
+            list.innerHTML = '';
+            if (!scanQuery) {
+                hint.textContent = 'Позиции появятся по мере ввода';
+                list.innerHTML = '<div class="scan-empty">Например: 1956</div>';
+                return;
+            }
+            const matched = scanGetMatchedFilters();
+            if (!matched.length) {
+                hint.textContent = 'Нет совпадений';
+                list.innerHTML = '<div class="scan-empty">Ничего не найдено по «' + escapeHtml(scanQuery) + '»</div>';
+                return;
+            }
+            hint.textContent = 'Найдено: ' + matched.length + ' — выберите позицию';
+            matched.forEach(function(filterName) {
+                const div = document.createElement('div');
+                div.className = 'scan-result-item';
+                div.innerHTML = '<div class="flt">' + escapeHtml(filterName) + '</div>';
+                div.onclick = function() { scanPickFilter(filterName); };
+                list.appendChild(div);
+            });
+        }
+
+        function scanKeyPress(key) {
+            if (key === 'clear') {
+                scanQuery = '';
+            } else if (key === 'back') {
+                scanQuery = scanQuery.slice(0, -1);
+            } else if (/^[0-9]$/.test(key)) {
+                if (scanQuery.length >= 12) return;
+                scanQuery += key;
+            } else {
+                return;
+            }
+            scanUpdateQueryUi();
+            scanRenderFilterMatches();
+        }
+
+        document.getElementById('scanKeypad').addEventListener('click', function(e) {
+            const btn = e.target.closest('[data-key]');
+            if (!btn) return;
+            scanKeyPress(btn.getAttribute('data-key'));
+        });
+
+        async function scanPickFilter(filterName) {
+            scanPickedFilter = filterName;
+            scanSelected = null;
+            const hint = document.getElementById('scanResultsHint');
+            const list = document.getElementById('scanResultsList');
+            hint.textContent = 'Загрузка…';
+            list.innerHTML = '<div class="scan-empty">Ищем заявки…</div>';
+            scanShowStage('results');
+            try {
+                const res = await fetch('scan_coil_lookup.php', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ text: filterName })
+                });
+                const data = await res.json();
+                scanResultsCache = (data && data.results) ? data.results : [];
+                list.innerHTML = '';
+                if (!scanResultsCache.length) {
+                    hint.textContent = 'Заявки не найдены';
+                    list.innerHTML = '<div class="scan-empty">Позиция найдена в справочнике, но активных заявок нет.</div>';
+                    // Карточка без заявки — только геометрия через lookup пустой; покажем минимальную карточку
+                    scanSelected = {
+                        order_number: '',
+                        filter_label: filterName,
+                        geometry: {},
+                        remarks: [],
+                        corrugated: { plan: 0, fact: 0 },
+                        built: { plan: 0, fact: 0 }
+                    };
+                    scanOpenCard(-1);
+                    return;
+                }
+                if (scanResultsCache.length === 1) {
+                    scanOpenCard(0);
+                    return;
+                }
+                hint.textContent = filterName + ' — выберите заявку';
+                scanResultsCache.forEach(function(item, idx) {
+                    const div = document.createElement('div');
+                    div.className = 'scan-result-item';
+                    const corr = item.corrugated || {};
+                    const built = item.built || {};
+                    div.innerHTML =
+                        '<div class="ord">Заявка ' + escapeHtml(item.order_number || '') + '</div>' +
+                        '<div class="flt">' + escapeHtml(item.filter_label || '') + '</div>' +
+                        '<div class="meta">Гофра ' + (corr.fact || 0) + '/' + (corr.plan || 0) +
+                        ' · Сборка ' + (built.fact || 0) + '/' + (built.plan || 0) + '</div>';
+                    div.onclick = function() { scanOpenCard(idx); };
+                    list.appendChild(div);
+                });
+            } catch (err) {
+                console.error(err);
+                hint.textContent = 'Ошибка загрузки';
+                list.innerHTML = '<div class="scan-empty">Не удалось загрузить данные позиции</div>';
+            }
+        }
+
+        function fmtNum(v) {
+            if (v === null || v === undefined || v === '') return '—';
+            return String(v);
+        }
+
+        function scanOpenCard(idx) {
+            if (idx >= 0) {
+                scanSelected = scanResultsCache[idx] || null;
+            }
+            if (!scanSelected) return;
+            const g = scanSelected.geometry || {};
+            const corr = scanSelected.corrugated || {};
+            const built = scanSelected.built || {};
+            const remarks = (scanSelected.remarks || []).filter(Boolean);
+            let geomHtml = '';
+            geomHtml += '<div><strong>Длина:</strong> ' + fmtNum(g.length_mm) + ' мм</div>';
+            geomHtml += '<div><strong>Ширина:</strong> ' + fmtNum(g.width_mm) + ' мм</div>';
+            geomHtml += '<div><strong>Высота:</strong> ' + fmtNum(g.height_mm) + ' мм</div>';
+            geomHtml += '<div><strong>Рёбра:</strong> ' + fmtNum(g.pleats) + '</div>';
+            geomHtml += '<div><strong>Усилители:</strong> ' + fmtNum(g.amplifiers) + '</div>';
+            if (g.glueing) geomHtml += '<div><strong>Проливка:</strong> ' + escapeHtml(String(g.glueing)) + '</div>';
+            if (g.prefilter) geomHtml += '<div><strong>Предфильтр:</strong> ' + escapeHtml(String(g.prefilter)) + '</div>';
+
+            let html = '';
+            html += '<div class="card-title">' + escapeHtml(scanSelected.filter_label || '') + '</div>';
+            html += '<div class="card-order">' + (scanSelected.order_number
+                ? ('Заявка ' + escapeHtml(scanSelected.order_number))
+                : 'Заявка не найдена') + '</div>';
+            html += '<div class="scan-grid">';
+            html += '<div class="scan-stat"><div class="lbl">Сгофрировано</div><div class="val">' + (corr.fact || 0) + ' / ' + (corr.plan || 0) + '</div></div>';
+            html += '<div class="scan-stat"><div class="lbl">Собрано фильтров</div><div class="val">' + (built.fact || 0) + ' / ' + (built.plan || 0) + '</div></div>';
+            html += '</div>';
+            html += '<div class="scan-geom">' + geomHtml + '</div>';
+            if (remarks.length) {
+                html += '<div class="scan-remarks"><strong>Особенности:</strong><br>' + escapeHtml(remarks.join('\n')) + '</div>';
+            }
+            document.getElementById('scanCardBody').innerHTML = html;
+            scanShowStage('card');
+        }
+
+        function scanBackFromCard() {
+            if (scanResultsCache.length > 1) {
+                scanShowStage('results');
+            } else {
+                scanShowStage('keypad');
+            }
+        }
+
+        function scanUseInForm() {
+            if (!scanSelected) return;
+            const filter = scanSelected.filter_label || '';
+            const order = scanSelected.order_number || '';
+            closeScanModal();
+            filterInput.value = filter;
+            loadOrdersForFilter(filter).then(function() {
+                if (order) {
+                    const exists = Array.from(orderSelect.options).some(o => o.value === order);
+                    if (!exists) {
+                        const o = document.createElement('option');
+                        o.value = order;
+                        o.textContent = order;
+                        orderSelect.appendChild(o);
+                        currentFilterOrders.push(order);
+                    }
+                    orderSelect.value = order;
+                }
+                document.getElementById('countInput').focus();
+            });
+            const section = document.querySelector('.production-section');
+            if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
     </script>
 </body>
 </html>

@@ -355,6 +355,82 @@ while ($row = $all_filters_stmt->fetch(PDO::FETCH_ASSOC)) {
 // ===== ФОРМАТ 199: Проверка и распределение =====
 $format_199_filters = [];
 $format_199_assigned = [];
+$format_199_has_candidates = false;
+
+// Границы диапазона ширин (плюс всегда ровно 199; опционально ширина×2 в диапазоне)
+$format_199_min_width_default = 175;
+$format_199_max_width_default = 190;
+$format_199_include_double_default = true;
+
+if ($order !== '' && (isset($_GET['format_199_min_width']) || isset($_GET['format_199_max_width']) || isset($_GET['format_199_include_double']))) {
+    $minW = isset($_GET['format_199_min_width'])
+        ? (int)$_GET['format_199_min_width']
+        : (int)cutPlanSessionGet($order, 'format_199_min_width', $format_199_min_width_default);
+    $maxW = isset($_GET['format_199_max_width'])
+        ? (int)$_GET['format_199_max_width']
+        : (int)cutPlanSessionGet($order, 'format_199_max_width', $format_199_max_width_default);
+    if ($minW < 50) {
+        $minW = 50;
+    }
+    if ($maxW < 50) {
+        $maxW = 50;
+    }
+    if ($maxW > 300) {
+        $maxW = 300;
+    }
+    if ($minW > $maxW) {
+        $minW = $maxW;
+    }
+    cutPlanSessionSet($order, 'format_199_min_width', $minW);
+    cutPlanSessionSet($order, 'format_199_max_width', $maxW);
+    if (isset($_GET['format_199_include_double'])) {
+        cutPlanSessionSet($order, 'format_199_include_double', $_GET['format_199_include_double'] === '1');
+    }
+    cutPlanSessionSet($order, 'format_199_setup_active', true);
+}
+
+$format_199_min_width = ($order !== '')
+    ? (int)cutPlanSessionGet($order, 'format_199_min_width', $format_199_min_width_default)
+    : $format_199_min_width_default;
+$format_199_max_width = ($order !== '')
+    ? (int)cutPlanSessionGet($order, 'format_199_max_width', $format_199_max_width_default)
+    : $format_199_max_width_default;
+$format_199_include_double = ($order !== '')
+    ? (bool)cutPlanSessionGet($order, 'format_199_include_double', $format_199_include_double_default)
+    : $format_199_include_double_default;
+
+if ($format_199_min_width < 50) {
+    $format_199_min_width = 50;
+}
+if ($format_199_max_width < 50) {
+    $format_199_max_width = 50;
+}
+if ($format_199_max_width > 300) {
+    $format_199_max_width = 300;
+}
+if ($format_199_min_width > $format_199_max_width) {
+    $format_199_min_width = $format_199_max_width;
+}
+
+/**
+ * Ширина подходит под формат 199 при заданном диапазоне.
+ * @return array{match: bool, reason: string} reason: exact_199|direct|double|none
+ */
+$format199WidthMatch = static function (float $width, int $minW, int $maxW, bool $includeDouble): array {
+    if (abs($width - 199.0) < 0.01) {
+        return ['match' => true, 'reason' => 'exact_199'];
+    }
+    if ($width >= $minW && $width <= $maxW) {
+        return ['match' => true, 'reason' => 'direct'];
+    }
+    if ($includeDouble) {
+        $width2 = $width * 2;
+        if ($width2 >= $minW && $width2 <= $maxW) {
+            return ['match' => true, 'reason' => 'double'];
+        }
+    }
+    return ['match' => false, 'reason' => 'none'];
+};
 
 // Проверяем только если нет missing_filters
 if (empty($missing_filters)) {
@@ -373,13 +449,20 @@ if (empty($missing_filters)) {
         }
         
         $width = (float)$paper_info['p_p_width'];
+
+        // Кандидаты для модалки: текущий диапазон, ×2 в диапазоне, или коридор 150–max
+        $candidateMatch = $format199WidthMatch($width, min(150, $format_199_min_width), $format_199_max_width, true);
+        if ($candidateMatch['match'] || ($width >= 150 && $width <= max(190, $format_199_max_width))) {
+            $format_199_has_candidates = true;
+        }
         
-        // Проверяем ширину: 199 или диапазон 175-190
-        if ($width == 199 || ($width >= 175 && $width <= 190)) {
+        $match = $format199WidthMatch($width, $format_199_min_width, $format_199_max_width, $format_199_include_double);
+        if ($match['match']) {
             $format_199_filters[] = [
                 'filter' => $filter_name,
                 'count' => $filter_count,
                 'width' => $width,
+                'match_reason' => $match['reason'],
                 'paper' => $paper_info['p_p_name'],
                 'height' => (float)$paper_info['p_p_height'],
                 'pleats' => (int)$paper_info['p_p_pleats_count']
@@ -391,6 +474,7 @@ if (empty($missing_filters)) {
 // Обработка сброса форматов 199
 if (isset($_GET['reset_format_199']) && $order !== '') {
     cutPlanSessionUnsetAll($order, ['format_199_assigned', 'format_199_stock', 'format_199_processed']);
+    cutPlanSessionSet($order, 'format_199_setup_active', true);
     header('Location: ?order=' . urlencode($order));
     exit;
 }
@@ -398,6 +482,7 @@ if (isset($_GET['reset_format_199']) && $order !== '') {
 // Повторно включить модальное окно формата 199 (после "Пропустить")
 if (isset($_GET['enable_format_199']) && $order !== '') {
     cutPlanSessionUnsetAll($order, ['format_199_assigned', 'format_199_stock', 'format_199_processed']);
+    cutPlanSessionSet($order, 'format_199_setup_active', true);
     header('Location: ?order=' . urlencode($order));
     exit;
 }
@@ -472,6 +557,10 @@ if (isset($_POST['format_199_submit'])) {
     cutPlanSessionSet($order, 'format_199_assigned', $assigned_filters);
     cutPlanSessionSet($order, 'format_199_stock', $format_199_stock);
     cutPlanSessionSet($order, 'format_199_processed', true);
+    cutPlanSessionUnset($order, 'format_199_setup_active');
+    // После модалки нужен именно пересчёт, а не «просмотр» черновика,
+    // который мог сохраниться в БД пока модалка была открыта.
+    cutPlanSessionSet($order, 'format_199_force_calc', true);
     
     error_log("Format 199 POST: Saved to session: " . json_encode($assigned_filters));
     error_log("Format 199 POST: Stock: $format_199_stock");
@@ -489,6 +578,25 @@ if ($format_199_assigned !== []) {
     error_log('Format 199: Loaded from session: ' . json_encode($format_199_assigned));
 } else {
     error_log('Format 199: No data in session');
+}
+
+// После подтверждения/пропуска формата 199 — сразу считаем новый раскрой
+if ($order !== '' && cutPlanSessionGet($order, 'format_199_force_calc')) {
+    $viewExistingOnly = false;
+    cutPlanSessionUnset($order, 'format_199_force_calc');
+}
+
+// Пока модалка формата 199 не закрыта — не уходим в «просмотр сохранённого».
+// Иначе после первого рендера раскрой уже лежит в БД, и «Обновить список» прячет модалку.
+$format_199_setup_pending = $format_199_has_candidates
+    && empty($format_199_assigned)
+    && !cutPlanSessionGet($order, 'format_199_processed');
+if ($order !== '' && $format_199_setup_pending) {
+    if (!$viewExistingOnly || cutPlanSessionGet($order, 'format_199_setup_active')
+        || isset($_GET['format_199_min_width']) || isset($_GET['format_199_max_width']) || isset($_GET['format_199_include_double'])) {
+        cutPlanSessionSet($order, 'format_199_setup_active', true);
+        $viewExistingOnly = false;
+    }
 }
 
 $rolls_1000 = [];
@@ -890,13 +998,53 @@ function getCombinations($elements, $length) {
 // 2. Есть фильтры для формата 199
 // 3. Еще не назначены фильтры и окно не было обработано (пропущено)
 // 4. Не режим просмотра сохранённого раскроя
-if (!$viewExistingOnly && empty($missing_filters) && !empty($format_199_filters) && empty($format_199_assigned) && !cutPlanSessionGet($order, 'format_199_processed')):
+if (!$viewExistingOnly && empty($missing_filters) && $format_199_has_candidates && empty($format_199_assigned) && !cutPlanSessionGet($order, 'format_199_processed')):
 ?>
 <div id="format199Modal" style="display: block; position: fixed; z-index: 9999; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5);">
     <div style="background-color: #fff; margin: 5% auto; padding: 0; border: 1px solid #999; width: 95%; max-width: 1000px;">
         <div style="padding: 15px 20px; background-color: #f0f0f0; border-bottom: 1px solid #999;">
             <h2 style="margin: 0; font-size: 16px; text-align: center; color: #333;">Распределение фильтров для формата 199</h2>
             <p style="margin: 5px 0 0 0; font-size: 12px; text-align: center; color: #666;">Укажите количество форматов 199 на складе и выберите позиции для них</p>
+        </div>
+
+        <!-- Границы диапазона ширин (вне формы, чтобы Enter не отправлял назначение) -->
+        <div style="padding: 15px 20px 0 20px;">
+            <div style="padding: 10px; background-color: #f9f9f9; border: 1px solid #999;">
+                <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333; font-size: 12px;">
+                    Диапазон ширин (мм):
+                </label>
+                <span style="color: #666; font-size: 12px;">от</span>
+                <input type="number"
+                       id="format_199_min_width"
+                       min="50"
+                       max="300"
+                       step="1"
+                       value="<?= (int)$format_199_min_width ?>"
+                       style="width: 80px; padding: 3px 6px; border: 1px solid #999; font-size: 12px;"
+                       onkeydown="if (event.key === 'Enter') { event.preventDefault(); applyFormat199Range(); }">
+                <span style="margin: 0 4px; color: #666; font-size: 12px;">до</span>
+                <input type="number"
+                       id="format_199_max_width"
+                       min="50"
+                       max="300"
+                       step="1"
+                       value="<?= (int)$format_199_max_width ?>"
+                       style="width: 80px; padding: 3px 6px; border: 1px solid #999; font-size: 12px;"
+                       onkeydown="if (event.key === 'Enter') { event.preventDefault(); applyFormat199Range(); }">
+                <span style="margin-left: 8px; color: #666; font-size: 12px;">(+ ровно 199 мм)</span>
+                <button type="button"
+                        onclick="applyFormat199Range()"
+                        style="margin-left: 10px; padding: 3px 12px; background: #666; color: white; border: 1px solid #333; cursor: pointer; font-size: 12px;">
+                    Обновить список
+                </button>
+                <label style="display: block; margin-top: 8px; font-size: 12px; color: #333; cursor: pointer;">
+                    <input type="checkbox"
+                           id="format_199_include_double"
+                           <?= $format_199_include_double ? 'checked' : '' ?>
+                           style="vertical-align: middle; margin-right: 4px;">
+                    Включать позиции, у которых ширина × 2 попадает в диапазон
+                </label>
+            </div>
         </div>
         
         <form method="POST" id="format199Form" onsubmit="console.log('🔵 Форма формата 199 отправляется'); console.log('Order:', '<?= htmlspecialchars($order) ?>'); return true;">
@@ -922,7 +1070,7 @@ if (!$viewExistingOnly && empty($missing_filters) && !empty($format_199_filters)
                 <!-- Список доступных фильтров -->
                 <div style="margin-bottom: 20px;">
                     <h3 style="margin: 0 0 10px 0; font-size: 14px; color: #333; text-align: center;">
-                        Доступные позиции (ширина 199 мм или 175-190 мм):
+                        Доступные позиции (199 мм<?= $format_199_include_double ? ', ширина×2 в диапазоне' : '' ?> или <?= (int)$format_199_min_width ?>–<?= (int)$format_199_max_width ?> мм):
                     </h3>
                     
                     <div style="max-height: 300px; overflow-y: auto; border: 1px solid #999;">
@@ -937,6 +1085,14 @@ if (!$viewExistingOnly && empty($missing_filters) && !empty($format_199_filters)
                                 </tr>
                             </thead>
                             <tbody>
+                                <?php if (empty($format_199_filters)): ?>
+                                <tr>
+                                    <td colspan="5" style="padding: 12px; text-align: center; border: 1px solid #999; color: #666;">
+                                        Нет позиций в диапазоне <?= (int)$format_199_min_width ?>–<?= (int)$format_199_max_width ?> мм<?= $format_199_include_double ? ' (включая ширину×2)' : '' ?>.
+                                        Измените границы и нажмите «Обновить список».
+                                    </td>
+                                </tr>
+                                <?php else: ?>
                                 <?php foreach ($format_199_filters as $idx => $f): ?>
                                 <tr>
                                     <td style="padding: 3px 6px; text-align: center; border: 1px solid #999;">
@@ -952,6 +1108,11 @@ if (!$viewExistingOnly && empty($missing_filters) && !empty($format_199_filters)
                                     </td>
                                     <td style="padding: 3px 6px; text-align: center; border: 1px solid #999;">
                                         <?= number_format($f['width'], 0) ?> мм
+                                        <?php if (($f['match_reason'] ?? '') === 'double'): ?>
+                                            <div style="font-size: 10px; color: #0066cc; font-weight: normal;">
+                                                ×2 = <?= number_format($f['width'] * 2, 0) ?> мм
+                                            </div>
+                                        <?php endif; ?>
                                     </td>
                                     <td style="padding: 3px 6px; text-align: center; border: 1px solid #999; font-weight: bold;">
                                         <?php 
@@ -980,6 +1141,7 @@ if (!$viewExistingOnly && empty($missing_filters) && !empty($format_199_filters)
                                     </td>
                                 </tr>
                                 <?php endforeach; ?>
+                                <?php endif; ?>
                             </tbody>
                         </table>
                     </div>
@@ -1029,6 +1191,27 @@ if (!$viewExistingOnly && empty($missing_filters) && !empty($format_199_filters)
 </div>
 
 <script>
+function applyFormat199Range() {
+    const minInput = document.getElementById('format_199_min_width');
+    const maxInput = document.getElementById('format_199_max_width');
+    const doubleCb = document.getElementById('format_199_include_double');
+    let min = parseInt(minInput.value, 10);
+    let max = parseInt(maxInput.value, 10);
+    if (isNaN(min) || min < 50) min = 50;
+    if (isNaN(max) || max < 50) max = 50;
+    if (max > 300) max = 300;
+    if (min > max) min = max;
+    const order = <?= json_encode($order, JSON_UNESCAPED_UNICODE) ?>;
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('order') && !params.has('order_number')) {
+        params.set('order', order);
+    }
+    params.set('format_199_min_width', String(min));
+    params.set('format_199_max_width', String(max));
+    params.set('format_199_include_double', doubleCb && doubleCb.checked ? '1' : '0');
+    window.location.href = '?' + params.toString();
+}
+
 function toggleFilterInput(checkbox) {
     const index = checkbox.dataset.filterIndex;
     const input = document.querySelector(`.filter-count-input[data-filter-index="${index}"]`);
@@ -1085,7 +1268,7 @@ endif; // Конец модального окна формата 199
 
 <?php 
 // Кнопка включения формата 199, если модалка была пропущена
-if (!$viewExistingOnly && empty($missing_filters) && !empty($format_199_filters) && empty($format_199_assigned) && cutPlanSessionGet($order, 'format_199_processed')): ?>
+if (!$viewExistingOnly && empty($missing_filters) && $format_199_has_candidates && empty($format_199_assigned) && cutPlanSessionGet($order, 'format_199_processed')): ?>
     <div style="margin: 10px auto 0; text-align: center;">
         <a href="?order=<?= urlencode($order) ?>&enable_format_199=1"
            style="display: inline-block; padding: 8px 14px; background: #0066cc; color: #fff; border-radius: 6px; text-decoration: none; font-weight: 600;">

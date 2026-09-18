@@ -116,17 +116,25 @@ if (isset($_GET['filters_with_balance'])) {
     exit;
 }
 
-// ========= API: все фильтры (весь ассортимент) =========
+// ========= API: все фильтры (весь ассортимент из справочника + заявки) =========
 // GET ?all_filters=1
 if (isset($_GET['all_filters'])) {
     header('Content-Type: application/json; charset=utf-8');
     try {
         $pdo = pdo_plan();
+        // Справочник panel_filter_structure — полный ассортимент (в т.ч. новые позиции без заявок).
+        // UNION с orders — чтобы не потерять имена, которые есть только в заявках.
         $stmt = $pdo->query("
-            SELECT DISTINCT `filter`
-            FROM `orders`
-            WHERE `filter` IS NOT NULL AND TRIM(`filter`) != ''
-            ORDER BY `filter`
+            SELECT f FROM (
+                SELECT DISTINCT TRIM(`filter`) AS f
+                FROM `panel_filter_structure`
+                WHERE `filter` IS NOT NULL AND TRIM(`filter`) != ''
+                UNION
+                SELECT DISTINCT TRIM(`filter`) AS f
+                FROM `orders`
+                WHERE `filter` IS NOT NULL AND TRIM(`filter`) != ''
+            ) AS all_f
+            ORDER BY f
         ");
         echo json_encode($stmt->fetchAll(PDO::FETCH_COLUMN));
     } catch (Throwable $e) {

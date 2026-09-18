@@ -695,6 +695,7 @@ echo "<!-- Аккуратная панель авторизации -->
                     <a href="NP_supply_requirements.php" target="_blank" rel="noopener" class="stack"><button>Потребность комплектующих</button></a>
                     <?php if ($canAccessLaser): ?>
                     <a href="laser_request.php" target="_blank" rel="noopener" class="stack"><button type="button">Заявка на лазер</button></a>
+                    <a href="bobbin_cut_request.php" target="_blank" rel="noopener" class="stack"><button type="button">Заявка на бобинорезку</button></a>
                     <?php endif; ?>
                 </div>
 
