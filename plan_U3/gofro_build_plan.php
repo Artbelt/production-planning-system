@@ -1076,6 +1076,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
         .coverage-legend__swatch--stock { background: #dcfce7; }
         .coverage-legend__swatch--plan { background: #dbeafe; }
         .coverage-legend__swatch--gap { background: #fee2e2; }
+        .coverage-legend__swatch--surplus { background: #fef3c7; }
         .coverage-legend__hint {
             color: var(--muted);
             font-size: 11px;
@@ -1143,18 +1144,18 @@ $pageTitle = 'Планирование сборки гофропакетов';
         }
         /*
          * Фильтр по высоте: подсветка всей строки, кроме ячеек с заливкой
-         * (покрытие г/п, очередь изменений).
+         * (покрытие г/п, префицит, очередь изменений).
          */
-        table.gofro-plan-table.fold-height-filter-active tbody tr[data-row-key]:not(.fold-height-match) td:not(.gofro-coverage-cell):not(.gofro-coverage-cell-partial):not(.gofro-coverage-planned-cell):not(.gofro-coverage-planned-cell-partial):not(.gofro-coverage-gap):not(.gofro-coverage-gap-partial):not(.queue-pending) {
+        table.gofro-plan-table.fold-height-filter-active tbody tr[data-row-key]:not(.fold-height-match) td:not(.gofro-coverage-cell):not(.gofro-coverage-cell-partial):not(.gofro-coverage-planned-cell):not(.gofro-coverage-planned-cell-partial):not(.gofro-coverage-gap):not(.gofro-coverage-gap-partial):not(.gofro-surplus-cell):not(.gofro-surplus-cell-partial):not(.gofro-need-surplus):not(.queue-pending) {
             opacity: 0.42;
         }
-        table.gofro-plan-table.fold-height-filter-active tbody tr[data-row-key].fold-height-match td:not(.gofro-coverage-cell):not(.gofro-coverage-cell-partial):not(.gofro-coverage-planned-cell):not(.gofro-coverage-planned-cell-partial):not(.gofro-coverage-gap):not(.gofro-coverage-gap-partial):not(.queue-pending) {
+        table.gofro-plan-table.fold-height-filter-active tbody tr[data-row-key].fold-height-match td:not(.gofro-coverage-cell):not(.gofro-coverage-cell-partial):not(.gofro-coverage-planned-cell):not(.gofro-coverage-planned-cell-partial):not(.gofro-coverage-gap):not(.gofro-coverage-gap-partial):not(.gofro-surplus-cell):not(.gofro-surplus-cell-partial):not(.gofro-need-surplus):not(.queue-pending) {
             background-color: #fffbeb;
         }
-        table.gofro-plan-table.fold-height-filter-active tbody tr[data-row-key].fold-height-match:hover td:not(.gofro-coverage-cell):not(.gofro-coverage-cell-partial):not(.gofro-coverage-planned-cell):not(.gofro-coverage-planned-cell-partial):not(.gofro-coverage-gap):not(.gofro-coverage-gap-partial):not(.queue-pending) {
+        table.gofro-plan-table.fold-height-filter-active tbody tr[data-row-key].fold-height-match:hover td:not(.gofro-coverage-cell):not(.gofro-coverage-cell-partial):not(.gofro-coverage-planned-cell):not(.gofro-coverage-planned-cell-partial):not(.gofro-coverage-gap):not(.gofro-coverage-gap-partial):not(.gofro-surplus-cell):not(.gofro-surplus-cell-partial):not(.gofro-need-surplus):not(.queue-pending) {
             background-color: #fef3c7;
         }
-        table.gofro-plan-table.fold-height-filter-active tbody tr[data-row-key].fold-height-match td.filter-name-cell:not(.gofro-coverage-cell):not(.gofro-coverage-cell-partial):not(.gofro-coverage-planned-cell):not(.gofro-coverage-planned-cell-partial):not(.gofro-coverage-gap):not(.gofro-coverage-gap-partial):not(.queue-pending) {
+        table.gofro-plan-table.fold-height-filter-active tbody tr[data-row-key].fold-height-match td.filter-name-cell:not(.gofro-coverage-cell):not(.gofro-coverage-cell-partial):not(.gofro-coverage-planned-cell):not(.gofro-coverage-planned-cell-partial):not(.gofro-coverage-gap):not(.gofro-coverage-gap-partial):not(.gofro-surplus-cell):not(.gofro-surplus-cell-partial):not(.gofro-need-surplus):not(.queue-pending) {
             box-shadow: inset 4px 0 0 #f59e0b;
         }
         td.date-cell.gofro-coverage-cell {
@@ -1184,6 +1185,29 @@ $pageTitle = 'Планирование сборки гофропакетов';
         td.date-cell.gofro-coverage-gap-partial {
             background: linear-gradient(to top, #fee2e2 0%, #fee2e2 45%, #fff 45%, #fff 100%);
             box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.35);
+        }
+        /* Префицит: план г/п сверх потребности (после coverage — перекрывает фон ячейки) */
+        td.date-cell.gofro-surplus-cell {
+            background: #fef3c7;
+            box-shadow: inset 0 0 0 1px rgba(217, 119, 6, 0.45);
+        }
+        td.date-cell.gofro-surplus-cell-partial {
+            background: linear-gradient(to top, #fef3c7 0%, #fef3c7 55%, #fff 55%, #fff 100%);
+            box-shadow: inset 0 0 0 1px rgba(217, 119, 6, 0.45);
+        }
+        td.gofro-need-cell.gofro-need-surplus {
+            background: #fef3c7;
+            box-shadow: inset 0 0 0 1px rgba(217, 119, 6, 0.35);
+            font-weight: 600;
+            color: #92400e;
+        }
+        .gofro-surplus-badge {
+            color: #b45309;
+            font-weight: 600;
+            font-size: 11px;
+        }
+        tbody tr.has-gofro-surplus td.filter-name-cell {
+            box-shadow: inset 3px 0 0 #f59e0b;
         }
         .muted {
             color: var(--muted);
@@ -1571,6 +1595,11 @@ $pageTitle = 'Планирование сборки гофропакетов';
             border-color: #dc2626;
             background: #fef2f2;
         }
+        td.date-cell.gofro-surplus-cell .cell-gofro-qty,
+        td.date-cell.gofro-surplus-cell-partial .cell-gofro-qty {
+            border-color: #d97706;
+            background: #fffbeb;
+        }
         td.date-cell.queue-pending .cell-gofro-qty {
             border-color: #d97706;
             box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.35);
@@ -1779,7 +1808,8 @@ $pageTitle = 'Планирование сборки гофропакетов';
         <span class="coverage-legend__item"><span class="coverage-legend__swatch coverage-legend__swatch--stock"></span>запас г/п</span>
         <span class="coverage-legend__item"><span class="coverage-legend__swatch coverage-legend__swatch--plan"></span>план г/п</span>
         <span class="coverage-legend__item"><span class="coverage-legend__swatch coverage-legend__swatch--gap"></span>не хватает</span>
-        <span class="coverage-legend__hint">По мелкой цифре в ячейке, слева направо</span>
+        <span class="coverage-legend__item"><span class="coverage-legend__swatch coverage-legend__swatch--surplus"></span>лишнее</span>
+        <span class="coverage-legend__hint">По мелкой цифре в ячейке, слева направо; «лишнее» — план г/п сверх потребности</span>
     </div>
     <div id="fold-height-panel" class="fold-height-panel" hidden>
         <span class="fold-height-panel__title">Высота ребра, мм</span>
@@ -1934,7 +1964,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                             <td class="num-metric-col col-compact"><?= $gofroProduced ?></td>
                             <td class="num-metric-col col-compact"><?= $gofroAvailable ?></td>
                             <td
-                                class="num-metric-col col-compact"
+                                class="num-metric-col col-compact gofro-need-cell"
                                 title="Остаток фильтров: <?= (int)$remaining ?> из <?= (int)$ordered ?>; доступно г/п: <?= (int)$gofroAvailable ?>; потребность: <?= (int)$gofroNeed ?>"
                             ><?= (int)$gofroNeed ?></td>
                             <td
@@ -2640,6 +2670,76 @@ $pageTitle = 'Планирование сборки гофропакетов';
             cell.title = baseTitle ? `${baseTitle}\n${coverageTitle}` : coverageTitle;
         });
     }
+
+    function applyGofroSurplusForRow(state) {
+        if (!state) {
+            return;
+        }
+        const surplusClasses = ['gofro-surplus-cell', 'gofro-surplus-cell-partial'];
+        const todayIso = getTodayIso();
+        const planByDate = state.planByDate || {};
+        let plannedFromToday = 0;
+        state.dateCells.forEach((cell) => {
+            const d = String(cell.dataset.date || '');
+            if (!d || d < todayIso) {
+                return;
+            }
+            plannedFromToday += Math.max(0, parseInt(planByDate[d] || '0', 10) || 0);
+        });
+        const gofroNeed = Math.max(0, state.gofroNeed || 0);
+        const surplusTotal = Math.max(0, plannedFromToday - gofroNeed);
+
+        state.row.classList.toggle('has-gofro-surplus', surplusTotal > 0);
+
+        const needCell = state.needCell || state.row.querySelector('td.gofro-need-cell');
+        if (needCell) {
+            if (needCell.dataset.needBaseHtml === undefined) {
+                needCell.dataset.needBaseHtml = needCell.innerHTML;
+                needCell.dataset.needBaseTitle = needCell.getAttribute('title') || '';
+            }
+            const baseNeedTitle = needCell.dataset.needBaseTitle || '';
+            if (surplusTotal > 0) {
+                needCell.classList.add('gofro-need-surplus');
+                needCell.innerHTML = `${gofroNeed}<span class="gofro-surplus-badge"> (+${surplusTotal})</span>`;
+                needCell.title = baseNeedTitle
+                    ? `${baseNeedTitle}\nЛишнее в плане: ${surplusTotal} шт`
+                    : `Потребность: ${gofroNeed} шт\nЛишнее в плане: ${surplusTotal} шт`;
+            } else {
+                needCell.classList.remove('gofro-need-surplus');
+                needCell.innerHTML = needCell.dataset.needBaseHtml;
+                needCell.title = baseNeedTitle;
+            }
+        }
+
+        let needLeft = gofroNeed;
+        state.dateCells.forEach((cell) => {
+            cell.classList.remove(...surplusClasses);
+            const d = String(cell.dataset.date || '');
+            const qty = Math.max(0, parseInt(planByDate[d] || '0', 10) || 0);
+            if (!d || d < todayIso || qty <= 0) {
+                return;
+            }
+            let cellSurplus = 0;
+            if (needLeft >= qty) {
+                needLeft -= qty;
+            } else {
+                cellSurplus = qty - needLeft;
+                needLeft = 0;
+            }
+            if (cellSurplus <= 0) {
+                return;
+            }
+            if (cellSurplus >= qty) {
+                cell.classList.add('gofro-surplus-cell');
+            } else {
+                cell.classList.add('gofro-surplus-cell-partial');
+            }
+            const curTitle = cell.getAttribute('title') || '';
+            const surplusLine = `Лишнее в плане: ${cellSurplus} шт`;
+            cell.title = curTitle ? `${curTitle}\n${surplusLine}` : surplusLine;
+        });
+    }
+
     let pickerTarget = null;
     let dragContext = null;
     let suppressCellClick = false;
@@ -3044,8 +3144,6 @@ $pageTitle = 'Планирование сборки гофропакетов';
             return;
         }
         const todayIso = getTodayIso();
-        const existing = getDebtShiftsForKey(state.rowKey);
-        const nonPast = existing.filter((s) => s.date >= todayIso);
         let plannedFromToday = 0;
         const pastFromPlan = [];
         const planByDate = state.planByDate || {};
@@ -3062,8 +3160,8 @@ $pageTitle = 'Планирование сборки гофропакетов';
         });
         pastFromPlan.sort((a, b) => a.date.localeCompare(b.date));
         const uncovered = Math.max(0, state.gofroNeed - plannedFromToday);
-        const cappedPast = capDebtShiftsFifo(pastFromPlan, uncovered);
-        setDebtShiftsForKey(state.rowKey, cappedPast.concat(nonPast));
+        // Только прошлые даты, как на сервере — без «долга» из снятого лишнего на сегодня/будущее.
+        setDebtShiftsForKey(state.rowKey, capDebtShiftsFifo(pastFromPlan, uncovered));
     }
 
     function bindDebtShiftDrag(item, state) {
@@ -3217,55 +3315,6 @@ $pageTitle = 'Планирование сборки гофропакетов';
         }
     }
 
-    function adjustDebtForPlanDelta(state, deltaPlan, fallbackDate) {
-        if (!state || !deltaPlan) {
-            return;
-        }
-        const rowKey = state.rowKey;
-        const shifts = getDebtShiftsForKey(rowKey);
-        const next = [];
-        if (deltaPlan > 0) {
-            let consume = deltaPlan;
-            shifts.forEach((item) => {
-                const qty = item.qty;
-                if (qty <= 0) {
-                    return;
-                }
-                if (consume <= 0) {
-                    next.push({ date: item.date, qty });
-                    return;
-                }
-                const take = Math.min(qty, consume);
-                consume -= take;
-                const left = qty - take;
-                if (left > 0) {
-                    next.push({ date: item.date, qty: left });
-                }
-            });
-        } else {
-            const addQty = Math.abs(deltaPlan);
-            const dateRef = fallbackDate || getTodayIso();
-            let merged = false;
-            shifts.forEach((item) => {
-                const qty = item.qty;
-                if (qty <= 0) {
-                    return;
-                }
-                if (!merged && item.date === dateRef) {
-                    next.push({ date: item.date, qty: qty + addQty });
-                    merged = true;
-                } else {
-                    next.push({ date: item.date, qty });
-                }
-            });
-            if (!merged && addQty > 0) {
-                next.push({ date: dateRef, qty: addQty });
-            }
-        }
-        setDebtShiftsForKey(rowKey, next);
-        renderDebtCellByKey(rowKey);
-    }
-
     function applyDebtChange(debtChange, direction) {
         const rowKey = debtChange.rowKey || '';
         const shift = debtChange.shift || null;
@@ -3403,15 +3452,6 @@ $pageTitle = 'Планирование сборки гофропакетов';
         }
         pendingMoves.push(move);
         applyMoveLocally(move);
-        if (move.payload.mode === 'set_qty' || move.payload.mode === 'clear_cell') {
-            const state = rowStateMap.get(move.payload.source_row_key);
-            const beforeQty = move.beforeQty || 0;
-            const nextQty = Math.max(0, parseInt(move.payload.qty, 10) || 0);
-            const delta = nextQty - beforeQty;
-            if (state && delta !== 0) {
-                adjustDebtForPlanDelta(state, delta, move.payload.plan_date);
-            }
-        }
         return true;
     }
 
@@ -3599,6 +3639,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
             machineType: String(row.dataset.machineType || 'knife'),
             rowHint: String(row.dataset.rowHint || ''),
             filterCell: row.querySelector('td.filter-name-cell'),
+            needCell: row.querySelector('td.gofro-need-cell'),
             dateCells: Array.from(row.querySelectorAll('td.date-cell[data-date]')),
             allocatedByDate,
             planByDate,
@@ -3703,6 +3744,7 @@ $pageTitle = 'Планирование сборки гофропакетов';
                 refreshCellDom(cell, gofroQty);
             });
             applyGofroCoverageForRow(state);
+            applyGofroSurplusForRow(state);
         });
 
         Object.keys(dateHeaderTotals).forEach((date) => {
@@ -3895,10 +3937,6 @@ $pageTitle = 'Планирование сборки гофропакетов';
         };
         pendingMoves.push(move);
         applyMoveLocally(move);
-        const delta = nextQty - beforeQty;
-        if (delta !== 0) {
-            adjustDebtForPlanDelta(state, delta, date);
-        }
         refreshPendingUi();
         persistPendingMovesBackup();
     }
