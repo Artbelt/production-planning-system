@@ -27,34 +27,64 @@ try {
         exit;
     }
 
-    // Проверяем, что фильтр есть в заявке
+    // Проверяем, что фильтр есть в заявке (та же логика, что в get_orders_for_filter.php)
     if (!empty($order_number)) {
         $found = false;
+        $filter_label = is_string($filter_label) ? trim($filter_label) : '';
+        $order_number = is_string($order_number) ? trim($order_number) : $order_number;
 
+        // [48] <-> [h48]; базовое имя до пробела (AF1973s из "AF1973s [48] ...")
         $filter_alt = preg_replace('/\[(\d+)\]/', '[h$1]', $filter_label);
+        $filter_alt2 = preg_replace('/\[h(\d+)\]/', '[$1]', $filter_label);
+        $base = preg_split('/\s+/', $filter_label)[0] ?? $filter_label;
+        $base = is_string($base) ? trim($base) : $filter_label;
+
         $checkStmt = $pdo->prepare("
-            SELECT 1 
-            FROM orders 
-            WHERE order_number = ? 
-              AND (`filter` = ? OR `filter` = ?)
+            SELECT 1
+            FROM orders
+            WHERE order_number = ?
+              AND (
+                TRIM(`filter`) = ?
+                OR TRIM(`filter`) = ?
+                OR TRIM(`filter`) = ?
+                OR TRIM(`filter`) LIKE CONCAT(?, '%')
+                OR TRIM(`filter`) LIKE CONCAT(?, '%')
+                OR TRIM(`filter`) LIKE CONCAT(?, '%')
+                OR TRIM(`filter`) LIKE CONCAT(?, '%')
+              )
               AND COALESCE(hide, 0) != 1
             LIMIT 1
         ");
-        $checkStmt->execute([$order_number, $filter_label, $filter_alt]);
+        $checkStmt->execute([
+            $order_number,
+            $filter_label, $filter_alt, $filter_alt2,
+            $filter_label, $filter_alt, $filter_alt2, $base,
+        ]);
         if ($checkStmt->fetchColumn()) {
             $found = true;
         }
 
         if (!$found) {
-            // В плане может быть [48] или [h48] — проверяем оба варианта
             $checkStmt = $pdo->prepare("
-                SELECT 1 
-                FROM corrugation_plan 
-                WHERE order_number = ? 
-                  AND (filter_label = ? OR filter_label = ?)
+                SELECT 1
+                FROM corrugation_plan
+                WHERE order_number = ?
+                  AND (
+                    filter_label = ?
+                    OR filter_label = ?
+                    OR filter_label = ?
+                    OR filter_label LIKE CONCAT(?, '%')
+                    OR filter_label LIKE CONCAT(?, '%')
+                    OR filter_label LIKE CONCAT(?, '%')
+                    OR filter_label LIKE CONCAT(?, '%')
+                  )
                 LIMIT 1
             ");
-            $checkStmt->execute([$order_number, $filter_label, $filter_alt]);
+            $checkStmt->execute([
+                $order_number,
+                $filter_label, $filter_alt, $filter_alt2,
+                $filter_label, $filter_alt, $filter_alt2, $base,
+            ]);
             if ($checkStmt->fetchColumn()) {
                 $found = true;
             }
