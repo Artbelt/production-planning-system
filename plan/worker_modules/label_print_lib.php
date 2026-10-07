@@ -159,7 +159,8 @@ function label_print_build_payload(
                 isset($struct['comment']) ? (string)$struct['comment'] : null
             );
             $hasPrefilter = trim((string)($struct['prefilter'] ?? '')) !== '';
-            $hasGlueing = trim((string)($struct['glueing'] ?? '')) !== '';
+            // glueing — INTEGER (1..4); 0/NULL/'' = без проливки (как в NP_corrugation_plan)
+            $hasGlueing = !empty($struct['glueing']) && (int)$struct['glueing'] > 0;
         }
     }
 

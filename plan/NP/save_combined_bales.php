@@ -17,8 +17,8 @@ try {
     // Удалим старые раскрои по заявке
     $pdo->prepare("DELETE FROM cut_plans WHERE order_number = ?")->execute([$order]);
 
-    // Получим текущий максимум bale_id
-    $max_id = intval($pdo->query("SELECT MAX(bale_id) FROM cut_plans")->fetchColumn());
+    // Нумерация бухт внутри заявки: 1, 2, 3... (не глобальный MAX по всей таблице)
+    $max_id = 0;
 
 // Сохраняем авто-бухты
 foreach ($auto_bales as $bale) {

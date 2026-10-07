@@ -32,6 +32,7 @@ $databases = [
     'У3' => ['name' => 'plan_u3', 'table' => 'roll_plans', 'dateField' => 'work_date'],
     'У4' => ['name' => 'plan_u4', 'table' => 'roll_plans', 'dateField' => 'work_date'],
     'У5' => ['name' => 'plan_u5', 'table' => 'roll_plans', 'dateField' => 'work_date'],
+    'У6' => ['name' => 'plan_u6', 'table' => 'roll_plans', 'dateField' => 'work_date'],
 ];
 
 function connectShop(string $host, string $user, string $pass, string $dbname): ?PDO
@@ -247,13 +248,15 @@ if (($_GET['action'] ?? '') === 'bale_details') {
         'U3' => 'plan_u3',
         'U4' => 'plan_u4',
         'U5' => 'plan_u5',
+        'U6' => 'plan_u6',
         'У2' => 'plan',
         'У3' => 'plan_u3',
         'У4' => 'plan_u4',
         'У5' => 'plan_u5',
+        'У6' => 'plan_u6',
     ];
     if (!isset($dbByShop[$shopKey]) || $order === '' || $bale === '') {
-        echo json_encode(['ok' => false, 'error' => 'Нужны параметры shop (U2/U3/U4/U5), order и bale'], JSON_UNESCAPED_UNICODE);
+        echo json_encode(['ok' => false, 'error' => 'Нужны параметры shop (U2/U3/U4/U5/U6), order и bale'], JSON_UNESCAPED_UNICODE);
         exit;
     }
     $dbname = $dbByShop[$shopKey];
@@ -320,8 +323,8 @@ if (($_GET['action'] ?? '') === 'bale_details') {
         }
         $norm[] = $line;
     }
-    $shopNorm = in_array($shopKey, ['У2', 'У3', 'У4', 'У5'], true)
-        ? ['У2' => 'U2', 'У3' => 'U3', 'У4' => 'U4', 'У5' => 'U5'][$shopKey]
+    $shopNorm = in_array($shopKey, ['У2', 'У3', 'У4', 'У5', 'У6'], true)
+        ? ['У2' => 'U2', 'У3' => 'U3', 'У4' => 'U4', 'У5' => 'U5', 'У6' => 'U6'][$shopKey]
         : $shopKey;
     echo json_encode(
         [
@@ -362,8 +365,8 @@ if (($_GET['action'] ?? '') === 'move_bale') {
     $newDateRaw = trim((string) ($body['new_date'] ?? $_GET['new_date'] ?? ''));
 
     $shopNorm = [
-        'U2' => 'U2', 'U3' => 'U3', 'U4' => 'U4', 'U5' => 'U5',
-        'У2' => 'U2', 'У3' => 'U3', 'У4' => 'U4', 'У5' => 'U5',
+        'U2' => 'U2', 'U3' => 'U3', 'U4' => 'U4', 'U5' => 'U5', 'U6' => 'U6',
+        'У2' => 'U2', 'У3' => 'U3', 'У4' => 'U4', 'У5' => 'U5', 'У6' => 'U6',
     ][$shopKey] ?? '';
 
     if ($shopNorm !== 'U3') {
@@ -507,6 +510,12 @@ if (($_GET['action'] ?? '') === 'cut_by_day') {
     $shopsOut['U5'] = $r5;
     $total += count($r5['items']);
 
+    $u6 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u6');
+    $tblU6 = resolveRollPlanTablePdo($u6, 'U6') ?? 'roll_plans';
+    $r6 = fetchRowsCutOnDay($u6, $tblU6, $dayYmd, 'U6');
+    $shopsOut['U6'] = $r6;
+    $total += count($r6['items']);
+
     echo json_encode(
         [
             'ok' => true,
@@ -555,6 +564,10 @@ if (($_GET['action'] ?? '') === 'cut_log') {
     $u5 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u5');
     $tblU5 = resolveRollPlanTablePdo($u5, 'U5') ?? 'roll_plans';
     $entries = array_merge($entries, fetchCutLogForTable($u5, $tblU5, 'U5', $from, $to, 'U5'));
+
+    $u6 = connectShop($dbHost, $dbUser, $dbPass, 'plan_u6');
+    $tblU6 = resolveRollPlanTablePdo($u6, 'U6') ?? 'roll_plans';
+    $entries = array_merge($entries, fetchCutLogForTable($u6, $tblU6, 'U6', $from, $to, 'U6'));
 
     usort($entries, static function ($a, $b) {
         return strcmp($b['marked_at'], $a['marked_at']);
@@ -627,16 +640,16 @@ $dowShort = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 $cutOperatorMinutesPerBale = 40;
 
 /** @var array<string, array<string, list<array{order:string,bale:string,done:bool}>>> $grid[$shop][$ymd] */
-$grid = ['У2' => [], 'У3' => [], 'У4' => [], 'У5' => []];
+$grid = ['У2' => [], 'У3' => [], 'У4' => [], 'У5' => [], 'У6' => []];
 
-foreach (['У2', 'У3', 'У4', 'У5'] as $shopLabel) {
+foreach (['У2', 'У3', 'У4', 'У5', 'У6'] as $shopLabel) {
     $cfg = $databases[$shopLabel];
     $pdo = connectShop($dbHost, $dbUser, $dbPass, $cfg['name']);
     if (!$pdo) {
         continue;
     }
     $rows = [];
-    if ($shopLabel === 'У3' || $shopLabel === 'У4') {
+    if ($shopLabel === 'У3' || $shopLabel === 'У4' || $shopLabel === 'У6') {
         $rows = array_merge(
             fetchAssignmentsWithDate($pdo, 'roll_plans', 'work_date', $dateFrom, $dateTo),
             fetchAssignmentsWithDate($pdo, 'roll_plan', 'plan_date', $dateFrom, $dateTo)
@@ -678,7 +691,7 @@ foreach (['У2', 'У3', 'У4', 'У5'] as $shopLabel) {
     unset($list);
 }
 
-foreach (['У2', 'У3', 'У4', 'У5'] as $shopLabel) {
+foreach (['У2', 'У3', 'У4', 'У5', 'У6'] as $shopLabel) {
     foreach ($grid[$shopLabel] as $ymd => &$list) {
         usort($list, static function ($a, $b) {
             $c = strcmp($a['order'], $b['order']);
@@ -692,7 +705,7 @@ $plannedOperatorLoadByDay = [];
 foreach ($days as $d) {
     $ymd = $d->format('Y-m-d');
     $baleCount = 0;
-    foreach (['У2', 'У3', 'У4', 'У5'] as $shopLabel) {
+    foreach (['У2', 'У3', 'У4', 'У5', 'У6'] as $shopLabel) {
         $baleCount += count($grid[$shopLabel][$ymd] ?? []);
     }
     $hours = ($baleCount * $cutOperatorMinutesPerBale) / 60;
@@ -1384,9 +1397,9 @@ $navQuery = static function (int $w): string {
                 </tr>
             </thead>
             <tbody>
-                <?php foreach (['У2', 'У3', 'У4', 'У5'] as $shopLabel): ?>
+                <?php foreach (['У2', 'У3', 'У4', 'У5', 'У6'] as $shopLabel): ?>
                 <?php
-                $shopCode = ['У2' => 'U2', 'У3' => 'U3', 'У4' => 'U4', 'У5' => 'U5'][$shopLabel] ?? $shopLabel;
+                $shopCode = ['У2' => 'U2', 'У3' => 'U3', 'У4' => 'U4', 'У5' => 'U5', 'У6' => 'U6'][$shopLabel] ?? $shopLabel;
                 ?>
                 <tr>
                     <td class="shop"><?= htmlspecialchars($shopLabel) ?></td>
@@ -1557,7 +1570,7 @@ $navQuery = static function (int $w): string {
         var moveErr = document.getElementById('bale-move-err');
         var moveCancel = document.getElementById('bale-move-cancel');
         var moveConfirm = document.getElementById('bale-move-confirm');
-        var shopNames = { U2: 'У2', U3: 'У3', U4: 'У4', U5: 'У5' };
+        var shopNames = { U2: 'У2', U3: 'У3', U4: 'У4', U5: 'У5', U6: 'У6' };
         var current = { shop: '', order: '', bale: '', date: '', movable: false };
 
         function closePanel() {
@@ -1841,8 +1854,8 @@ $navQuery = static function (int $w): string {
 
         function renderCutDayResult(data) {
             var shops = data.shops || {};
-            var order = ['U2', 'U3', 'U4', 'U5'];
-            var labels = { U2: 'У2', U3: 'У3', U4: 'У4', U5: 'У5' };
+            var order = ['U2', 'U3', 'U4', 'U5', 'U6'];
+            var labels = { U2: 'У2', U3: 'У3', U4: 'У4', U5: 'У5', U6: 'У6' };
             var html = '<p class="cut-day-muted">Дата: <strong>' + escapeHtml(data.day) + '</strong> · всего бухт: <strong>' + (data.total | 0) + '</strong></p>';
             order.forEach(function (code) {
                 var block = shops[code] || { items: [], note: null };
@@ -1932,7 +1945,7 @@ $navQuery = static function (int $w): string {
         var closeBtn = document.getElementById('cut-log-panel-close');
         var balePanel = document.getElementById('bale-panel');
         var cutDayBackdrop = document.getElementById('cut-day-backdrop');
-        var shopLabels = { U2: 'У2', U3: 'У3', U4: 'У4', U5: 'У5' };
+        var shopLabels = { U2: 'У2', U3: 'У3', U4: 'У4', U5: 'У5', U6: 'У6' };
         var monitorFrom = <?= json_encode($dateFrom, JSON_UNESCAPED_UNICODE) ?>;
         var monitorTo = <?= json_encode($dateTo, JSON_UNESCAPED_UNICODE) ?>;
         var todayYmd = <?= json_encode((new DateTimeImmutable('today'))->format('Y-m-d'), JSON_UNESCAPED_UNICODE) ?>;

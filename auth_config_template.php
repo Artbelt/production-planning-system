@@ -126,7 +126,7 @@ define('DEPARTMENTS', [
         'name' => 'Цех У6',
         'description' => 'Производственный цех У6',
         'system_path' => '/plan_U6/',
-        'is_active' => false
+        'is_active' => true
     ],
     'ZU' => [
         'name' => 'Заготовительный участок',

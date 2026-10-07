@@ -58,7 +58,8 @@ try {
         'U2' => '../../plan/settings.php',
         'U3' => '../../plan_U3/settings.php',
         'U4' => '../../plan_U4/settings.php',
-        'U5' => '../../plan_U5/settings.php'
+        'U5' => '../../plan_U5/settings.php',
+        'U6' => '../../plan_U6/settings.php'
     ];
 
     $settings_status = [];

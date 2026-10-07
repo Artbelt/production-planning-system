@@ -500,7 +500,8 @@ $userLogs = $db->select("
                             'U2' => ['name' => 'Участок 2', 'is_active' => true],
                             'U3' => ['name' => 'Участок 3', 'is_active' => true],
                             'U4' => ['name' => 'Участок 4', 'is_active' => true],
-                            'U5' => ['name' => 'Участок 5', 'is_active' => true]
+                            'U5' => ['name' => 'Участок 5', 'is_active' => true],
+                            'U6' => ['name' => 'Участок 6', 'is_active' => true]
                         ];
                         foreach ($departments as $deptCode => $deptInfo): ?>
                             <?php if ($deptInfo['is_active']): ?>

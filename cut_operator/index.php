@@ -58,7 +58,8 @@ $databases = [
     'U2' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan', 'table' => 'roll_plan'],
     'U3' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan_u3', 'table' => 'roll_plans'],
     'U4' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan_u4', 'table' => 'roll_plans'],
-    'U5' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan_u5', 'table' => 'roll_plans']
+    'U5' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan_u5', 'table' => 'roll_plans'],
+    'U6' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan_u6', 'table' => 'roll_plans']
 ];
 
 // Получаем дату
@@ -1113,6 +1114,7 @@ if (isset($_POST['action'])) {
             <option value="U3">U3</option>
             <option value="U4">U4</option>
             <option value="U5">U5</option>
+            <option value="U6">U6</option>
         </select>
         
         <label>Статус: </label>
@@ -1297,6 +1299,7 @@ if (isset($_POST['action'])) {
                 <option value="U3">U3</option>
                 <option value="U4">U4</option>
                 <option value="U5">U5</option>
+                <option value="U6">U6</option>
             </select>
         </div>
 

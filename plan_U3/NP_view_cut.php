@@ -170,13 +170,11 @@ function fmt1($v) { return number_format((float)$v, 1, '.', ' '); }
                         $bale = $bales[$baleId];
                         $baleWidth = (float)($bale['format'] ?? 1200);
                         $leftover = max(0, round($baleWidth - (float)$bale['total_width'], 1));
-                        $baleNum = array_search($baleId, array_keys($bales), true);
-                        $baleNum = ($baleNum === false) ? $baleId : ($baleNum + 1);
                     ?>
                         <div class="card">
                             <div class="cardHead">
                                 <div>
-                                    <b>Бухта #<?= (int)$baleNum ?></b> ·
+                                    <b>Бухта #<?= (int)$baleId ?></b> ·
                                     Остаток: <b><?= fmt1($leftover) ?> мм</b> ·
                                     Формат: <b><?= (int)$bale['format'] ?> мм</b>
                                 </div>

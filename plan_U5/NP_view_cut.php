@@ -190,12 +190,11 @@ function fmt1($v) { return number_format((float)$v, 1, '.', ' '); }
                     <?php foreach ($baleIds as $baleId): 
                         $bale = $bales[$baleId];
                         $leftover = max(0, round($BALE_WIDTH - $bale['total_width']));
-                        $baleNum = array_search($baleId, array_keys($bales)) + 1;
                     ?>
                         <div class="card">
                             <div class="cardHead">
                                 <div>
-                                    <b>Бухта #<?= $baleNum ?></b> · 
+                                    <b>Бухта #<?= (int)$baleId ?></b> · 
                                     Материал: <b><?= htmlspecialchars($bale['material'] ?: 'Simple') ?></b> · 
                                     Остаток: <b><?= $leftover ?> мм</b> · 
                                     Формат: <b><?= $bale['format'] ?> мм</b>

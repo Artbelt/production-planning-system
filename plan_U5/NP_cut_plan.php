@@ -285,10 +285,11 @@ try{
     .panelHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 
     .menu{position:fixed;z-index:50;display:none;background:#fff;border:1px solid #ccc;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);padding:8px}
-    .menu .row{display:flex;align-items:center;gap:6px;margin:4px 0}
-    .menu .mi{border:1px solid #aaa;padding:5px 9px;border-radius:6px;background:#fafafa;cursor:pointer;white-space:nowrap}
-    .menu input{width:35px;padding:4px 6px;border:1px solid #bbb;border-radius:6px}
-    #mi_auto{min-width:180px; text-align:center;}
+    .menu .row{display:flex;align-items:center;gap:6px;margin:4px 0;width:100%}
+    .menu .mi{border:1px solid #aaa;padding:5px 9px;border-radius:6px;background:#fafafa;cursor:pointer;white-space:nowrap;box-sizing:border-box}
+    .menu input{width:35px;padding:4px 6px;border:1px solid #bbb;border-radius:6px;flex-shrink:0}
+    #mi_auto,#mi_addN{flex:1;text-align:center;}
+    .menu .mi-x{flex:1;min-width:44px;text-align:center;font-weight:400;}
 
     #assortPanel{
         max-height:340px;
@@ -673,6 +674,11 @@ try{
 
 <!-- ВСПЛЫВАЮЩЕЕ МЕНЮ -->
 <div class="menu" id="ctxMenu">
+    <div class="row">
+        <button class="mi mi-x" id="mi_x1" title="Добавить 1">×1</button>
+        <button class="mi mi-x" id="mi_x2" title="Добавить 2">×2</button>
+        <button class="mi mi-x" id="mi_x3" title="Добавить 3">×3</button>
+    </div>
     <div class="row"><button class="mi" id="mi_auto">Добавить авто</button></div>
     <div class="row">
         <button class="mi" id="mi_addN">Добавить N</button>
@@ -1308,6 +1314,9 @@ try{
         if(!e.target.closest('#ctxMenu') && !e.target.closest('.posTable')) closeMenu();
     });
     el('mi_auto').addEventListener('click',()=>{ addAuto(); closeMenu(); });
+    el('mi_x1').addEventListener('click',()=>{ addN(1); closeMenu(); });
+    el('mi_x2').addEventListener('click',()=>{ addN(2); closeMenu(); });
+    el('mi_x3').addEventListener('click',()=>{ addN(3); closeMenu(); });
     el('mi_addN').addEventListener('click',()=>{ const n=parseInt(el('mi_n').value||'1',10); addN(n); closeMenu(); });
 
     /* события ассортимента */

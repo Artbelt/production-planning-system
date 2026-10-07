@@ -108,7 +108,8 @@ try {
         'U2' => array_merge(loadSettings('../../plan/settings.php'), ['name' => 'plan']),
         'U3' => array_merge(loadSettings('../../plan_U3/settings.php'), ['name' => 'plan_u3']),
         'U4' => array_merge(loadSettings('../../plan_U4/settings.php'), ['name' => 'plan_u4']),
-        'U5' => array_merge(loadSettings('../../plan_U5/settings.php'), ['name' => 'plan_u5'])
+        'U5' => array_merge(loadSettings('../../plan_U5/settings.php'), ['name' => 'plan_u5']),
+        'U6' => array_merge(loadSettings('../../plan_U6/settings.php'), ['name' => 'plan_u6'])
     ];
     
     // Логируем загруженные настройки (без паролей)

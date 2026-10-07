@@ -407,6 +407,7 @@ $advertisement = 'Информация';
                     <form action="parts_output_view.php" method="post" class="stack"><input type="submit" value="Обзор изготовленных гофропакетов"></form>
                     <?php if ($canAccessLaser): ?>
                     <a href="laser_request.php" target="_blank" rel="noopener" class="stack"><button type="button">Заявка на лазер</button></a>
+                    <a href="bobbin_cut_request.php" target="_blank" rel="noopener" class="stack"><button type="button">Заявка на бобинорезку</button></a>
                     <?php endif; ?>
                 </div>
 

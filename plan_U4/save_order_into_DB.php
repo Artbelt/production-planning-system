@@ -1,50 +1,98 @@
 <?php
-require_once('tools/tools.php');
+/** Блок сохранения заявки в БД — по образцу plan/save_order_into_DB.php */
 
-/** Блок сохранения заявки в БД */
-if ($_POST['order_str']) {
+header('Content-Type: text/html; charset=utf-8');
 
-   // print_r( $_POST['order_str']);
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo 'Ожидается POST-запрос.';
+    exit;
+}
 
-    echo 'сохранение заявки...';
-    /** соединение  с БД*/
+$orderStr = $_POST['order_str'] ?? '';
+$orderName = trim((string)($_POST['order_name'] ?? ''));
+$workshop = trim((string)($_POST['workshop'] ?? ''));
 
-    $order = unserialize($_POST['order_str']);
-    //$order = json_decode($_POST['order_str']);
+if ($orderStr === '') {
+    echo 'Нет данных заявки (order_str). Вернитесь назад и загрузите файл снова.';
+    exit;
+}
 
-    /** Если появляется ошибка unserialize(): Error at offset ххх of ххх bytes in ххх  надо проверить нет ли переноса строки в фчейках Экселевского файла*/
-    //print_r_my($order);
+if ($orderName === '' || $workshop === '') {
+    echo '<p>Не заполнены поля номера заявки или участка.</p>';
+    exit;
+}
 
-    $workshop = $_POST['workshop'];
-    if (file_exists(__DIR__ . '/../env.php')) require __DIR__ . '/../env.php';
-    $mysqli = new mysqli(defined('DB_HOST') ? DB_HOST : '127.0.0.1', defined('DB_USER') ? DB_USER : 'root', defined('DB_PASS') ? DB_PASS : '', 'plan_u4');
-    if($mysqli->connect_errno){ /** Соединение с БД не удалось */
-        echo 'соединение с БД не удалось';
-        echo "Номер ошибки: " . $mysqli->connect_errno . "\n";
-        echo "Ошибка: " . $mysqli->connect_error . "\n";
-        exit();
-    }
-    /** Соединение с БД удалось */
-    foreach($order as $value) {
-        $order0 = $_POST['order_name'];
-        $order1 = $workshop;
-        $order2 = $value['B'];
-        $order3 = $value['C'];
-        $order4 = $value['D'];
-        $order5 = $value['E'];
-        $order6 = $value['F'];
-        $order7 = $value['G'];
-        $order8 = $value['H'];
-        $order9 = $value['I'];
-        $order10 = $value['J'];
-        $sql = "INSERT INTO orders (order_number, workshop,	filter,	count, marking, personal_packaging, personal_label, group_packaging, packaging_rate, group_label, remark)"
-            . "VALUES ('$order0','$order1','$order2','$order3','$order4','$order5','$order6','$order7','$order8','$order9','$order10');";
-        if (!$result = $mysqli->query($sql)){ echo "Ошибка: Наш запрос не удался и вот почему: \n Запрос: " . $sql . "\n"."Номер ошибки: " . $mysqli->errno . "\n Ошибка: " . $mysqli->error . "\n";
-            exit;
+echo 'сохранение заявки...';
+if (function_exists('ob_get_level') && ob_get_level() > 0) {
+    @ob_flush();
+}
+@flush();
+
+// order_str передаётся в hidden поле как base64 от serialize($order)
+if (strpos($orderStr, '&') !== false) {
+    $orderStr = html_entity_decode($orderStr, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+}
+$orderStrRaw = $orderStr;
+$maybeDecoded = base64_decode($orderStr, true);
+if ($maybeDecoded !== false) {
+    $orderStrRaw = $maybeDecoded;
+}
+
+$order = @unserialize($orderStrRaw, ['allowed_classes' => false]);
+if (!is_array($order) || count($order) === 0) {
+    echo '<p>Ошибка: данные заявки пусты, повреждены или обрезаны при отправке формы. Загрузите файл снова.</p>';
+    exit;
+}
+
+if (file_exists(__DIR__ . '/../env.php')) {
+    require __DIR__ . '/../env.php';
+}
+require_once __DIR__ . '/../auth/includes/db.php';
+
+$pdo = null;
+try {
+    $pdo = getPdo('plan_u4');
+
+    $stmt = $pdo->prepare(
+        'INSERT INTO orders (order_number, workshop, filter, `count`, marking, personal_packaging, personal_label, group_packaging, packaging_rate, group_label, remark) '
+        . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+
+    $pdo->beginTransaction();
+    $inserted = 0;
+    foreach ($order as $value) {
+        if (!is_array($value)) {
+            continue;
         }
+        $stmt->execute([
+            $orderName,
+            $workshop,
+            $value['B'] ?? '',
+            (int) ($value['C'] ?? 0),
+            $value['D'] ?? '',
+            $value['E'] ?? '',
+            $value['F'] ?? '',
+            $value['G'] ?? '',
+            (int) ($value['H'] ?? 0),
+            $value['I'] ?? '',
+            $value['J'] ?? '',
+        ]);
+        $inserted++;
     }
-    echo 'успешно завершено <p>';
-    echo "<a href='main.php'>на главную</a>";
+    $pdo->commit();
 
+    if ($inserted === 0) {
+        echo '<p>Ошибка: ни одной позиции не сохранено. Проверьте файл заявки.</p>';
+        exit;
+    }
+
+    echo '<p>успешно завершено (позиций: ' . $inserted . ')</p>';
+    echo "<a href='main.php'>на главную</a>";
+} catch (Throwable $e) {
+    if ($pdo instanceof PDO && $pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    echo '<p>Ошибка сохранения заявки: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8') . '</p>';
 }
 ?>

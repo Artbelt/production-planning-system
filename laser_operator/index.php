@@ -103,7 +103,8 @@ $databases = [
     'U2' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan'],
     'U3' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan_u3'],
     'U4' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan_u4'],
-    'U5' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan_u5']
+    'U5' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan_u5'],
+    'U6' => ['host' => $dbHost, 'user' => $dbUser, 'pass' => $dbPass, 'name' => 'plan_u6']
 ];
 
 // === Автомиграция: добавляем необходимые поля во все БД ===
@@ -679,6 +680,7 @@ $allRequests = getAllLaserRequests($databases);
         .department-U3 { background: #dcfce7; color: #166534; }
         .department-U4 { background: #fef3c7; color: #92400e; }
         .department-U5 { background: #fce7f3; color: #be185d; }
+        .department-U6 { background: #e0e7ff; color: #3730a3; }
         
         /* Прогресс */
         .progress-cell {
@@ -1123,6 +1125,7 @@ $allRequests = getAllLaserRequests($databases);
                         <option value="U3">U3</option>
                         <option value="U4">U4</option>
                         <option value="U5">U5</option>
+                        <option value="U6">U6</option>
                     </select>
                 </div>
                 <div class="modal-field">

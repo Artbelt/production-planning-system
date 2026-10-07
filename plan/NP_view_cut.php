@@ -178,12 +178,11 @@ function fmt1($v) { return number_format((float)$v, 1, '.', ' '); }
                         // Остаток = ширина бухты (формат) минус сумма ширин полос; формат из БД: 1200, 1000 или 199 мм
                         $baleWidth = (float)$bale['format'];
                         $leftover = max(0, round($baleWidth - $bale['total_width'], 1));
-                        $baleNum = array_search($baleId, array_keys($bales)) + 1;
                     ?>
                         <div class="card">
                             <div class="cardHead">
                                 <div>
-                                    <b>Бухта #<?= $baleNum ?></b> ·
+                                    <b>Бухта #<?= (int)$baleId ?></b> ·
                                     Материал: <b><?= htmlspecialchars($bale['material'] ?: 'Simple') ?></b> ·
                                     Остаток: <b><?= $leftover ?> мм</b> ·
                                     Формат: <b><?= $bale['format'] ?> мм</b>

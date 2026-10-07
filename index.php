@@ -136,6 +136,9 @@ foreach ($userDepartments as $dept) {
     $availableDepartments[] = $dept['department_code'];
 }
 
+// Участки без модуля production_plans (пока только заявки)
+$departmentsWithoutPlans = ['U4', 'U6'];
+
 // Проверяем общий доступ к лазерным заявкам (есть ли хотя бы один департамент с доступом)
 $canAccessLaser = false;
 foreach ($availableDepartments as $dept) {
@@ -359,7 +362,7 @@ foreach ($userDepartments as $dept) {
 			<?php endif; ?>
 			
 			<?php if ($canViewPlans): ?>
-				<?php if ($dept !== 'U4'): ?>
+				<?php if (!in_array($dept, $departmentsWithoutPlans, true)): ?>
 				<button class="btn plan" onclick="window.open('/plan<?= $dept === 'U2' ? '' : '_' . $dept ?>/production_plans.php', '_blank')">План <?= $dept ?></button>
 				<?php else: ?>
 				<button class="btn plan" disabled>План <?= $dept ?></button>
@@ -376,7 +379,7 @@ foreach ($userDepartments as $dept) {
 			<?php endif; ?>
 			
 			<?php if ($canViewPlans): ?>
-				<?php if ($dept !== 'U4'): ?>
+				<?php if (!in_array($dept, $departmentsWithoutPlans, true)): ?>
 				<button class="btn plan" onclick="window.open('/plan<?= $dept === 'U2' ? '' : '_' . $dept ?>/production_plans.php', '_blank')">План <?= $dept ?></button>
 				<?php else: ?>
 				<button class="btn plan" disabled>План <?= $dept ?></button>
@@ -393,7 +396,7 @@ foreach ($userDepartments as $dept) {
 			<?php endif; ?>
 			
 			<?php if ($canViewPlans): ?>
-				<?php if ($dept !== 'U4'): ?>
+				<?php if (!in_array($dept, $departmentsWithoutPlans, true)): ?>
 				<button class="btn plan" onclick="window.open('/plan<?= $dept === 'U2' ? '' : '_' . $dept ?>/production_plans.php', '_blank')">План <?= $dept ?></button>
 				<?php else: ?>
 				<button class="btn plan" disabled>План <?= $dept ?></button>
@@ -458,6 +461,19 @@ foreach ($userDepartments as $dept) {
 			<button class="btn plan" disabled style="opacity: 0.3;">План У5</button>
 			<?php endif; ?>
 		</div>
+		<div class="row">
+			<?php if ($canViewRequests && in_array('U6', $availableDepartments)): ?>
+			<button class="btn" onclick="window.open('/plan_U6/archived_orders.php', '_blank')">Заявки У6</button>
+			<?php else: ?>
+			<button class="btn" disabled style="opacity: 0.3;">Заявки У6</button>
+			<?php endif; ?>
+			
+			<?php if (in_array('U6', $availableDepartments)): ?>
+			<button class="btn plan" disabled>План У6</button>
+			<?php else: ?>
+			<button class="btn plan" disabled style="opacity: 0.3;">План У6</button>
+			<?php endif; ?>
+		</div>
 	<?php endif; ?>
 	
 	<!-- Системы планирования (только для мастеров и директоров) -->
@@ -473,6 +489,9 @@ foreach ($userDepartments as $dept) {
 		<?php endif; ?>
 		<?php if (in_array('U5', $availableDepartments)): ?>
 		<button class="btn system" onclick="window.open('/plan_U5/main.php', '_blank')">У5</button>
+		<?php endif; ?>
+		<?php if (in_array('U6', $availableDepartments)): ?>
+		<button class="btn system" onclick="window.open('/plan_U6/main.php', '_blank')">У6</button>
 		<?php endif; ?>
 	<?php endif; ?>
 	
@@ -517,6 +536,9 @@ foreach ($userDepartments as $dept) {
 		<?php if (in_array('U5', $availableDepartments)): ?>
 		<button class="btn production" onclick="window.open('/plan_U5/product_output.php', '_blank')">Внести выпущенную продукцию У5</button>
 		<?php endif; ?>
+		<?php if (in_array('U6', $availableDepartments)): ?>
+		<button class="btn production" onclick="window.open('/plan_U6/product_output.php', '_blank')">Внести выпущенную продукцию У6</button>
+		<?php endif; ?>
 	<?php endif; ?>
 	
 	<!-- Сводный план (только для сборщиц У5) -->
@@ -545,6 +567,9 @@ foreach ($userDepartments as $dept) {
 		<?php if (in_array('U5', $availableDepartments) && canAccessLaserRequests($userDepartments, 'U5')): ?>
 		<button class="btn laser" onclick="window.open('/plan_U5/laser_request.php', '_blank')">Заявка на лазер У5</button>
 		<?php endif; ?>
+		<?php if (in_array('U6', $availableDepartments) && canAccessLaserRequests($userDepartments, 'U6')): ?>
+		<button class="btn laser" onclick="window.open('/plan_U6/laser_request.php', '_blank')">Заявка на лазер У6</button>
+		<?php endif; ?>
 	<?php endif; ?>
 
 	<!-- Заявка на порезку бумаги (сборщицы У4) -->
@@ -561,6 +586,11 @@ foreach ($userDepartments as $dept) {
 	<?php if (in_array('U3', $availableDepartments) && canAccessLaserRequests($userDepartments, 'U3')): ?>
 	<button class="btn cut" onclick="window.open('/plan_U3/bobbin_cut_request.php', '_blank')">Заявка на бобинорезку У3</button>
 	<?php endif; ?>
+
+	<!-- Заявка на бобинорезку (сборщицы У6) -->
+	<?php if (in_array('U6', $availableDepartments) && canAccessLaserRequests($userDepartments, 'U6')): ?>
+	<button class="btn cut" onclick="window.open('/plan_U6/bobbin_cut_request.php', '_blank')">Заявка на бобинорезку У6</button>
+	<?php endif; ?>
 	
 	<!-- Заявки на лазер (для гофропакетчиков) -->
 	<?php if ($canAccessLaserCorr): ?>
@@ -575,6 +605,9 @@ foreach ($userDepartments as $dept) {
 		<?php endif; ?>
 		<?php if (in_array('U5', $availableDepartments) && canAccessLaserRequestsForCorr($userDepartments, 'U5')): ?>
 		<button class="btn laser" onclick="window.open('/plan_U5/laser_request.php', '_blank')">Заявка на лазер У5</button>
+		<?php endif; ?>
+		<?php if (in_array('U6', $availableDepartments) && canAccessLaserRequestsForCorr($userDepartments, 'U6')): ?>
+		<button class="btn laser" onclick="window.open('/plan_U6/laser_request.php', '_blank')">Заявка на лазер У6</button>
 		<?php endif; ?>
 	<?php endif; ?>
 	
