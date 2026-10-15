@@ -193,19 +193,20 @@ $advertisement = 'Информация';
         button:disabled, input[type="submit"]:disabled{
             background:#e5e7eb; color:#9ca3af; border-color:#e5e7eb; box-shadow:none; cursor:not-allowed;
         }
-        /* разделы в разработке: серые, чтобы отличаться от рабочих кнопок */
-        button.btn-wip,
-        button.btn-wip:hover,
-        button.btn-wip:active{
-            background:#9ca3af;
-            color:#f9fafb;
-            border-color:#9ca3af;
-            box-shadow:none;
-            transform:none;
-        }
         /* если где-то остались инлайновые background — приглушим */
         input[type="submit"][style*="background"], button[style*="background"]{
             background:var(--accent)!important; color:#fff!important;
+        }
+        /* разделы в разработке: серые, чтобы отличаться от рабочих кнопок.
+           Правило стоит после приглушения инлайновых background и тоже с !important. */
+        button.btn-wip,
+        button.btn-wip:hover,
+        button.btn-wip:active{
+            background:#9ca3af !important;
+            color:#f9fafb !important;
+            border-color:#9ca3af !important;
+            box-shadow:none !important;
+            transform:none !important;
         }
 
         /* поля ввода/селекты */
@@ -469,6 +470,7 @@ $advertisement = 'Информация';
                     </form>
 
                     <div style="border-top:1px solid var(--border); margin:6px 0;"></div>
+                    <div class="muted" style="font-size:12px; font-weight:600;">В разработке</div>
 
                     <a href="../diagnostics/index.php" target="_blank" rel="noopener" class="stack" title="В разработке">
                         <button type="button" class="btn-wip" title="В разработке">Диагностика ПУ-машины</button>
