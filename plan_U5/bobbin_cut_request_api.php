@@ -34,7 +34,7 @@ try {
     if (!defined('BOBBIN_BALE_FORMAT_MM')) {
         define('BOBBIN_BALE_FORMAT_MM', 240.0);
         define('BOBBIN_STRIP_MIN', 10.0);
-        define('BOBBIN_STRIP_MAX', 35.0);
+        define('BOBBIN_STRIP_MAX', 37.5);
         define('BOBBIN_STRIP_STEP', 2.5);
         define('BOBBIN_FILTER_LABEL', 'Обечайка');
         define('BOBBIN_REST_MIN', 20.0);
@@ -508,7 +508,13 @@ function bobbinNormalizeBales(array $rawBales): array
             }
             if (!bobbinIsAllowedWidth($width)) {
                 throw new InvalidArgumentException(
-                    'Недопустимая ширина ' . $width . ' мм (допустимо 10–35 с шагом 2.5)'
+                    'Недопустимая ширина ' . $width . ' мм (допустимо '
+                    . rtrim(rtrim(number_format(BOBBIN_STRIP_MIN, 1, '.', ''), '0'), '.')
+                    . '–'
+                    . rtrim(rtrim(number_format(BOBBIN_STRIP_MAX, 1, '.', ''), '0'), '.')
+                    . ' с шагом '
+                    . rtrim(rtrim(number_format(BOBBIN_STRIP_STEP, 1, '.', ''), '0'), '.')
+                    . ')'
                 );
             }
             for ($i = 0; $i < $qty; $i++) {
