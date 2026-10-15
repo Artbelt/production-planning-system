@@ -193,6 +193,16 @@ $advertisement = 'Информация';
         button:disabled, input[type="submit"]:disabled{
             background:#e5e7eb; color:#9ca3af; border-color:#e5e7eb; box-shadow:none; cursor:not-allowed;
         }
+        /* разделы в разработке: серые, чтобы отличаться от рабочих кнопок */
+        button.btn-wip,
+        button.btn-wip:hover,
+        button.btn-wip:active{
+            background:#9ca3af;
+            color:#f9fafb;
+            border-color:#9ca3af;
+            box-shadow:none;
+            transform:none;
+        }
         /* если где-то остались инлайновые background — приглушим */
         input[type="submit"][style*="background"], button[style*="background"]{
             background:var(--accent)!important; color:#fff!important;
@@ -460,14 +470,14 @@ $advertisement = 'Информация';
 
                     <div style="border-top:1px solid var(--border); margin:6px 0;"></div>
 
-                    <a href="../diagnostics/index.php" target="_blank" rel="noopener" class="stack">
-                        <button type="button">Диагностика ПУ-машины</button>
+                    <a href="../diagnostics/index.php" target="_blank" rel="noopener" class="stack" title="В разработке">
+                        <button type="button" class="btn-wip" title="В разработке">Диагностика ПУ-машины</button>
                     </a>
-                    <a href="../diagnostics/editor.php" target="_blank" rel="noopener" class="stack">
-                        <button type="button">Редактор диагностики ПУ</button>
+                    <a href="../diagnostics/editor.php" target="_blank" rel="noopener" class="stack" title="В разработке">
+                        <button type="button" class="btn-wip" title="В разработке">Редактор диагностики ПУ</button>
                     </a>
-                    <a href="../diagnostics/journal.php" target="_blank" rel="noopener" class="stack">
-                        <button type="button">Журнал диагностики ПУ</button>
+                    <a href="../diagnostics/journal.php" target="_blank" rel="noopener" class="stack" title="В разработке">
+                        <button type="button" class="btn-wip" title="В разработке">Журнал диагностики ПУ</button>
                     </a>
                 </div>
             </td>
