@@ -91,8 +91,9 @@ echo "<a href='../index.php' style='padding: 6px 12px; background: #f3f4f6; colo
 echo "<a href='../auth/logout.php' style='padding: 6px 12px; background: #f3f4f6; color: #374151; text-decoration: none; border-radius: 4px; font-size: 12px;'>Выход</a>";
 echo "</div></div>";
 
-echo "<tr align='center'><td colspan='3' style='padding: 20px;'>";
-echo "<table width='600' bgcolor='white' style='border-collapse: collapse; margin: 0 auto; border-radius: 8px;'>";
+echo "<tr><td colspan='3' style='padding: 20px; vertical-align: top;'>";
+echo "<div style='display:flex; gap:20px; justify-content:center; align-items:flex-start; flex-wrap:wrap;'>";
+echo "<table width='420' bgcolor='white' style='border-collapse: collapse; border-radius: 8px; flex: 0 0 420px;'>";
 echo "<tr><td style='padding: 20px;'>";
 
 echo '<div style="padding: 12px; background: #ffffff; border: 2px solid #6495ed; border-radius: 6px;">';
@@ -113,6 +114,9 @@ echo '</form>';
 echo '<div style="border-top: 1px solid #e0e0e0; padding-top: 15px; margin-bottom: 15px;">';
 echo '<div style="color: #6495ed; font-weight: bold; font-size: 14px; margin-bottom: 10px; text-align: center;">Операции</div>';
 echo '<div style="text-align: center; margin-bottom: 8px;"><a href="product_output.php" target="_blank" style="display:inline-block;height:25px;line-height:25px;width:220px;background:#6495ed;color:white;border-radius:4px;font-weight:bold;text-decoration:none;">Выпуск продукции</a></div>';
+echo '<form action="product_output_view.php" method="post" target="_blank" style="text-align: center; margin-bottom: 8px;">';
+echo '<input type="submit" value="Обзор выпуска продукции" style="height: 25px; width: 220px; background: #6495ed; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer;">';
+echo '</form>';
 echo '<div style="text-align: center; margin-bottom: 8px;"><a href="laser_request.php" target="_blank" style="display:inline-block;height:25px;line-height:25px;width:220px;background:#6495ed;color:white;border-radius:4px;font-weight:bold;text-decoration:none;">Заявка на лазер</a></div>';
 echo '<div style="text-align: center; margin-bottom: 8px;"><a href="bobbin_cut_request.php" target="_blank" style="display:inline-block;height:25px;line-height:25px;width:220px;background:#6495ed;color:white;border-radius:4px;font-weight:bold;text-decoration:none;">Заявка на бобинорезку</a></div>';
 echo '</div>';
@@ -205,6 +209,10 @@ echo '</div>';
 
 echo '</div>';
 echo "</td></tr></table>";
+echo "<div style='width: 420px; max-width: 100%; flex: 0 0 420px;'>";
+show_weekly_production();
+echo "</div>";
+echo "</div>";
 echo "</td></tr></table>";
 echo '</body></html>';
 

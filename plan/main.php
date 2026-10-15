@@ -457,6 +457,18 @@ $advertisement = 'Информация';
                         <input type="hidden" name="workshop" value="<?php echo htmlspecialchars($currentDepartment); ?>">
                         <input type="submit" value="План для сборщиц">
                     </form>
+
+                    <div style="border-top:1px solid var(--border); margin:6px 0;"></div>
+
+                    <a href="../diagnostics/index.php" target="_blank" rel="noopener" class="stack">
+                        <button type="button">Диагностика ПУ-машины</button>
+                    </a>
+                    <a href="../diagnostics/editor.php" target="_blank" rel="noopener" class="stack">
+                        <button type="button">Редактор диагностики ПУ</button>
+                    </a>
+                    <a href="../diagnostics/journal.php" target="_blank" rel="noopener" class="stack">
+                        <button type="button">Журнал диагностики ПУ</button>
+                    </a>
                 </div>
             </td>
 

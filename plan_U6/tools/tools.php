@@ -135,27 +135,261 @@ function print_r_my ($a){
     }
 }
 
-/** Отображение выпуска продукции за последнюю неделю */
+/** Отображение выпуска продукции за последние 10 дней (как на U3/U5) */
 function show_weekly_production(){
-    $average_value = 0;
+    global $mysql_host, $mysql_user, $mysql_user_pass, $mysql_database;
+
+    echo '<div class="production-card">';
+    echo '<div class="production-card-header">';
+    echo '<h3 class="production-card-title">Изготовленная продукция за последние 10 дней</h3>';
+    echo '</div>';
+    echo '<div class="production-card-body">';
+
+    $days = [];
     for ($a = 1; $a < 11; $a++) {
-
-        $production_date = date("Y-m-d", time() - (60 * 60 * 24 * $a));;
-        $production_date = reverse_date($production_date);
-        $sql = "SELECT * FROM manufactured_production WHERE date_of_production = '$production_date';";
-        $result = mysql_execute($sql);
-        /** @var $x $variant counter */
-        $x = 0;
-        foreach ($result as $variant) {
-            $x += $variant['count_of_filters'];
-
-        }
-        $average_value += $x;
-        /** Выводим сумму фильтров */
-        echo $production_date . " " . $x . " шт <br>";
-
+        $days[date('Y-m-d', time() - (60 * 60 * 24 * $a))] = 0;
     }
-    echo "<br>Суммарно:".$average_value."шт <br> Среднесменное количество = ".($average_value/10)." шт/смену ";
+
+    try {
+        $mysqli = new mysqli($mysql_host, $mysql_user, $mysql_user_pass, $mysql_database);
+        if ($mysqli->connect_errno) {
+            throw new RuntimeException('connect');
+        }
+        $mysqli->set_charset('utf8mb4');
+
+        $dates = array_keys($days);
+        $start = min($dates);
+        $end = max($dates);
+        $stmt = $mysqli->prepare(
+            "SELECT date_of_production, SUM(count_of_filters) AS total_count
+             FROM manufactured_production
+             WHERE date_of_production >= ? AND date_of_production <= ?
+             GROUP BY date_of_production"
+        );
+        if (!$stmt) {
+            throw new RuntimeException('prepare');
+        }
+        $stmt->bind_param('ss', $start, $end);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        if ($result) {
+            while ($row = $result->fetch_assoc()) {
+                $date = substr((string)$row['date_of_production'], 0, 10);
+                if (isset($days[$date])) {
+                    $days[$date] = (int)$row['total_count'];
+                }
+            }
+        }
+        $stmt->close();
+        $mysqli->close();
+    } catch (Throwable $e) {
+        echo 'Не удалось загрузить выпуск продукции';
+        echo '</div></div>';
+        return;
+    }
+
+    $count = array_sum($days);
+
+    echo '<style>
+        .production-card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(2, 8, 20, 0.06);
+            margin: 0;
+            overflow: hidden;
+            text-align: left;
+        }
+        .production-card-header {
+            padding: 10px 12px;
+            border-bottom: 1px solid #e5e7eb;
+            background-color: #ffffff;
+        }
+        .production-card-title {
+            margin: 0;
+            font-size: 14px;
+            font-weight: 600;
+            color: #111827;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .production-card-body {
+            padding: 10px 12px;
+            background-color: #ffffff;
+        }
+        .production-card-footer {
+            padding: 10px 12px;
+            background-color: #ffffff;
+            border-top: 1px solid #e5e7eb;
+        }
+        .production-table {
+            border-collapse: separate;
+            border-spacing: 0;
+            width: 100%;
+            margin: 8px 0;
+            font-size: 12px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+        .production-table th {
+            background-color: #f8f9fa;
+            padding: 6px 10px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+            font-weight: normal;
+            color: #495057;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .production-table td {
+            padding: 6px 10px;
+            border-bottom: 1px solid #f1f3f5;
+            color: #6c757d;
+        }
+        .production-table tbody tr:nth-child(even) { background-color: #fafbfc; }
+        .production-table tbody tr:hover { background-color: #f0f4f8; }
+        .production-table tbody tr:last-child td { border-bottom: none; }
+        .production-table .date-col { color: #495057; }
+        .production-table .total-col { text-align: right; color: #495057; }
+        .production-table .total-col .count-link {
+            color: #4a90e2;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .production-table .total-col .count-link:hover {
+            color: #357abd;
+            text-decoration: underline;
+        }
+        .production-stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+        }
+        .production-stat-label { color: #6c757d; font-weight: 500; }
+        .production-stat-value { font-weight: 600; font-size: 13px; }
+        .highlight_green {
+            background:#e7f5ee; color:#0f5132; border:1px solid #cfe9db;
+            padding:2px 6px; border-radius:6px; font-weight:600;
+        }
+        .highlight_red {
+            background:#fff7e6; color:#7a3e00; border:1px solid #ffe1ad;
+            padding:2px 6px; border-radius:6px; font-weight:600;
+        }
+    </style>';
+
+    echo '<table class="production-table">';
+    echo '<thead><tr><th class="date-col">Дата</th><th class="total-col">Всего</th></tr></thead>';
+    echo '<tbody>';
+    foreach ($days as $date => $total_count) {
+        echo '<tr>';
+        echo '<td class="date-col">' . htmlspecialchars($date) . '</td>';
+        echo '<td class="total-col">';
+        if ($total_count > 0) {
+            echo '<span class="count-link" data-date="' . htmlspecialchars($date) . '" data-type="production">' . $total_count . '</span>';
+        } else {
+            echo '-';
+        }
+        echo '</td></tr>';
+    }
+    echo '</tbody></table>';
+    echo '</div>';
+
+    echo '<div class="production-card-footer">';
+    $count_per_day = $count / 10;
+    $stat_class = $count_per_day > 1000 ? 'highlight_green' : 'highlight_red';
+    $stat_title = $count_per_day > 1000
+        ? 'Это количество обеспечит 30 000 фильтров в месяц'
+        : 'Это количество НЕ обеспечит 30 000 фильтров в месяц';
+    echo "<div class='production-stat'><span class='production-stat-label'>Среднее количество в смену:</span> <span class='production-stat-value {$stat_class}' title='" . htmlspecialchars($stat_title) . "'>" . round($count_per_day, 0) . "</span></div>";
+    echo '</div></div>';
+
+    ?>
+    <div id="productionDetailModal" style="display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); justify-content: center; align-items: center;">
+        <div style="background-color: white; padding: 20px; border-radius: 8px; max-width: 800px; width: 92%; max-height: 90vh; overflow-y: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1); position: relative;">
+            <span id="closeProductionModal" style="position: absolute; right: 15px; top: 15px; font-size: 28px; font-weight: bold; color: #999; cursor: pointer; line-height: 1;">&times;</span>
+            <h3 id="productionModalTitle" style="margin-top: 0; margin-bottom: 15px;">Детальная информация за день</h3>
+            <div id="productionModalContent" style="min-height: 200px;">
+                <div style="text-align: center; padding: 40px;">Загрузка данных...</div>
+            </div>
+        </div>
+    </div>
+    <style>
+        #productionDetailModal table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        #productionDetailModal th { background-color: #f3f4f6; padding: 8px; text-align: left; border: 1px solid #ddd; font-weight: bold; }
+        #productionDetailModal td { padding: 8px; border: 1px solid #ddd; }
+        #productionDetailModal tr:nth-child(even) { background-color: #f9fafb; }
+        .production-summary { background-color: #eff6ff; padding: 10px; border-radius: 4px; margin-bottom: 15px; }
+    </style>
+    <script>
+    (function() {
+        if (window.productionModalInitialized) return;
+        window.productionModalInitialized = true;
+
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('count-link') && e.target.getAttribute('data-type') === 'production') {
+                e.preventDefault();
+                showProductionDetails(e.target.getAttribute('data-date'));
+            }
+        });
+
+        const closeBtn = document.getElementById('closeProductionModal');
+        const modal = document.getElementById('productionDetailModal');
+        if (closeBtn && modal) {
+            closeBtn.addEventListener('click', function() { modal.style.display = 'none'; });
+            modal.addEventListener('click', function(e) {
+                if (e.target.id === 'productionDetailModal') this.style.display = 'none';
+            });
+        }
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && modal && modal.style.display === 'flex') modal.style.display = 'none';
+        });
+
+        function showProductionDetails(date) {
+            const title = document.getElementById('productionModalTitle');
+            const content = document.getElementById('productionModalContent');
+            title.textContent = 'Детальная информация - ' + date;
+            content.innerHTML = '<div style="text-align: center; padding: 40px;">Загрузка данных...</div>';
+            modal.style.display = 'flex';
+
+            fetch('get_daily_production_details.php?date=' + encodeURIComponent(date))
+                .then(function(response) {
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    return response.json();
+                })
+                .then(function(data) {
+                    if (data.error) {
+                        content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка: ' + escapeHtml(data.error) + '</div>';
+                        return;
+                    }
+                    if (!data.items || data.items.length === 0) {
+                        content.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">Нет данных для отображения</div>';
+                        return;
+                    }
+                    let html = '<div class="production-summary"><strong>Итого:</strong> <strong>' + data.total_count + ' шт</strong></div>';
+                    html += '<table><thead><tr><th>Фильтр</th><th>Заявка</th><th>Изготовлено</th></tr></thead><tbody>';
+                    data.items.forEach(function(item) {
+                        html += '<tr><td>' + escapeHtml(item.filter_name || '-') + '</td><td>' + escapeHtml(item.order_number || '-') + '</td><td>' + item.count + ' шт</td></tr>';
+                    });
+                    html += '</tbody></table>';
+                    content.innerHTML = html;
+                })
+                .catch(function(error) {
+                    content.innerHTML = '<div style="color: red; text-align: center; padding: 20px;">Ошибка загрузки данных: ' + escapeHtml(error.message) + '</div>';
+                });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    })();
+    </script>
+    <?php
 }
 
 
