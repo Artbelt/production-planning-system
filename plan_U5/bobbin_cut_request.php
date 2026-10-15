@@ -426,7 +426,7 @@ const BOBBIN_REST_MAX = 30;
 const BOBBIN_API = 'bobbin_cut_request_api.php';
 const BOBBIN_WIDTHS = (() => {
     const out = [];
-    for (let w = 10; w <= 35.001; w += 2.5) out.push(Math.round(w * 10) / 10);
+    for (let w = 10; w <= 37.501; w += 2.5) out.push(Math.round(w * 10) / 10);
     return out;
 })();
 let bobbinCurrentStrips = [];
