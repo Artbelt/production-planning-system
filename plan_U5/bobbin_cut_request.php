@@ -271,6 +271,30 @@ $userName = htmlspecialchars($user['full_name'] ?? $session['full_name'] ?? 'П�
             color: var(--accent);
         }
         .bc-width-btns button:disabled { opacity: 0.35; }
+        .bc-width-btns button.is-close {
+            background: #059669;
+            border-color: #047857;
+            color: #fff;
+            font-weight: 700;
+        }
+        .bc-width-btns button.is-close:hover:not(:disabled) {
+            background: #047857;
+            border-color: #065f46;
+            color: #fff;
+        }
+        .bc-width-btns button.is-dim { opacity: 0.4; }
+        .bc-close-hint {
+            text-align: center;
+            font-size: 13px;
+            font-weight: 600;
+            min-height: 1.3em;
+            margin: 0 0 2px;
+            color: var(--muted);
+        }
+        .bc-close-hint.is-ready { color: #047857; }
+        .bc-close-hint.is-warn { color: #b45309; }
+        #bobbinSaveBaleBtn.is-ready { background: #059669; }
+        #bobbinSaveBaleBtn.is-ready:hover { background: #047857; }
         .bc-actions {
             display: flex;
             flex-wrap: wrap;
@@ -392,6 +416,7 @@ $userName = htmlspecialchars($user['full_name'] ?? $session['full_name'] ?? 'П�
                 <span>Полос: <b id="bobbinStripCount">0</b></span>
                 <span style="color: var(--muted);">Допуск остатка: 20–30 мм</span>
             </div>
+            <div id="bobbinCloseHint" class="bc-close-hint"></div>
             <div id="bobbinWidthBtns" class="bc-width-btns"></div>
             <div class="bc-actions">
                 <button type="button" id="bobbinSaveBaleBtn" onclick="bobbinSaveBale()" disabled>Сохранить бухту</button>
@@ -479,15 +504,74 @@ function bobbinLayoutHtml(widths, opts) {
     return html;
 }
 
+function bobbinWidthLabel(w) {
+    return Number.isInteger(w) ? String(w) : String(w).replace('.', ',');
+}
+
+function bobbinClosingWidths(rest) {
+    return BOBBIN_WIDTHS.filter(w => {
+        if (w > rest + 0.01) return false;
+        const next = Math.round((rest - w) * 10) / 10;
+        return next >= BOBBIN_REST_MIN - 0.01 && next <= BOBBIN_REST_MAX + 0.01;
+    });
+}
+
+function bobbinRenderCloseHint(rest, closing) {
+    const el = document.getElementById('bobbinCloseHint');
+    if (!el) return;
+    if (bobbinCurrentStrips.length === 0) {
+        el.className = 'bc-close-hint';
+        el.textContent = '';
+        return;
+    }
+    if (rest < BOBBIN_REST_MIN - 0.01) {
+        el.className = 'bc-close-hint is-warn';
+        el.textContent = 'Остаток меньше 20 мм — уберите полосу';
+        return;
+    }
+    if (bobbinRestOk(rest)) {
+        el.className = 'bc-close-hint is-ready';
+        el.textContent = 'Остаток в допуске — сохраните бухту';
+        return;
+    }
+    if (closing.length > 0) {
+        el.className = 'bc-close-hint is-ready';
+        el.textContent = 'Закроют бухту: ' + closing.map(bobbinWidthLabel).join(' · ');
+        return;
+    }
+    el.className = 'bc-close-hint';
+    el.textContent = 'До закрытия ещё рано';
+}
+
 function bobbinBuildWidthButtons() {
     const wrap = document.getElementById('bobbinWidthBtns');
     if (!wrap) return;
     const rest = Math.round((BOBBIN_FORMAT_MM - bobbinUsedSum()) * 10) / 10;
+    const started = bobbinCurrentStrips.length > 0;
+    const inRange = started && bobbinRestOk(rest);
+    const tooSmall = started && rest < BOBBIN_REST_MIN - 0.01;
+    const closing = bobbinClosingWidths(rest);
+    const showClose = started && !inRange && !tooSmall && closing.length > 0;
+
     wrap.innerHTML = BOBBIN_WIDTHS.map(w => {
-        const disabled = w > rest + 0.01 ? ' disabled' : '';
-        const label = Number.isInteger(w) ? String(w) : String(w).replace('.', ',');
-        return `<button type="button"${disabled} onclick="bobbinAddWidth(${w})">${label}</button>`;
+        const fits = w <= rest + 0.01;
+        const closes = closing.includes(w);
+        let disabled = '';
+        let cls = '';
+        let title = '';
+        if (!fits || tooSmall || (inRange && !closes)) {
+            disabled = ' disabled';
+        } else if (showClose && closes) {
+            cls = ' class="is-close"';
+            const next = Math.round((rest - w) * 10) / 10;
+            title = ` title="Закроет бухту, остаток ${bobbinWidthLabel(next)} мм"`;
+        } else if (showClose) {
+            cls = ' class="is-dim"';
+            title = ' title="Не попадёт в допуск 20–30 мм"';
+        }
+        return `<button type="button"${cls}${disabled}${title} onclick="bobbinAddWidth(${w})">${bobbinWidthLabel(w)}</button>`;
     }).join('');
+    bobbinRenderCloseHint(rest, closing);
 }
 
 function bobbinRestOk(rest) {
@@ -499,7 +583,13 @@ function bobbinRenderCurrent() {
     const rest = Math.round((BOBBIN_FORMAT_MM - used) * 10) / 10;
     const restEl = document.getElementById('bobbinRest');
     restEl.textContent = bobbinFmt(rest);
-    restEl.style.color = bobbinCurrentStrips.length > 0 && !bobbinRestOk(rest) ? '#dc2626' : '';
+    if (bobbinCurrentStrips.length > 0 && bobbinRestOk(rest)) {
+        restEl.style.color = '#047857';
+    } else if (bobbinCurrentStrips.length > 0) {
+        restEl.style.color = '#dc2626';
+    } else {
+        restEl.style.color = '';
+    }
     document.getElementById('bobbinUsed').textContent = bobbinFmt(used);
     document.getElementById('bobbinStripCount').textContent = String(bobbinCurrentStrips.length);
 
@@ -514,7 +604,9 @@ function bobbinRenderCurrent() {
 
     bobbinBuildWidthButtons();
     const canSave = bobbinCurrentStrips.length > 0 && bobbinRestOk(rest);
-    document.getElementById('bobbinSaveBaleBtn').disabled = !canSave;
+    const saveBtn = document.getElementById('bobbinSaveBaleBtn');
+    saveBtn.disabled = !canSave;
+    saveBtn.classList.toggle('is-ready', canSave);
     document.getElementById('bobbinSubmitBtn').disabled = bobbinSavedBales.length === 0;
 }
 

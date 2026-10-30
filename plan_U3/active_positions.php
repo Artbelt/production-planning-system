@@ -1339,6 +1339,13 @@ $pageTitle = 'Активные позиции';
         tr:hover td { background: #fafbfc; }
         td.num { text-align: right; font-variant-numeric: tabular-nums; }
         th.date-col, td.date-col { text-align: center; }
+        /* Выходные: лёгкая заливка колонки, видна и когда шапка ушла за экран */
+        th.date-col.weekend {
+            background: #e4ebf3;
+        }
+        td.date-cell.weekend {
+            background: #f0f4f8;
+        }
         /* Левая граница блока дат; ::before поверх inset из gofro-coverage и пр. подсветок */
         th.date-col.plan-dates-edge,
         td.date-cell.plan-dates-edge {
@@ -2210,6 +2217,7 @@ $pageTitle = 'Активные позиции';
                         <?php foreach ($buildPlanDates as $idx => $planDate):
                             $dateObj = DateTime::createFromFormat('Y-m-d', (string) $planDate);
                             $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
+                            $weekendClass = ($dateObj && in_array((int)$dateObj->format('N'), [6, 7], true)) ? ' weekend' : '';
                             $indicatorState = $dateIndicators[(string)$planDate] ?? ['press_qty' => 0, 'diameter_qty' => 0, 'w600_qty' => 0, 'total_qty' => 0];
                             $pressCount = (int)($indicatorState['press_qty'] ?? 0);
                             $pressNorm = max(1, (int) $indicatorMaxPressDefault);
@@ -2263,7 +2271,7 @@ $pageTitle = 'Активные позиции';
                             $totalTitle = 'Всего в смену: ' . $totalQty . ' шт из нормы ' . (int)$indicatorNormTotal . ' шт';
                             $planDatesEdgeClass = ($idx === 0) ? ' plan-dates-edge' : '';
                         ?>
-                            <th class="num date-col<?= $planDatesEdgeClass ?>" data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
+                            <th class="num date-col<?= $weekendClass ?><?= $planDatesEdgeClass ?>" data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
                                 <span class="date-head">
                                     <span><?= htmlspecialchars($dateLabel, ENT_QUOTES, 'UTF-8') ?></span>
                                     <span class="date-indicators" aria-hidden="true">
@@ -2460,9 +2468,11 @@ $pageTitle = 'Активные позиции';
                         <?php foreach ($buildPlanDates as $idx => $planDate):
                             $planQty = (int)($planQtyByDate[$planDate] ?? 0);
                             $planDatesEdgeClass = ($idx === 0) ? ' plan-dates-edge' : '';
+                            $planDateObj = DateTime::createFromFormat('Y-m-d', (string) $planDate);
+                            $weekendClass = ($planDateObj && in_array((int)$planDateObj->format('N'), [6, 7], true)) ? ' weekend' : '';
                         ?>
                             <td
-                                class="num date-col date-cell<?= $planDatesEdgeClass ?>"
+                                class="num date-col date-cell<?= $weekendClass ?><?= $planDatesEdgeClass ?>"
                                 data-order="<?= htmlspecialchars($rawOrder, ENT_QUOTES, 'UTF-8') ?>"
                                 data-filter="<?= htmlspecialchars($rawFilter, ENT_QUOTES, 'UTF-8') ?>"
                                 data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>"
@@ -2490,6 +2500,7 @@ $pageTitle = 'Активные позиции';
                         <?php foreach ($buildPlanDates as $idx => $planDate):
                             $dateObj = DateTime::createFromFormat('Y-m-d', (string) $planDate);
                             $dateLabel = $dateObj ? $dateObj->format('d.m') : (string) $planDate;
+                            $weekendClass = ($dateObj && in_array((int)$dateObj->format('N'), [6, 7], true)) ? ' weekend' : '';
                             $indicatorState = $dateIndicators[(string)$planDate] ?? ['press_qty' => 0, 'diameter_qty' => 0, 'w600_qty' => 0, 'total_qty' => 0];
                             $pressCount = (int)($indicatorState['press_qty'] ?? 0);
                             $pressNorm = max(1, (int) $indicatorMaxPressDefault);
@@ -2543,7 +2554,7 @@ $pageTitle = 'Активные позиции';
                             $totalTitle = 'Всего в смену: ' . $totalQty . ' шт из нормы ' . (int)$indicatorNormTotal . ' шт';
                             $planDatesEdgeClass = ($idx === 0) ? ' plan-dates-edge' : '';
                         ?>
-                            <th class="num date-col<?= $planDatesEdgeClass ?>" data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
+                            <th class="num date-col<?= $weekendClass ?><?= $planDatesEdgeClass ?>" data-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" data-plan-date="<?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>" title="План сборки на <?= htmlspecialchars((string)$planDate, ENT_QUOTES, 'UTF-8') ?>">
                                 <span class="date-head">
                                     <span><?= htmlspecialchars($dateLabel, ENT_QUOTES, 'UTF-8') ?></span>
                                     <span class="date-indicators" aria-hidden="true">
@@ -3824,9 +3835,19 @@ $pageTitle = 'Активные позиции';
             return `${String(p.d).padStart(2, '0')}.${String(p.mo).padStart(2, '0')}`;
         }
 
+        function isWeekendIso(iso) {
+            const p = parseIsoParts(iso);
+            if (!p) {
+                return false;
+            }
+            const dt = new Date(Date.UTC(p.y, p.mo - 1, p.d));
+            const day = dt.getUTCDay();
+            return day === 0 || day === 6;
+        }
+
         function buildPlanDateTh(iso) {
             const th = document.createElement('th');
-            th.className = 'num date-col plan-dates-edge';
+            th.className = 'num date-col plan-dates-edge' + (isWeekendIso(iso) ? ' weekend' : '');
             th.setAttribute('data-plan-date', iso);
             th.setAttribute('data-date', iso);
             th.setAttribute('title', 'План сборки на ' + iso);
@@ -6433,6 +6454,7 @@ $pageTitle = 'Активные позиции';
             th.setAttribute('data-plan-date', iso);
             th.setAttribute('data-date', iso);
             th.setAttribute('title', 'План сборки на ' + iso);
+            th.classList.toggle('weekend', isWeekendIso(iso));
             const labelSpan = th.querySelector('.date-head > span:first-child');
             if (labelSpan) {
                 labelSpan.textContent = formatDdMmFromIso(iso);
@@ -6512,7 +6534,7 @@ $pageTitle = 'Активные позиции';
                 const order = tr.getAttribute('data-order') || '';
                 const filter = tr.getAttribute('data-filter') || '';
                 const td = document.createElement('td');
-                td.className = 'num date-col date-cell';
+                td.className = 'num date-col date-cell' + (isWeekendIso(nextIso) ? ' weekend' : '');
                 td.dataset.order = order;
                 td.dataset.filter = filter;
                 td.dataset.date = nextIso;
