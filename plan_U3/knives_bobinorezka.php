@@ -318,7 +318,8 @@ function getStatusName($status) {
             background: #059669;
         }
         .calendar-table {
-            width: 100%;
+            width: max-content;
+            min-width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
             font-size: 13px;
@@ -359,14 +360,21 @@ function getStatusName($status) {
         .calendar-table tr:hover td:first-child {
             background: #f9fafb;
         }
+        .calendar-table th.day-col,
+        .calendar-table td.status-cell {
+            width: 18px;
+            min-width: 18px;
+            max-width: 18px;
+            padding: 2px 0;
+        }
+        .calendar-table th.day-col {
+            font-size: 10px;
+        }
         .status-cell {
             cursor: pointer;
-            min-width: 35px;
-            width: 35px;
-            height: 30px;
+            height: 22px;
             transition: all 0.2s;
-            font-size: 10px;
-            padding: 2px;
+            font-size: 9px;
         }
         .status-cell:hover {
             opacity: 0.8;
@@ -625,7 +633,7 @@ function getStatusName($status) {
                             $isToday = ($date === $todayStr);
                             $dt = new DateTime($date);
                         ?>
-                            <th class="<?php echo $isToday ? 'today' : ''; ?>" title="<?php echo $dt->format('d.m.Y'); ?>">
+                            <th class="day-col<?php echo $isToday ? ' today' : ''; ?>" title="<?php echo $dt->format('d.m.Y'); ?>">
                                 <?php echo $dt->format('d'); ?>
                             </th>
                         <?php endforeach; ?>
