@@ -77,6 +77,17 @@ foreach ($userDepartmentsForU3 as $dept) {
     }
 }
 
+$activePositionsUserId = (int)($session['user_id'] ?? 0);
+$activePositionsUserName = trim((string)($session['full_name'] ?? ''));
+if ($activePositionsUserName === '') {
+    $activePositionsUserName = trim((string)($session['phone'] ?? ''));
+}
+if ($activePositionsUserName === '') {
+    $activePositionsUserName = 'Пользователь #' . $activePositionsUserId;
+}
+$activePositionsUserName = preg_replace('/[\r\n\t]+/u', ' ', $activePositionsUserName);
+$activePositionsUserName = mb_substr($activePositionsUserName, 0, 255, 'UTF-8');
+
 /**
  * Нормализуем имя фильтра для сопоставления позиций заявки и записей планов.
  */
@@ -91,6 +102,197 @@ function normalizeTextKey(string $name): string
 {
     $name = preg_replace('/\s+/u', ' ', trim($name));
     return mb_strtoupper($name, 'UTF-8');
+}
+
+/** Ключ фильтра для блокировки смены: как normalizeFilterKeyJs на странице. */
+function normalizeShiftLockFilterKey(string $name): string
+{
+    $name = preg_replace('/\s+/u', ' ', trim($name));
+    return mb_strtoupper($name, 'UTF-8');
+}
+
+function ensureBuildPlanShiftLocksTable(PDO $pdo): void
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS build_plan_shift_locks (
+            order_number VARCHAR(64) NOT NULL,
+            filter_key VARCHAR(191) NOT NULL,
+            day_date DATE NOT NULL,
+            user_id INT UNSIGNED NOT NULL,
+            user_name VARCHAR(255) NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (order_number, filter_key, day_date),
+            KEY idx_shift_lock_user (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
+function fetchBuildPlanShiftLocks(PDO $pdo): array
+{
+    $stmt = $pdo->query("
+        SELECT order_number, filter_key, day_date, user_id, user_name
+        FROM build_plan_shift_locks
+        ORDER BY day_date, order_number, filter_key
+    ");
+    $locks = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $date = substr((string)($row['day_date'] ?? ''), 0, 10);
+        $order = (string)($row['order_number'] ?? '');
+        $filterKey = (string)($row['filter_key'] ?? '');
+        if ($order === '' || $filterKey === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            continue;
+        }
+        $locks[] = [
+            'order_number' => $order,
+            'filter_key' => $filterKey,
+            'day_date' => $date,
+            'user_id' => (int)($row['user_id'] ?? 0),
+            'user_name' => (string)($row['user_name'] ?? ''),
+        ];
+    }
+    return $locks;
+}
+
+function purgeExpiredBuildPlanShiftLocks(PDO $pdo, string $todayIso): void
+{
+    $stmt = $pdo->prepare('DELETE FROM build_plan_shift_locks WHERE day_date < ?');
+    $stmt->execute([$todayIso]);
+}
+
+function findBuildPlanShiftLock(PDO $pdo, string $order, string $filterKey, string $dayDate): ?array
+{
+    $stmt = $pdo->prepare('
+        SELECT user_id, user_name
+        FROM build_plan_shift_locks
+        WHERE order_number = ? AND filter_key = ? AND day_date = ?
+        LIMIT 1
+    ');
+    $stmt->execute([$order, $filterKey, $dayDate]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$row) {
+        return null;
+    }
+    return [
+        'user_id' => (int)($row['user_id'] ?? 0),
+        'user_name' => (string)($row['user_name'] ?? ''),
+    ];
+}
+
+function respondShiftLocks(PDO $pdo, bool $ok, string $error = ''): void
+{
+    header('Content-Type: application/json; charset=utf-8');
+    $body = [
+        'ok' => $ok,
+        'locks' => fetchBuildPlanShiftLocks($pdo),
+    ];
+    if (!$ok && $error !== '') {
+        $body['error'] = $error;
+    }
+    echo json_encode($body, JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+function planQtyByDateFrom(PDO $pdo, string $order, string $filter, string $minDate): array
+{
+    $stmt = $pdo->prepare("
+        SELECT day_date, SUM(qty) AS qty
+        FROM build_plans
+        WHERE shift = 'D' AND order_number = ? AND filter = ? AND day_date >= ?
+        GROUP BY day_date
+    ");
+    $stmt->execute([$order, $filter, $minDate]);
+    $map = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $date = substr((string)($row['day_date'] ?? ''), 0, 10);
+        $qty = (int)($row['qty'] ?? 0);
+        if ($date !== '' && $qty > 0) {
+            $map[$date] = $qty;
+        }
+    }
+    return $map;
+}
+
+function contiguousPlanDates(array $qtyByDate, string $fromDate): array
+{
+    if (!isset($qtyByDate[$fromDate])) {
+        return [];
+    }
+    $dates = [];
+    $cursor = new DateTimeImmutable($fromDate);
+    while (isset($qtyByDate[$cursor->format('Y-m-d')])) {
+        array_unshift($dates, $cursor->format('Y-m-d'));
+        $cursor = $cursor->modify('-1 day');
+    }
+    $cursor = (new DateTimeImmutable($fromDate))->modify('+1 day');
+    while (isset($qtyByDate[$cursor->format('Y-m-d')])) {
+        $dates[] = $cursor->format('Y-m-d');
+        $cursor = $cursor->modify('+1 day');
+    }
+    return $dates;
+}
+
+/** Даты, которые перенос меняет: их блокировка запрещает запись. */
+function shiftDatesTouchedByMove(
+    PDO $pdo,
+    string $todayIso,
+    string $order,
+    string $filter,
+    string $fromDate,
+    string $toDate,
+    string $mode
+): array {
+    if ($mode === 'clear_cell' || $mode === 'set_qty') {
+        return [$fromDate];
+    }
+    if ($mode === 'debt') {
+        return [$toDate];
+    }
+    if ($mode === 'single') {
+        return array_values(array_unique([$fromDate, $toDate]));
+    }
+    $qtyByDate = planQtyByDateFrom($pdo, $order, $filter, $todayIso);
+    $fromDt = new DateTimeImmutable($fromDate);
+    $toDt = new DateTimeImmutable($toDate);
+    $offsetDays = (int)$fromDt->diff($toDt)->format('%r%a');
+    $sourceDates = $mode === 'block'
+        ? contiguousPlanDates($qtyByDate, $fromDate)
+        : array_keys($qtyByDate);
+    if (empty($sourceDates)) {
+        $sourceDates = [$fromDate];
+    }
+    $touched = [];
+    foreach ($sourceDates as $date) {
+        $touched[$date] = true;
+        $targetDate = (new DateTimeImmutable($date))
+            ->modify(($offsetDays >= 0 ? '+' : '') . $offsetDays . ' days')
+            ->format('Y-m-d');
+        $touched[$targetDate] = true;
+    }
+    return array_keys($touched);
+}
+
+function assertBuildPlanDatesUnlocked(PDO $pdo, string $order, string $filter, array $dates): void
+{
+    $filterKey = normalizeShiftLockFilterKey($filter);
+    foreach ($dates as $date) {
+        $date = substr((string)$date, 0, 10);
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            continue;
+        }
+        $lock = findBuildPlanShiftLock($pdo, $order, $filterKey, $date);
+        if (!$lock) {
+            continue;
+        }
+        $shown = DateTime::createFromFormat('Y-m-d', $date);
+        $label = $shown ? $shown->format('d.m.Y') : $date;
+        $name = trim((string)$lock['user_name']);
+        if ($name === '') {
+            $name = 'другой пользователь';
+        }
+        throw new RuntimeException(
+            'смена ' . $label . ' заблокирована (' . $name . '). Снять блокировку может только этот пользователь.'
+        );
+    }
 }
 
 /**
@@ -436,6 +638,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
+            ensureBuildPlanShiftLocksTable($pdo);
             $pdo->beginTransaction();
             foreach ($moves as $idx => $move) {
                 $order = trim((string)($move['order_number'] ?? ''));
@@ -462,6 +665,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 try {
+                    $touchedDates = shiftDatesTouchedByMove($pdo, $todayIso, $order, $filter, $fromDate, $toDate, $mode);
+                    assertBuildPlanDatesUnlocked($pdo, $order, $filter, $touchedDates);
                     if ($mode === 'debt') {
                         if ($movedQty <= 0) {
                             throw new RuntimeException('Операция #' . ($idx + 1) . ': не указано количество для переноса из долга.');
@@ -502,6 +707,100 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
     }
+
+    if (in_array($action, ['list_shift_locks', 'lock_shift', 'unlock_shift', 'unlock_my_shifts'], true)) {
+        try {
+            ensureBuildPlanShiftLocksTable($pdo);
+            purgeExpiredBuildPlanShiftLocks($pdo, $todayIso);
+            if ($action === 'list_shift_locks') {
+                respondShiftLocks($pdo, true);
+            }
+            if (!$activePositionsCanEdit) {
+                http_response_code(403);
+                respondShiftLocks($pdo, false, 'Недостаточно прав: блокировать смены могут только мастера и директора цеха U3.');
+            }
+            if ($action === 'unlock_my_shifts') {
+                $delMine = $pdo->prepare('DELETE FROM build_plan_shift_locks WHERE user_id = ?');
+                $delMine->execute([$activePositionsUserId]);
+                respondShiftLocks($pdo, true);
+            }
+            $order = trim((string)($payload['order_number'] ?? ''));
+            $filter = trim((string)($payload['filter_name'] ?? ''));
+            $dayDate = trim((string)($payload['day_date'] ?? ''));
+            if ($order === '' || $filter === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $dayDate)) {
+                respondShiftLocks($pdo, false, 'Некорректные параметры блокировки.');
+            }
+            $filterKey = normalizeShiftLockFilterKey($filter);
+            $existing = findBuildPlanShiftLock($pdo, $order, $filterKey, $dayDate);
+            if ($action === 'lock_shift') {
+                if ($existing) {
+                    if ((int)$existing['user_id'] === $activePositionsUserId) {
+                        respondShiftLocks($pdo, true);
+                    }
+                    $ownerName = trim((string)$existing['user_name']);
+                    if ($ownerName === '') {
+                        $ownerName = 'другой пользователь';
+                    }
+                    respondShiftLocks($pdo, false, 'Смену уже заблокировал ' . $ownerName . '.');
+                }
+                $ins = $pdo->prepare('
+                    INSERT INTO build_plan_shift_locks (order_number, filter_key, day_date, user_id, user_name)
+                    VALUES (?, ?, ?, ?, ?)
+                ');
+                try {
+                    $ins->execute([$order, $filterKey, $dayDate, $activePositionsUserId, $activePositionsUserName]);
+                } catch (Throwable $insertError) {
+                    $existing = findBuildPlanShiftLock($pdo, $order, $filterKey, $dayDate);
+                    if ($existing && (int)$existing['user_id'] !== $activePositionsUserId) {
+                        $ownerName = trim((string)$existing['user_name']);
+                        if ($ownerName === '') {
+                            $ownerName = 'другой пользователь';
+                        }
+                        respondShiftLocks($pdo, false, 'Смену уже заблокировал ' . $ownerName . '.');
+                    }
+                    if (!$existing) {
+                        throw $insertError;
+                    }
+                }
+                respondShiftLocks($pdo, true);
+            }
+            if ($action === 'unlock_shift') {
+                if (!$existing) {
+                    respondShiftLocks($pdo, true);
+                }
+                if ((int)$existing['user_id'] !== $activePositionsUserId) {
+                    $ownerName = trim((string)$existing['user_name']);
+                    if ($ownerName === '') {
+                        $ownerName = 'другой пользователь';
+                    }
+                    respondShiftLocks($pdo, false, 'Смену заблокировал ' . $ownerName . '. Снять может только этот пользователь.');
+                }
+                $delOne = $pdo->prepare('
+                    DELETE FROM build_plan_shift_locks
+                    WHERE order_number = ? AND filter_key = ? AND day_date = ? AND user_id = ?
+                ');
+                $delOne->execute([$order, $filterKey, $dayDate, $activePositionsUserId]);
+                respondShiftLocks($pdo, true);
+            }
+            respondShiftLocks($pdo, false, 'Неизвестное действие.');
+        } catch (Throwable $e) {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(
+                ['ok' => false, 'error' => 'Не удалось сохранить блокировку.', 'locks' => []],
+                JSON_UNESCAPED_UNICODE
+            );
+            exit;
+        }
+    }
+}
+
+$shiftLocks = [];
+try {
+    ensureBuildPlanShiftLocksTable($pdo);
+    purgeExpiredBuildPlanShiftLocks($pdo, $todayIso);
+    $shiftLocks = fetchBuildPlanShiftLocks($pdo);
+} catch (Throwable $e) {
+    $shiftLocks = [];
 }
 
 $maxPct = max(0, min(100, (int) $activePositionsMaxCompletionPct));
@@ -1582,6 +1881,44 @@ $pageTitle = 'Активные позиции';
             color: #1d4ed8;
             border: 1px solid #bfdbfe;
         }
+        .state-chain-break {
+            background: #ffedd5;
+            color: #9a3412;
+            border: 1px solid #fdba74;
+        }
+        .chain-break-bar[hidden] { display: none !important; }
+        .chain-break-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0 0 10px;
+            padding: 8px 10px;
+            border: 1px solid #fdba74;
+            background: #fff7ed;
+            border-radius: 10px;
+            color: #9a3412;
+            font-size: 12px;
+            line-height: 1.35;
+        }
+        .chain-break-bar__text { margin-right: auto; }
+        tr.plan-row.chain-break-row td.pos-cell,
+        tr.plan-row.chain-break-row:hover td.pos-cell,
+        tbody tr.plan-row.chain-break-row:hover td.pos-cell.frozen-col {
+            background: #fff7ed !important;
+            box-shadow: inset 4px 0 0 #ea580c;
+        }
+        tr.plan-row.chain-break-row td.date-cell.chain-break-work,
+        tr.plan-row.chain-break-row:hover td.date-cell.chain-break-work {
+            background: #ffedd5 !important;
+            outline: 2px solid #fb923c;
+            outline-offset: -2px;
+        }
+        tr.plan-row.chain-break-row td.date-cell.chain-break-gap,
+        tr.plan-row.chain-break-row:hover td.date-cell.chain-break-gap {
+            background: #fee2e2 !important;
+            outline: 2px dashed #dc2626;
+            outline-offset: -2px;
+        }
         .alert {
             padding: 14px 16px;
             background: #fef2f2;
@@ -2173,11 +2510,15 @@ $pageTitle = 'Активные позиции';
         <div id="pendingMovesBar" class="pending-bar">
             <span id="pendingMovesText" class="pending-text">Изменений в очереди: 0</span>
             <button type="button" id="toggleQueuePanelBtn" class="toolbar-btn secondary" aria-pressed="false">Очередь</button>
-            <button type="button" id="normalizePlanBtn" class="toolbar-btn secondary">Нормализовать план</button>
-            <button type="button" id="clearLocksBtn" class="toolbar-btn secondary">Снять блокировку</button>
+            <button type="button" id="normalizePlanBtn" class="toolbar-btn secondary" title="Снять перегруз по нормам и подсветить позиции с разрывом цепочки: несколько смен в работе, затем пауза, затем снова в работе">Нормализовать план</button>
+            <button type="button" id="clearLocksBtn" class="toolbar-btn secondary" title="Снимает только блокировки, которые поставили вы">Снять свои блокировки</button>
             <button type="button" id="undoPendingMoveBtn" class="toolbar-btn secondary">Отменить последнее</button>
             <button type="button" id="clearPendingMovesBtn" class="toolbar-btn secondary">Сбросить все</button>
             <button type="button" id="applyPendingMovesBtn" class="toolbar-btn">Применить</button>
+        </div>
+        <div id="chainBreakBar" class="chain-break-bar" hidden>
+            <span id="chainBreakText" class="chain-break-bar__text"></span>
+            <button type="button" id="clearChainBreakBtn" class="toolbar-btn secondary">Снять подсветку</button>
         </div>
         <div id="moveQueuePanel" class="queue-panel" hidden>
             <div class="queue-panel__head">
@@ -2644,7 +2985,7 @@ $pageTitle = 'Активные позиции';
 <div id="normalizePreviewModal" class="norm-modal" hidden>
     <div class="norm-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="normalizePreviewTitle">
         <div id="normalizePreviewTitle" class="norm-modal__head">Предлагаемые изменения</div>
-        <div class="norm-modal__sub">Выберите, какие переносы добавить в очередь.</div>
+        <div id="normalizePreviewSub" class="norm-modal__sub">Выберите, какие переносы добавить в очередь.</div>
         <ul id="normalizePreviewList" class="norm-list"></ul>
         <div class="norm-modal__foot">
             <button type="button" id="normalizePreviewCancelBtn" class="toolbar-btn secondary">Отмена</button>
@@ -2725,6 +3066,7 @@ $pageTitle = 'Активные позиции';
         const normTotalInput = document.getElementById('indNormTotalInput');
         const maxListPctInput = document.getElementById('indMaxListPctInput');
         const normalizePreviewModal = document.getElementById('normalizePreviewModal');
+        const normalizePreviewSub = document.getElementById('normalizePreviewSub');
         const normalizePreviewList = document.getElementById('normalizePreviewList');
         const normalizePreviewApplyBtn = document.getElementById('normalizePreviewApplyBtn');
         const normalizePreviewCancelBtn = document.getElementById('normalizePreviewCancelBtn');
@@ -2740,6 +3082,9 @@ $pageTitle = 'Активные позиции';
         const debtExpandPopover = document.getElementById('debtExpandPopover');
         const debtExpandPopoverInner = document.getElementById('debtExpandPopoverInner');
         const normalizePlanBtn = document.getElementById('normalizePlanBtn');
+        const chainBreakBar = document.getElementById('chainBreakBar');
+        const chainBreakText = document.getElementById('chainBreakText');
+        const clearChainBreakBtn = document.getElementById('clearChainBreakBtn');
         const applyPendingMovesBtn = document.getElementById('applyPendingMovesBtn');
         const undoPendingMoveBtn = document.getElementById('undoPendingMoveBtn');
         const clearLocksBtn = document.getElementById('clearLocksBtn');
@@ -2771,7 +3116,7 @@ $pageTitle = 'Активные позиции';
         const debtSpreadHint = document.getElementById('debtSpreadHint');
         const debtSpreadCancelBtn = document.getElementById('debtSpreadCancelBtn');
         const debtSpreadApplyBtn = document.getElementById('debtSpreadApplyBtn');
-        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !openGofroPackagesBtn || !toggleGofroCoverageBtn || !togglePressRowsOnlyBtn || !toggleDiameterRowsOnlyBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !maxListPctInput || !normalizePreviewModal || !normalizePreviewList || !normalizePreviewApplyBtn || !normalizePreviewCancelBtn || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !applyPendingMovesPanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !debtExpandPopover || !debtExpandPopoverInner || !normalizePlanBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearLocksBtn || !clearPendingMovesBtn || !addPlanDayBtn || !enterRangeSelectModeBtn || !rangeSelectHint || !planFocusBar || !planFocusLabel || !resetFocusRangeBtn || !openHiddenOrdersBtn || !hiddenOrdersModal || !hiddenOrdersSearchInput || !hiddenOrdersList || !hiddenOrdersShowAllBtn || !hiddenOrdersApplyBtn || !hiddenOrdersCancelBtn || !hiddenOrdersBadge || !debtCellContextMenu || !debtCellCtxSpread || !debtSpreadModal || !debtSpreadMeta || !debtSpreadStartSelect || !debtSpreadBatchInput || !debtSpreadQtyInput || !debtSpreadHint || !debtSpreadCancelBtn || !debtSpreadApplyBtn) {
+        if (!btn || !rowIndicatorsBtn || !modal || !openSettingsBtn || !openGofroPackagesBtn || !toggleGofroCoverageBtn || !togglePressRowsOnlyBtn || !toggleDiameterRowsOnlyBtn || !saveBtn || !cancelBtn || !resetBtn || !maxPressInput || !norm600Input || !normDInput || !normTotalInput || !maxListPctInput || !normalizePreviewModal || !normalizePreviewSub || !normalizePreviewList || !normalizePreviewApplyBtn || !normalizePreviewCancelBtn || !pendingMovesBar || !pendingMovesText || !toggleQueuePanelBtn || !moveQueuePanel || !closeQueuePanelBtn || !applyPendingMovesPanelBtn || !moveQueueEmpty || !moveQueueList || !dragPreview || !debtExpandPopover || !debtExpandPopoverInner || !normalizePlanBtn || !chainBreakBar || !chainBreakText || !clearChainBreakBtn || !applyPendingMovesBtn || !undoPendingMoveBtn || !clearLocksBtn || !clearPendingMovesBtn || !addPlanDayBtn || !enterRangeSelectModeBtn || !rangeSelectHint || !planFocusBar || !planFocusLabel || !resetFocusRangeBtn || !openHiddenOrdersBtn || !hiddenOrdersModal || !hiddenOrdersSearchInput || !hiddenOrdersList || !hiddenOrdersShowAllBtn || !hiddenOrdersApplyBtn || !hiddenOrdersCancelBtn || !hiddenOrdersBadge || !debtCellContextMenu || !debtCellCtxSpread || !debtSpreadModal || !debtSpreadMeta || !debtSpreadStartSelect || !debtSpreadBatchInput || !debtSpreadQtyInput || !debtSpreadHint || !debtSpreadCancelBtn || !debtSpreadApplyBtn) {
             return;
         }
         const storageKey = 'activePositionsIndicatorSettings';
@@ -2782,7 +3127,6 @@ $pageTitle = 'Активные позиции';
         const pressRowsOnlyStorageKey = 'activePositionsPressRowsOnly';
         const diameterRowsOnlyStorageKey = 'activePositionsDiameterRowsOnly';
         const queuePanelStorageKey = 'activePositionsQueuePanelOpen';
-        const lockStorageKey = `activePositionsLockedShifts:${window.location.pathname}`;
         const hiddenOrdersStorageKey = `activePositionsHiddenOrders:${window.location.pathname}`;
         const pendingMovesStorageKey = `activePositionsPendingMoves:${window.location.pathname}`;
         const FROZEN_COL_COUNT = 8;
@@ -3761,7 +4105,16 @@ $pageTitle = 'Активные позиции';
             });
             syncPlanDatesEdgeColumn();
         }
-        const lockedShiftKeys = loadLockedShiftKeys();
+        const currentUserId = <?= (int)$activePositionsUserId ?>;
+        const initialShiftLocks = <?= json_encode($shiftLocks, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+        const shiftLocks = new Map();
+        let isLockRequest = false;
+        applyShiftLocks(initialShiftLocks);
+        try {
+            localStorage.removeItem(`activePositionsLockedShifts:${window.location.pathname}`);
+        } catch (e) {
+            // старые локальные блокировки больше не используются
+        }
         let dragContext = null;
         let isMoving = false;
         let isApplyingPendingMoves = false;
@@ -3905,29 +4258,99 @@ $pageTitle = 'Активные позиции';
             return th;
         }
 
-        function loadLockedShiftKeys() {
+        function shiftLockMapKey(order, filterKey, date) {
+            order = String(order || '').trim();
+            filterKey = String(filterKey || '').trim();
+            date = String(date || '').trim();
+            if (!order || !filterKey || !date) {
+                return '';
+            }
+            return `${order}|${filterKey}|${date}`;
+        }
+
+        function applyShiftLocks(list) {
+            shiftLocks.clear();
+            (Array.isArray(list) ? list : []).forEach(function (item) {
+                const key = shiftLockMapKey(item.order_number, item.filter_key, item.day_date);
+                if (!key) {
+                    return;
+                }
+                shiftLocks.set(key, {
+                    userId: parseInt(item.user_id, 10) || 0,
+                    userName: String(item.user_name || ''),
+                });
+            });
+            document.querySelectorAll('td.date-cell').forEach(refreshCellLockState);
+        }
+
+        function getShiftLock(cell) {
+            const key = getCellLockKey(cell);
+            if (!key || !shiftLocks.has(key)) {
+                return null;
+            }
+            return shiftLocks.get(key);
+        }
+
+        function lockTooltip(info) {
+            const name = String((info && info.userName) || '').trim() || 'другой пользователь';
+            if ((parseInt(info && info.userId, 10) || 0) === currentUserId) {
+                return 'Заблокировали вы. Клик снимет блокировку.';
+            }
+            return `Заблокировал: ${name}. Снять может только этот пользователь.`;
+        }
+
+        function countMyShiftLocks() {
+            let count = 0;
+            shiftLocks.forEach(function (info) {
+                if ((parseInt(info.userId, 10) || 0) === currentUserId) {
+                    count += 1;
+                }
+            });
+            return count;
+        }
+
+        async function postShiftLockAction(body, isPoll) {
+            const headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Requested-With': 'fetch',
+            };
+            if (isPoll) {
+                headers['X-Active-Positions-Poll'] = '1';
+            }
+            const response = await fetch(window.location.pathname + window.location.search, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: headers,
+                body: JSON.stringify(body),
+            });
+            const contentType = response.headers.get('content-type') || '';
+            if (response.status === 401 || contentType.indexOf('text/html') !== -1) {
+                return { ok: false, error: 'Сессия истекла. Войдите снова.', login: true };
+            }
             try {
-                const raw = localStorage.getItem(lockStorageKey);
-                if (!raw) {
-                    return new Set();
+                const data = await response.json();
+                if (!data || typeof data !== 'object') {
+                    return { ok: false, error: 'Не удалось обновить блокировки.' };
                 }
-                const parsed = JSON.parse(raw);
-                if (!Array.isArray(parsed)) {
-                    return new Set();
-                }
-                return new Set(parsed
-                    .map(function (item) { return String(item || '').trim(); })
-                    .filter(function (item) { return item !== ''; }));
+                return data;
             } catch (e) {
-                return new Set();
+                return { ok: false, error: 'Не удалось обновить блокировки.' };
             }
         }
 
-        function persistLockedShiftKeys() {
+        async function refreshShiftLocksFromServer(options) {
+            const force = !!(options && options.force);
+            if (!force && (isLockRequest || isApplyingPendingMoves || dragContext || document.visibilityState === 'hidden')) {
+                return;
+            }
             try {
-                localStorage.setItem(lockStorageKey, JSON.stringify(Array.from(lockedShiftKeys)));
+                const data = await postShiftLockAction({ action: 'list_shift_locks' }, true);
+                if (data && data.ok && Array.isArray(data.locks)) {
+                    applyShiftLocks(data.locks);
+                }
             } catch (e) {
-                // ignore storage write errors
+                // сеть недоступна: оставляем блокировки, которые уже на экране
             }
         }
 
@@ -3952,8 +4375,7 @@ $pageTitle = 'Активные позиции';
         }
 
         function isCellLocked(cell) {
-            const key = getCellLockKey(cell);
-            return key !== '' && lockedShiftKeys.has(key);
+            return !!getShiftLock(cell);
         }
 
         function refreshCellLockState(cell) {
@@ -3961,61 +4383,96 @@ $pageTitle = 'Активные позиции';
                 return;
             }
             const qty = Math.max(0, parseInt(cell.dataset.qty || '0', 10) || 0);
-            const key = getCellLockKey(cell);
-            let wasUpdated = false;
-            if (qty <= 0 && key !== '') {
-                wasUpdated = lockedShiftKeys.delete(key) || wasUpdated;
-            }
-            const locked = qty > 0 && key !== '' && lockedShiftKeys.has(key);
+            const info = getShiftLock(cell);
+            const locked = !!info && qty > 0;
             cell.classList.toggle('date-cell--locked', locked);
             cell.classList.toggle('locked', locked);
             if (locked) {
                 cell.dataset.locked = '1';
                 cell.setAttribute('draggable', 'false');
-                cell.title = 'Зафиксировано';
-            } else {
-                delete cell.dataset.locked;
-                cell.setAttribute('draggable', canEditPlan && qty > 0 ? 'true' : 'false');
+                cell.title = lockTooltip(info);
+                return;
+            }
+            delete cell.dataset.locked;
+            cell.setAttribute('draggable', canEditPlan && qty > 0 ? 'true' : 'false');
+            const title = String(cell.title || '');
+            if (title.indexOf('Заблокир') === 0 || title === 'Зафиксировано') {
+                cell.title = getCellTitle(qty);
+            } else if (title === '') {
                 cell.title = getCellTitle(qty);
             }
-            if (wasUpdated) {
-                persistLockedShiftKeys();
-            }
         }
 
-        function toggleCellLock(cell) {
-            if (!canEditPlan) {
+        async function toggleCellLock(cell) {
+            if (!canEditPlan || !cell || isLockRequest || isApplyingPendingMoves) {
                 return;
             }
-            if (!cell) {
-                return;
-            }
+            const info = getShiftLock(cell);
             const qty = Math.max(0, parseInt(cell.dataset.qty || '0', 10) || 0);
-            if (qty <= 0) {
+            if (!info && qty <= 0) {
                 return;
             }
-            const key = getCellLockKey(cell);
-            if (!key) {
+            if (info && (parseInt(info.userId, 10) || 0) !== currentUserId) {
+                alert(lockTooltip(info));
                 return;
             }
-            if (lockedShiftKeys.has(key)) {
-                lockedShiftKeys.delete(key);
-            } else {
-                lockedShiftKeys.add(key);
+            const order = String(cell.dataset.order || '').trim();
+            const filter = String(cell.dataset.filter || '').trim();
+            const dayDate = String(cell.dataset.date || '').trim();
+            if (!order || !filter || !dayDate) {
+                return;
             }
-            persistLockedShiftKeys();
-            refreshCellLockState(cell);
+            isLockRequest = true;
+            try {
+                const data = await postShiftLockAction({
+                    action: info ? 'unlock_shift' : 'lock_shift',
+                    order_number: order,
+                    filter_name: filter,
+                    day_date: dayDate,
+                }, false);
+                if (data && Array.isArray(data.locks)) {
+                    applyShiftLocks(data.locks);
+                }
+                if (!data || !data.ok) {
+                    if (data && data.login) {
+                        promptRelogin(data.error);
+                        return;
+                    }
+                    alert((data && data.error) ? data.error : 'Не удалось изменить блокировку.');
+                }
+            } catch (e) {
+                alert('Не удалось изменить блокировку.');
+            } finally {
+                isLockRequest = false;
+            }
         }
 
-        function clearAllCellLocks() {
-            if (lockedShiftKeys.size === 0) {
+        async function clearAllCellLocks() {
+            if (!canEditPlan || isLockRequest || isApplyingPendingMoves) {
                 return;
             }
-            lockedShiftKeys.clear();
-            persistLockedShiftKeys();
-            dateCells.forEach(function (cell) {
-                refreshCellLockState(cell);
-            });
+            const mine = countMyShiftLocks();
+            if (mine <= 0) {
+                alert('Нет ваших блокировок. Чужую может снять только тот, кто её поставил.');
+                return;
+            }
+            if (!window.confirm(`Снять ваши блокировки (${mine})? Чужие останутся.`)) {
+                return;
+            }
+            isLockRequest = true;
+            try {
+                const data = await postShiftLockAction({ action: 'unlock_my_shifts' }, false);
+                if (data && Array.isArray(data.locks)) {
+                    applyShiftLocks(data.locks);
+                }
+                if (!data || !data.ok) {
+                    alert((data && data.error) ? data.error : 'Не удалось снять блокировки.');
+                }
+            } catch (e) {
+                alert('Не удалось снять блокировки.');
+            } finally {
+                isLockRequest = false;
+            }
         }
 
         function recalcHeaderIndicatorsFromTable() {
@@ -5744,6 +6201,216 @@ $pageTitle = 'Активные позиции';
             };
         }
 
+        let chainBreakItems = [];
+
+        function ruNoun(n, one, few, many) {
+            const n10 = n % 10;
+            const n100 = n % 100;
+            if (n10 === 1 && n100 !== 11) {
+                return one;
+            }
+            if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) {
+                return few;
+            }
+            return many;
+        }
+
+        function isWeekendPlanCell(cell) {
+            if (!cell) {
+                return false;
+            }
+            if (cell.classList.contains('weekend')) {
+                return true;
+            }
+            const iso = String(cell.dataset.date || '');
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+                return false;
+            }
+            const utcDay = new Date(iso + 'T00:00:00Z').getUTCDay();
+            return utcDay === 0 || utcDay === 6;
+        }
+
+        function formatIsoDateRanges(dates) {
+            if (!dates.length) {
+                return '';
+            }
+            const parts = [];
+            let start = dates[0];
+            let prev = dates[0];
+            function pushRange(a, b) {
+                parts.push(a === b ? toShortDate(a) : `${toShortDate(a)}–${toShortDate(b)}`);
+            }
+            for (let i = 1; i < dates.length; i += 1) {
+                const prevMs = Date.parse(prev + 'T00:00:00Z');
+                const curMs = Date.parse(dates[i] + 'T00:00:00Z');
+                if (curMs - prevMs === 86400000) {
+                    prev = dates[i];
+                    continue;
+                }
+                pushRange(start, prev);
+                start = dates[i];
+                prev = dates[i];
+            }
+            pushRange(start, prev);
+            return parts.join(', ');
+        }
+
+        function chainBreakSummary(item) {
+            const workDates = item.workCells.map(function (cell) {
+                return cell.dataset.date || '';
+            }).filter(Boolean);
+            const gapDates = item.gapCells.map(function (cell) {
+                return cell.dataset.date || '';
+            }).filter(Boolean);
+            return `Работа ${formatIsoDateRanges(workDates)}; пауза ${formatIsoDateRanges(gapDates)}`;
+        }
+
+        function restoreChainBreakTitle(el) {
+            if (!el || el.dataset.chainBreakTitleSaved !== '1') {
+                return;
+            }
+            const prev = el.dataset.chainBreakTitlePrev || '';
+            if (prev) {
+                el.setAttribute('title', prev);
+            } else {
+                el.removeAttribute('title');
+            }
+            delete el.dataset.chainBreakTitleSaved;
+            delete el.dataset.chainBreakTitlePrev;
+        }
+
+        function setChainBreakTitle(el, text) {
+            if (!el) {
+                return;
+            }
+            if (el.dataset.chainBreakTitleSaved !== '1') {
+                el.dataset.chainBreakTitleSaved = '1';
+                el.dataset.chainBreakTitlePrev = el.getAttribute('title') || '';
+            }
+            el.title = text;
+        }
+
+        function clearChainBreakHighlight() {
+            chainBreakItems = [];
+            document.querySelectorAll('tr.plan-row.chain-break-row').forEach(function (row) {
+                row.classList.remove('chain-break-row');
+            });
+            document.querySelectorAll('td.date-cell.chain-break-work, td.date-cell.chain-break-gap').forEach(function (cell) {
+                cell.classList.remove('chain-break-work', 'chain-break-gap');
+                restoreChainBreakTitle(cell);
+            });
+            document.querySelectorAll('.state-badge.state-chain-break').forEach(function (badge) {
+                badge.remove();
+            });
+            chainBreakBar.hidden = true;
+            chainBreakText.textContent = '';
+        }
+
+        /** Разрыв цепочки: позиция стоит в нескольких сменах, между ними есть пустой рабочий день, потом снова стоит в плане. Выходные паузой не считаются. */
+        function collectChainBreaks() {
+            const breaks = [];
+            document.querySelectorAll('tr.plan-row').forEach(function (row) {
+                if (row.hidden) {
+                    return;
+                }
+                const cells = Array.from(row.querySelectorAll('td.date-cell')).sort(function (a, b) {
+                    return String(a.dataset.date || '').localeCompare(String(b.dataset.date || ''));
+                });
+                let first = -1;
+                let last = -1;
+                cells.forEach(function (cell, idx) {
+                    const qty = parseInt(cell.dataset.qty || '0', 10) || 0;
+                    if (qty > 0) {
+                        if (first < 0) {
+                            first = idx;
+                        }
+                        last = idx;
+                    }
+                });
+                if (first < 0 || last <= first) {
+                    return;
+                }
+                const workCells = [];
+                const gapCells = [];
+                for (let i = first; i <= last; i += 1) {
+                    const cell = cells[i];
+                    const qty = parseInt(cell.dataset.qty || '0', 10) || 0;
+                    if (qty > 0) {
+                        workCells.push(cell);
+                        continue;
+                    }
+                    if (!isWeekendPlanCell(cell)) {
+                        gapCells.push(cell);
+                    }
+                }
+                if (gapCells.length === 0 || workCells.length < 2) {
+                    return;
+                }
+                breaks.push({
+                    row: row,
+                    order: row.dataset.order || '',
+                    filter: row.dataset.filter || '',
+                    workCells: workCells,
+                    gapCells: gapCells,
+                });
+            });
+            return breaks;
+        }
+
+        function applyChainBreakHighlight(breaks) {
+            clearChainBreakHighlight();
+            chainBreakItems = breaks;
+            if (breaks.length === 0) {
+                return;
+            }
+            breaks.forEach(function (item) {
+                const summary = chainBreakSummary(item);
+                item.row.classList.add('chain-break-row');
+                const badges = item.row.querySelector('.state-cell__badges');
+                if (badges) {
+                    const badge = document.createElement('span');
+                    badge.className = 'state-badge state-chain-break';
+                    badge.textContent = 'Разрыв';
+                    badge.title = summary;
+                    badges.appendChild(badge);
+                }
+                item.workCells.forEach(function (cell) {
+                    cell.classList.add('chain-break-work');
+                    setChainBreakTitle(cell, `Разрыв цепочки. ${summary}`);
+                });
+                item.gapCells.forEach(function (cell) {
+                    cell.classList.add('chain-break-gap');
+                    setChainBreakTitle(cell, `Разрыв цепочки: в этот рабочий день позицию не делали. ${summary}`);
+                });
+            });
+            const n = breaks.length;
+            chainBreakText.textContent = `Разрыв цепочки: ${n} ${ruNoun(n, 'позиция', 'позиции', 'позиций')}. Оранжевым — смены в работе, красным пунктиром — рабочие дни паузы между ними. Выходные паузой не считаются.`;
+            chainBreakBar.hidden = false;
+        }
+
+        function refreshChainBreakHighlight() {
+            const breaks = collectChainBreaks();
+            applyChainBreakHighlight(breaks);
+            return breaks;
+        }
+
+        function syncChainBreakHighlightIfActive() {
+            if (chainBreakBar.hidden) {
+                return;
+            }
+            refreshChainBreakHighlight();
+        }
+
+        function scrollToChainBreak(item) {
+            if (!item) {
+                return;
+            }
+            const cell = (item.gapCells && item.gapCells[0]) || (item.workCells && item.workCells[0]) || item.row;
+            if (cell && cell.scrollIntoView) {
+                cell.scrollIntoView({ block: 'center', inline: 'center' });
+            }
+        }
+
         function closeNormalizePreviewModal() {
             normalizationDraftMoves = [];
             normalizePreviewList.innerHTML = '';
@@ -5752,6 +6419,12 @@ $pageTitle = 'Активные позиции';
 
         function renderNormalizePreviewModal(draftMoves) {
             normalizePreviewList.innerHTML = '';
+            if (chainBreakItems.length > 0) {
+                const n = chainBreakItems.length;
+                normalizePreviewSub.textContent = `Выберите, какие переносы добавить в очередь. Разрыв цепочки: в таблице подсвечено ${n} ${ruNoun(n, 'позиция', 'позиции', 'позиций')} — подсветка останется после закрытия.`;
+            } else {
+                normalizePreviewSub.textContent = 'Выберите, какие переносы добавить в очередь.';
+            }
             draftMoves.forEach(function (draft, idx) {
                 const item = document.createElement('li');
                 item.className = 'norm-item';
@@ -5804,6 +6477,7 @@ $pageTitle = 'Активные позиции';
                 pushPendingMove(queuedMove);
             });
             closeNormalizePreviewModal();
+            syncChainBreakHighlightIfActive();
             if (skipped.length > 0) {
                 alert(`Часть предложений не применена: ${skipped.join(', ')}`);
             }
@@ -5816,11 +6490,15 @@ $pageTitle = 'Активные позиции';
             if (isApplyingPendingMoves) {
                 return;
             }
+            const chainBreaks = refreshChainBreakHighlight();
             const settings = getSettings();
             const normTotal = Math.max(1, parseInt(settings.normTotal, 10) || 1);
             const normD = Math.max(1, parseInt(settings.normD, 10) || 1);
             const dates = getUniquePlanDates();
             if (dates.length === 0) {
+                if (chainBreaks.length > 0) {
+                    scrollToChainBreak(chainBreaks[0]);
+                }
                 return;
             }
 
@@ -5944,8 +6622,13 @@ $pageTitle = 'Активные позиции';
                 }
             }
 
+            if (draftMoves.length === 0 && chainBreaks.length > 0) {
+                scrollToChainBreak(chainBreaks[0]);
+            }
             if (draftMoves.length === 0 && unresolved.size === 0) {
-                alert('Нормализация: перегрузов по нормам total/D не найдено.');
+                if (chainBreaks.length === 0) {
+                    alert('Нормализация: перегрузов по нормам total/D не найдено.');
+                }
                 return;
             }
             if (draftMoves.length > 0) {
@@ -5956,7 +6639,11 @@ $pageTitle = 'Активные позиции';
                 return;
             }
             const unresolvedList = Array.from(unresolved).join(', ');
-            alert(`Нормализация: найдено ${draftMoves.length} предложений, но остались перегрузы по датам: ${unresolvedList}.`);
+            let overloadMessage = `Нормализация: найдено ${draftMoves.length} предложений, но остались перегрузы по датам: ${unresolvedList}.`;
+            if (chainBreaks.length > 0) {
+                overloadMessage += ` Разрыв цепочки: подсвечено ${chainBreaks.length} ${ruNoun(chainBreaks.length, 'позиция', 'позиции', 'позиций')}.`;
+            }
+            alert(overloadMessage);
         }
 
         function applyQueuedMoveChanges(queuedMove, direction) {
@@ -6171,6 +6858,7 @@ $pageTitle = 'Активные позиции';
             }
             const count = backup.moves.length;
             if (!window.confirm(`Найдены несохранённые изменения (${count} операций). Восстановить в очередь?`)) {
+                clearPendingMovesBackup();
                 return;
             }
             let restored = 0;
@@ -6206,6 +6894,7 @@ $pageTitle = 'Активные позиции';
             updatePendingBarState();
             renderMoveQueuePanel();
             persistPendingMovesBackup();
+            syncChainBreakHighlightIfActive();
         }
 
         function removePendingMoveAt(index) {
@@ -6233,6 +6922,7 @@ $pageTitle = 'Активные позиции';
             renderMoveQueuePanel();
             clearQueuePreview();
             persistPendingMovesBackup();
+            syncChainBreakHighlightIfActive();
         }
 
         function clearPendingMoves() {
@@ -6243,6 +6933,7 @@ $pageTitle = 'Активные позиции';
             updatePendingBarState();
             renderMoveQueuePanel();
             persistPendingMovesBackup();
+            syncChainBreakHighlightIfActive();
         }
 
         function promptRelogin(message, loginUrl) {
@@ -6320,6 +7011,7 @@ $pageTitle = 'Активные позиции';
                 if (/Unexpected token|JSON|Failed to fetch|NetworkError/i.test(msg)) {
                     promptRelogin('Не удалось сохранить: возможно, сессия истекла.');
                 } else {
+                    await refreshShiftLocksFromServer({ force: true });
                     alert(msg);
                 }
             } finally {
@@ -6809,6 +7501,14 @@ $pageTitle = 'Активные позиции';
             }
             clearAllCellLocks();
         });
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') {
+                refreshShiftLocksFromServer();
+            }
+        });
+        setInterval(function () {
+            refreshShiftLocksFromServer();
+        }, 20000);
         addPlanDayBtn.addEventListener('click', function () {
             if (isApplyingPendingMoves) {
                 return;
@@ -6895,6 +7595,9 @@ $pageTitle = 'Активные позиции';
         });
         normalizePlanBtn.addEventListener('click', function () {
             normalizePlanIntoQueue();
+        });
+        clearChainBreakBtn.addEventListener('click', function () {
+            clearChainBreakHighlight();
         });
         normalizePreviewApplyBtn.addEventListener('click', function () {
             applySelectedNormalizationDraftMoves();

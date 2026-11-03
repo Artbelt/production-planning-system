@@ -160,6 +160,9 @@ class AuthManager {
         if (strpos($script, '/auth/api/') !== false) {
             return;
         }
+        if (($_SERVER['HTTP_X_ACTIVE_POSITIONS_POLL'] ?? '') === '1') {
+            return;
+        }
         
         $uri = isset($_SERVER['REQUEST_URI']) ? substr((string) $_SERVER['REQUEST_URI'], 0, 1000) : '';
         $details = json_encode([
