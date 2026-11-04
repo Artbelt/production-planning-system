@@ -469,6 +469,26 @@ $allRequests = getAllLaserRequests($databases);
             transform: scale(1.06);
         }
 
+        .section-title-actions {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .dxf-rect-open {
+            width: auto;
+            height: 28px;
+            padding: 0 10px;
+            background: var(--panel);
+            color: var(--accent-solid);
+            border: 1.5px solid var(--accent-solid);
+            box-shadow: none;
+            font-size: 13px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
         .stock-form-grid-2 {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -504,6 +524,8 @@ $allRequests = getAllLaserRequests($databases);
             box-shadow: var(--shadow);
             max-width: 440px;
             width: 100%;
+            max-height: calc(100vh - 32px);
+            overflow: auto;
             padding: 22px 22px 18px;
             position: relative;
         }
@@ -520,6 +542,52 @@ $allRequests = getAllLaserRequests($databases);
             font-size: 13px;
             color: var(--muted);
             line-height: 1.45;
+        }
+
+        .modal-field .modal-hint {
+            margin: 0 0 10px 0;
+        }
+
+        .modal-error {
+            margin: 8px 0 0 0;
+            font-size: 13px;
+            color: #b91c1c;
+            line-height: 1.4;
+        }
+
+        .dxf-gap-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .dxf-type-switch {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .modal-field .dxf-type-option {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin: 0;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .modal-field .dxf-type-option:has(input:checked) {
+            border-color: var(--accent-solid);
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.12);
+        }
+
+        .modal-field .dxf-type-option input {
+            width: auto;
+            margin: 0;
         }
 
         .modal-close {
@@ -1004,11 +1072,18 @@ $allRequests = getAllLaserRequests($databases);
                         <span id="last-update" style="margin-left: 10px;"></span>
                     </span>
                 </div>
-                <button type="button"
-                        class="stock-request-open"
-                        id="openStockRequestModal"
-                        title="Заявка на поддержание складского запаса (себе)"
-                        aria-label="Создать заявку на поддержание складского запаса">+</button>
+                <div class="section-title-actions">
+                    <button type="button"
+                            class="stock-request-open dxf-rect-open"
+                            id="openDxfModal"
+                            title="Создать вставку"
+                            aria-label="Создать вставку">Создать вставку</button>
+                    <button type="button"
+                            class="stock-request-open"
+                            id="openStockRequestModal"
+                            title="Заявка на поддержание складского запаса (себе)"
+                            aria-label="Создать заявку на поддержание складского запаса">+</button>
+                </div>
             </div>
             
             <div class="filters">
@@ -1167,6 +1242,69 @@ $allRequests = getAllLaserRequests($databases);
                 <div class="modal-actions">
                     <button type="button" class="btn-modal-secondary" id="cancelStockRequestModal">Отмена</button>
                     <button type="submit" class="btn-modal-primary">Создать заявку</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="dxfRectModal" role="dialog" aria-modal="true" aria-labelledby="dxfModalTitle">
+        <div class="modal-box">
+            <button type="button" class="modal-close" id="closeDxfModal" aria-label="Закрыть">×</button>
+            <h3 id="dxfModalTitle">Создать вставку</h3>
+            <p class="modal-hint">Контур синий, стиль «основная». Пунктир чёрный и на 1 мм короче с каждой стороны.</p>
+            <form id="dxfRectForm">
+                <div class="modal-field">
+                    <label>Тип</label>
+                    <div class="dxf-type-switch" role="radiogroup" aria-label="Тип прямоугольника">
+                        <label class="dxf-type-option">
+                            <input type="radio" name="dxf_line_count" value="4" checked>
+                            4 линии
+                        </label>
+                        <label class="dxf-type-option">
+                            <input type="radio" name="dxf_line_count" value="3">
+                            3 линии
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-field">
+                    <div class="modal-row-2">
+                        <div>
+                            <label for="dxf_width">Ширина, мм</label>
+                            <input type="number" id="dxf_width" required min="0.1" max="10000" step="any" value="100" inputmode="decimal">
+                        </div>
+                        <div>
+                            <label for="dxf_height">Высота, мм</label>
+                            <input type="number" id="dxf_height" required min="0.1" max="10000" step="any" value="50" inputmode="decimal">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-field">
+                    <label>Расстояния между линиями, мм</label>
+                    <p class="modal-hint">Снизу вверх: от нижнего края до первой линии, затем промежуток между каждой следующей.</p>
+                    <div class="dxf-gap-list">
+                        <div>
+                            <label for="dxf_gap_1">От низа до 1-й</label>
+                            <input type="number" id="dxf_gap_1" required min="0.1" max="10000" step="any" value="10" inputmode="decimal">
+                        </div>
+                        <div>
+                            <label for="dxf_gap_2">Между 1-й и 2-й</label>
+                            <input type="number" id="dxf_gap_2" required min="0.1" max="10000" step="any" value="10" inputmode="decimal">
+                        </div>
+                        <div>
+                            <label for="dxf_gap_3">Между 2-й и 3-й</label>
+                            <input type="number" id="dxf_gap_3" required min="0.1" max="10000" step="any" value="10" inputmode="decimal">
+                        </div>
+                        <div id="dxf_gap_4_row">
+                            <label for="dxf_gap_4">Между 3-й и 4-й</label>
+                            <input type="number" id="dxf_gap_4" required min="0.1" max="10000" step="any" value="10" inputmode="decimal">
+                        </div>
+                    </div>
+                    <p class="modal-hint" id="dxfDashPreview"></p>
+                    <p class="modal-error" id="dxfRectError" hidden></p>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-modal-secondary" id="cancelDxfModal">Отмена</button>
+                    <button type="submit" class="btn-modal-primary">Скачать DXF</button>
                 </div>
             </form>
         </div>
@@ -1847,6 +1985,226 @@ $allRequests = getAllLaserRequests($databases);
             if (m) m.classList.remove('is-open');
         }
 
+        function openDxfModal() {
+            const m = document.getElementById('dxfRectModal');
+            if (m) {
+                m.classList.add('is-open');
+                document.getElementById('dxf_width')?.focus();
+                document.getElementById('dxf_width')?.select();
+            }
+        }
+
+        function closeDxfModal() {
+            const m = document.getElementById('dxfRectModal');
+            if (m) m.classList.remove('is-open');
+        }
+
+        function formatDxfNumber(value) {
+            const rounded = Math.round(value * 1000) / 1000;
+            return String(rounded);
+        }
+
+        function encodeWindows1251(text) {
+            const cyr = {
+                'А': 0xC0, 'Б': 0xC1, 'В': 0xC2, 'Г': 0xC3, 'Д': 0xC4, 'Е': 0xC5, 'Ж': 0xC6, 'З': 0xC7,
+                'И': 0xC8, 'Й': 0xC9, 'К': 0xCA, 'Л': 0xCB, 'М': 0xCC, 'Н': 0xCD, 'О': 0xCE, 'П': 0xCF,
+                'Р': 0xD0, 'С': 0xD1, 'Т': 0xD2, 'У': 0xD3, 'Ф': 0xD4, 'Х': 0xD5, 'Ц': 0xD6, 'Ч': 0xD7,
+                'Ш': 0xD8, 'Щ': 0xD9, 'Ъ': 0xDA, 'Ы': 0xDB, 'Ь': 0xDC, 'Э': 0xDD, 'Ю': 0xDE, 'Я': 0xDF,
+                'а': 0xE0, 'б': 0xE1, 'в': 0xE2, 'г': 0xE3, 'д': 0xE4, 'е': 0xE5, 'ж': 0xE6, 'з': 0xE7,
+                'и': 0xE8, 'й': 0xE9, 'к': 0xEA, 'л': 0xEB, 'м': 0xEC, 'н': 0xED, 'о': 0xEE, 'п': 0xEF,
+                'р': 0xF0, 'с': 0xF1, 'т': 0xF2, 'у': 0xF3, 'ф': 0xF4, 'х': 0xF5, 'ц': 0xF6, 'ч': 0xF7,
+                'ш': 0xF8, 'щ': 0xF9, 'ъ': 0xFA, 'ы': 0xFB, 'ь': 0xFC, 'э': 0xFD, 'ю': 0xFE, 'я': 0xFF,
+                'Ё': 0xA8, 'ё': 0xB8
+            };
+            const bytes = new Uint8Array(text.length);
+            for (let i = 0; i < text.length; i++) {
+                const code = text.charCodeAt(i);
+                bytes[i] = code < 128 ? code : (cyr[text[i]] ?? 0x3F);
+            }
+            return bytes;
+        }
+
+        function buildRectangleDxf(width, height, dashYs) {
+            const w = formatDxfNumber(width);
+            const h = formatDxfNumber(height);
+            const style = 'основная';
+            const dashStyle = 'пунктирная';
+            const contourColor = '5';
+            const dashColor = '7';
+            const x1 = formatDxfNumber(1);
+            const x2 = formatDxfNumber(width - 1);
+            const lines = [
+                '0', 'SECTION',
+                '2', 'HEADER',
+                '9', '$ACADVER',
+                '1', 'AC1009',
+                '9', '$DWGCODEPAGE',
+                '3', 'ANSI_1251',
+                '9', '$INSUNITS',
+                '70', '4',
+                '0', 'ENDSEC',
+                '0', 'SECTION',
+                '2', 'TABLES',
+                '0', 'TABLE',
+                '2', 'LTYPE',
+                '70', '2',
+                '0', 'LTYPE',
+                '2', style,
+                '70', '0',
+                '3', 'Solid',
+                '72', '65',
+                '73', '0',
+                '40', '0.0',
+                '0', 'LTYPE',
+                '2', dashStyle,
+                '70', '0',
+                '3', 'Dashed',
+                '72', '65',
+                '73', '2',
+                '40', '6.0',
+                '49', '3.0',
+                '49', '-3.0',
+                '0', 'ENDTAB',
+                '0', 'TABLE',
+                '2', 'LAYER',
+                '70', '2',
+                '0', 'LAYER',
+                '2', style,
+                '70', '0',
+                '62', contourColor,
+                '6', style,
+                '0', 'LAYER',
+                '2', dashStyle,
+                '70', '0',
+                '62', dashColor,
+                '6', dashStyle,
+                '0', 'ENDTAB',
+                '0', 'ENDSEC',
+                '0', 'SECTION',
+                '2', 'ENTITIES',
+                '0', 'POLYLINE',
+                '8', style,
+                '6', style,
+                '62', contourColor,
+                '66', '1',
+                '70', '1',
+                '0', 'VERTEX',
+                '8', style,
+                '10', '0',
+                '20', '0',
+                '30', '0',
+                '0', 'VERTEX',
+                '8', style,
+                '10', w,
+                '20', '0',
+                '30', '0',
+                '0', 'VERTEX',
+                '8', style,
+                '10', w,
+                '20', h,
+                '30', '0',
+                '0', 'VERTEX',
+                '8', style,
+                '10', '0',
+                '20', h,
+                '30', '0',
+                '0', 'SEQEND'
+            ];
+            dashYs.forEach(function(y) {
+                const yy = formatDxfNumber(y);
+                lines.push(
+                    '0', 'LINE',
+                    '8', dashStyle,
+                    '6', dashStyle,
+                    '62', dashColor,
+                    '10', x1,
+                    '20', yy,
+                    '30', '0',
+                    '11', x2,
+                    '21', yy,
+                    '31', '0'
+                );
+            });
+            lines.push('0', 'ENDSEC', '0', 'EOF', '');
+            return lines.join('\r\n');
+        }
+
+        function readDxfNumber(id) {
+            const el = document.getElementById(id);
+            if (!el) return NaN;
+            return parseFloat(String(el.value).replace(',', '.'));
+        }
+
+        function dxfLineCount() {
+            const checked = document.querySelector('input[name="dxf_line_count"]:checked');
+            return checked && checked.value === '3' ? 3 : 4;
+        }
+
+        function dashLineLayout() {
+            const width = readDxfNumber('dxf_width');
+            const height = readDxfNumber('dxf_height');
+            const count = dxfLineCount();
+            const gaps = [];
+            for (let i = 1; i <= count; i++) {
+                gaps.push(readDxfNumber('dxf_gap_' + i));
+            }
+            if (gaps.some(function(gap) { return !Number.isFinite(gap) || gap <= 0 || gap > 10000; })) {
+                return { count: count, error: 'Каждое расстояние должно быть больше нуля.' };
+            }
+            const ys = [];
+            let y = 0;
+            gaps.forEach(function(gap) {
+                y += gap;
+                ys.push(Math.round(y * 1000) / 1000);
+            });
+            if (!Number.isFinite(width) || width <= 2 || width > 10000) {
+                return { count: count, ys: ys, error: 'Ширина должна быть больше 2 мм: пунктир отступает по 1 мм от левого и правого края.' };
+            }
+            if (!Number.isFinite(height) || height <= 0 || height > 10000) {
+                return { count: count, ys: ys, error: 'Укажите высоту прямоугольника.' };
+            }
+            const lastY = ys[ys.length - 1];
+            if (lastY >= height) {
+                return {
+                    count: count,
+                    ys: ys,
+                    error: 'Линии не помещаются в прямоугольник: последняя на ' + formatDxfNumber(lastY) + ' мм при высоте ' + formatDxfNumber(height) + ' мм.'
+                };
+            }
+            return { count: count, ys: ys };
+        }
+
+        function updateDashPreview() {
+            const preview = document.getElementById('dxfDashPreview');
+            const errorEl = document.getElementById('dxfRectError');
+            const layout = dashLineLayout();
+            if (preview) {
+                preview.textContent = layout.ys
+                    ? 'Высота линий от низа: ' + layout.ys.map(formatDxfNumber).join(', ') + ' мм.'
+                    : '';
+            }
+            if (errorEl) {
+                errorEl.textContent = layout.error || '';
+                errorEl.hidden = !layout.error;
+            }
+            return layout;
+        }
+
+        function downloadRectangleDxf(width, height, dashYs) {
+            const dxf = buildRectangleDxf(width, height, dashYs);
+            const blob = new Blob([encodeWindows1251(dxf)], { type: 'application/dxf' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            const nameW = formatDxfNumber(width).replace('.', '_');
+            const nameH = formatDxfNumber(height).replace('.', '_');
+            link.href = url;
+            link.download = 'rectangle_' + nameW + 'x' + nameH + '_' + dashYs.length + '.dxf';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        }
+
         // Инициализация
         document.addEventListener('DOMContentLoaded', function() {
             const stockModal = document.getElementById('stockRequestModal');
@@ -1856,8 +2214,46 @@ $allRequests = getAllLaserRequests($databases);
             stockModal?.addEventListener('click', function(e) {
                 if (e.target === stockModal) closeStockModal();
             });
+
+            const dxfModal = document.getElementById('dxfRectModal');
+            document.getElementById('openDxfModal')?.addEventListener('click', openDxfModal);
+            document.getElementById('closeDxfModal')?.addEventListener('click', closeDxfModal);
+            document.getElementById('cancelDxfModal')?.addEventListener('click', closeDxfModal);
+            dxfModal?.addEventListener('click', function(e) {
+                if (e.target === dxfModal) closeDxfModal();
+            });
+            function syncDxfLineCount() {
+                const count = dxfLineCount();
+                const row = document.getElementById('dxf_gap_4_row');
+                const input = document.getElementById('dxf_gap_4');
+                if (row) row.hidden = count === 3;
+                if (input) input.required = count === 4;
+                updateDashPreview();
+            }
+
+            document.getElementById('dxfRectForm')?.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const width = readDxfNumber('dxf_width');
+                const height = readDxfNumber('dxf_height');
+                const layout = updateDashPreview();
+                if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 2 || height <= 0 || width > 10000 || height > 10000 || layout.error || !layout.ys) {
+                    return;
+                }
+                downloadRectangleDxf(width, height, layout.ys);
+                closeDxfModal();
+            });
+            ['dxf_width', 'dxf_height', 'dxf_gap_1', 'dxf_gap_2', 'dxf_gap_3', 'dxf_gap_4'].forEach(function(id) {
+                document.getElementById(id)?.addEventListener('input', updateDashPreview);
+            });
+            document.querySelectorAll('input[name="dxf_line_count"]').forEach(function(input) {
+                input.addEventListener('change', syncDxfLineCount);
+            });
+            syncDxfLineCount();
+
             document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape' && stockModal?.classList.contains('is-open')) closeStockModal();
+                if (e.key !== 'Escape') return;
+                if (dxfModal?.classList.contains('is-open')) closeDxfModal();
+                else if (stockModal?.classList.contains('is-open')) closeStockModal();
             });
 
             // Инициализация всплывающего окна
