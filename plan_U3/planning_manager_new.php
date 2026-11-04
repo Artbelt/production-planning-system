@@ -1,7 +1,7 @@
 <?php
 /**
  * Менеджер планирования: витрина этапов под контур
- * active_positions → plan_roll_cutting → gofro_build_plan (+ раскрой как раньше).
+ * active_positions → gofro_build_plan → plan_roll_cutting (+ раскрой как раньше).
  */
 
 require_once __DIR__ . '/../auth/includes/config.php';
@@ -467,23 +467,9 @@ $hWireframe = (int) $maxPctWireframe;
                 </div>
 
                 <div class="stage-section">
-                    <h4 class="stage-title">План порезки бухт</h4>
+                    <h4 class="stage-title">План гофрирования</h4>
                     <?php if (!$build): ?>
                         <span class="badge badge-muted">Нет плана сборки</span>
-                    <?php elseif ($roll): ?>
-                        <span class="badge badge-success">Готово</span>
-                    <?php else: ?>
-                        <span class="badge badge-warning">Нет порезки</span>
-                    <?php endif; ?>
-                    <div class="stage-actions">
-                        <a class="btn-secondary btn-sm btn-full" href="plan_roll_cutting.php?order=<?= $enc ?>" target="_blank" rel="noopener">План порезки</a>
-                    </div>
-                </div>
-
-                <div class="stage-section">
-                    <h4 class="stage-title">План гофрирования</h4>
-                    <?php if (!$roll): ?>
-                        <span class="badge badge-muted">Нет плана порезки</span>
                     <?php elseif ($gofro): ?>
                         <span class="badge badge-success">Готово</span>
                     <?php else: ?>
@@ -491,6 +477,20 @@ $hWireframe = (int) $maxPctWireframe;
                     <?php endif; ?>
                     <div class="stage-actions">
                         <a class="btn-secondary btn-sm btn-full" href="gofro_build_plan.php?max_pct=<?= $hGofro ?>" target="_blank" rel="noopener">План гофро</a>
+                    </div>
+                </div>
+
+                <div class="stage-section">
+                    <h4 class="stage-title">План порезки бухт</h4>
+                    <?php if (!$gofro): ?>
+                        <span class="badge badge-muted">Нет плана гофро</span>
+                    <?php elseif ($roll): ?>
+                        <span class="badge badge-success">Готово</span>
+                    <?php else: ?>
+                        <span class="badge badge-warning">Нет порезки</span>
+                    <?php endif; ?>
+                    <div class="stage-actions">
+                        <a class="btn-secondary btn-sm btn-full" href="plan_roll_cutting.php?order=<?= $enc ?>" target="_blank" rel="noopener">План порезки</a>
                     </div>
                 </div>
 
