@@ -191,12 +191,33 @@ echo '<p>Загружен файл ' . pathinfo($inputFileName,PATHINFO_BASENAME
 @$objPHPExcel = PHPExcel_IOFactory::load($inputFileName);
 
 @$sheetData = $objPHPExcel->getActiveSheet()->toArray(null,true,true,true);
+if (!is_array($sheetData)) {
+    $sheetData = [];
+}
+
+/**
+ * Два варианта файла заявки:
+ * - с пустым первым столбцом: «Марка фильтра» в B, участок в C, период в E и F;
+ * - без пустого столбца: те же поля на одну колонку левее.
+ * Второй вариант сдвигаем вправо, чтобы вывод и сохранение по-прежнему читали B–J.
+ */
+$alignedSheet = u5_align_order_columns($sheetData);
+$sheetData = $alignedSheet['rows'];
 
 /**Вывод заявки на экран */
 $propusk = true;/** маркер пропуска начальной части файла и заголовков*/
+$headerFound = false;
 $order = [];/**массив - заявка без лишних элементов, заголовков etc.*/
-$workshop = 'U'.$sheetData['1']['C'];
-echo '<p>для участка №'.$sheetData['1']['C'] . '<br>на период ' . $sheetData['1']['E'] . ' = ' . $sheetData['1']['F'] . '</p>';
+$workshopCell = $sheetData['1']['C'] ?? '';
+$periodFrom = $sheetData['1']['E'] ?? '';
+$periodTo = $sheetData['1']['F'] ?? '';
+$workshop = 'U'.$workshopCell;
+echo '<p>для участка №'.htmlspecialchars((string)$workshopCell, ENT_QUOTES, 'UTF-8')
+    . '<br>на период ' . htmlspecialchars((string)$periodFrom, ENT_QUOTES, 'UTF-8')
+    . ' = ' . htmlspecialchars((string)$periodTo, ENT_QUOTES, 'UTF-8') . '</p>';
+if ($alignedSheet['shifted']) {
+    echo '<p>Файл без пустого первого столбца: столбцы приведены к обычной раскладке.</p>';
+}
 echo '<table id="orderTable">';
 echo '<tr><td><b>Фильтр</b></td><td><b>Кол-во</b></td><td><b>Маркировка</b></td><td><b>Инд.упак.</b>'
     .'</td><td><b>Этик.инд.</b></td><td><b>групп.упак.<b></td><td><b>Hорма упак.</b></td><td><b>этик.групп.</b>'
@@ -204,8 +225,12 @@ echo '<tr><td><b>Фильтр</b></td><td><b>Кол-во</b></td><td><b>Марк
 
 $rowIndex = 0;
 foreach ($sheetData as $arr){
-    if($arr['B']=='Марка фильтра') {$propusk = false; continue;}
-    if(($propusk == false) && ($arr['B']!='')){/**Убираем пустые ячейки*/
+    if (!is_array($arr)) {
+        continue;
+    }
+    $cellB = u5_order_cell_text($arr['B'] ?? null);
+    if($cellB === 'Марка фильтра') {$propusk = false; $headerFound = true; continue;}
+    if(($propusk == false) && ($cellB !== '')){/**Убираем пустые ячейки*/
 
         $arr = array_map(function($item) {
             if ($item !== null) {
@@ -233,6 +258,11 @@ foreach ($sheetData as $arr){
 }
 $propusk = true;
 echo '</table>';
+if (!$headerFound) {
+    echo '<p style="color:#991b1b; background:#fee2e2; padding:12px; border-radius:8px;">Не найден заголовок «Марка фильтра». Нужен файл с пустым первым столбцом или без него: заголовок в колонке A или B.</p>';
+} elseif ($rowIndex === 0) {
+    echo '<p style="color:#991b1b; background:#fee2e2; padding:12px; border-radius:8px;">Заголовок найден, но позиции заявки пустые.</p>';
+}
 echo '</div>'; // закрываем panel
 
 /** Переменная для сериализации и передачи массива в следующий скрипт */
@@ -341,3 +371,56 @@ document.getElementById('saveOrderForm').addEventListener('submit', function(e) 
     </div>
 </body>
 </html>
+<?php
+
+function u5_order_cell_text($value): string
+{
+    if ($value === null) {
+        return '';
+    }
+    $text = str_replace(["\r", "\n", "\xC2\xA0"], ['', '', ' '], (string)$value);
+    return trim($text);
+}
+
+function u5_align_order_columns(array $sheetData): array
+{
+    $headerCol = null;
+    foreach ($sheetData as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        foreach ($row as $col => $value) {
+            if (!is_string($col) || strlen($col) !== 1) {
+                continue;
+            }
+            if (u5_order_cell_text($value) === 'Марка фильтра') {
+                $headerCol = $col;
+                break 2;
+            }
+        }
+    }
+
+    // Уже стандартная раскладка либо заголовок не в A/B — лист не трогаем.
+    if ($headerCol !== 'A') {
+        return ['rows' => $sheetData, 'shifted' => false];
+    }
+
+    $normalized = [];
+    foreach ($sheetData as $rowKey => $row) {
+        if (!is_array($row)) {
+            $normalized[$rowKey] = $row;
+            continue;
+        }
+        $newRow = ['A' => null];
+        foreach ($row as $col => $value) {
+            if (is_string($col) && strlen($col) === 1 && $col >= 'A' && $col <= 'Y') {
+                $newRow[chr(ord($col) + 1)] = $value;
+            } else {
+                $newRow[$col] = $value;
+            }
+        }
+        $normalized[$rowKey] = $newRow;
+    }
+
+    return ['rows' => $normalized, 'shifted' => true];
+}

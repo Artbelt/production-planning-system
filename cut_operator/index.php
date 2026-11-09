@@ -125,6 +125,22 @@ function cutOperatorHasColumn(mysqli $mysqli, string $table, string $column): bo
     return $res && (int)$res->fetch_row()[0] > 0;
 }
 
+function cutOperatorMarkButtonAttrs(int $id, string $department, string $orderNumber, string $baleId, string $sourceTable): string
+{
+    $js = static function ($value): string {
+        return htmlspecialchars(
+            json_encode((string) $value, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS),
+            ENT_QUOTES
+        );
+    };
+    return 'type="button" onclick="event.stopPropagation(); markAsDone('
+        . $id . ', '
+        . $js($department) . ', '
+        . $js($orderNumber) . ', '
+        . $js($baleId) . ', '
+        . $js($sourceTable) . ')"';
+}
+
 function cutOperatorWritableRollTables(mysqli $mysqli): array
 {
     $tables = [];
@@ -382,6 +398,7 @@ function getAllCutTasks($databases, $date) {
                         'plan_date' => $row['plan_date'],
                         'done' => $row['done'],
                         'department' => $department,
+                        'source_table' => $table,
                         'filters' => $details['filters'],
                         'total_width' => $details['total_width']
                     ];
@@ -481,6 +498,7 @@ function getOverdueTasks($databases, $today) {
                         'plan_date' => $row['plan_date'],
                         'done' => $row['done'],
                         'department' => $department,
+                        'source_table' => $table,
                         'days_overdue' => (int)$daysOverdue,
                         'filters' => $details['filters'],
                         'total_width' => $details['total_width']
@@ -600,7 +618,8 @@ if (isset($_POST['action'])) {
                     'id' => (int)$row['id'],
                     'bale_id' => $row['bale_id'],
                     'plan_date' => $row['plan_date'],
-                    'done' => (int)$row['done']
+                    'done' => (int)$row['done'],
+                    'source_table' => $table
                 ];
             }
             $stmt->close();
@@ -614,10 +633,16 @@ if (isset($_POST['action'])) {
     }
 
     if ($_POST['action'] === 'mark_done') {
-        $taskId = (int)$_POST['id'];
+        $taskId = (int)($_POST['id'] ?? 0);
         $department = $_POST['department'] ?? '';
+        $orderNumber = trim((string)($_POST['order_number'] ?? ''));
+        $baleId = trim((string)($_POST['bale_id'] ?? ''));
+        $sourceTable = $_POST['source_table'] ?? '';
+        if (!in_array($sourceTable, ['roll_plan', 'roll_plans'], true)) {
+            $sourceTable = '';
+        }
         
-        if (!$taskId || !isset($databases[$department])) {
+        if (!isset($databases[$department]) || ($taskId <= 0 && ($orderNumber === '' || $baleId === ''))) {
             echo json_encode(['success' => false, 'message' => 'Неверные параметры']);
             exit;
         }
@@ -626,7 +651,7 @@ if (isset($_POST['action'])) {
         
         try {
             $pdo = getPdo($dbConfig['name']);
-            $result = rollPlanMarkCutDone($pdo, $department, $taskId);
+            $result = rollPlanMarkCutDone($pdo, $department, $taskId, $orderNumber, $baleId, $sourceTable);
             if (!empty($result['success'])) {
                 echo json_encode(['success' => true, 'message' => 'Статус успешно обновлен']);
             } else {
@@ -1156,7 +1181,7 @@ if (isset($_POST['action'])) {
                         <td><?= htmlspecialchars($task['plan_date']) ?></td>
                         <td style="font-weight: bold; color: red;"><?= $task['days_overdue'] ?></td>
                         <td>
-                            <button onclick="event.stopPropagation(); markAsDone(<?= $task['id'] ?>, '<?= htmlspecialchars($task['department'], ENT_QUOTES) ?>')">
+                            <button <?= cutOperatorMarkButtonAttrs((int)$task['id'], (string)$task['department'], (string)$task['order_number'], (string)$task['bale_id'], (string)($task['source_table'] ?? '')) ?>>
                                 Выполнено
                             </button>
                         </td>
@@ -1234,7 +1259,7 @@ if (isset($_POST['action'])) {
                             </td>
                             <td>
                                 <?php if (!$bale['done']): ?>
-                                    <button onclick="event.stopPropagation(); markAsDone(<?= $bale['id'] ?>, '<?= htmlspecialchars($department, ENT_QUOTES) ?>')">
+                                    <button <?= cutOperatorMarkButtonAttrs((int)$bale['id'], (string)$department, (string)$bale['order_number'], (string)$bale['bale_id'], (string)($bale['source_table'] ?? '')) ?>>
                                         ВЫПОЛНЕНО
                                     </button>
                                 <?php else: ?>
@@ -1389,7 +1414,7 @@ if (isset($_POST['action'])) {
             });
         }
 
-        function markAsDone(id, department) {
+        function markAsDone(id, department, orderNumber, baleId, sourceTable) {
             var xhr = new XMLHttpRequest();
             xhr.open('POST', '', true);
             xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
@@ -1415,7 +1440,18 @@ if (isset($_POST['action'])) {
                 alert("Ошибка соединения с сервером");
             };
             
-            xhr.send('action=mark_done&id=' + encodeURIComponent(id) + '&department=' + encodeURIComponent(department));
+            var body = 'action=mark_done&id=' + encodeURIComponent(id)
+                + '&department=' + encodeURIComponent(department);
+            if (orderNumber !== undefined && orderNumber !== null) {
+                body += '&order_number=' + encodeURIComponent(orderNumber);
+            }
+            if (baleId !== undefined && baleId !== null) {
+                body += '&bale_id=' + encodeURIComponent(baleId);
+            }
+            if (sourceTable) {
+                body += '&source_table=' + encodeURIComponent(sourceTable);
+            }
+            xhr.send(body);
         }
 
         // Фильтры
@@ -1690,11 +1726,19 @@ if (isset($_POST['action'])) {
             markDoneBtn.addEventListener('click', function() {
                 var department = deptSelect.value;
                 var selectedId = parseInt(baleSelect.value, 10);
-                if (!department || !selectedId) return;
+                var bale = balesCache.find(function(b) { return b.id === selectedId; });
+                if (!department || !selectedId || !bale) return;
                 if (!confirm('Отметить бухту как выполненную?')) return;
 
                 markDoneBtn.disabled = true;
-                postAction({ action: 'mark_done', id: selectedId, department: department })
+                postAction({
+                    action: 'mark_done',
+                    id: selectedId,
+                    department: department,
+                    order_number: orderSelect.value,
+                    bale_id: bale.bale_id,
+                    source_table: bale.source_table || ''
+                })
                     .then(function(data) {
                         markDoneBtn.disabled = false;
                         if (data.success) {

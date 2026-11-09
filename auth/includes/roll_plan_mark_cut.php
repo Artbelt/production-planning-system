@@ -135,13 +135,11 @@ function rollPlanMarkCutDoneById(PDO $pdo, string $table, int $id): array
         $sets[] = 'fact_cut_at = NOW()';
     }
 
-    $sql = 'UPDATE `' . str_replace('`', '', $table) . '` SET ' . implode(', ', $sets) . ' WHERE id = ?';
+    $safeTable = str_replace('`', '', $table);
+    $sql = 'UPDATE `' . $safeTable . '` SET ' . implode(', ', $sets) . ' WHERE id = ?';
     try {
         $stmt = $pdo->prepare($sql);
-        $ok = $stmt->execute([$id]);
-        if (!$ok || $stmt->rowCount() === 0) {
-            return ['success' => false, 'message' => 'Запись не обновлена'];
-        }
+        $stmt->execute([$id]);
 
         $sel = ['done'];
         if (rollPlanTableHasColumnPdo($pdo, $table, 'fact_cut_date')) {
@@ -150,9 +148,14 @@ function rollPlanMarkCutDoneById(PDO $pdo, string $table, int $id): array
         if (rollPlanTableHasColumnPdo($pdo, $table, 'fact_cut_at')) {
             $sel[] = 'fact_cut_at';
         }
-        $st = $pdo->prepare('SELECT ' . implode(', ', $sel) . ' FROM `' . str_replace('`', '', $table) . '` WHERE id = ?');
+        $st = $pdo->prepare('SELECT ' . implode(', ', $sel) . ' FROM `' . $safeTable . '` WHERE id = ?');
         $st->execute([$id]);
         $row = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+        // rowCount() у UPDATE часто 0, если done уже был 1 или драйвер не сообщил
+        // число изменённых строк. Для интерфейса важно, что бухта стала выполненной.
+        if ((int) ($row['done'] ?? 0) !== 1) {
+            return ['success' => false, 'message' => 'Запись не обновлена'];
+        }
 
         return [
             'success' => true,
@@ -165,19 +168,185 @@ function rollPlanMarkCutDoneById(PDO $pdo, string $table, int $id): array
     }
 }
 
+function rollPlanNormalizeTableName(?string $table): string
+{
+    $table = strtolower(trim((string) $table));
+    return in_array($table, ['roll_plan', 'roll_plans'], true) ? $table : '';
+}
+
 /**
- * Отметка по id с автопоиском таблицы участка (roll_plan / roll_plans).
+ * Базовые таблицы, куда можно писать done.
+ * VIEW не дублируем, если рядом есть roll_plan / roll_plans как BASE TABLE.
+ *
+ * @return list<string>
+ */
+function rollPlanWritableTables(PDO $pdo): array
+{
+    $base = [];
+    foreach (['roll_plan', 'roll_plans'] as $table) {
+        if (rollPlanTableExists($pdo, $table) && rollPlanTableType($pdo, $table) === 'BASE TABLE') {
+            $base[] = $table;
+        }
+    }
+    if ($base !== []) {
+        return $base;
+    }
+    foreach (['roll_plan', 'roll_plans'] as $table) {
+        if (rollPlanTableExists($pdo, $table)) {
+            return [$table];
+        }
+    }
+    return [];
+}
+
+/**
+ * Ставит done=1 на всех копиях бухты (order_number + bale_id) в roll_plan и roll_plans.
+ * $sourceTable/$sourceId — строка, которую показал интерфейс: её id может совпадать
+ * с другой бухтой в соседней таблице, поэтому одной проверки «первый id нашёлся» мало.
  *
  * @return array{success: bool, message?: string, fact_cut_date?: string, fact_cut_at?: string}
  */
-function rollPlanMarkCutDone(PDO $pdo, string $departmentCode, int $id): array
-{
-    foreach (rollPlanTableCandidates($pdo, $departmentCode) as $table) {
-        $chk = $pdo->prepare('SELECT id FROM `' . str_replace('`', '', $table) . '` WHERE id = ?');
-        $chk->execute([$id]);
-        if ($chk->fetchColumn()) {
-            return rollPlanMarkCutDoneById($pdo, $table, $id);
+function rollPlanMarkCutDoneByOrderBale(
+    PDO $pdo,
+    string $orderNumber,
+    string $baleId,
+    string $sourceTable = '',
+    int $sourceId = 0
+): array {
+    $orderNumber = trim($orderNumber);
+    $baleId = trim($baleId);
+    $sourceTable = rollPlanNormalizeTableName($sourceTable);
+    if ($orderNumber === '' || $baleId === '') {
+        return ['success' => false, 'message' => 'Не указаны заявка и бухта'];
+    }
+
+    $targets = [];
+    foreach (rollPlanWritableTables($pdo) as $table) {
+        $safe = str_replace('`', '', $table);
+        try {
+            $st = $pdo->prepare(
+                "SELECT id FROM `{$safe}`
+                 WHERE TRIM(order_number) = ? AND TRIM(bale_id) = ?"
+            );
+            $st->execute([$orderNumber, $baleId]);
+            $ids = $st->fetchAll(PDO::FETCH_COLUMN);
+        } catch (Throwable $e) {
+            error_log('rollPlanMarkCutDoneByOrderBale: ' . $e->getMessage());
+            continue;
         }
+        foreach ($ids as $rowId) {
+            $targets[$table . '#' . (int) $rowId] = [$table, (int) $rowId];
+        }
+    }
+
+    if ($sourceTable !== '' && $sourceId > 0 && rollPlanTableExists($pdo, $sourceTable)) {
+        $key = $sourceTable . '#' . $sourceId;
+        // VIEW поверх базовой таблицы не обновляем отдельно: запись уже уйдёт в roll_plan.
+        $coveredByBase = $targets !== [] && rollPlanTableType($pdo, $sourceTable) === 'VIEW';
+        if (!isset($targets[$key]) && !$coveredByBase) {
+            $targets[$key] = [$sourceTable, $sourceId];
+        }
+    }
+
+    if ($targets === []) {
+        return ['success' => false, 'message' => 'Запись не найдена'];
+    }
+
+    $lastOk = null;
+    $lastError = 'Запись не обновлена';
+    $failed = 0;
+    foreach ($targets as $target) {
+        $res = rollPlanMarkCutDoneById($pdo, $target[0], $target[1]);
+        if (!empty($res['success'])) {
+            $lastOk = $res;
+        } else {
+            $failed++;
+            $lastError = $res['message'] ?? $lastError;
+        }
+    }
+
+    if ($failed > 0 || $lastOk === null) {
+        return ['success' => false, 'message' => $lastError];
+    }
+    return $lastOk;
+}
+
+/**
+ * Отметка по id с автопоиском таблицы участка (roll_plan / roll_plans).
+ *
+ * На U6 одновременно живут две базовые таблицы. Список просроченных читает ту,
+ * где больше строк (часто roll_plans), а поиск только по id сначала попадал в roll_plan
+ * и отмечал чужую бухту с тем же id. Если переданы source_table или заявка+бухта,
+ * отмечается именно эта бухта во всех копиях.
+ *
+ * @return array{success: bool, message?: string, fact_cut_date?: string, fact_cut_at?: string}
+ */
+function rollPlanMarkCutDone(
+    PDO $pdo,
+    string $departmentCode,
+    int $id,
+    ?string $orderNumber = null,
+    ?string $baleId = null,
+    ?string $sourceTable = null
+): array {
+    $orderNumber = trim((string) $orderNumber);
+    $baleId = trim((string) $baleId);
+    $sourceTable = rollPlanNormalizeTableName($sourceTable);
+
+    if ($sourceTable !== '' && $id > 0 && rollPlanTableExists($pdo, $sourceTable)) {
+        $safe = str_replace('`', '', $sourceTable);
+        try {
+            $chk = $pdo->prepare(
+                "SELECT order_number, bale_id FROM `{$safe}` WHERE id = ?"
+            );
+            $chk->execute([$id]);
+            $row = $chk->fetch(PDO::FETCH_ASSOC);
+        } catch (Throwable $e) {
+            error_log('rollPlanMarkCutDone source: ' . $e->getMessage());
+            $row = false;
+        }
+        if ($row) {
+            $orderFromRow = trim((string) ($row['order_number'] ?? ''));
+            $baleFromRow = trim((string) ($row['bale_id'] ?? ''));
+            if ($orderFromRow !== '' && $baleFromRow !== '') {
+                return rollPlanMarkCutDoneByOrderBale($pdo, $orderFromRow, $baleFromRow, $sourceTable, $id);
+            }
+            return rollPlanMarkCutDoneById($pdo, $sourceTable, $id);
+        }
+    }
+
+    if ($orderNumber !== '' && $baleId !== '') {
+        return rollPlanMarkCutDoneByOrderBale($pdo, $orderNumber, $baleId, $sourceTable, $id);
+    }
+
+    if ($id <= 0) {
+        return ['success' => false, 'message' => 'Нет ID'];
+    }
+
+    foreach (rollPlanTableCandidates($pdo, $departmentCode) as $table) {
+        $safe = str_replace('`', '', $table);
+        try {
+            $chk = $pdo->prepare(
+                "SELECT order_number, bale_id FROM `{$safe}` WHERE id = ?"
+            );
+            $chk->execute([$id]);
+            $row = $chk->fetch(PDO::FETCH_ASSOC);
+        } catch (Throwable $e) {
+            error_log('rollPlanMarkCutDone id: ' . $e->getMessage());
+            continue;
+        }
+        if (!$row) {
+            continue;
+        }
+        $orderFromRow = trim((string) ($row['order_number'] ?? ''));
+        $baleFromRow = trim((string) ($row['bale_id'] ?? ''));
+        if ($orderFromRow !== '' || $baleFromRow !== '') {
+            if ($orderFromRow === '' || $baleFromRow === '') {
+                return rollPlanMarkCutDoneById($pdo, $table, $id);
+            }
+            return rollPlanMarkCutDoneByOrderBale($pdo, $orderFromRow, $baleFromRow, $table, $id);
+        }
+        return rollPlanMarkCutDoneById($pdo, $table, $id);
     }
     return ['success' => false, 'message' => 'Запись не найдена'];
 }

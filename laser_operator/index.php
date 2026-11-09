@@ -477,6 +477,7 @@ $allRequests = getAllLaserRequests($databases);
         }
 
         .dxf-rect-open {
+            display: none !important;
             width: auto;
             height: 28px;
             padding: 0 10px;
@@ -1076,6 +1077,7 @@ $allRequests = getAllLaserRequests($databases);
                     <button type="button"
                             class="stock-request-open dxf-rect-open"
                             id="openDxfModal"
+                            hidden
                             title="Создать вставку"
                             aria-label="Создать вставку">Создать вставку</button>
                     <button type="button"
@@ -1251,7 +1253,7 @@ $allRequests = getAllLaserRequests($databases);
         <div class="modal-box">
             <button type="button" class="modal-close" id="closeDxfModal" aria-label="Закрыть">×</button>
             <h3 id="dxfModalTitle">Создать вставку</h3>
-            <p class="modal-hint">Контур синий, стиль «основная». Пунктир чёрный и на 1 мм короче с каждой стороны.</p>
+            <p class="modal-hint">Файл RLD для RDWorks. Контур синий, режим резки. Линии чёрные, режим dot, на 1 мм короче с каждой стороны.</p>
             <form id="dxfRectForm">
                 <div class="modal-field">
                     <label>Тип</label>
@@ -1304,7 +1306,7 @@ $allRequests = getAllLaserRequests($databases);
                 </div>
                 <div class="modal-actions">
                     <button type="button" class="btn-modal-secondary" id="cancelDxfModal">Отмена</button>
-                    <button type="submit" class="btn-modal-primary">Скачать DXF</button>
+                    <button type="submit" class="btn-modal-primary">Скачать RLD</button>
                 </div>
             </form>
         </div>
@@ -2231,16 +2233,45 @@ $allRequests = getAllLaserRequests($databases);
                 updateDashPreview();
             }
 
-            document.getElementById('dxfRectForm')?.addEventListener('submit', function(e) {
+            document.getElementById('dxfRectForm')?.addEventListener('submit', async function(e) {
                 e.preventDefault();
                 const width = readDxfNumber('dxf_width');
                 const height = readDxfNumber('dxf_height');
                 const layout = updateDashPreview();
+                const errorEl = document.getElementById('dxfRectError');
                 if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 2 || height <= 0 || width > 10000 || height > 10000 || layout.error || !layout.ys) {
                     return;
                 }
-                downloadRectangleDxf(width, height, layout.ys);
-                closeDxfModal();
+                try {
+                    const response = await fetch('api/create_insert_rld.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ width: width, height: height, lines: layout.ys })
+                    });
+                    if (!response.ok) {
+                        const text = await response.text();
+                        if (errorEl) {
+                            errorEl.textContent = text || 'Не удалось создать RLD';
+                            errorEl.hidden = false;
+                        }
+                        return;
+                    }
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = 'insert_' + formatDxfNumber(width).replace('.', '_') + 'x' + formatDxfNumber(height).replace('.', '_') + '_' + layout.ys.length + '.rld';
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    URL.revokeObjectURL(url);
+                    closeDxfModal();
+                } catch (err) {
+                    if (errorEl) {
+                        errorEl.textContent = 'Не удалось создать RLD';
+                        errorEl.hidden = false;
+                    }
+                }
             });
             ['dxf_width', 'dxf_height', 'dxf_gap_1', 'dxf_gap_2', 'dxf_gap_3', 'dxf_gap_4'].forEach(function(id) {
                 document.getElementById(id)?.addEventListener('input', updateDashPreview);
