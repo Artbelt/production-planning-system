@@ -52,6 +52,48 @@ $form_factors = $pdo->query("SELECT id, name FROM form_factors ORDER BY id")->fe
             font-weight: bold;
             color: #333;
         }
+        .section-head {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 4px 0 8px;
+        }
+        .section-head .section-title {
+            margin: 0;
+        }
+        .presence-toggle {
+            display: inline-flex;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            overflow: hidden;
+            background: #f3f4f6;
+        }
+        .presence-toggle button {
+            border: none;
+            background: transparent;
+            color: #4b5563;
+            padding: 4px 12px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .presence-toggle button.is-no {
+            background: #6b7280;
+            color: #fff;
+        }
+        .presence-toggle button.is-yes {
+            background: #16a34a;
+            color: #fff;
+        }
+        fieldset.optional-block {
+            border: 0;
+            margin: 0;
+            padding: 0;
+            min-inline-size: 0;
+        }
+        fieldset.optional-block[hidden] {
+            display: none;
+        }
         input[type="submit"] {
             display: block;
             margin: 20px auto;
@@ -265,6 +307,21 @@ if (isset($_POST['analog_filter']) AND ($_POST['analog_filter'] != '')){
         'comment' => ''  // добавлено
     );
 }
+
+$field_filled = static function ($v): bool {
+    return $v !== null && trim((string)$v) !== '';
+};
+$has_wireframe = $field_filled($analog_data['wireframe_length'] ?? null)
+    || $field_filled($analog_data['wireframe_width'] ?? null)
+    || $field_filled($analog_data['wireframe_material'] ?? null)
+    || $field_filled($analog_data['wireframe_supplier'] ?? null);
+$has_prefilter = $field_filled($analog_data['prefilter_length'] ?? null)
+    || $field_filled($analog_data['prefilter_width'] ?? null)
+    || $field_filled($analog_data['prefilter_material'] ?? null)
+    || $field_filled($analog_data['prefilter_supplier'] ?? null)
+    || $field_filled($analog_data['prefilter_remark'] ?? null);
+$has_glueing = $field_filled($analog_data['glueing'] ?? null)
+    || $field_filled($analog_data['glueing_remark'] ?? null);
 ?>
 
 <form action="processing_add_panel_filter_into_db.php" method="post">
@@ -311,58 +368,82 @@ if (isset($_POST['analog_filter']) AND ($_POST['analog_filter'] != '')){
     </div>
 
     <hr>
-    <div class="section-title">Каркас:</div>
-    <div class="field-group">
-        <label>Длина каркаса:<input type="text" size="5" name="wf_length" value="<?php echo $analog_data['wireframe_length'] ?>"></label>
-        <label>Ширина каркаса:<input type="text" size="5" name="wf_width" value="<?php echo $analog_data['wireframe_width'] ?>"></label>
-        <label>Материал каркаса:
-            <select name="wf_material">
-                <option></option>
-                <option <?php if ($analog_data['wireframe_material'] == 'ОЦ 0,45'){echo 'selected';} ?>>ОЦ 0,45</option>
-                <option <?php if ($analog_data['wireframe_material'] == 'Жесть 0,22'){echo 'selected';} ?>>Жесть 0,22</option>
-            </select>
-        </label>
-        <label>Поставщик каркаса:
-            <select name="wf_supplier">
-                <option></option>
-                <option <?php if ($analog_data['wireframe_supplier'] == 'ЗУ'){echo 'selected';} ?>>ЗУ</option>
-            </select>
-        </label>
+    <div class="section-head">
+        <div class="section-title">Каркас:</div>
+        <div class="presence-toggle" data-target="wf-fields" data-label="Каркас">
+            <button type="button" data-value="0" class="<?php echo $has_wireframe ? '' : 'is-no'; ?>">Нет</button>
+            <button type="button" data-value="1" class="<?php echo $has_wireframe ? 'is-yes' : ''; ?>">Есть</button>
+        </div>
     </div>
+    <fieldset id="wf-fields" class="optional-block" <?php echo $has_wireframe ? '' : 'disabled hidden'; ?>>
+        <div class="field-group">
+            <label>Длина каркаса:<input type="text" size="5" name="wf_length" value="<?php echo $analog_data['wireframe_length'] ?? '' ?>"></label>
+            <label>Ширина каркаса:<input type="text" size="5" name="wf_width" value="<?php echo $analog_data['wireframe_width'] ?? '' ?>"></label>
+            <label>Материал каркаса:
+                <select name="wf_material">
+                    <option></option>
+                    <option <?php if (($analog_data['wireframe_material'] ?? '') == 'ОЦ 0,45'){echo 'selected';} ?>>ОЦ 0,45</option>
+                    <option <?php if (($analog_data['wireframe_material'] ?? '') == 'Жесть 0,22'){echo 'selected';} ?>>Жесть 0,22</option>
+                </select>
+            </label>
+            <label>Поставщик каркаса:
+                <select name="wf_supplier">
+                    <option></option>
+                    <option <?php if (($analog_data['wireframe_supplier'] ?? '') == 'ЗУ'){echo 'selected';} ?>>ЗУ</option>
+                </select>
+            </label>
+        </div>
+    </fieldset>
 
     <hr>
-    <div class="section-title">Предфильтр:</div>
-    <div class="field-group">
-        <label>Длина предфильтра:<input type="text" size="5" name="pf_length" value="<?php echo $analog_data['prefilter_length'] ?>"></label>
-        <label>Ширина предфильтра:<input type="text" size="5" name="pf_width" value="<?php echo $analog_data['prefilter_width'] ?>"></label>
-        <label>Материал предфильтра:
-            <select name="pf_material">
-                <option></option>
-                <option <?php if ($analog_data['prefilter_material'] == 'Н/т полотно'){echo 'selected';} ?>>Н/т полотно</option>
-            </select>
-        </label>
-        <label>Поставщик предфильтра:
-            <select name="pf_supplier">
-                <option></option>
-                <option <?php if ($analog_data['prefilter_supplier'] == 'УУ'){echo 'selected';} ?>>УУ</option>
-            </select>
-        </label>
+    <div class="section-head">
+        <div class="section-title">Предфильтр:</div>
+        <div class="presence-toggle" data-target="pf-fields" data-label="Предфильтр">
+            <button type="button" data-value="0" class="<?php echo $has_prefilter ? '' : 'is-no'; ?>">Нет</button>
+            <button type="button" data-value="1" class="<?php echo $has_prefilter ? 'is-yes' : ''; ?>">Есть</button>
+        </div>
     </div>
-    <div class="field-group">
-        <label>Комментарий к предфильтру:<input type="text" size="50" name="pf_remark" value="<?php echo $analog_data['prefilter_remark'] ?>"></label>
-    </div>
+    <fieldset id="pf-fields" class="optional-block" <?php echo $has_prefilter ? '' : 'disabled hidden'; ?>>
+        <div class="field-group">
+            <label>Длина предфильтра:<input type="text" size="5" name="pf_length" value="<?php echo $analog_data['prefilter_length'] ?? '' ?>"></label>
+            <label>Ширина предфильтра:<input type="text" size="5" name="pf_width" value="<?php echo $analog_data['prefilter_width'] ?? '' ?>"></label>
+            <label>Материал предфильтра:
+                <select name="pf_material">
+                    <option></option>
+                    <option <?php if (($analog_data['prefilter_material'] ?? '') == 'Н/т полотно'){echo 'selected';} ?>>Н/т полотно</option>
+                </select>
+            </label>
+            <label>Поставщик предфильтра:
+                <select name="pf_supplier">
+                    <option></option>
+                    <option <?php if (($analog_data['prefilter_supplier'] ?? '') == 'УУ'){echo 'selected';} ?>>УУ</option>
+                </select>
+            </label>
+        </div>
+        <div class="field-group">
+            <label>Комментарий к предфильтру:<input type="text" size="50" name="pf_remark" value="<?php echo $analog_data['prefilter_remark'] ?? '' ?>"></label>
+        </div>
+    </fieldset>
     <hr>
-    <div class="section-title">Проливка:</div>
-    <select name="glueing">
-        <option></option>
-        <option <?php if ($analog_data['glueing'] == '1'){echo 'selected';} ?>>1</option>
-        <option <?php if ($analog_data['glueing'] == '2'){echo 'selected';} ?>>2</option>
-        <option <?php if ($analog_data['glueing'] == '3'){echo 'selected';} ?>>3</option>
-        <option <?php if ($analog_data['glueing'] == '4'){echo 'selected';} ?>>4</option>
-    </select>
-    <div class="field-group">
-        <label>Комментарий к проливке:<input type="text" size="50" name="glueing_remark" value="<?php echo $analog_data['glueing_remark']; ?>"></label>
+    <div class="section-head">
+        <div class="section-title">Проливка:</div>
+        <div class="presence-toggle" data-target="glue-fields" data-label="Проливка">
+            <button type="button" data-value="0" class="<?php echo $has_glueing ? '' : 'is-no'; ?>">Нет</button>
+            <button type="button" data-value="1" class="<?php echo $has_glueing ? 'is-yes' : ''; ?>">Есть</button>
+        </div>
     </div>
+    <fieldset id="glue-fields" class="optional-block" <?php echo $has_glueing ? '' : 'disabled hidden'; ?>>
+        <select name="glueing">
+            <option></option>
+            <option <?php if (($analog_data['glueing'] ?? '') == '1'){echo 'selected';} ?>>1</option>
+            <option <?php if (($analog_data['glueing'] ?? '') == '2'){echo 'selected';} ?>>2</option>
+            <option <?php if (($analog_data['glueing'] ?? '') == '3'){echo 'selected';} ?>>3</option>
+            <option <?php if (($analog_data['glueing'] ?? '') == '4'){echo 'selected';} ?>>4</option>
+        </select>
+        <div class="field-group">
+            <label>Комментарий к проливке:<input type="text" size="50" name="glueing_remark" value="<?php echo $analog_data['glueing_remark'] ?? ''; ?>"></label>
+        </div>
+    </fieldset>
     <hr>
     <div class="section-title">Форм-фактор:</div>
     <select name="form_factor">
@@ -492,6 +573,13 @@ if (isset($_POST['analog_filter']) AND ($_POST['analog_filter'] != '')){
         const logDiv = document.getElementById("change-log");
         const logField = document.getElementById("changes_log");
 
+        function writeChange(msg) {
+            let p = document.createElement("div");
+            p.textContent = msg;
+            logDiv.appendChild(p);
+            logField.value += msg + "\n";
+        }
+
         document.querySelectorAll("input[type=text], select").forEach(el => {
             el.dataset.oldValue = el.value;
 
@@ -500,13 +588,28 @@ if (isset($_POST['analog_filter']) AND ($_POST['analog_filter'] != '')){
                 let newVal = this.value || "пусто";
                 if (oldVal !== newVal) {
                     let label = this.closest("label") ? this.closest("label").innerText.split(':')[0] : this.name;
-                    let msg = `  ${label}  : [ ${oldVal} ] => [ ${newVal} ];`;
-                    let p = document.createElement("div");
-                    p.textContent = msg;
-                    logDiv.appendChild(p);
+                    writeChange(`  ${label}  : [ ${oldVal} ] => [ ${newVal} ];`);
                     this.dataset.oldValue = newVal;
-                    logField.value += msg + "\n";
                 }
+            });
+        });
+
+        document.querySelectorAll(".presence-toggle").forEach(toggle => {
+            const block = document.getElementById(toggle.dataset.target);
+            const label = toggle.dataset.label || "Элемент";
+            toggle.querySelectorAll("button").forEach(btn => {
+                btn.addEventListener("click", function() {
+                    const turnOn = this.dataset.value === "1";
+                    const wasOn = !block.hidden;
+                    if (turnOn === wasOn) return;
+                    toggle.querySelectorAll("button").forEach(b => {
+                        b.classList.remove("is-yes", "is-no");
+                    });
+                    this.classList.add(turnOn ? "is-yes" : "is-no");
+                    block.hidden = !turnOn;
+                    block.disabled = !turnOn;
+                    writeChange(`  ${label}  : [ ${wasOn ? "есть" : "нет"} ] => [ ${turnOn ? "есть" : "нет"} ];`);
+                });
             });
         });
     });
