@@ -6076,7 +6076,7 @@ $pageTitle = 'Активные позиции';
             let skippedLocked = 0;
             for (let i = startIdx; i < allDates.length && remaining > 0; i += 1) {
                 const d = allDates[i];
-                if (d < todayIso) {
+                if (d < todayIso || isWeekendIso(d)) {
                     continue;
                 }
                 const cell = getCellByDate(rowCellsArr, d);
@@ -6111,11 +6111,11 @@ $pageTitle = 'Активные позиции';
                 remaining -= consumed.taken;
             }
             if (moves.length === 0) {
-                let extra = 'Проверьте пустые даты в строке или расширьте период («+ день»).';
+                let extra = 'Проверьте пустые рабочие дни в строке или расширьте период («+ день»). Суббота и воскресенье не заполняются.';
                 if (skippedBusy > 0) {
-                    extra = 'Все даты начиная с выбранной заняты в этой строке (' + skippedBusy + ' колонок с планом). ' + extra;
+                    extra = 'Все рабочие дни начиная с выбранной даты заняты в этой строке (' + skippedBusy + ' колонок с планом). ' + extra;
                 } else if (skippedLocked > 0) {
-                    extra = 'Свободные даты зафиксированы блокировкой (' + skippedLocked + '). Снимите блокировку или выберите другую дату. ' + extra;
+                    extra = 'Свободные рабочие дни зафиксированы блокировкой (' + skippedLocked + '). Снимите блокировку или выберите другую дату. ' + extra;
                 }
                 return { error: 'Не удалось добавить ни одного переноса. ' + extra };
             }
@@ -6154,10 +6154,10 @@ $pageTitle = 'Активные позиции';
                 return;
             }
             const dates = getUniquePlanDates().filter(function (d) {
-                return d >= todayIso;
+                return d >= todayIso && !isWeekendIso(d);
             });
             if (dates.length === 0) {
-                alert('В таблице нет колонок дат плана (начиная с сегодня).');
+                alert('В таблице нет рабочих дней плана (начиная с сегодня). Суббота и воскресенье не заполняются.');
                 return;
             }
             debtSpreadAnchorCell = debtCell;
@@ -6174,7 +6174,7 @@ $pageTitle = 'Активные позиции';
             debtSpreadQtyInput.value = String(sum);
             debtSpreadQtyInput.max = String(sum);
             debtSpreadQtyInput.min = '1';
-            debtSpreadHint.textContent = 'Операции попадут в очередь изменений на странице. Проверьте список в панели «Очередь» и нажмите «Применить», чтобы записать план в базу. Если свободных дат не хватает, добавьте колонки кнопкой «+ день».';
+            debtSpreadHint.textContent = 'Операции попадут в очередь изменений на странице. Проверьте список в панели «Очередь» и нажмите «Применить», чтобы записать план в базу. Суббота и воскресенье пропускаются. Если свободных рабочих дней не хватает, добавьте колонки кнопкой «+ день».';
             debtSpreadModal.hidden = false;
         }
 
