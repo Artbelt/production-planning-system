@@ -330,6 +330,33 @@ function cutOperatorLoadFilters(mysqli $mysqli, string $orderNumber, string $bal
     return ['filters' => $filters, 'total_width' => $totalWidth];
 }
 
+/**
+ * Длина для строки «Длина бухты» в деталях просрочки.
+ * У5: та же цифра, что в квадратных скобках у названия бухты — длина первой полосы.
+ * Остальные участки: уникальные длины полос.
+ */
+function cutOperatorOverdueBaleLengthLabel(array $filters, string $department): string
+{
+    if ($filters === []) {
+        return '';
+    }
+    if ($department === 'U5') {
+        $length = $filters[0]['length'] ?? null;
+        if ($length === '' || $length === null) {
+            return '';
+        }
+        return number_format((float)$length, 0, '.', '');
+    }
+    $lengths = [];
+    foreach ($filters as $filter) {
+        if (!isset($filter['length']) || $filter['length'] === '' || $filter['length'] === null) {
+            continue;
+        }
+        $lengths[number_format((float)$filter['length'], 0, '.', '')] = true;
+    }
+    return implode(', ', array_keys($lengths));
+}
+
 // Функция для получения всех заданий из всех баз данных
 function getAllCutTasks($databases, $date) {
     $allTasks = [];
@@ -1208,17 +1235,9 @@ if (isset($_POST['action'])) {
                                     <?php endforeach; ?>
                                 </tbody>
                             </table>
-                            <?php
-                            $baleLengths = [];
-                            foreach ($task['filters'] as $filter) {
-                                if (!isset($filter['length']) || $filter['length'] === '' || $filter['length'] === null) {
-                                    continue;
-                                }
-                                $baleLengths[number_format((float)$filter['length'], 0, '.', '')] = true;
-                            }
-                            ?>
-                            <?php if ($baleLengths): ?>
-                            <p><strong>Длина бухты:</strong> <?= htmlspecialchars(implode(', ', array_keys($baleLengths)), ENT_QUOTES, 'UTF-8') ?> м</p>
+                            <?php $baleLengthLabel = cutOperatorOverdueBaleLengthLabel($task['filters'], (string)$task['department']); ?>
+                            <?php if ($baleLengthLabel !== ''): ?>
+                            <p><strong>Длина бухты:</strong> <?= htmlspecialchars($baleLengthLabel, ENT_QUOTES, 'UTF-8') ?> м</p>
                             <?php endif; ?>
                             <p><strong>Суммарная ширина:</strong> <?= $task['total_width'] ?> мм</p>
                             <?php $residual = 1200 - $task['total_width']; ?>
