@@ -2437,15 +2437,42 @@ $pageTitle = 'Активные позиции';
             outline: 2px solid #2457e6;
             outline-offset: -2px;
         }
-        #cycleReflowModal .cycle-reflow-body {
+        #cycleReflowModal .cycle-reflow-body,
+        #cycleShiftModal .cycle-reflow-body {
             padding: 12px 14px 14px;
             display: grid;
             gap: 8px;
             align-content: start;
         }
-        #cycleReflowModal .cycle-reflow-body label {
+        #cycleReflowModal .cycle-reflow-body label,
+        #cycleShiftModal .cycle-reflow-body label {
             font-size: 13px;
             font-weight: 600;
+            color: #1f2937;
+        }
+        #cycleShiftModal .cycle-shift-choices {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        #cycleShiftModal .cycle-shift-choices button {
+            border: 1px solid #d1d5db;
+            background: #fff;
+            color: #1f2937;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font: inherit;
+            cursor: pointer;
+        }
+        #cycleShiftModal .cycle-shift-choices button[aria-pressed="true"] {
+            background: #2457e6;
+            border-color: #2457e6;
+            color: #fff;
+        }
+        #cycleShiftModal #cycleShiftHint {
+            margin: 0;
+            font-size: 13px;
+            line-height: 1.45;
             color: #1f2937;
         }
         #cycleReflowModal .cycle-reflow-body input {
@@ -2565,6 +2592,7 @@ $pageTitle = 'Активные позиции';
             <button type="button" id="dateCellCtxClear" role="menuitem">Очистить</button>
             <button type="button" id="dateCellCtxEdit" role="menuitem">Изменить…</button>
             <button type="button" id="dateCellCtxReflow" role="menuitem">Переложить цикл…</button>
+            <button type="button" id="dateCellCtxShift" role="menuitem">Сдвинуть на…</button>
         </div>
         <div id="debtCellContextMenu" class="date-cell-context-menu debt-cell-context-menu" hidden role="menu">
             <button type="button" id="debtCellCtxSpread" role="menuitem">Разнести по дням…</button>
@@ -3065,6 +3093,30 @@ $pageTitle = 'Активные позиции';
         </div>
     </div>
 </div>
+<div id="cycleShiftModal" class="norm-modal" hidden>
+    <div class="norm-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="cycleShiftTitle" aria-describedby="cycleShiftHint">
+        <div id="cycleShiftTitle" class="norm-modal__head">Сдвинуть цикл</div>
+        <div id="cycleShiftMeta" class="norm-modal__sub"></div>
+        <div class="cycle-reflow-body">
+            <label>Куда</label>
+            <div class="cycle-shift-choices" id="cycleShiftDirection">
+                <button type="button" data-direction="later" aria-pressed="true">Позже</button>
+                <button type="button" data-direction="earlier">Раньше</button>
+            </div>
+            <label>На сколько</label>
+            <div class="cycle-shift-choices" id="cycleShiftWeeks">
+                <button type="button" data-weeks="1" aria-pressed="true">1 неделя</button>
+                <button type="button" data-weeks="2">2 недели</button>
+                <button type="button" data-weeks="3">3 недели</button>
+            </div>
+            <p id="cycleShiftHint"></p>
+        </div>
+        <div class="norm-modal__foot">
+            <button type="button" id="cycleShiftCancelBtn" class="toolbar-btn secondary">Отмена</button>
+            <button type="button" id="cycleShiftApplyBtn" class="toolbar-btn">В очередь</button>
+        </div>
+    </div>
+</div>
 <div id="debtExpandPopover" class="debt-popover" hidden>
     <div id="debtExpandPopoverInner" class="debt-popover__inner"></div>
 </div>
@@ -3157,6 +3209,14 @@ $pageTitle = 'Активные позиции';
         const cycleReflowHint = document.getElementById('cycleReflowHint');
         const cycleReflowCancelBtn = document.getElementById('cycleReflowCancelBtn');
         const cycleReflowApplyBtn = document.getElementById('cycleReflowApplyBtn');
+        const dateCellCtxShift = document.getElementById('dateCellCtxShift');
+        const cycleShiftModal = document.getElementById('cycleShiftModal');
+        const cycleShiftMeta = document.getElementById('cycleShiftMeta');
+        const cycleShiftDirection = document.getElementById('cycleShiftDirection');
+        const cycleShiftWeeks = document.getElementById('cycleShiftWeeks');
+        const cycleShiftHint = document.getElementById('cycleShiftHint');
+        const cycleShiftCancelBtn = document.getElementById('cycleShiftCancelBtn');
+        const cycleShiftApplyBtn = document.getElementById('cycleShiftApplyBtn');
         const debtCellContextMenu = document.getElementById('debtCellContextMenu');
         const debtCellCtxSpread = document.getElementById('debtCellCtxSpread');
         const debtSpreadModal = document.getElementById('debtSpreadModal');
@@ -3324,6 +3384,9 @@ $pageTitle = 'Активные позиции';
             dateCellCtxEdit.disabled = locked || isApplyingPendingMoves;
             if (dateCellCtxReflow) {
                 dateCellCtxReflow.disabled = qty <= 0 || isApplyingPendingMoves;
+            }
+            if (dateCellCtxShift) {
+                dateCellCtxShift.disabled = qty <= 0 || isApplyingPendingMoves;
             }
             dateCellContextMenu.hidden = false;
             const pad = 4;
@@ -6260,7 +6323,7 @@ $pageTitle = 'Активные позиции';
                     const who = info && String(info.userName || '').trim();
                     return 'Смена ' + toShortDate(sourceCell.dataset.date) + ' заблокирована'
                         + (who ? ' (' + who + ')' : '')
-                        + '. Снимите блокировку — цикл целиком не перекладывается.';
+                        + '. Снимите блокировку — цикл целиком не меняется.';
                 }
             }
             const rowCells = getRowDateCellsByOrderFilter(cycle.order, cycle.filter);
@@ -6271,7 +6334,7 @@ $pageTitle = 'Активные позиции';
                     continue;
                 }
                 if (isCellLocked(cell)) {
-                    return 'Дата ' + toShortDate(slot.date) + ' заблокирована. Цикл целиком не перекладывается.';
+                    return 'Дата ' + toShortDate(slot.date) + ' заблокирована. Цикл целиком не меняется.';
                 }
                 const qty = cellPlanQty(cell);
                 if (qty > 0 && !sourceDates.has(slot.date)) {
@@ -6385,6 +6448,7 @@ $pageTitle = 'Активные позиции';
                 return;
             }
             closeDateCellContextMenu();
+            closeCycleShiftModal();
             const cycle = collectPlanCycle(cell);
             if (cycle.error) {
                 alert(cycle.error);
@@ -6412,17 +6476,23 @@ $pageTitle = 'Активные позиции';
                 if (dates.indexOf(iso) !== -1) {
                     return true;
                 }
+                const first = dates.length ? dates[0] : '';
                 const last = dates.length ? dates[dates.length - 1] : '';
-                if (last && iso <= last) {
+                let grew = false;
+                if (first && iso < first) {
+                    grew = prependPlanDayColumn({ silent: true });
+                } else if (!last || iso > last) {
+                    grew = addPlanDayColumn({ silent: true });
+                } else {
                     return false;
                 }
-                const before = last;
-                if (!addPlanDayColumn({ silent: true })) {
+                if (!grew) {
                     return false;
                 }
                 const after = getUniquePlanDates();
+                const afterFirst = after.length ? after[0] : '';
                 const afterLast = after.length ? after[after.length - 1] : '';
-                if (!afterLast || afterLast === before) {
+                if (afterFirst === first && afterLast === last) {
                     return false;
                 }
                 guard += 1;
@@ -6431,33 +6501,53 @@ $pageTitle = 'Активные позиции';
         }
 
         function extendFocusThrough(iso) {
-            if (!focusRange || !iso || iso <= focusRange.endDate) {
+            if (!focusRange || !iso) {
                 return;
             }
-            focusRange = { startDate: focusRange.startDate, endDate: iso };
+            let start = focusRange.startDate;
+            let end = focusRange.endDate;
+            if (iso < start) {
+                start = iso;
+            }
+            if (iso > end) {
+                end = iso;
+            }
+            if (start === focusRange.startDate && end === focusRange.endDate) {
+                return;
+            }
+            focusRange = { startDate: start, endDate: end };
             updatePlanFocusBar();
             updateRangeActiveHeaderClasses();
             applyFocusColumnVisibility();
         }
 
-        function applyCycleReflowFromModal() {
-            if (!cycleReflowState || isApplyingPendingMoves) {
+        function showCycleQueueError(ui, text) {
+            if (!ui || !ui.hint) {
                 return;
             }
-            const preview = cycleReflowPreview();
-            if (preview.error || !preview.slots) {
-                renderCycleReflowPreview();
-                return;
+            ui.hint.textContent = text;
+            ui.hint.style.color = '#9f1239';
+            if (ui.applyBtn) {
+                ui.applyBtn.disabled = true;
             }
-            const lastDate = preview.slots[preview.slots.length - 1].date;
-            if (!ensurePlanColumnsThrough(lastDate)) {
-                cycleReflowHint.textContent = 'Не удалось добавить колонки до ' + toShortDate(lastDate) + '.';
-                cycleReflowHint.style.color = '#9f1239';
-                cycleReflowApplyBtn.disabled = true;
-                return;
+        }
+
+        function queueCycleSlots(cycle, slots, ui) {
+            if (!cycle || !slots || slots.length === 0) {
+                showCycleQueueError(ui, 'Нет дат для записи.');
+                return false;
             }
+            const orderedSlots = slots.slice().sort(function (a, b) {
+                return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
+            });
+            const firstDate = orderedSlots[0].date;
+            const lastDate = orderedSlots[orderedSlots.length - 1].date;
+            if (!ensurePlanColumnsThrough(firstDate) || !ensurePlanColumnsThrough(lastDate)) {
+                showCycleQueueError(ui, 'Не удалось добавить колонки с ' + toShortDate(firstDate) + ' по ' + toShortDate(lastDate) + '.');
+                return false;
+            }
+            extendFocusThrough(firstDate);
             extendFocusThrough(lastDate);
-            const cycle = cycleReflowState;
             const rowCells = getRowDateCellsByOrderFilter(cycle.order, cycle.filter);
             cycle.sourceCells = cycle.sourceCells.map(function (oldCell) {
                 return getCellByDate(rowCells, String(oldCell.dataset.date || '')) || oldCell;
@@ -6466,15 +6556,13 @@ $pageTitle = 'Активные позиции';
             cycle.sourceCells.forEach(function (one) {
                 one.classList.add('cycle-reflow-mark');
             });
-            const conflict = cycleReflowConflict(cycle, preview.slots);
+            const conflict = cycleReflowConflict(cycle, orderedSlots);
             if (conflict) {
-                cycleReflowHint.textContent = conflict;
-                cycleReflowHint.style.color = '#9f1239';
-                cycleReflowApplyBtn.disabled = true;
-                return;
+                showCycleQueueError(ui, conflict);
+                return false;
             }
             const slotByDate = new Map();
-            preview.slots.forEach(function (slot) {
+            orderedSlots.forEach(function (slot) {
                 slotByDate.set(slot.date, slot.qty);
             });
             const sourceDates = new Set(cycle.sourceCells.map(function (c) {
@@ -6486,10 +6574,8 @@ $pageTitle = 'Активные позиции';
                 const date = dates[i];
                 const cell = getCellByDate(rowCells, date);
                 if (!cell) {
-                    cycleReflowHint.textContent = 'Нет колонки на ' + toShortDate(date) + '.';
-                    cycleReflowHint.style.color = '#9f1239';
-                    cycleReflowApplyBtn.disabled = true;
-                    return;
+                    showCycleQueueError(ui, 'Нет колонки на ' + toShortDate(date) + '.');
+                    return false;
                 }
                 const prev = cellPlanQty(cell);
                 const next = slotByDate.has(date) ? slotByDate.get(date) : 0;
@@ -6498,24 +6584,167 @@ $pageTitle = 'Активные позиции';
                 }
                 const queued = next <= 0 ? buildQueuedClearCellMove(cell) : buildQueuedSetQtyMove(cell, String(next));
                 if (!queued || queued.error) {
-                    cycleReflowHint.textContent = (queued && queued.error) ? queued.error : 'Не удалось собрать правку на ' + toShortDate(date) + '.';
-                    cycleReflowHint.style.color = '#9f1239';
-                    cycleReflowApplyBtn.disabled = true;
-                    return;
+                    showCycleQueueError(ui, (queued && queued.error) ? queued.error : 'Не удалось собрать правку на ' + toShortDate(date) + '.');
+                    return false;
                 }
                 moves.push(queued);
             }
             if (moves.length === 0) {
-                cycleReflowHint.textContent = 'Цикл уже разложен так.';
-                cycleReflowHint.style.color = '#9f1239';
-                cycleReflowApplyBtn.disabled = true;
-                return;
+                showCycleQueueError(ui, 'Цикл уже стоит на этих датах.');
+                return false;
             }
             moves.forEach(function (move) {
                 pushPendingMove(move);
             });
-            closeCycleReflowModal();
+            if (ui && typeof ui.close === 'function') {
+                ui.close();
+            }
             setQueuePanelOpen(true);
+            return true;
+        }
+
+        function applyCycleReflowFromModal() {
+            if (!cycleReflowState || isApplyingPendingMoves) {
+                return;
+            }
+            const preview = cycleReflowPreview();
+            if (preview.error || !preview.slots) {
+                renderCycleReflowPreview();
+                return;
+            }
+            queueCycleSlots(cycleReflowState, preview.slots, {
+                hint: cycleReflowHint,
+                applyBtn: cycleReflowApplyBtn,
+                close: closeCycleReflowModal,
+            });
+        }
+
+        let cycleShiftState = null;
+        let cycleShiftWeeksValue = 1;
+        let cycleShiftDirectionValue = 'later';
+
+        function planCycleShiftSlots(cycle, weeks, direction) {
+            const count = parseInt(weeks, 10);
+            if (count !== 1 && count !== 2 && count !== 3) {
+                return { error: 'Можно сдвинуть на 1, 2 или 3 недели.' };
+            }
+            const sign = direction === 'earlier' ? -1 : 1;
+            const slots = [];
+            for (let i = 0; i < cycle.sourceCells.length; i += 1) {
+                const cell = cycle.sourceCells[i];
+                const fromDate = String(cell.dataset.date || '');
+                const date = addDaysIso(fromDate, sign * count * 7);
+                if (!date) {
+                    return { error: 'Не удалось посчитать дату сдвига.' };
+                }
+                if (date < todayIso) {
+                    return { error: 'Сдвиг на ' + count + ' ' + ruNoun(count, 'неделю', 'недели', 'недель') + ' раньше уводит смену ' + toShortDate(fromDate) + ' на ' + toShortDate(date) + ', это прошлая дата.' };
+                }
+                slots.push({ date: date, qty: cellPlanQty(cell) });
+            }
+            slots.sort(function (a, b) {
+                return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
+            });
+            return { slots: slots };
+        }
+
+        function describeCycleShift(cycle, slots, weeks, direction) {
+            const dir = direction === 'earlier' ? 'раньше' : 'позже';
+            const first = slots[0].date;
+            const last = slots[slots.length - 1].date;
+            return 'Сдвиг на ' + weeks + ' ' + ruNoun(weeks, 'неделю', 'недели', 'недель') + ' ' + dir
+                + '. Было ' + toShortDate(cycle.startDate) + '–' + toShortDate(cycle.endDate)
+                + ', станет ' + toShortDate(first) + '–' + toShortDate(last)
+                + '. Количество в каждой смене то же. В базу запишется кнопкой «Применить».';
+        }
+
+        function setCycleShiftChoice(container, attr, value) {
+            if (!container) {
+                return;
+            }
+            container.querySelectorAll('button').forEach(function (button) {
+                button.setAttribute('aria-pressed', button.getAttribute(attr) === String(value) ? 'true' : 'false');
+            });
+        }
+
+        function cycleShiftPreview() {
+            if (!cycleShiftState) {
+                return { error: 'Цикл не выбран.' };
+            }
+            const placed = planCycleShiftSlots(cycleShiftState, cycleShiftWeeksValue, cycleShiftDirectionValue);
+            if (placed.error) {
+                return placed;
+            }
+            const conflict = cycleReflowConflict(cycleShiftState, placed.slots);
+            if (conflict) {
+                return { error: conflict };
+            }
+            return {
+                slots: placed.slots,
+                text: describeCycleShift(cycleShiftState, placed.slots, cycleShiftWeeksValue, cycleShiftDirectionValue),
+            };
+        }
+
+        function renderCycleShiftPreview() {
+            if (!cycleShiftHint || !cycleShiftApplyBtn) {
+                return;
+            }
+            const preview = cycleShiftPreview();
+            cycleShiftHint.textContent = preview.error || preview.text || '';
+            cycleShiftHint.style.color = preview.error ? '#9f1239' : '#1f2937';
+            cycleShiftApplyBtn.disabled = !!preview.error || !preview.slots;
+        }
+
+        function closeCycleShiftModal() {
+            cycleShiftState = null;
+            if (cycleShiftModal) {
+                cycleShiftModal.hidden = true;
+            }
+            clearCycleReflowMarks();
+        }
+
+        function openCycleShiftModal(cell) {
+            if (!canEditPlan || !cycleShiftModal || !cell || isApplyingPendingMoves || isMoving) {
+                return;
+            }
+            closeDateCellContextMenu();
+            closeCycleReflowModal();
+            const cycle = collectPlanCycle(cell);
+            if (cycle.error) {
+                alert(cycle.error);
+                return;
+            }
+            cycleShiftState = cycle;
+            cycleShiftWeeksValue = 1;
+            cycleShiftDirectionValue = 'later';
+            setCycleShiftChoice(cycleShiftDirection, 'data-direction', 'later');
+            setCycleShiftChoice(cycleShiftWeeks, 'data-weeks', '1');
+            clearCycleReflowMarks();
+            cycle.sourceCells.forEach(function (one) {
+                one.classList.add('cycle-reflow-mark');
+            });
+            cycleShiftMeta.textContent = cycle.order + ' • ' + cycle.filter
+                + ' — ' + cycle.sourceCells.length + ' ' + ruNoun(cycle.sourceCells.length, 'смена', 'смены', 'смен')
+                + ', ' + cycle.total + ' шт, '
+                + toShortDate(cycle.startDate) + '–' + toShortDate(cycle.endDate);
+            cycleShiftModal.hidden = false;
+            renderCycleShiftPreview();
+        }
+
+        function applyCycleShiftFromModal() {
+            if (!cycleShiftState || isApplyingPendingMoves) {
+                return;
+            }
+            const preview = cycleShiftPreview();
+            if (preview.error || !preview.slots) {
+                renderCycleShiftPreview();
+                return;
+            }
+            queueCycleSlots(cycleShiftState, preview.slots, {
+                hint: cycleShiftHint,
+                applyBtn: cycleShiftApplyBtn,
+                close: closeCycleShiftModal,
+            });
         }
 
         function getUniquePlanDates() {
@@ -7692,6 +7921,97 @@ $pageTitle = 'Активные позиции';
             return true;
         }
 
+        function prependPlanDayColumn(options) {
+            const silent = !!(options && options.silent);
+            const table = document.querySelector('.panel table');
+            if (!table) {
+                return false;
+            }
+            const rowList = Array.from(document.querySelectorAll('tbody tr.plan-row'));
+            if (rowList.length === 0) {
+                if (!silent) {
+                    alert('Нет строк плана — добавлять колонку не к чему.');
+                }
+                return false;
+            }
+            const dates = getUniquePlanDates();
+            if (dates.length === 0) {
+                return addPlanDayColumn(options);
+            }
+            const prevIso = addDaysIso(dates[0], -1);
+            if (!prevIso || !parseIsoParts(prevIso) || prevIso < pageTodayIso) {
+                return false;
+            }
+            if (dates.indexOf(prevIso) !== -1) {
+                return false;
+            }
+            const theadRow = table.querySelector('thead tr');
+            const tfootRow = table.querySelector('tfoot tr');
+            if (!theadRow || !tfootRow) {
+                return false;
+            }
+            const firstHeadDateTh = theadRow.querySelector('th[data-plan-date]');
+            let newHeadTh;
+            if (firstHeadDateTh) {
+                newHeadTh = firstHeadDateTh.cloneNode(true);
+            } else {
+                newHeadTh = buildPlanDateTh(prevIso);
+            }
+            resetNewPlanDateHeader(newHeadTh, prevIso);
+            const newFootTh = newHeadTh.cloneNode(true);
+            delete newHeadTh.dataset.dateFilterBound;
+            delete newHeadTh.dataset.rangeSelectBound;
+            delete newHeadTh.dataset.pressIndicatorClickBound;
+            delete newFootTh.dataset.dateFilterBound;
+            delete newFootTh.dataset.rangeSelectBound;
+            delete newFootTh.dataset.pressIndicatorClickBound;
+            if (firstHeadDateTh) {
+                theadRow.insertBefore(newHeadTh, firstHeadDateTh);
+            } else {
+                theadRow.appendChild(newHeadTh);
+            }
+            const firstFootDateTh = tfootRow.querySelector('th[data-plan-date]');
+            if (firstFootDateTh) {
+                tfootRow.insertBefore(newFootTh, firstFootDateTh);
+            } else {
+                tfootRow.appendChild(newFootTh);
+            }
+            bindPressIndicatorClick(newHeadTh);
+            bindPressIndicatorClick(newFootTh);
+            bindDateHeaderFilterClick(newHeadTh);
+            bindDateHeaderFilterClick(newFootTh);
+            bindRangeSelectOnDateHeader(newHeadTh);
+            bindRangeSelectOnDateHeader(newFootTh);
+
+            rowList.forEach(function (tr) {
+                const order = tr.getAttribute('data-order') || '';
+                const filter = tr.getAttribute('data-filter') || '';
+                const td = document.createElement('td');
+                td.className = 'num date-col date-cell' + (isWeekendIso(prevIso) ? ' weekend' : '');
+                td.dataset.order = order;
+                td.dataset.filter = filter;
+                td.dataset.date = prevIso;
+                td.dataset.qty = '0';
+                td.setAttribute('draggable', 'false');
+                td.title = getCellTitle(0);
+                td.textContent = '';
+                const firstDateCell = tr.querySelector('td.date-cell');
+                if (firstDateCell) {
+                    tr.insertBefore(td, firstDateCell);
+                } else {
+                    tr.appendChild(td);
+                }
+                bindDateCellInteractions(td);
+                refreshCellLockState(td);
+            });
+
+            refreshDateCellsCache();
+            applyFrozenColumns();
+            updateRangeActiveHeaderClasses();
+            scheduleRecalc();
+            return true;
+        }
+
         function bindDateCellInteractions(cell) {
             refreshCellLockState(cell);
             cell.addEventListener('mousemove', function (e) {
@@ -7928,6 +8248,61 @@ $pageTitle = 'Активные позиции';
             cycleReflowModal.addEventListener('click', function (e) {
                 if (e.target === cycleReflowModal) {
                     closeCycleReflowModal();
+                }
+            });
+        }
+        if (dateCellCtxShift) {
+            dateCellCtxShift.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                const targetCell = dateCellContextMenuTarget;
+                closeDateCellContextMenu();
+                if (!targetCell) {
+                    return;
+                }
+                openCycleShiftModal(targetCell);
+            });
+        }
+        if (cycleShiftDirection) {
+            cycleShiftDirection.addEventListener('click', function (e) {
+                const button = e.target.closest('button[data-direction]');
+                if (!button) {
+                    return;
+                }
+                cycleShiftDirectionValue = button.getAttribute('data-direction') === 'earlier' ? 'earlier' : 'later';
+                setCycleShiftChoice(cycleShiftDirection, 'data-direction', cycleShiftDirectionValue);
+                renderCycleShiftPreview();
+            });
+        }
+        if (cycleShiftWeeks) {
+            cycleShiftWeeks.addEventListener('click', function (e) {
+                const button = e.target.closest('button[data-weeks]');
+                if (!button) {
+                    return;
+                }
+                const weeks = parseInt(button.getAttribute('data-weeks'), 10);
+                if (weeks !== 1 && weeks !== 2 && weeks !== 3) {
+                    return;
+                }
+                cycleShiftWeeksValue = weeks;
+                setCycleShiftChoice(cycleShiftWeeks, 'data-weeks', String(weeks));
+                renderCycleShiftPreview();
+            });
+        }
+        if (cycleShiftCancelBtn) {
+            cycleShiftCancelBtn.addEventListener('click', function () {
+                closeCycleShiftModal();
+            });
+        }
+        if (cycleShiftApplyBtn) {
+            cycleShiftApplyBtn.addEventListener('click', function () {
+                applyCycleShiftFromModal();
+            });
+        }
+        if (cycleShiftModal) {
+            cycleShiftModal.addEventListener('click', function (e) {
+                if (e.target === cycleShiftModal) {
+                    closeCycleShiftModal();
                 }
             });
         }
@@ -8200,6 +8575,10 @@ $pageTitle = 'Активные позиции';
             }
             if (e.key === 'Escape' && cycleReflowModal && !cycleReflowModal.hidden) {
                 closeCycleReflowModal();
+                return;
+            }
+            if (e.key === 'Escape' && cycleShiftModal && !cycleShiftModal.hidden) {
+                closeCycleShiftModal();
                 return;
             }
             if (e.key === 'Escape' && !debtSpreadModal.hidden) {
