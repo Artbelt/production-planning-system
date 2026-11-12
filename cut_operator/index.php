@@ -1208,6 +1208,18 @@ if (isset($_POST['action'])) {
                                     <?php endforeach; ?>
                                 </tbody>
                             </table>
+                            <?php
+                            $baleLengths = [];
+                            foreach ($task['filters'] as $filter) {
+                                if (!isset($filter['length']) || $filter['length'] === '' || $filter['length'] === null) {
+                                    continue;
+                                }
+                                $baleLengths[number_format((float)$filter['length'], 0, '.', '')] = true;
+                            }
+                            ?>
+                            <?php if ($baleLengths): ?>
+                            <p><strong>Длина бухты:</strong> <?= htmlspecialchars(implode(', ', array_keys($baleLengths)), ENT_QUOTES, 'UTF-8') ?> м</p>
+                            <?php endif; ?>
                             <p><strong>Суммарная ширина:</strong> <?= $task['total_width'] ?> мм</p>
                             <?php $residual = 1200 - $task['total_width']; ?>
                             <p class="residual <?= ($residual < 100) ? 'low' : '' ?>">
