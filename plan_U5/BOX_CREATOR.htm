@@ -183,19 +183,49 @@
 
     }
 
-    function main() {
-        // filter sizes
-        //let length = document.getElementById("length").innerText;
-        //let width = document.getElementById("width").innerText;
-        //let height = document.getElementById("height").innerText;
+    // Наружная кромка длинного клапана: выступ на четверти и ответный паз на трёх четвертях.
+    // Оба длинных клапана получают один и тот же профиль, поэтому при складывании выступ попадает в паз.
+    function drawLengthFlapOuter(x0, y0, length) {
+        const quarter = length / 4;
+        if (length < 80) {
+            line(x0, y0, x0 + length, y0, 7);
+            return;
+        }
+        line(x0, y0, x0 + quarter - 10, y0, 7);
+        line(x0 + quarter - 10, y0, x0 + quarter - 10, y0 + 5, 7);
+        arc(x0 + quarter - 5, y0 + 5, 5, 90, 180);
+        line(x0 + quarter - 5, y0 + 10, x0 + quarter + 5, y0 + 10, 7);
+        arc(x0 + quarter + 5, y0 + 5, 5, 0, 90);
+        line(x0 + quarter + 10, y0 + 5, x0 + quarter + 10, y0, 7);
+        line(x0 + quarter + 10, y0, x0 + 3 * quarter - 10, y0, 7);
+        line(x0 + 3 * quarter - 10, y0, x0 + 3 * quarter - 10, y0 - 5, 7);
+        arc(x0 + 3 * quarter - 5, y0 - 5, 5, 180, 270);
+        line(x0 + 3 * quarter - 5, y0 - 10, x0 + 3 * quarter + 5, y0 - 10, 7);
+        arc(x0 + 3 * quarter + 5, y0 - 5, 5, 270, 0);
+        line(x0 + 3 * quarter + 10, y0 - 5, x0 + 3 * quarter + 10, y0, 7);
+        line(x0 + 3 * quarter + 10, y0, x0 + length, y0, 7);
+    }
 
+    // Кромка короткого клапана с вырезом под палец. Дуга лежит на той же линии, что и разрыв.
+    function drawWidthFlapOuter(x0, yEdge, width, arcStart, arcEnd) {
+        const hole = 10;
+        if (width <= hole * 2 + 4) {
+            line(x0, yEdge, x0 + width, yEdge, 3);
+            return;
+        }
+        const mid = x0 + width / 2;
+        line(x0, yEdge, mid - hole, yEdge, 3);
+        line(mid + hole, yEdge, x0 + width, yEdge, 3);
+        arc(mid, yEdge, hole, arcStart, arcEnd);
+    }
+
+    function main() {
         let D =  Number(document.getElementById("length").value);//длина ящика
         let C =  Number(document.getElementById("width").value); //ширина ящика
         let A = Number(document.getElementById("height").value);
         let tail = 40;
 
         let gap =6;
-        let paper_thickness = 3;
 
         let B;
         //коэффициенты для корректировки длины клапанов
@@ -209,99 +239,90 @@
 
         B = C/2 + 4;
 
+        const xC1 = tail;
+        const xD1 = tail + C + gap;
+        const xC2 = xD1 + D + gap;
+        const xD2 = xC2 + C + gap;
+        const xEnd = xD2 + D;
+
         start_of_file();
-        //1
-        line(0,0,tail+paper_thickness,0,1);
+        //1 клеевой клапан
+        line(0,0,tail,0,1);
         //2
-        line(tail+paper_thickness,0,tail+paper_thickness,B+g1,2);
-        //3
-        line(tail+paper_thickness,B+g1,tail+C,B+g1,3);
-        //71 дуга
-        arc(tail+0.5*C,B+g1,10,180,0);
+        line(xC1,0,xC1,B+g1,2);
+        //3 короткий клапан, верх
+        drawWidthFlapOuter(xC1, B + g1, C, 180, 0);
         //4
-        line(tail+C,B+g1,tail+C,0,4);
+        line(xC1+C,B+g1,xC1+C,0,4);
         //5
-        line(tail+C,0,tail+C+gap,0,5);
+        line(xC1+C,0,xD1,0,5);
         //6
-        line(tail+C+gap,0,tail+C+gap,B+g2,6);
-        //7
-        line(tail+C+gap,B+g2,tail+C+gap+D,B+g2,7);
+        line(xD1,0,xD1,B+g2,6);
+        //7 длинный клапан, верх
+        drawLengthFlapOuter(xD1, B + g2, D);
         //8
-        line(tail+C+gap+D,B+g2,tail+C+gap+D,0,8);
+        line(xD1+D,B+g2,xD1+D,0,8);
         //9
-        line(tail+C+gap+D,0,tail+C+gap+D+gap,0,9);
+        line(xD1+D,0,xC2,0,9);
         //10
-        line(tail+C+gap+D+gap,0,tail+C+gap+D+gap,B+g1,10);
-        //11
-        line(tail+C+gap+D+gap,B+g1,tail+C+gap+D+gap+C,B+g1,11);
-        //72 дуга
-        arc(tail+C+gap+D+gap+0.5*C,B+g1,10,180,0);
+        line(xC2,0,xC2,B+g1,10);
+        //11 короткий клапан, верх
+        drawWidthFlapOuter(xC2, B + g1, C, 180, 0);
         //12
-        line(tail+C+gap+D+gap+C,B+g1,tail+C+gap+D+gap+C,0,12);
+        line(xC2+C,B+g1,xC2+C,0,12);
         //13
-        line(tail+C+gap+D+gap+C,0,tail+C+gap+D+gap+C+gap,0,13);
+        line(xC2+C,0,xD2,0,13);
         //14
-        line(tail+C+gap+D+gap+C+gap,0,tail+C+gap+D+gap+C+gap,B+g2,14);
-        //15
-        line(tail+C+gap+D+gap+C+gap,B+g2,tail+C+gap+D+gap+C+gap+D,B+g2,15);
+        line(xD2,0,xD2,B+g2,14);
+        //15 длинный клапан, верх
+        drawLengthFlapOuter(xD2, B + g2, D);
 
         let L1 = -1*(A+B);
         let L2 = -1 * A;
         //16
-        line(tail+C+gap+D+gap+C+gap+D,B+g2,tail+C+gap+D+gap+C+gap+D,L1-g2,16);
+        line(xEnd,B+g2,xEnd,L1-g2,16);
         //32
         line(0,0,0,L2,32);
         //31
-        line(0,L2,tail+paper_thickness,L2,31);
+        line(0,L2,tail,L2,31);
         //30
-        line(tail+paper_thickness,L2,tail+paper_thickness,L1-g1,30);
-        //29
-        line(tail+paper_thickness,L1-g1,tail+C,L1-g1,29);
-        //73 дуга
-        arc(tail+0.5*C,L1,10,0,180);
+        line(xC1,L2,xC1,L1-g1,30);
+        //29 короткий клапан, низ. Центр дуги на кромке L1-g1, а не на L1.
+        drawWidthFlapOuter(xC1, L1 - g1, C, 0, 180);
         //28
-        line(tail+C,L1-g1,tail+C,L2,28);
+        line(xC1+C,L1-g1,xC1+C,L2,28);
         //27
-        line(tail+C,L2,tail+C+gap,L2,27);
+        line(xC1+C,L2,xD1,L2,27);
         //26
-        line(tail+C+gap,L2,tail+C+gap,L1-g2,26);
-        //25
-        line(tail+C+gap,L1-g2,tail+C+gap+D,L1-g2,25);
+        line(xD1,L2,xD1,L1-g2,26);
+        //25 длинный клапан, низ
+        drawLengthFlapOuter(xD1, L1 - g2, D);
         //24
-        line(tail+C+gap+D,L1-g2,tail+C+gap+D,L2,24);
+        line(xD1+D,L1-g2,xD1+D,L2,24);
         //23
-        line(tail+C+gap+D,L2,tail+C+gap+D+gap,L2,23);
+        line(xD1+D,L2,xC2,L2,23);
         //22
-        line(tail+C+gap+D+gap,L2,tail+C+gap+D+gap,L1-g1,22);
-        //21
-        line(tail+C+gap+D+gap,L1-g1,tail+C+gap+D+gap+C,L1-g1,21);
-        //74 дуга
-        arc(tail+C+gap+D+gap+0.5*C,L1,10,0,180);
+        line(xC2,L2,xC2,L1-g1,22);
+        //21 короткий клапан, низ
+        drawWidthFlapOuter(xC2, L1 - g1, C, 0, 180);
         //20
-        line(tail+C+gap+D+gap+C,L1-g1,tail+C+gap+D+gap+C,L2,20);
+        line(xC2+C,L1-g1,xC2+C,L2,20);
         //19
-        line(tail+C+gap+D+gap+C,L2,tail+C+gap+D+gap+C+gap,L2,19);
+        line(xC2+C,L2,xD2,L2,19);
         //18
-        line(tail+C+gap+D+gap+C+gap,L2,tail+C+gap+D+gap+C+gap,L1-g2,18);
-        //17
-        line(tail+C+gap+D+gap+C+gap,L1-g2,tail+C+gap+D+gap+C+gap+D,L1-g2,17);
+        line(xD2,L2,xD2,L1-g2,18);
+        //17 длинный клапан, низ
+        drawLengthFlapOuter(xD2, L1 - g2, D);
 
-        //50
-        line(tail+paper_thickness,1.5,tail+C,1.5);
-        //51
-        line(tail+C+gap,3,tail+C+gap+D,3);
-        //52
-        line(tail+C+gap+D+gap,1.5,tail+C+gap+D+gap+C,1.5);
-        //53
-        line(tail+C+gap+D+gap+C+gap,3,tail+C+gap+D+gap+C+gap+D,3);
-        //60
-        line(tail+paper_thickness,L2-1.5,tail+C,L2-1.5);
-        //61
-        line(tail+C+gap,L2-3,tail+C+gap+D,L2-3);
-        //62
-        line(tail+C+gap+D+gap,L2-1.5,tail+C+gap+D+gap+C,L2-1.5);
-        //63
-        line(tail+C+gap+D+gap+C+gap,L2-3,tail+C+gap+D+gap+C+gap+D,L2-3);
+        // биговка клапанов
+        line(xC1,1.5,xC1+C,1.5);
+        line(xD1,3,xD1+D,3);
+        line(xC2,1.5,xC2+C,1.5);
+        line(xD2,3,xD2+D,3);
+        line(xC1,L2-1.5,xC1+C,L2-1.5);
+        line(xD1,L2-3,xD1+D,L2-3);
+        line(xC2,L2-1.5,xC2+C,L2-1.5);
+        line(xD2,L2-3,xD2+D,L2-3);
 
         end_of_file();
 
