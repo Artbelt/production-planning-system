@@ -769,12 +769,62 @@ if (isset($_POST['action'])) {
             overflow: hidden;
         }
         
-        .department-header {
+        button.department-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            margin: 0;
+            box-sizing: border-box;
+            border-radius: 0;
             background: #4a90e2;
             color: white;
             padding: 12px 20px;
+            font-family: inherit;
             font-weight: bold;
             font-size: 16px;
+            line-height: 1.3;
+            text-align: left;
+            user-select: none;
+        }
+
+        button.department-header:hover,
+        button.department-header:focus {
+            background: #3b7dcc;
+        }
+
+        button.department-header:focus {
+            outline: none;
+        }
+
+        button.department-header:focus-visible {
+            outline: 2px solid #d6e6f8;
+            outline-offset: -3px;
+        }
+
+        .section-title {
+            flex: 1 1 auto;
+        }
+
+        .section-chevron {
+            display: inline-block;
+            width: 1em;
+            flex: 0 0 auto;
+            color: #fff;
+            font-size: 12px;
+            line-height: 1;
+        }
+
+        .section-chevron::before {
+            content: '▼';
+        }
+
+        .department-section.is-collapsed .section-chevron::before {
+            content: '▶';
+        }
+
+        .department-section.is-collapsed .section-body {
+            display: none;
         }
         
         table {
@@ -1148,6 +1198,28 @@ if (isset($_POST['action'])) {
             padding: 4px 0;
         }
     </style>
+    <script>
+        (function () {
+            try {
+                var raw = localStorage.getItem('cut_operator_section_collapsed');
+                if (!raw) return;
+                var map = JSON.parse(raw);
+                if (!map || typeof map !== 'object' || Array.isArray(map)) return;
+                var css = '';
+                Object.keys(map).forEach(function (id) {
+                    if (!map[id] || !/^[A-Za-z0-9_-]+$/.test(id)) return;
+                    var sel = '.department-section[data-section-id="' + id + '"]';
+                    css += sel + ' .section-body{display:none}';
+                    css += sel + ' .section-chevron::before{content:"▶"}';
+                });
+                if (!css) return;
+                var style = document.createElement('style');
+                style.id = 'cut-operator-collapse-preload';
+                style.textContent = css;
+                document.head.appendChild(style);
+            } catch (e) {}
+        })();
+    </script>
 </head>
 <body>
     <div class="header">
@@ -1178,11 +1250,12 @@ if (isset($_POST['action'])) {
     </div>
 
     <?php if (!empty($overdueTasks)): ?>
-    <div class="department-section overdue-section">
-        <div class="department-header">
-            ⚠️ Просроченные бухты
-        </div>
-        <div class="table-wrapper">
+    <div class="department-section overdue-section" data-section-id="overdue">
+        <button type="button" class="department-header section-toggle" aria-expanded="true" aria-controls="section-body-overdue">
+            <span class="section-chevron" aria-hidden="true"></span>
+            <span class="section-title">⚠️ Просроченные бухты</span>
+        </button>
+        <div class="table-wrapper section-body" id="section-body-overdue">
             <table>
                 <thead>
                     <tr>
@@ -1256,11 +1329,12 @@ if (isset($_POST['action'])) {
 
     <?php foreach ($allTasks as $department => $tasks): ?>
         <?php if (!empty($tasks)): ?>
-        <div class="department-section" data-department="<?= htmlspecialchars($department) ?>">
-            <div class="department-header">
-                Задания от участка <?= htmlspecialchars(str_replace('U', '', $department)) ?>
-            </div>
-            <div class="table-wrapper">
+        <div class="department-section" data-department="<?= htmlspecialchars($department) ?>" data-section-id="<?= htmlspecialchars($department) ?>">
+            <button type="button" class="department-header section-toggle" aria-expanded="true" aria-controls="section-body-<?= htmlspecialchars($department) ?>">
+                <span class="section-chevron" aria-hidden="true"></span>
+                <span class="section-title">Задания от участка <?= htmlspecialchars(str_replace('U', '', $department)) ?></span>
+            </button>
+            <div class="table-wrapper section-body" id="section-body-<?= htmlspecialchars($department) ?>">
                 <table>
                     <thead>
                         <tr>
@@ -1386,6 +1460,69 @@ if (isset($_POST['action'])) {
     </div>
 
     <script>
+        (function () {
+            var STORAGE_KEY = 'cut_operator_section_collapsed';
+
+            function readCollapsedMap() {
+                try {
+                    var raw = localStorage.getItem(STORAGE_KEY);
+                    if (!raw) {
+                        return {};
+                    }
+                    var parsed = JSON.parse(raw);
+                    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                        return {};
+                    }
+                    return parsed;
+                } catch (e) {
+                    return {};
+                }
+            }
+
+            function writeCollapsedMap(map) {
+                try {
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
+                } catch (e) {}
+            }
+
+            function applyCollapsed(section, collapsed) {
+                section.classList.toggle('is-collapsed', collapsed);
+                var toggle = section.querySelector('.section-toggle');
+                if (toggle) {
+                    toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                }
+            }
+
+            var saved = readCollapsedMap();
+            document.querySelectorAll('.department-section[data-section-id]').forEach(function (section) {
+                var id = section.getAttribute('data-section-id');
+                if (!id) {
+                    return;
+                }
+                applyCollapsed(section, !!saved[id]);
+
+                var toggle = section.querySelector('.section-toggle');
+                if (!toggle) {
+                    return;
+                }
+                toggle.addEventListener('click', function () {
+                    var collapsed = !section.classList.contains('is-collapsed');
+                    applyCollapsed(section, collapsed);
+                    var map = readCollapsedMap();
+                    if (collapsed) {
+                        map[id] = true;
+                    } else {
+                        delete map[id];
+                    }
+                    writeCollapsedMap(map);
+                });
+            });
+            var preload = document.getElementById('cut-operator-collapse-preload');
+            if (preload) {
+                preload.remove();
+            }
+        })();
+
         function closeAllBaleDetails() {
             document.querySelectorAll('.details-row.is-open').forEach(function(row) {
                 row.classList.remove('is-open');
